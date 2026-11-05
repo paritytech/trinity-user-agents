@@ -139,7 +139,7 @@ async fn lookup_with_retries(
 		match lookup_dotns_identity(chain, asset_hub_chain_genesis_hash, account).await {
 			Ok(Some(identity)) => {
 				debug!(
-					account = %hex::encode(account),
+					account = %crate::logging::Account::new(&account).in_full(),
 					lite_username = ?identity.lite_username(),
 					full_username = ?identity.full_username(),
 					"dotNS {label} lookup found username"
@@ -148,17 +148,16 @@ async fn lookup_with_retries(
 			},
 			Ok(None) => {
 				debug!(
-					account = %hex::encode(account),
+					account = %crate::logging::Account::new(&account).in_full(),
 					"dotNS {label} lookup found no username"
 				);
 				return LookupOutcome::NoRecord;
 			},
 			Err(reason) => {
-				// A warning leaves the device, so the account is named by a
-				// handle rather than in full. The debug lines above, which stay
-				// on it, still carry the whole id.
+				// The debug lines above stay on the device, so they name the
+				// account in full; this one does not.
 				warn!(
-					account = %crate::logging::account_handle(&account),
+					account = %crate::logging::Account::new(&account),
 					attempt,
 					reason = %reason.reason(),
 					"dotNS {label} lookup failed"

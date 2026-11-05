@@ -107,14 +107,88 @@ const HOST_SINK_EVENT_LEVEL: Level = Level::WARN;
 /// How much of an account a line that leaves the device may name.
 const ACCOUNT_HANDLE_BYTES: usize = 4;
 
-/// A short handle for an account, for a line that leaves the device.
+/// An account named in a log line.
 ///
-/// Enough to tell two accounts apart within one log, and not the identifier
-/// itself. A host ships these lines to a crash reporter, where a whole account
-/// id is a public key that indexes everything that account has ever done. Lines
-/// that stay on the device can name it in full.
-pub fn account_handle(account: &[u8]) -> String {
-	hex::encode(&account[..account.len().min(ACCOUNT_HANDLE_BYTES)])
+/// Both `Display` and `Debug` write a short handle of the account's leading
+/// bytes, so either sigil in a `tracing` field is safe to use. The handle is
+/// enough to tell two accounts apart within one log and is not the identifier
+/// itself. A host ships warnings and errors to a crash reporter, where a whole
+/// account id is a public key that indexes everything that account has ever
+/// done.
+///
+/// A line that stays on the device names the account in full through
+/// [`Account::in_full`], which has to be asked for by name.
+#[derive(Clone, Copy)]
+pub struct Account<'a>(&'a [u8]);
+
+impl<'a> Account<'a> {
+	/// Names `account` in a log line.
+	pub fn new(account: &'a [u8]) -> Self {
+		Self(account)
+	}
+
+	/// The whole account, for a line that stays on the device.
+	pub fn in_full(&self) -> String {
+		hex::encode(self.0)
+	}
+}
+
+impl fmt::Display for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		for byte in &self.0[..self.0.len().min(ACCOUNT_HANDLE_BYTES)] {
+			write!(f, "{byte:02x}")?;
+		}
+		Ok(())
+	}
+}
+
+impl fmt::Debug for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+/// Longest a host-supplied string may run in a line that leaves the device.
+const HOST_TEXT_MAX_CHARS: usize = 160;
+
+/// Text a host handed the core, named in a log line.
+///
+/// A foreign exception message is written by code the core does not control.
+/// It can run to any length and can carry newlines, and the host ships
+/// warnings and errors to a crash reporter. Both `Display` and `Debug` write
+/// it on one line and stop after a bounded number of characters, so one
+/// foreign string cannot crowd the fields beside it out of the detail the
+/// sink forwards.
+///
+/// The text itself is not read or rewritten. This bounds its shape, and it is
+/// the one place a rule about its content would go.
+#[derive(Clone, Copy)]
+pub struct HostText<'a>(&'a str);
+
+impl<'a> HostText<'a> {
+	/// Names `text`, which came from a host, in a log line.
+	pub fn new(text: &'a str) -> Self {
+		Self(text)
+	}
+}
+
+impl fmt::Display for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let bounded = truncate_to_chars(self.0, HOST_TEXT_MAX_CHARS);
+		for character in bounded.chars() {
+			f.write_char(if character.is_control() { ' ' } else { character })?;
+		}
+		if bounded.len() < self.0.len() {
+			f.write_str("\u{2026}")?;
+		}
+		Ok(())
+	}
+}
+
+impl fmt::Debug for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
 }
 
 /// Longest detail the host sink forwards, in characters.
@@ -496,6 +570,72 @@ mod tests {
 	/// The host sink is process-wide, so a test that installs one has to own it
 	/// for the whole of its run or a sibling's teardown reads as its own.
 	static SINK_TESTS: Mutex<()> = Mutex::new(());
+
+	/// Both sigils a `tracing` field can use have to redact, or the safe
+	/// spelling is the one the author has to remember.
+	#[test]
+	fn an_account_prints_as_a_handle_under_either_sigil() {
+		let account = [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45];
+
+		assert_eq!(Account::new(&account).to_string(), "abcdef01");
+		assert_eq!(format!("{:?}", Account::new(&account)), "abcdef01");
+	}
+
+	/// The whole account is still reachable, by a name that says so.
+	#[test]
+	fn an_account_names_itself_in_full_only_when_asked() {
+		let account = [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45];
+
+		assert_eq!(Account::new(&account).in_full(), "abcdef012345");
+	}
+
+	/// An account shorter than the handle is printed whole rather than
+	/// panicking on the slice.
+	#[test]
+	fn a_short_account_does_not_panic() {
+		assert_eq!(Account::new(&[0xab, 0xcd]).to_string(), "abcd");
+		assert_eq!(Account::new(&[]).to_string(), "");
+	}
+
+	/// A foreign exception description can be several lines, and a detail the
+	/// sink forwards is one.
+	#[test]
+	fn host_text_is_written_on_one_line() {
+		let thrown = "NSError Domain=Host\nCode=3\r\n\tUserInfo={}";
+
+		assert_eq!(HostText::new(thrown).to_string(), "NSError Domain=Host Code=3   UserInfo={}");
+	}
+
+	/// One foreign string must not crowd the fields beside it out of the
+	/// detail the sink forwards.
+	#[test]
+	fn host_text_stops_at_the_bound() {
+		let thrown = "e".repeat(HOST_TEXT_MAX_CHARS + 20);
+
+		let written = HostText::new(&thrown).to_string();
+
+		assert_eq!(written.chars().count(), HOST_TEXT_MAX_CHARS + 1);
+		assert!(written.ends_with('\u{2026}'), "{written}");
+	}
+
+	/// Text already within the bound is written as the host wrote it, with no
+	/// marker suggesting something was dropped.
+	#[test]
+	fn host_text_within_the_bound_is_untouched() {
+		assert_eq!(HostText::new("keychain unavailable").to_string(), "keychain unavailable");
+		assert_eq!(format!("{:?}", HostText::new("keychain unavailable")), "keychain unavailable");
+	}
+
+	/// The bound counts characters, so a multi-byte description is not cut
+	/// mid-character.
+	#[test]
+	fn host_text_bounds_characters_not_bytes() {
+		let thrown = "\u{e9}".repeat(HOST_TEXT_MAX_CHARS + 5);
+
+		let written = HostText::new(&thrown).to_string();
+
+		assert_eq!(written.chars().filter(|c| *c == '\u{e9}').count(), HOST_TEXT_MAX_CHARS);
+	}
 
 	/// A host-addressed target the table does not list never reaches a sink,
 	/// so a marker added without saying what it carries stays on the device.
