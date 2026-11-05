@@ -756,8 +756,9 @@ TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> (<chain-backend>) �
 `<chain-backend>` is the `--chain-backend` value in use, `rpc` or `light-client`.
 
 The role label is omitted at narrow widths so user, network, and product remain
-visible. Values are ellipsized to fit, with the product consuming the remaining
-space after the user, network, and fixed log value. The session name is not shown
+visible. The user, network, and product are ellipsized to fit, with the product
+consuming the remaining space after the user, the network, and the chain backend
+and log value, which are always shown whole. The session name is not shown
 separately from the resolved user. Idle command guidance appears as a dim
 placeholder inside the empty prompt instead of consuming status-bar space.
 Operational hints temporarily use the right side of the status line while a

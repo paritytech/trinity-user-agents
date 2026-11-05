@@ -40,6 +40,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
 	LogLevel,
+	chain::ChainBackend,
 	qr_scanner::RgbaFrame,
 	signing_shell::{
 		CommandEditor, SessionCommand, ShellCommand, contains_mnemonic, mask_mnemonic,
@@ -666,6 +667,7 @@ impl TerminalUi {
 	/// Create a terminal transcript and its cloneable host bridge.
 	pub fn new(
 		network: impl Into<String>,
+		chain_backend: ChainBackend,
 		product_id: ProductId,
 		session: impl Into<String>,
 		session_names: Vec<String>,
@@ -679,6 +681,7 @@ impl TerminalUi {
 				receiver,
 				app: App::new(
 					network.into(),
+					chain_backend,
 					product_id,
 					session.into(),
 					session_names,
@@ -692,6 +695,7 @@ impl TerminalUi {
 	/// Create the same terminal surface for a product-side pairing host.
 	pub fn new_pairing(
 		network: impl Into<String>,
+		chain_backend: ChainBackend,
 		product_id: ProductId,
 		log_filter: String,
 	) -> (Self, UiHandle) {
@@ -701,7 +705,7 @@ impl TerminalUi {
 			Self {
 				sender,
 				receiver,
-				app: App::new_pairing(network.into(), product_id, log_filter),
+				app: App::new_pairing(network.into(), chain_backend, product_id, log_filter),
 			},
 			handle,
 		)
@@ -1242,6 +1246,7 @@ enum HostRole {
 struct App {
 	role: HostRole,
 	network: String,
+	chain_backend: ChainBackend,
 	product: Option<ProductId>,
 	session: String,
 	connection: String,
@@ -1264,6 +1269,7 @@ impl App {
 		Self::with_role(
 			HostRole::Pairing,
 			String::new(),
+			ChainBackend::Rpc,
 			None,
 			String::new(),
 			Vec::new(),
@@ -1273,6 +1279,7 @@ impl App {
 
 	fn new(
 		network: String,
+		chain_backend: ChainBackend,
 		product_id: ProductId,
 		session: String,
 		session_names: Vec<String>,
@@ -1281,6 +1288,7 @@ impl App {
 		Self::with_role(
 			HostRole::Signing,
 			network,
+			chain_backend,
 			Some(product_id),
 			session,
 			session_names,
@@ -1288,10 +1296,16 @@ impl App {
 		)
 	}
 
-	fn new_pairing(network: String, product_id: ProductId, log_filter: String) -> Self {
+	fn new_pairing(
+		network: String,
+		chain_backend: ChainBackend,
+		product_id: ProductId,
+		log_filter: String,
+	) -> Self {
 		Self::with_role(
 			HostRole::Pairing,
 			network,
+			chain_backend,
 			Some(product_id),
 			String::new(),
 			Vec::new(),
@@ -1302,6 +1316,7 @@ impl App {
 	fn with_role(
 		role: HostRole,
 		network: String,
+		chain_backend: ChainBackend,
 		product: Option<ProductId>,
 		session: String,
 		session_names: Vec<String>,
@@ -1315,6 +1330,7 @@ impl App {
 		Self {
 			role,
 			network,
+			chain_backend,
 			product,
 			session,
 			connection: "disconnected".to_string(),
@@ -2498,6 +2514,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 	let title = format!(" TrUAPI {role} host");
 	let user_prefix = " · 👤 ";
 	let network_prefix = " · 🌐 ";
+	let backend_suffix = format!(" ({})", app.chain_backend);
 	let product_prefix = " · 📦 ";
 	let log_suffix = format!(" · log {}", app.log_filter);
 	let width = usize::from(width);
@@ -2506,6 +2523,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 		.saturating_add(text_display_width(&app.connection))
 		.saturating_add(text_display_width(network_prefix))
 		.saturating_add(text_display_width(&app.network))
+		.saturating_add(text_display_width(&backend_suffix))
 		.saturating_add(text_display_width(product_prefix))
 		.saturating_add(text_display_width(&log_suffix));
 
@@ -2520,6 +2538,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 			Span::styled(app.connection.clone(), user_style),
 			Span::raw(network_prefix),
 			Span::styled(app.network.clone(), Style::default().add_modifier(Modifier::DIM)),
+			Span::styled(backend_suffix, Style::default().add_modifier(Modifier::DIM)),
 			Span::raw(product_prefix),
 			Span::styled(product, semantic_style(Color::Cyan)),
 			Span::styled(log_suffix, Style::default().add_modifier(Modifier::DIM)),
@@ -2528,6 +2547,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 
 	let fixed_width = text_display_width(" 👤 ")
 		.saturating_add(text_display_width(network_prefix))
+		.saturating_add(text_display_width(&backend_suffix))
 		.saturating_add(text_display_width(product_prefix))
 		.saturating_add(text_display_width(&log_suffix));
 	if fixed_width >= width {
@@ -2552,6 +2572,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 			ellipsize_display_width(&app.network, network_budget),
 			Style::default().add_modifier(Modifier::DIM),
 		),
+		Span::styled(backend_suffix, Style::default().add_modifier(Modifier::DIM)),
 		Span::raw(product_prefix),
 		Span::styled(
 			ellipsize_display_width(
@@ -3038,6 +3059,7 @@ mod tests {
 	fn test_app() -> App {
 		App::new(
 			"testnet".to_string(),
+			ChainBackend::Rpc,
 			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
@@ -3488,6 +3510,7 @@ mod tests {
 	fn pairing_host_status_shows_the_selected_log_level() -> Result<()> {
 		let mut app = App::new_pairing(
 			"paseo-next-v2".to_string(),
+			ChainBackend::Rpc,
 			ProductId::for_test("playground.dot"),
 			"info".to_string(),
 		);
@@ -3498,7 +3521,7 @@ mod tests {
 
 		assert_eq!(
 			status,
-			" TrUAPI pairing host · 👤 disconnected · 🌐 paseo-next-v2 · 📦 playground.dot · log info"
+			" TrUAPI pairing host · 👤 disconnected · 🌐 paseo-next-v2 (rpc) · 📦 playground.dot · log info"
 		);
 		assert!(screen.contains("log info"));
 		assert!(screen.contains("/script"));
@@ -3517,7 +3540,7 @@ mod tests {
 
 		assert_eq!(
 			status,
-			" TrUAPI signing host · 👤 alice.dot · 🌐 testnet · 📦 playground.dot · log info"
+			" TrUAPI signing host · 👤 alice.dot · 🌐 testnet (rpc) · 📦 playground.dot · log info"
 		);
 		assert!(!screen.contains("session default"));
 		Ok(())
@@ -3536,6 +3559,7 @@ mod tests {
 	fn rust_log_filter_value_is_visible_in_the_status_bar() {
 		let app = App::new(
 			"testnet".to_string(),
+			ChainBackend::Rpc,
 			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
@@ -3549,6 +3573,7 @@ mod tests {
 	fn narrow_status_prioritizes_the_log_level() {
 		let app = App::new(
 			"testnet".to_string(),
+			ChainBackend::Rpc,
 			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
@@ -3556,6 +3581,24 @@ mod tests {
 		);
 
 		assert_eq!(line_text(header_line(&app, 10)), " log debug");
+	}
+
+	/// Nothing else in the UI says which backend serves the chains, so a narrow
+	/// bar shortens the network name and keeps the backend whole.
+	#[test]
+	fn a_narrow_status_bar_keeps_the_chain_backend() {
+		let mut app = test_app();
+		app.network = "paseo-next-v2".to_string();
+		app.chain_backend = ChainBackend::LightClient;
+		app.connection = "alice.dot".to_string();
+
+		assert_eq!(
+			[80, 60].map(|width| line_text(header_line(&app, width))),
+			[
+				" 👤 alice.dot · 🌐 paseo-next-v2 (light-client) · 📦 playground.dot · log info",
+				" 👤 alice… · 🌐 paseo… (light-client) · 📦 playg… · log info",
+			]
+		);
 	}
 
 	#[test]

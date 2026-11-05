@@ -1327,8 +1327,12 @@ async fn run_pairing_host(
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
-		let (ui, handle) =
-			TerminalUi::new_pairing(network.status_label(), product_id.clone(), initial_log_filter);
+		let (ui, handle) = TerminalUi::new_pairing(
+			network.id,
+			network.chain_backend,
+			product_id.clone(),
+			initial_log_filter,
+		);
 		(Some(ui.enter()?), Some(handle))
 	} else {
 		(None, None)
@@ -1446,7 +1450,8 @@ async fn run_signing_host(
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new(
-			network.status_label(),
+			network.id,
+			network.chain_backend,
 			product_id,
 			initial_session_name.clone(),
 			initial_session_names,

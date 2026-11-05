@@ -966,12 +966,6 @@ pub struct ChainEndpoint {
 }
 
 impl NetworkConfig {
-	/// The network as the terminal status bar shows it, with the backend that
-	/// reaches its chains.
-	pub fn status_label(&self) -> String {
-		format!("{} ({})", self.id, self.chain_backend)
-	}
-
 	/// The identity backend base URL, or an error naming the override when the
 	/// network has none.
 	pub fn identity_backend(&self) -> anyhow::Result<&'static str> {
@@ -1794,17 +1788,6 @@ mod tests {
 	#[test]
 	fn polkadot_holds_real_identities() {
 		assert!(Network::Polkadot.config().ensure_disposable_identities().is_err());
-	}
-
-	/// Nothing else in the interactive UI says which backend serves the chains.
-	#[test]
-	fn the_status_label_names_the_chain_backend() {
-		let rpc = Network::PaseoNextV2.config();
-		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..rpc };
-		assert_eq!(
-			[rpc.status_label(), light.status_label()],
-			["paseo-next-v2 (rpc)", "paseo-next-v2 (light-client)"]
-		);
 	}
 
 	#[test]
