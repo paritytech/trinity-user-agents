@@ -36,9 +36,9 @@ import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHo
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_DEEPLINK
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
+import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
@@ -110,7 +110,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         navigationHolder.attach(navController)
         contextManager.attachActivity(this)
 
-        intent?.let(::processIntent)
+        intent?.let {
+            if (isFreshNotificationLaunch(isRestored = savedInstanceState != null, intentFlags = it.flags)) {
+                recordProductNotificationTap(it)
+            }
+            processIntent(it)
+        }
 
         handleDeeplinkOutcome()
         syncSplashScreenTheme()
@@ -131,6 +136,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
 
+        recordProductNotificationTap(intent)
         processIntent(intent)
     }
 
@@ -290,19 +296,17 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
-    private fun processIntent(intent: Intent) {
-        if (intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) {
-            val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
-            val deeplink = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_DEEPLINK)
-            if (productId != null && deeplink != null) {
-                runCatching {
-                    hostEventCapture.capture {
-                        hostEventOriginProvider.current().productNotificationTapped(productId, deeplink)
-                    }
-                }.logFailure("Failed to capture product notification tapped event")
+    private fun recordProductNotificationTap(intent: Intent) {
+        if (!intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) return
+        val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID) ?: return
+        runCatching {
+            hostEventCapture.capture {
+                hostEventOriginProvider.current().productNotificationTapped(productId)
             }
-        }
+        }.logFailure("Failed to capture product notification tapped event")
+    }
 
+    private fun processIntent(intent: Intent) {
         intent.data?.let {
             viewModel.handleDeepLink(it)
         }

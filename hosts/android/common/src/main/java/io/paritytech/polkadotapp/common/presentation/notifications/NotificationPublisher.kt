@@ -34,7 +34,8 @@ abstract class NotificationPublisher(
         createChannel(channel)
 
         notificationManager.notify(tag, notificationId, notification)
-        return true
+        return notificationManager.getNotificationChannelCompat(channel.id)?.importance !=
+            NotificationManagerCompat.IMPORTANCE_NONE
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {
@@ -66,15 +67,16 @@ abstract class NotificationPublisher(
     protected fun NotificationCompat.Builder.setupDefaultNotification(
         deepLink: Uri? = null,
         contentIntentExtras: Bundle? = null,
+        contentIntentRequestCode: Int = 0,
     ): NotificationCompat.Builder {
         return this
             .setSmallIcon(RCommon.drawable.ic_notification_default)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(createPendingIntent(deepLink, contentIntentExtras))
+            .setContentIntent(createPendingIntent(deepLink, contentIntentExtras, contentIntentRequestCode))
             .setAutoCancel(true)
     }
 
-    private fun createPendingIntent(deepLink: Uri?, extras: Bundle?): PendingIntent {
+    private fun createPendingIntent(deepLink: Uri?, extras: Bundle?, requestCode: Int): PendingIntent {
         val intent = intentProvider.getRootIntent().apply {
             if (deepLink != null) {
                 data = deepLink
@@ -86,7 +88,7 @@ abstract class NotificationPublisher(
 
         return PendingIntent.getActivity(
             appContext,
-            0,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

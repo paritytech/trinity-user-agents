@@ -7,7 +7,6 @@ import androidx.core.os.bundleOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_DEEPLINK
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
@@ -26,23 +25,26 @@ class ProductNotificationPublisher @Inject constructor(
 ) : NotificationPublisher(context, intentProvider) {
     fun publishNotification(notificationId: Int, productId: ProductId, text: String, deeplink: String?) {
         val channel = PolkadotNotificationChannel.PRODUCTS
-        val deeplinkValue = deeplink.orEmpty()
         val contentIntentExtras = bundleOf(
             PRODUCT_NOTIFICATION_INTENT_MARKER to true,
             PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID to productId.value,
-            PRODUCT_NOTIFICATION_INTENT_DEEPLINK to deeplinkValue,
         )
 
         val notification = NotificationCompat.Builder(appContext, channel.id)
             .setContentText(text)
-            .setupDefaultNotification(deeplink?.let(Uri::parse), contentIntentExtras)
+            .setupDefaultNotification(
+                deepLink = deeplink?.let(Uri::parse),
+                contentIntentExtras = contentIntentExtras,
+                // Own PendingIntent per notification, so a tap carries this notification's extras.
+                contentIntentRequestCode = notificationId,
+            )
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .build()
 
         if (publish(notificationId, channel, notification)) {
             runCatching {
                 capture.capture {
-                    originProvider.current().productNotificationShown(productId.value, deeplinkValue)
+                    originProvider.current().productNotificationShown(productId.value)
                 }
             }.logFailure("Failed to capture product notification shown event")
         }

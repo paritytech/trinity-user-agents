@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.app.telemetry
 
+import android.content.Intent
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
@@ -125,20 +127,17 @@ class HostProcessTelemetryTest {
         val captured = mutableListOf<HostEvent>()
         val capture = HostEventCapture { captured += it() }
 
-        capture.capture { origin.productNotificationShown(productId = "jolly.dot", deeplink = "jolly.dot/game") }
-        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", deeplink = "jolly.dot/game") }
+        capture.capture { origin.productNotificationShown(productId = "jolly.dot") }
+        capture.capture { origin.productNotificationTapped(productId = "jolly.dot") }
 
         val expectedTags = mapOf(
             "host.platform" to "android",
             "host.app_variant" to "nightly",
             "host.app_flavor" to "gp",
             "host.native_app_version" to "1.2.3",
-        )
-        val expectedExtras = mapOf(
-            "host.app_build" to 42L,
             "product_notification.product_id" to "jolly.dot",
-            "product_notification.deeplink" to "jolly.dot/game",
         )
+        val expectedExtras = mapOf<String, Any>("host.app_build" to 42L)
         assertEquals(
             listOf(
                 HostEvent("host.product_notification.shown", expectedTags, expectedExtras),
@@ -154,10 +153,22 @@ class HostProcessTelemetryTest {
         )
         disabledCapture.capture {
             eventBuilt = true
-            origin.productNotificationShown(productId = "jolly.dot", deeplink = "jolly.dot/game")
+            origin.productNotificationShown(productId = "jolly.dot")
         }
 
         assertFalse(eventBuilt)
+    }
+
+    @Test
+    fun `records a product notification tap only on a fresh launch`() {
+        assertTrue(isFreshNotificationLaunch(isRestored = false, intentFlags = Intent.FLAG_ACTIVITY_NEW_TASK))
+        assertFalse(isFreshNotificationLaunch(isRestored = true, intentFlags = 0))
+        assertFalse(
+            isFreshNotificationLaunch(
+                isRestored = false,
+                intentFlags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY,
+            )
+        )
     }
 
     @Test
