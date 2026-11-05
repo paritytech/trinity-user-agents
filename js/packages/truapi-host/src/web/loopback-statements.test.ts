@@ -263,6 +263,49 @@ describe("the statement encoding the store actually sees", () => {
     ).toThrow(/at most 4 topics/);
   });
 
+  it("carries the proof a suite gives", () => {
+    // p2p-market injects a statement with its own proof and reads it back.
+    const proof = {
+      tag: "Ed25519" as const,
+      value: {
+        signature: `0x${"11".repeat(64)}` as const,
+        signer: `0x${"22".repeat(32)}` as const,
+      },
+    };
+    const fields = decodeStatement(encodeStatement({ topics: [], proof }));
+    expect(fields!.find((field) => field.tag === "Proof")?.value).toEqual(
+      proof,
+    );
+  });
+
+  it("takes a proof whatever order its fields are written in", () => {
+    const proof = {
+      tag: "Sr25519" as const,
+      value: {
+        signer: `0x${"22".repeat(32)}` as const,
+        signature: `0x${"11".repeat(64)}` as const,
+      },
+    };
+    expect(() => encodeStatement({ topics: [], proof })).not.toThrow();
+  });
+
+  it("refuses a proof the codec would reshape", () => {
+    // A short signature would run into the signer and come back as a
+    // different proof, with nothing saying why.
+    const withProof = (proof: unknown) => () =>
+      encodeStatement({
+        topics: [],
+        proof: proof as Parameters<typeof encodeStatement>[0]["proof"],
+      });
+    const signer = `0x${"22".repeat(32)}`;
+    expect(
+      withProof({ tag: "Sr25519", value: { signature: "0x11", signer } }),
+    ).toThrow(/wrong length for Sr25519/);
+    expect(withProof({ tag: "Schnorr", value: {} })).toThrow(
+      /`proof` is one of/,
+    );
+  });
+
   it("refuses fields the codec would truncate or wrap", () => {
     // A 40-byte channel would arrive as its first 32 bytes, and an expiry of
     // -1 as 2^64 - 1: a statement the suite never meant to send.

@@ -415,14 +415,22 @@ describe("the permission policy the old package's name asks for", () => {
     : describe.skip;
 
   suite("against the real core", () => {
-    it("takes `reject-all` without complaint", async () => {
-      // The name the old package spells the denying policy with, recognised
-      // rather than merely unequal to "allow-all". Recognising it is what
-      // leaves the mock free to refuse a name it does not know, which the
-      // case below asserts.
-      const { host, dispose } = await createMockClient();
+    it("answers `reject-all` and `approve-all` as the old package did", async () => {
+      // Recognising the old names is what leaves the mock free to refuse a
+      // name it does not know, which the case below asserts. Each permission
+      // is asked once because the core keeps a settled answer.
+      const { client, host, dispose } = await createMockClient();
       try {
-        expect(() => host.setPermissionBehavior("reject-all")).not.toThrow();
+        host.setPermissionBehavior("reject-all");
+        const denied =
+          await client.permissions.requestDevicePermission("Camera");
+        host.setPermissionBehavior("approve-all");
+        const granted =
+          await client.permissions.requestDevicePermission("Microphone");
+        expect([
+          denied._unsafeUnwrap().granted,
+          granted._unsafeUnwrap().granted,
+        ]).toEqual([false, true]);
       } finally {
         dispose();
       }
