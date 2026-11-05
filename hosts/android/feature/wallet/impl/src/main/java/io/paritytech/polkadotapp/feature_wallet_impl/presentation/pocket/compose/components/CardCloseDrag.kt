@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
+package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components
 
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
@@ -35,6 +35,10 @@ internal class CardCloseDragState(windowHeightPx: Float) {
 
     fun drag(delta: Float) {
         offsetPx = (offsetPx + delta).coerceAtLeast(0f)
+    }
+
+    fun reset() {
+        offsetPx = 0f
     }
 
     suspend fun beginDrag() {

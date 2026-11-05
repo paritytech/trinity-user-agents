@@ -9,10 +9,15 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,18 +31,18 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
-import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
@@ -47,6 +52,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketT
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardCloseDragState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.delay
@@ -75,6 +81,8 @@ fun ProductPocketCardDetails(
     BackHandler { onBack() }
 
     val fold = rememberExpandedCardFoldState()
+    val windowHeightPx = LocalWindowInfo.current.containerSize.height.toFloat()
+    val closeDrag = remember(windowHeightPx) { CardCloseDragState(windowHeightPx) }
 
     // One WebView per product: a screen still drawn for another card must not take it.
     val session = shownProduct?.takeIf { card.key.launches(it.url) }?.session
@@ -89,6 +97,9 @@ fun ProductPocketCardDetails(
     val leaving = arrival?.targetState == EnterExitState.PostExit
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
     var settled by remember(leaving) { mutableStateOf(false) }
+    LaunchedEffect(leaving) {
+        if (!leaving) closeDrag.reset()
+    }
     LaunchedEffect(arrived, openingFaceShown, leaving) {
         if (leaving || !arrived || openingFaceShown == null) return@LaunchedEffect
 
@@ -127,14 +138,12 @@ fun ProductPocketCardDetails(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        PolkadotTopBar(
-            title = card.title,
-            navigationAction = rememberTopBarAction(onBack),
-            titleAlignment = TopBarTitleAlignment.Center
-        )
-
-        FoldableCard(fold = fold) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+    ) {
+        FoldableCard(fold = fold, closeDrag = closeDrag, onClose = onBack) {
             ProductPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
@@ -149,7 +158,12 @@ fun ProductPocketCardDetails(
         }
 
         ExpandedProductContent(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    translationY = closeDrag.offsetPx
+                    alpha = 1f - closeDrag.progress
+                },
             session = session,
             showLoading = slowToOpen,
         )
@@ -157,7 +171,7 @@ fun ProductPocketCardDetails(
 }
 
 /**
- * The card above the product, draggable out of the way.
+ * The card above the product, draggable out of the way, or down past its unfolded rest to close it.
  *
  * Reporting a shorter height as it folds is what grows the product: the column hands on whatever the
  * card stops asking for. The drag lives here rather than on the product, because the product is a
@@ -166,11 +180,14 @@ fun ProductPocketCardDetails(
 @Composable
 private fun FoldableCard(
     fold: ExpandedCardFoldState,
+    closeDrag: CardCloseDragState,
+    onClose: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
             .clipToBounds()
             .layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
@@ -183,9 +200,18 @@ private fun FoldableCard(
             }
             .draggable(
                 orientation = Orientation.Vertical,
-                state = rememberDraggableState { delta -> fold.drag(delta) },
-                onDragStarted = { fold.beginDrag() },
-                onDragStopped = { fold.endDrag() },
+                state = rememberDraggableState { delta ->
+                    val pullingDownFromRest = delta > 0f && fold.foldedPx == 0f
+                    if (pullingDownFromRest || closeDrag.offsetPx > 0f) closeDrag.drag(delta) else fold.drag(delta)
+                },
+                onDragStarted = {
+                    fold.beginDrag()
+                    closeDrag.beginDrag()
+                },
+                onDragStopped = {
+                    fold.endDrag()
+                    closeDrag.release(onClose)
+                },
             ),
         content = { content() },
     )

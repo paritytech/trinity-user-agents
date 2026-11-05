@@ -40,6 +40,7 @@ import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNot
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScroll
 import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
@@ -131,6 +132,9 @@ private fun PocketScreenInternal(
     LaunchedEffect(onList) {
         if (onList) collectiblesColour.snapTo(0f)
     }
+    // A card opened from a list scrolled under the ID bar would otherwise keep the bar hidden.
+    val statusBarScroll = LocalStatusBarScroll.current
+    LaunchedEffect(screenState.contentKey) { statusBarScroll?.reset() }
 
     PolkadotSurface {
         SharedTransitionLayout {

@@ -4,6 +4,7 @@ import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabTaps
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
@@ -58,6 +59,7 @@ class PocketViewModel @Inject constructor(
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
+    tabTaps: BottomTabTaps,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -228,6 +230,14 @@ class PocketViewModel @Inject constructor(
         }
             .filterNotNull()
             .onEach { (card, request) -> openRequestedCard(card, request) }
+            .launchIn(this)
+
+        // The Docklet stands in for the card's own close: any tab tapped, Pocket included, leaves the card.
+        tabTaps.taps
+            .onEach {
+                dismissCard()
+                hideCollectiblesSketchbook()
+            }
             .launchIn(this)
     }
 

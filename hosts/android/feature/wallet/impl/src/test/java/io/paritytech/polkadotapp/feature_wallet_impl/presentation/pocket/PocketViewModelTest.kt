@@ -12,6 +12,8 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabTaps
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
@@ -83,6 +85,7 @@ class PocketViewModelTest {
     private val dispatchers = TestCoroutineDispatchers(testDispatcher)
 
     private val cardOpenRequests = PocketCardOpenRequests()
+    private val tabTaps = BottomTabTaps()
 
     private class FakeSpaHostSession : SpaHostSession {
         override val webView = MutableStateFlow<WebView?>(null)
@@ -104,6 +107,7 @@ class PocketViewModelTest {
         collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,
+        tabTaps = tabTaps,
         spaHost = spaHost,
     ).also { created += it }
 
@@ -272,6 +276,34 @@ class PocketViewModelTest {
         verify(exactly = 1) {
             with(spaHost) { context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(stashUrl, false) } }
         }
+    }
+
+    // The open card has no bar of its own to close it, so the Docklet is the way back to the list.
+    @Test
+    fun `tapping Pocket in the Docklet closes the open card`() = runTest(testDispatcher) {
+        val viewModel = createViewModel()
+        viewModel.selectCard(settledCards(viewModel).single())
+        advanceUntilIdle()
+
+        tabTaps.tap(BottomTab.WALLET)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.List)
+    }
+
+    @Test
+    fun `leaving for another tab closes the book, so Pocket comes back on its list`() = runTest(testDispatcher) {
+        withCollectiblesPage()
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.openCollectibles()
+        advanceUntilIdle()
+
+        tabTaps.tap(BottomTab.CHATS)
+        advanceUntilIdle()
+
+        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
+        assertNull(viewModel.collectiblesProduct.value)
     }
 
     @Test

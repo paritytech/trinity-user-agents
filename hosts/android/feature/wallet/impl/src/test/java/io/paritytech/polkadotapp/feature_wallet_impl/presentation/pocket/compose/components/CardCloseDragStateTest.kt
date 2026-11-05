@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
+package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components
 
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.ui.unit.dp
@@ -42,7 +42,7 @@ class CardCloseDragStateTest {
         state.release(onClose)
         advanceUntilIdle()
 
-        verify(exactly = 1) { onClose() }
+        verifyClosedOnce()
         assertEquals(1001f, state.offsetPx, 0f)
     }
 
@@ -53,7 +53,7 @@ class CardCloseDragStateTest {
         state.release(onClose)
         advanceUntilIdle()
 
-        verify(exactly = 0) { onClose() }
+        verifyNotClosed()
         assertEquals(0f, state.offsetPx, 0f)
     }
 
@@ -114,7 +114,7 @@ class CardCloseDragStateTest {
         state.release(onClose)
         advanceUntilIdle()
 
-        verify(exactly = 0) { onClose() }
+        verifyNotClosed()
         assertEquals(0f, state.offsetPx, 0f)
     }
 
@@ -131,15 +131,34 @@ class CardCloseDragStateTest {
         advanceUntilIdle()
 
         assertEquals(midSpring, state.offsetPx, 0f)
-        verify(exactly = 0) { onClose() }
+        verifyNotClosed()
     }
 
     @Test
-    fun `release without a drag does nothing`() = runTest(SteppingFrameClock()) {
+    fun `reset puts a closed card back at rest`() = runTest(SteppingFrameClock()) {
+        state.drag(1001f)
         state.release(onClose)
+
+        state.reset()
+
+        assertEquals(0f, state.offsetPx, 0f)
+        assertEquals(0f, state.progress, 0f)
+    }
+
+    // A zero-height window still needs a real drag to close, or an upward flick from rest would close the card.
+    @Test
+    fun `an upward drag from rest released does not close`() = runTest(SteppingFrameClock()) {
+        val unmeasured = CardCloseDragState(0f)
+        unmeasured.drag(-50f)
+
+        unmeasured.release(onClose)
         advanceUntilIdle()
 
-        verify(exactly = 0) { onClose() }
-        assertEquals(0f, state.offsetPx, 0f)
+        verifyNotClosed()
+        assertEquals(0f, unmeasured.offsetPx, 0f)
     }
+
+    private fun verifyClosedOnce() = verify(exactly = 1) { onClose() }
+
+    private fun verifyNotClosed() = verify(exactly = 0) { onClose() }
 }

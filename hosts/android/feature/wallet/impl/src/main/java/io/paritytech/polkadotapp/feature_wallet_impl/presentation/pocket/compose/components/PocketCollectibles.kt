@@ -50,8 +50,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
@@ -124,49 +122,38 @@ fun PocketCollectibles(
         if (outcome is DotNsLoadProgress.Completed) book.handOff() else stage = BookStage.Failed
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
-        PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_collectibles_title),
-            titleAlignment = TopBarTitleAlignment.Center
+        CollectiblesPage(
+            modifier = Modifier
+                .fillMaxSize()
+                .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
+            webView = webView,
+            stage = stage
         )
 
-        Box(
+        CollectiblesSketchbook(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .windowInsetsPadding(LocalAppNavigationBarInsets.current)
-        ) {
-            CollectiblesPage(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
-                webView = webView,
-                stage = stage
-            )
-
-            CollectiblesSketchbook(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PolkadotTheme.spacings.mediumIncreased)
-                    .pocketCollectiblesImageSharedElement()
-                    .graphicsLayer { rotationZ = book.tilt.value }
-                    .graphicsLayer {
-                        val angle = book.coverAngle.value
-                        transformOrigin = CoverSpine
-                        // At the default distance a full-width cover turning past 45° swings into the lens and fills the screen.
-                        cameraDistance = COVER_CAMERA_DISTANCE * density
-                        rotationY = angle
-                        // A layer has no back face of its own: past edge-on it would draw the cover mirrored.
-                        alpha = if (angle < COVER_EDGE_ON_DEGREES) 0f else 1f
-                    },
-                saturation = saturation(),
-                expanded = true
-            )
-        }
+                .padding(PolkadotTheme.spacings.mediumIncreased)
+                .pocketCollectiblesImageSharedElement()
+                .graphicsLayer { rotationZ = book.tilt.value }
+                .graphicsLayer {
+                    val angle = book.coverAngle.value
+                    transformOrigin = CoverSpine
+                    // At the default distance a full-width cover turning past 45° swings into the lens and fills the screen.
+                    cameraDistance = COVER_CAMERA_DISTANCE * density
+                    rotationY = angle
+                    // A layer has no back face of its own: past edge-on it would draw the cover mirrored.
+                    alpha = if (angle < COVER_EDGE_ON_DEGREES) 0f else 1f
+                },
+            saturation = saturation(),
+            expanded = true
+        )
     }
 }
 
