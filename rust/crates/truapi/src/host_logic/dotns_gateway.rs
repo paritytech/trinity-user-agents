@@ -15,15 +15,17 @@
 //! and the dotNS contracts (`paritytech/dotns`).
 
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::{GenericContractError, SolInterface};
-use parity_scale_codec::{Decode, Encode, Input};
+use parity_scale_codec::Encode;
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
+	chain::{
+		EvmContractError, ExtensionError, InheritedImplication, SubstrateSigner,
+		TransactionExtension,
+	},
 	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
@@ -39,15 +41,6 @@ pub const DOTNS_GATEWAY_CONTEXT: [u8; 32] = *b"pop:polkadot.network/dotns      "
 /// Reservation message prefix, matching `RESERVE_MSG_PREFIX` in the gateway
 /// pallet.
 pub const RESERVE_MSG_PREFIX: &[u8] = b"pop:dotns-gateway:reserve";
-
-/// Origin for read-only `ReviveApi_call` dry-runs.
-///
-/// `pallet_revive` rejects unmapped signed origins with `AccountUnmapped`.
-/// Eth-derived accounts — trailing 12 bytes `0xEE` — are implicitly mapped.
-/// They need no on-chain state, so views work from this synthetic account on
-/// any network. The address half is non-zero: a revert is read as an answer
-/// here, and Solidity guards commonly reject `address(0)` outright.
-pub const VIEW_CALL_ORIGIN: [u8; 32] = [0xEE; 32];
 
 /// Builds the payload the candidate signs to authorize a lite-name
 /// reservation.
@@ -176,157 +169,6 @@ pub fn account_to_h160(public_key: &[u8; 32]) -> [u8; 20] {
 			.try_into()
 			.expect("keccak_256 output is 32 bytes, tail slice is 20; qed")
 	}
-}
-
-/// Error decoding a dotNS contract round-trip.
-#[derive(Debug, Error, PartialEq)]
-pub enum DotnsContractError {
-	/// The `ReviveApi_call` output is not a `ContractResult`. The cause is
-	/// kept out of the message, which SCALE renders across several lines.
-	#[error("ReviveApi_call output is not a ContractResult")]
-	Malformed(parity_scale_codec::Error),
-	/// The runtime rejected the call before reaching the contract.
-	#[error("ReviveApi_call dispatch failed: {detail}")]
-	Dispatch {
-		/// Raw hex of the `DispatchError` payload.
-		detail: String,
-	},
-	/// The contract executed but reverted.
-	#[error("contract reverted: {detail}")]
-	Reverted {
-		/// Rendered revert reason.
-		detail: String,
-	},
-	/// ABI return data did not match the expected shape.
-	#[error(transparent)]
-	Abi(#[from] alloy_sol_types::Error),
-}
-
-/// `sp_weights::Weight`.
-#[derive(Encode, Decode)]
-pub struct Weight {
-	/// Computation time.
-	#[codec(compact)]
-	pub ref_time: u64,
-	/// Proof size in bytes.
-	#[codec(compact)]
-	pub proof_size: u64,
-}
-
-/// `pallet_revive::StorageDeposit` over a `u128` balance.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub enum StorageDeposit {
-	/// Balance returned to the origin.
-	Refund(u128),
-	/// Balance charged to the origin.
-	Charge(u128),
-}
-
-/// `pallet_revive::ExecReturnValue`.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub struct ExecReturnValue {
-	/// `ReturnFlags` bits; [`REVERT_FLAG`] marks a revert.
-	pub flags: u32,
-	/// The contract's return data.
-	pub data: Vec<u8>,
-}
-
-/// `ReturnFlags::REVERT`.
-pub const REVERT_FLAG: u32 = 1;
-
-/// A `DispatchError` kept as its raw bytes, since naming the error needs the
-/// runtime's metadata. It is the last field of a `ContractResult`, so it takes
-/// the rest of the input.
-pub struct RawDispatchError(Vec<u8>);
-
-impl Decode for RawDispatchError {
-	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
-		let len = input.remaining_len()?.ok_or("DispatchError of unknown length")?;
-		let mut bytes = vec![0; len];
-		input.read(&mut bytes)?;
-		Ok(Self(bytes))
-	}
-}
-
-#[cfg(test)]
-impl Encode for RawDispatchError {
-	fn encode_to<O: parity_scale_codec::Output + ?Sized>(&self, dest: &mut O) {
-		dest.write(&self.0);
-	}
-}
-
-/// `pallet_revive::ContractResult<ExecReturnValue, u128>`.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub struct ContractResult {
-	/// Weight the call consumed.
-	pub weight_consumed: Weight,
-	/// Weight the call needs as its limit.
-	pub weight_required: Weight,
-	/// Storage deposit the call charged or refunded.
-	pub storage_deposit: StorageDeposit,
-	/// Largest storage deposit the call needed while it ran.
-	pub max_storage_deposit: StorageDeposit,
-	/// Gas the call consumed.
-	pub gas_consumed: u128,
-	/// What the contract returned, or why the runtime rejected the call.
-	pub result: Result<ExecReturnValue, RawDispatchError>,
-}
-
-/// Arguments of the `ReviveApi_call` runtime API.
-#[derive(Encode)]
-struct ReviveCallArgs<'a> {
-	origin: &'a [u8; 32],
-	dest: &'a [u8; 20],
-	value: u128,
-	gas_limit: Option<Weight>,
-	storage_deposit_limit: Option<u128>,
-	input_data: &'a [u8],
-}
-
-/// SCALE arguments for the `ReviveApi_call` runtime API.
-/// A zero-value dry-run of `input` against `dest` from `origin`, leaving the
-/// gas and deposit limits for the node to estimate.
-pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
-	ReviveCallArgs {
-		origin,
-		dest,
-		value: 0,
-		gas_limit: None,
-		storage_deposit_limit: None,
-		input_data: input,
-	}
-	.encode()
-}
-
-/// Extracts the contract return data from a `ReviveApi_call` output.
-/// Dispatch errors and reverts are rejected.
-pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContractError> {
-	let contract_result =
-		ContractResult::decode(&mut &output[..]).map_err(DotnsContractError::Malformed)?;
-	match contract_result.result {
-		Ok(ExecReturnValue { flags, data }) if flags & REVERT_FLAG != 0 => {
-			Err(DotnsContractError::Reverted { detail: describe_revert(&data) })
-		},
-		Ok(ExecReturnValue { data, .. }) => Ok(data),
-		Err(RawDispatchError(error)) => {
-			Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(error)) })
-		},
-	}
-}
-
-/// Renders a Solidity revert payload: `Error(string)` and `Panic(uint256)` by
-/// their meaning, anything else as hex. The reason is escaped because any
-/// contract, such as a name owner's resolver, chooses it.
-fn describe_revert(data: &[u8]) -> String {
-	if data.is_empty() {
-		return "(empty)".to_string();
-	}
-	GenericContractError::abi_decode(data)
-		.map(|error| error.to_string().escape_debug().to_string())
-		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
 }
 
 /// Usernames of one account as recorded by the dotNS contracts. Holds at least
@@ -491,16 +333,15 @@ const CLAIM_PAGE_MAX: u64 = 16;
 
 /// A failed dotNS lookup, retaining the operation and its underlying failure.
 /// Use [`Self::reason`] for a complete diagnostic.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum DotnsError {
 	/// The chain could not serve a storage read.
 	#[error("{0}")]
 	#[from(String)]
 	Storage(String),
-	/// A contract view failed without an additional operation label.
-	#[error(transparent)]
-	#[from(DotnsViewError)]
-	View(DotnsViewError),
+	/// The chain follow the lookup reads through gave no best block to pin.
+	#[error("{0}")]
+	Follow(String),
 	/// The controller's protocol registry could not be read.
 	#[error("DotnsPopController.protocolRegistry()")]
 	ProtocolRegistry(#[source] DotnsCallError),
@@ -586,41 +427,14 @@ impl DotnsError {
 }
 
 /// A contract read failed during execution or decoding of its return data.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum DotnsCallError {
 	/// The view failed before returning data to decode.
 	#[error(transparent)]
-	View(DotnsViewError),
+	View(EvmContractError),
 	/// The view returned data that did not match the expected ABI shape.
 	#[error(transparent)]
-	Decode(DotnsContractError),
-}
-
-/// Why a contract view returned no data.
-///
-/// A revert is an answer from the contract (the view refused, or the address
-/// has no such function); anything else means the answer is unknown.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
-pub enum DotnsViewError {
-	/// The contract executed and reverted.
-	#[error(transparent)]
-	Reverted(DotnsContractError),
-	/// The runtime rejected the call or returned an invalid contract result.
-	#[error(transparent)]
-	Contract(DotnsContractError),
-	/// The view could not be dry-run or its output could not be decoded.
-	#[error("{0}")]
-	#[from(String)]
-	Failed(String),
-}
-
-/// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
-/// for [`DotnsTransport::view`] implementations.
-pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
-	decode_revive_call_output(output).map_err(|err| match err {
-		DotnsContractError::Reverted { .. } => DotnsViewError::Reverted(err),
-		other => DotnsViewError::Contract(other),
-	})
+	Decode(alloy_sol_types::Error),
 }
 
 /// How a caller reaches Asset Hub for dotNS reads.
@@ -628,13 +442,16 @@ pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
 /// The surface is one storage read plus one contract view. The headless CLI
 /// implements it over plain RPC. The in-core runtime implements it over a
 /// `chainHead_v1` follow. The resolution steps below are written once.
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 pub trait DotnsTransport {
 	/// Reads one storage value. `None` when the entry is absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
 	/// Dry-runs a contract view against `dest` and returns its return data.
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError>;
+	///
+	/// [`EvmContractError::Reverted`] is an answer from the contract; any other
+	/// error leaves the view's result unknown.
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError>;
 }
 
 /// Resolves the `DotnsPopController` address from `DotnsGateway.DispatcherAddress`.
@@ -669,10 +486,10 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 		Ok(_) => Ok(Some(stored)),
 		// A chain still storing its dispatcher pays this second view; a repointed one
 		// answers on the first. Both hops go once no chain stores a dispatcher.
-		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => {
 			match read_view(transport, &stored, RootGatewayDispatcher::TARGETCall {}).await {
 				Ok(controller) => Ok(Some(controller.into_array())),
-				Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+				Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => {
 					Err(DotnsError::UnknownDispatcher { address: stored })
 				},
 				Err(error) => Err(DotnsError::DispatcherTarget(error)),
@@ -832,7 +649,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 		.await
 		{
 			Ok(claims) => claims,
-			Err(DotnsCallError::View(DotnsViewError::Reverted(reason))) => {
+			Err(DotnsCallError::View(EvmContractError::Reverted { detail: reason })) => {
 				warn!(
 					%reason,
 					retained = claims.len(),
@@ -1038,7 +855,7 @@ mod tests {
 	}
 
 	/// Answers a view of `Call` with `value`.
-	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, DotnsViewError> {
+	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, EvmContractError> {
 		Ok(Call::abi_encode_returns(&value))
 	}
 
@@ -1047,10 +864,8 @@ mod tests {
 		Call::abi_decode(input).ok()
 	}
 
-	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
-		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-			detail: "(empty)".to_string(),
-		}))
+	fn view_reverted() -> Result<Vec<u8>, EvmContractError> {
+		Err(EvmContractError::Reverted { detail: "(empty)".to_string() })
 	}
 
 	struct RevertingSecondClaimPage {
@@ -1058,7 +873,7 @@ mod tests {
 		pending_calls: usize,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl DotnsTransport for RevertingSecondClaimPage {
 		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			panic!("unscripted storage read {}", hex::encode(key));
@@ -1068,7 +883,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			let page = DotnsPopController::pendingClaimsCall::abi_decode(&input)
 				.expect("only pending claims are scripted");
 			self.pending_calls += 1;
@@ -1077,9 +892,7 @@ mod tests {
 				return returns::<DotnsPopController::pendingClaimsCall>(self.first_page.clone());
 			}
 			assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "offset past end".to_string(),
-			}))
+			Err(EvmContractError::Reverted { detail: "offset past end".to_string() })
 		}
 	}
 
@@ -1116,7 +929,7 @@ mod tests {
 			struct IssuedAll {
 				denied: Vec<&'static str>,
 			}
-			#[crate::platform::async_trait]
+			#[async_trait::async_trait]
 			impl DotnsTransport for IssuedAll {
 				async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 					unreachable!("classify_labels reads no storage")
@@ -1125,7 +938,7 @@ mod tests {
 					&mut self,
 					_dest: &[u8; 20],
 					input: Vec<u8>,
-				) -> Result<Vec<u8>, DotnsViewError> {
+				) -> Result<Vec<u8>, EvmContractError> {
 					let asked = DotnsPopController::isPopIssuedCall::abi_decode(&input)
 						.expect("only isPopIssued is scripted");
 					returns::<DotnsPopController::isPopIssuedCall>(
@@ -1268,11 +1081,11 @@ mod tests {
 	/// and `TARGET()` / `protocolRegistry()` answer with scripted results.
 	struct ScriptedDiscovery {
 		stored: [u8; 20],
-		target: fn() -> Result<Vec<u8>, DotnsViewError>,
-		protocol_registry: fn() -> Result<Vec<u8>, DotnsViewError>,
+		target: fn() -> Result<Vec<u8>, EvmContractError>,
+		protocol_registry: fn() -> Result<Vec<u8>, EvmContractError>,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl DotnsTransport for ScriptedDiscovery {
 		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(Some(self.stored.to_vec()))
@@ -1282,7 +1095,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<RootGatewayDispatcher::TARGETCall>(&input).is_some() {
 				(self.target)()
 			} else if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
@@ -1295,7 +1108,7 @@ mod tests {
 		}
 	}
 
-	fn address_answer(byte: u8) -> Result<Vec<u8>, DotnsViewError> {
+	fn address_answer(byte: u8) -> Result<Vec<u8>, EvmContractError> {
 		returns::<RootGatewayDispatcher::TARGETCall>(Address::repeat_byte(byte))
 	}
 
@@ -1343,17 +1156,20 @@ mod tests {
 	fn discovery_separates_a_failed_confirmation_from_a_wrong_contract() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xdd; 20],
-			target: || Err(DotnsViewError::Failed("node unreachable".into())),
+			target: || {
+				Err(EvmContractError::Simulation(
+					subxt::Error::other_str("node unreachable").into(),
+				))
+			},
 			protocol_registry: view_reverted,
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect_err("failure");
-		assert_eq!(
+		assert!(matches!(
 			err,
-			DotnsError::DispatcherTarget(DotnsCallError::View(DotnsViewError::Failed(
-				"node unreachable".into()
-			)))
-		);
+			DotnsError::DispatcherTarget(DotnsCallError::View(EvmContractError::Simulation(reason)))
+				if reason.to_string() == "Other error: node unreachable"
+		));
 	}
 
 	#[test]
@@ -1361,19 +1177,22 @@ mod tests {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not fall back on a transport failure"),
-			protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
+			protocol_registry: || {
+				Err(EvmContractError::Simulation(
+					subxt::Error::other_str("node unreachable").into(),
+				))
+			},
 		};
 		for error in [
 			futures::executor::block_on(discover_pop_controller(&mut transport)).unwrap_err(),
 			futures::executor::block_on(resolve_labels(&mut transport, &[0xcc; 20], &[0xaa; 32]))
 				.unwrap_err(),
 		] {
-			assert_eq!(
+			assert!(matches!(
 				error,
-				DotnsError::ProtocolRegistry(DotnsCallError::View(DotnsViewError::Failed(
-					"node unreachable".into()
-				)))
-			);
+				DotnsError::ProtocolRegistry(DotnsCallError::View(EvmContractError::Simulation(reason)))
+					if reason.to_string() == "Other error: node unreachable"
+			));
 		}
 	}
 
@@ -1381,11 +1200,11 @@ mod tests {
 	/// result, `get(bytes32)` with a registry address, `recordExists(bytes32)`
 	/// with a scripted bool.
 	struct ScriptedTld {
-		tld: fn() -> Result<Vec<u8>, DotnsViewError>,
+		tld: fn() -> Result<Vec<u8>, EvmContractError>,
 		dot_record_exists: bool,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl DotnsTransport for ScriptedTld {
 		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(None)
@@ -1395,7 +1214,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
 				(self.tld)()
 			} else if decoded::<ProtocolRegistry::getCall>(&input).is_some() {
@@ -1421,14 +1240,14 @@ mod tests {
 			},
 			&registry,
 		));
-		assert_eq!(served.as_deref(), Ok(".paseo"));
+		assert_eq!(served.unwrap(), ".paseo");
 
 		// The fallback is verified: the registry must hold the ".dot" record.
 		let verified = futures::executor::block_on(network_tld(
 			&mut ScriptedTld { tld: reverted, dot_record_exists: true },
 			&registry,
 		));
-		assert_eq!(verified.as_deref(), Ok(TLD_WITHOUT_VIEW));
+		assert_eq!(verified.unwrap(), TLD_WITHOUT_VIEW);
 
 		let unverified = futures::executor::block_on(network_tld(
 			&mut ScriptedTld { tld: reverted, dot_record_exists: false },
@@ -1439,7 +1258,9 @@ mod tests {
 		// A transport failure is not an answer: no guessing.
 		let failed = futures::executor::block_on(network_tld(
 			&mut ScriptedTld {
-				tld: || Err(DotnsViewError::Failed("timed out".to_string())),
+				tld: || {
+					Err(EvmContractError::Simulation(subxt::Error::other_str("timed out").into()))
+				},
 				dot_record_exists: true,
 			},
 			&registry,
@@ -1449,10 +1270,10 @@ mod tests {
 
 	/// The full availability walk, scripted: tld → get(registrar) → exists.
 	struct ScriptedAvailability {
-		exists: fn() -> Result<Vec<u8>, DotnsViewError>,
+		exists: fn() -> Result<Vec<u8>, EvmContractError>,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl DotnsTransport for ScriptedAvailability {
 		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(None)
@@ -1462,7 +1283,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
 				returns::<DotnsPopController::protocolRegistryCall>(Address::repeat_byte(0x9e))
 			} else if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
@@ -1485,7 +1306,7 @@ mod tests {
 	#[test]
 	fn availability_fails_closed_when_the_registrar_does_not_answer() {
 		let controller = [0xc0; 20];
-		let run = |exists: fn() -> Result<Vec<u8>, DotnsViewError>| {
+		let run = |exists: fn() -> Result<Vec<u8>, EvmContractError>| {
 			futures::executor::block_on(label_available(
 				&mut ScriptedAvailability { exists },
 				&controller,
@@ -1493,11 +1314,12 @@ mod tests {
 			))
 		};
 
-		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(false)), Ok(true));
-		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(true)), Ok(false));
+		assert!(run(|| returns::<DotnsRegistrar::existsCall>(false)).unwrap());
+		assert!(!run(|| returns::<DotnsRegistrar::existsCall>(true)).unwrap());
 		let reverted = run(view_reverted);
 		assert!(reverted.is_err(), "{reverted:?}");
-		let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
+		let failed =
+			run(|| Err(EvmContractError::Simulation(subxt::Error::other_str("timed out").into())));
 		assert!(failed.is_err(), "{failed:?}");
 	}
 

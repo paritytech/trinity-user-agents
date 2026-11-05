@@ -14,8 +14,6 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         var built: [ProductId] = []
         var executions: [ProductId: MockProductExecution] = [:]
         var engines: [ProductId: MockJSEngine] = [:]
-        var cardsWhenTheEngineBooted: [PocketCard] = []
-        var bridge: ProductPocketHostBridge?
         var cannotBuild: Bool
         var engineFails: Bool
         var buildCount = 0
@@ -28,16 +26,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     var executions: [ProductId: MockProductExecution] { state.withLock { $0.executions } }
     /// The engine each product's latest worker runs in, so a test can kill it.
     var engines: [ProductId: MockJSEngine] { state.withLock { $0.engines } }
-    /// What the bridge would have answered the moment the worker's engine came
-    /// up, which is when its script subscribes to the card list.
-    private(set) var cardsWhenTheEngineBooted: [PocketCard] {
-        get { state.withLock { $0.cardsWhenTheEngineBooted } }
-        set { state.withLock { $0.cardsWhenTheEngineBooted = newValue } }
-    }
 
-    /// The bridge of the worker built last, so a test can read the slice the
-    /// core is being served after the collection moves.
-    var bridge: ProductPocketHostBridge? { state.withLock { $0.bridge } }
     /// Advances only when a test resumes a sleep, so the pauses inside a boot
     /// are placed by the test rather than by the wall clock.
     let clock = ManualClock()
@@ -83,14 +72,12 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     func makeRuntime(
         productId: ProductId,
-        context _: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
+        context _: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime {
         if cannotBuild { throw TrUAPIWorkerError.noWorker(productId) }
 
         let execution = MockProductExecution()
         state.withLock {
-            $0.bridge = pocket
             $0.built.append(productId)
             $0.executions[productId] = execution
         }
@@ -115,7 +102,6 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
                 osPermissionAsker: OSPermissionAsker()
             ),
             engineFactory: { [weak self] in
-                self?.cardsWhenTheEngineBooted = (try? pocket.listCards()) ?? []
                 if engineFails { return FailingJSEngine() }
                 if isFirstBuild, let firstStartFailsAfter {
                     return SlowFailingJSEngine(after: firstStartFailsAfter, clock: clock)

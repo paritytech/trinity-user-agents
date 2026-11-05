@@ -734,7 +734,7 @@ mod tests {
 		inner: Mutex<HashMap<String, Vec<u8>>>,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for MemStorage {
 		async fn read_core_storage(
 			&self,
@@ -1176,7 +1176,7 @@ mod tests {
 		}
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl Permissions for ScriptedPrompt {
 		async fn device_permission(
 			&self,
@@ -1243,7 +1243,7 @@ mod tests {
 		}
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl PermissionStatusHost for ScriptedStatus {
 		async fn device_permission_status(
 			&self,
@@ -2157,7 +2157,7 @@ mod tests {
 	/// path (fail closed for the current call, but do not persist the error).
 	struct FailingPrompt;
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl Permissions for FailingPrompt {
 		async fn device_permission(
 			&self,
@@ -2247,7 +2247,7 @@ mod tests {
 	#[derive(Default)]
 	struct FailingStorage;
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for FailingStorage {
 		async fn read_core_storage(
 			&self,

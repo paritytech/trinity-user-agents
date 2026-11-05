@@ -63,8 +63,8 @@ use futures::{
 };
 use truapi::latest::{
 	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
-	FundingFailure, FundingUpdate, GenericError, HostFundingReportError,
-	HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
+	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
+	HostFundingReportError, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
 	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
 	HostPaymentTopUpStatusSubscribeItem,
 };
@@ -72,7 +72,7 @@ use truapi::latest::{
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingSession,
+		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
 		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
 		retained,
 	},
@@ -117,6 +117,8 @@ type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSu
 pub trait FundingProviderLink: Send + Sync {
 	/// Hand the worker a session. Returns whether it took it.
 	fn assign(&self, session: FundingAssignment) -> BoxFuture<'static, bool>;
+	/// Ask the worker to price `ask`, and take its answer.
+	fn quote(&self, ask: FundingQuoteAsk) -> BoxFuture<'static, Option<FundingQuoteAnswer>>;
 	/// Ask the worker to stop a session, and take its answer.
 	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<FundingCancelAnswer>>;
 	/// Tell the worker the user's answer to its cancel offer. Returns whether
@@ -155,7 +157,7 @@ enum CatchUp {
 
 /// A call the core puts to a provider's worker about one session.
 enum ProviderCall {
-	Assign(FundingAssignment),
+	Assign(Box<FundingAssignment>),
 	Cancel(String, CancelCall),
 }
 
@@ -165,6 +167,22 @@ struct Announcements {
 	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
+}
+
+/// What a native host draws its funding screens from, pushed by the core so
+/// the host never reads it back. A host without one gets only
+/// [`FundingPlatform::funding_session_changed`].
+pub trait FundingFeed: Send + Sync {
+	/// A session changed: its status and the progress the host draws. Every
+	/// session the host has to hear of comes through here once more when
+	/// funding resumes. `progress` is `None` once the core keeps only the
+	/// session's summary.
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	);
 }
 
 /// Host-global funding sessions, their subscribers and the host surface.
@@ -187,15 +205,19 @@ pub struct FundingRegistry {
 	/// write lock.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
+	/// The feed a native host draws its funding screens from.
+	feed: OnceLock<Arc<dyn FundingFeed>>,
 	/// The core database the sessions are stored in.
 	db: OnceLock<store::Db>,
 	/// Each provider's worker connection, by product id.
-	links: Mutex<HashMap<String, Link>>,
+	links: Mutex<HashMap<ProductId, Link>>,
+	/// Callers waiting for a provider's worker to connect, by product id.
+	link_waiters: Mutex<HashMap<ProductId, Vec<oneshot::Sender<()>>>>,
 	/// The generation the next link takes.
 	next_generation: AtomicU64,
 	/// Sessions holding a reference on their provider's worker, with that
 	/// provider. Only the reconciler changes it.
-	holding: Mutex<HashMap<String, String>>,
+	holding: Mutex<HashMap<String, ProductId>>,
 	/// Sessions whose top-ups or payment are being followed to an outcome.
 	following: Mutex<HashSet<String>>,
 	/// Ids of funds whose host call is in flight, so no second call under
@@ -219,6 +241,13 @@ impl FundingRegistry {
 	/// installed it.
 	pub fn install_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
 		self.platform.set(platform).is_ok()
+	}
+
+	/// Install the feed the host draws its funding screens from, before the
+	/// funding surface, whose install resumes funding. Set-once; returns
+	/// whether this call installed it.
+	pub fn install_feed(&self, feed: Arc<dyn FundingFeed>) -> bool {
+		self.feed.set(feed).is_ok()
 	}
 
 	/// The host's funding surface, when one is installed.
@@ -251,14 +280,15 @@ impl FundingRegistry {
 		&self,
 		now_ms: u64,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
+		choice: FundingChoice,
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
-		let provider = provider_id.to_string();
+		let provider = provider_id.clone();
 		let assigned = self
 			.commit(now_ms, move |sessions| {
 				let assigned = sessions.get_mut(&intent).and_then(|session| {
-					session.assign(&provider, now_ms).then(|| session.assignment())
+					session.assign(&provider, choice, now_ms).then(|| session.assignment())
 				});
 				let changed = assigned.iter().map(|session| session.intent.clone()).collect();
 				(assigned, changed)
@@ -267,23 +297,21 @@ impl FundingRegistry {
 		let Some(session) = assigned else {
 			return Ok(false);
 		};
-		self.call(provider_id, vec![ProviderCall::Assign(session)]);
+		self.call(provider_id, vec![ProviderCall::Assign(Box::new(session))]);
 		Ok(true)
 	}
 
 	/// Take `link` as the way to call `provider_id`'s worker, in place of any
 	/// earlier one. Nothing is sent until [`Self::connected`], apart from
 	/// calls made in the meantime.
-	pub fn link(&self, provider_id: &str, link: Arc<dyn FundingProviderLink>) {
+	pub fn link(&self, provider_id: &ProductId, link: Arc<dyn FundingProviderLink>) {
 		let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
-		self.lock_links().insert(
-			provider_id.to_string(),
-			Link { link, generation, catch_up: CatchUp::Connecting },
-		);
+		self.lock_links()
+			.insert(provider_id.clone(), Link { link, generation, catch_up: CatchUp::Connecting });
 	}
 
 	/// Drop `link`, unless a newer one replaced it.
-	pub fn unlink(&self, provider_id: &str, link: &Arc<dyn FundingProviderLink>) {
+	pub fn unlink(&self, provider_id: &ProductId, link: &Arc<dyn FundingProviderLink>) {
 		let mut links = self.lock_links();
 		if links.get(provider_id).is_some_and(|held| Arc::ptr_eq(&held.link, link)) {
 			links.remove(provider_id);
@@ -297,33 +325,70 @@ impl FundingRegistry {
 	/// checks its connection again is not handed everything again. A worker
 	/// treats every call as idempotent, as one sent before it was ready is
 	/// repeated then.
-	pub fn connected(&self, provider_id: &str) {
-		let readied = self
-			.lock_links()
-			.get_mut(provider_id)
-			.filter(|held| held.catch_up == CatchUp::Connecting)
-			.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
-			.is_some();
+	pub fn connected(&self, provider_id: &ProductId) {
+		let readied = {
+			let mut links = self.lock_links();
+			let readied = links
+				.get_mut(provider_id)
+				.filter(|held| held.catch_up == CatchUp::Connecting)
+				.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
+				.is_some();
+			for waiter in lock(&self.link_waiters).remove(provider_id).unwrap_or_default() {
+				let _ = waiter.send(());
+			}
+			readied
+		};
 		if readied {
 			self.wake();
 		}
 	}
 
+	/// The link to `provider_id`'s worker once that worker has connected,
+	/// waiting for it when it has not. A caller holds the worker meanwhile,
+	/// so the host runs it, and bounds the wait itself.
+	pub async fn connected_link(&self, provider_id: &ProductId) -> Arc<dyn FundingProviderLink> {
+		self.connected_link_besides(provider_id, None).await
+	}
+
+	/// As [`Self::connected_link`], but waiting past `besides`, a link a call
+	/// just failed on, for the connection that follows it.
+	pub async fn connected_link_besides(
+		&self,
+		provider_id: &ProductId,
+		besides: Option<&Arc<dyn FundingProviderLink>>,
+	) -> Arc<dyn FundingProviderLink> {
+		loop {
+			let connected = {
+				let links = self.lock_links();
+				if let Some(held) = links.get(provider_id).filter(|held| {
+					held.catch_up != CatchUp::Connecting &&
+						!besides.is_some_and(|failed| Arc::ptr_eq(&held.link, failed))
+				}) {
+					return held.link.clone();
+				}
+				let (sender, connected) = oneshot::channel();
+				lock(&self.link_waiters).entry(provider_id.clone()).or_default().push(sender);
+				connected
+			};
+			let _ = connected.await;
+		}
+	}
+
 	/// What `provider_id`'s worker has to hear when it connects, one list per
 	/// session it serves, oldest first.
-	fn pending_calls(&self, provider_id: &str) -> Vec<Vec<ProviderCall>> {
+	fn pending_calls(&self, provider_id: &ProductId) -> Vec<Vec<ProviderCall>> {
 		let sessions = self.lock_sessions();
 		let mut served: Vec<&FundingSession> = sessions
 			.values()
 			.filter(|session| {
-				!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+				!session.is_terminal() && session.provider_id.as_ref() == Some(provider_id)
 			})
 			.collect();
 		served.sort_by_key(|session| session.opened_at_ms);
 		served
 			.into_iter()
 			.map(|session| {
-				core::iter::once(ProviderCall::Assign(session.assignment()))
+				core::iter::once(ProviderCall::Assign(Box::new(session.assignment())))
 					.chain(
 						session
 							.pending_cancel_call()
@@ -345,7 +410,7 @@ impl FundingRegistry {
 		update: FundingUpdate,
 	) -> Result<Result<(), HostFundingReportError>, FundingSessionError> {
 		let intent = intent.to_string();
-		let provider_id = provider.product_id.as_str();
+		let provider_id = &provider.product_id;
 		let host_id = |id: &[u8; 32]| host_payment_id(provider, *id);
 		self.commit(now_ms, move |sessions| {
 			let reported = match sessions.get_mut(&intent) {
@@ -374,9 +439,9 @@ impl FundingRegistry {
 	}
 
 	/// Whether a session of `provider_id` recorded funds under `host_id`.
-	pub fn holds_start(&self, provider_id: &str, host_id: &[u8; 32]) -> bool {
+	pub fn holds_start(&self, provider_id: &ProductId, host_id: &[u8; 32]) -> bool {
 		self.lock_sessions().values().any(|session| {
-			session.provider_id.as_deref() == Some(provider_id) &&
+			session.provider_id.as_ref() == Some(provider_id) &&
 				session.started.iter().any(|record| record.host_id == *host_id)
 		})
 	}
@@ -388,7 +453,7 @@ impl FundingRegistry {
 	pub async fn record_start(
 		&self,
 		now_ms: u64,
-		provider_id: &str,
+		provider_id: &ProductId,
 		intent: &str,
 		asked: FundsAsked,
 	) -> Result<Option<StartRecord>, FundingSessionError> {
@@ -396,13 +461,13 @@ impl FundingRegistry {
 		self.commit(now_ms, |sessions| {
 			let elsewhere = sessions.values().any(|session| {
 				session.intent != intent &&
-					session.provider_id.as_deref() == Some(provider_id) &&
+					session.provider_id.as_ref() == Some(provider_id) &&
 					session.started.iter().any(|record| record.host_id == host_id)
 			});
 			let Some(session) = sessions.get_mut(intent).filter(|session| {
 				!session.is_terminal() &&
 					session.direction == direction &&
-					session.provider_id.as_deref() == Some(provider_id)
+					session.provider_id.as_ref() == Some(provider_id)
 			}) else {
 				return (None, Vec::new());
 			};
@@ -438,9 +503,9 @@ impl FundingRegistry {
 	}
 
 	/// Whether open session `intent` is assigned to `provider_id`.
-	pub fn is_serving(&self, provider_id: &str, intent: &str) -> bool {
+	pub fn is_serving(&self, provider_id: &ProductId, intent: &str) -> bool {
 		self.get(intent).is_some_and(|session| {
-			!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+			!session.is_terminal() && session.provider_id.as_ref() == Some(provider_id)
 		})
 	}
 
@@ -866,10 +931,22 @@ impl FundingRegistry {
 	}
 
 	fn reconcile_work(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
+		self.retain_quotes(services);
 		self.hold_workers(services);
 		self.follow_settlements(services);
 		self.resolve_starts(services, now_ms);
 		self.catch_up_links(services, now_ms);
+	}
+
+	/// Keep quotes only for open sessions still waiting on a provider.
+	fn retain_quotes(&self, services: &RuntimeServices) {
+		let quoting: HashSet<String> = self
+			.lock_sessions()
+			.values()
+			.filter(|session| !session.is_terminal() && session.provider_id.is_none())
+			.map(|session| session.intent.clone())
+			.collect();
+		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
 	}
 
 	/// Every assigned open session holds its provider's worker. Only the
@@ -877,7 +954,7 @@ impl FundingRegistry {
 	/// order it derives them; a worker that starts and calls back changes the
 	/// sessions, which the next pass picks up.
 	fn hold_workers(&self, services: &RuntimeServices) {
-		let assigned: HashMap<String, String> = self
+		let assigned: HashMap<String, ProductId> = self
 			.lock_sessions()
 			.values()
 			.filter(|session| !session.is_terminal())
@@ -896,7 +973,7 @@ impl FundingRegistry {
 			holding.retain(|intent, provider| {
 				let kept = assigned.contains_key(intent);
 				if !kept {
-					release.push(core::mem::take(provider));
+					release.push(provider.clone());
 				}
 				kept
 			});
@@ -904,18 +981,18 @@ impl FundingRegistry {
 		};
 		// Taken before let go, so a provider moving from an ended session to
 		// a new one keeps its worker running.
-		for provider in acquire.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
-			services.worker_ledger.acquire(&provider);
+		for provider in &acquire {
+			services.worker_ledger.acquire(provider);
 		}
-		for provider in release.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
-			services.worker_ledger.release(&provider);
+		for provider in &release {
+			services.worker_ledger.release(provider);
 		}
 	}
 
 	/// Follow every session whose outcome is due, once the engine its funds
 	/// went through is installed.
 	fn follow_settlements(&self, services: &Arc<RuntimeServices>) {
-		let due: Vec<(String, String, Settlement)> = self
+		let due: Vec<(String, ProductId, Settlement)> = self
 			.lock_sessions()
 			.values()
 			.filter_map(|session| {
@@ -938,7 +1015,7 @@ impl FundingRegistry {
 	/// call is starting: taken once it holds them, dropped once it still does
 	/// not [`UNKNOWN_FUNDS_GRACE_MS`] after they were recorded.
 	fn resolve_starts(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
-		let pending: Vec<(String, String, FundingDirection, StartedFunds)> = self
+		let pending: Vec<(String, ProductId, FundingDirection, StartedFunds)> = self
 			.lock_sessions()
 			.values()
 			.filter(|session| !session.is_terminal())
@@ -976,7 +1053,7 @@ impl FundingRegistry {
 
 	/// Hand each ready worker every session it serves, one call at a time.
 	fn catch_up_links(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
-		let due: Vec<(String, u64, Arc<dyn FundingProviderLink>)> = self
+		let due: Vec<(ProductId, u64, Arc<dyn FundingProviderLink>)> = self
 			.lock_links()
 			.iter_mut()
 			.filter_map(|(provider, held)| match held.catch_up {
@@ -1005,7 +1082,7 @@ impl FundingRegistry {
 	/// Record how handing link `generation` of `provider_id` its sessions
 	/// went: done when every call was answered, due again shortly otherwise.
 	/// A link replaced meanwhile is left as it is.
-	fn caught_up(&self, provider_id: &str, generation: u64, answered: bool) {
+	fn caught_up(&self, provider_id: &ProductId, generation: u64, answered: bool) {
 		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
 		let due = {
 			let mut links = self.lock_links();
@@ -1027,7 +1104,7 @@ impl FundingRegistry {
 	/// `provider_id`: hand the link its sessions again, which repeats the
 	/// call. A link still connecting or already due is caught up anyway, and
 	/// one being caught up is due again once that ends.
-	fn call_unanswered(&self, provider_id: &str, generation: u64) {
+	fn call_unanswered(&self, provider_id: &ProductId, generation: u64) {
 		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
 		let mut links = self.lock_links();
 		let Some(held) = links.get_mut(provider_id).filter(|held| held.generation == generation)
@@ -1084,7 +1161,7 @@ impl FundingRegistry {
 	/// worker to connect, which repeats whatever is still pending. A call
 	/// that goes unanswered leaves the link due to be handed its sessions
 	/// again, which repeats it.
-	fn call(&self, provider_id: &str, calls: Vec<ProviderCall>) {
+	fn call(&self, provider_id: &ProductId, calls: Vec<ProviderCall>) {
 		let Some(services) = self.services.upgrade() else {
 			return;
 		};
@@ -1095,7 +1172,7 @@ impl FundingRegistry {
 		else {
 			return;
 		};
-		let provider_id = provider_id.to_string();
+		let provider_id = provider_id.clone();
 		let spawner = services.spawner.clone();
 		spawner(Box::pin(async move {
 			let registry = services.funding().clone();
@@ -1116,7 +1193,7 @@ impl FundingRegistry {
 		let (intent, answered) = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
-				let taken = within(CALL_TIMEOUT, link.assign(session)).await.unwrap_or(false);
+				let taken = within(CALL_TIMEOUT, link.assign(*session)).await.unwrap_or(false);
 				if !taken {
 					tracing::debug!(%intent, "a provider's worker did not take its session");
 				}
@@ -1227,57 +1304,69 @@ impl FundingRegistry {
 			let Some((intent, item)) = next else {
 				return;
 			};
-			platform.funding_session_changed(intent, item);
+			platform.funding_session_changed(intent.clone(), item.clone());
+			if let Some(feed) = self.feed.get() {
+				// Read as the session stands now, which is at least as new as
+				// `item`.
+				let progress = self.get(&intent).map(|session| session.progress());
+				feed.funding_session_changed(intent, item, progress);
+			}
 		}
 	}
 
 	fn lock_announcements(&self) -> MutexGuard<'_, Announcements> {
-		self.announcements.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.announcements)
 	}
 
 	fn lock_reconciler(&self) -> MutexGuard<'_, Option<mpsc::UnboundedSender<()>>> {
-		self.reconciler.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.reconciler)
 	}
 
 	fn lock_retry_at(&self) -> MutexGuard<'_, Option<u64>> {
-		self.retry_at.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.retry_at)
 	}
 
 	fn lock_starting(&self) -> MutexGuard<'_, HashSet<[u8; 32]>> {
-		self.starting.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.starting)
 	}
 
 	fn lock_resolving(&self) -> MutexGuard<'_, HashMap<[u8; 32], u64>> {
-		self.resolving.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.resolving)
 	}
 
 	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, FundingSessionSummary>> {
-		self.pack.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.pack)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.presenting.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.presenting)
 	}
 
 	fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.sessions)
 	}
 
 	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
-		self.subscribers.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.subscribers)
 	}
 
-	fn lock_links(&self) -> MutexGuard<'_, HashMap<String, Link>> {
+	fn lock_links(&self) -> MutexGuard<'_, HashMap<ProductId, Link>> {
 		self.links.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
-	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, String>> {
-		self.holding.lock().unwrap_or_else(PoisonError::into_inner)
+	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, ProductId>> {
+		lock(&self.holding)
 	}
 
 	fn lock_following(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.following.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.following)
 	}
+}
+
+/// Lock `mutex`, recovering its value if a holder panicked: every value the
+/// funding modules guard stays valid between statements.
+pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+	mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Funds a provider's worker asks the host to move for a session.
@@ -1554,18 +1643,43 @@ impl RuntimeServices {
 		self.funding().confirm_cancel(current_unix_millis(), intent, terms).await
 	}
 
-	/// Hand open session `intent` to the provider the user chose. Returns
-	/// whether it was open and not yet assigned.
+	/// Hand open session `intent` to the provider the user chose, on the
+	/// quote they chose it by. The quote must be one the core offered for
+	/// this session, not yet expired and, when the session has an amount,
+	/// pricing that amount; the core asked it in the session's direction, so
+	/// the provider serves it. Returns whether it was open and not yet
+	/// assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
+		quote_id: &str,
 	) -> Result<bool, FundingSessionError> {
-		let provider = provider_id
-			.parse::<ProductId>()
-			.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
-		self.funding()
-			.select_provider(current_unix_millis(), intent, provider.as_str())
+		let registry = self.funding();
+		let Some(session) = registry.get(intent) else {
+			return Ok(false);
+		};
+		if !self.funding_providers().is_quote_target(provider_id) {
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{provider_id} is not a funding provider"),
+			});
+		}
+		let choice = self
+			.funding_quotes()
+			.offered(intent, provider_id, quote_id, current_unix_millis())
+			.ok_or_else(|| FundingSessionError::UnknownQuote { quote_id: quote_id.to_string() })?;
+		if let Some(amount) = session.amount {
+			let priced = choice.balance_amount(session.direction);
+			if priced != amount {
+				return Err(FundingSessionError::QuoteAmountMismatch {
+					quote_id: choice.quote.quote_id.clone(),
+					priced,
+					amount,
+				});
+			}
+		}
+		registry
+			.select_provider(current_unix_millis(), intent, provider_id, choice)
 			.await
 	}
 
@@ -1577,23 +1691,13 @@ impl RuntimeServices {
 	fn follow_settlement(
 		self: Arc<Self>,
 		intent: String,
-		provider_id: String,
+		provider_id: ProductId,
 		settlement: Settlement,
 	) {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
 			let registry = self.funding().clone();
-			let provider = match provider_id.parse::<ProductId>() {
-				Ok(product_id) => {
-					ProductContext::new_with_execution(product_id, ExecutableKind::Worker)
-				},
-				Err(error) => {
-					// Kept as followed: nothing could settle it, and following it
-					// again would fail the same way.
-					tracing::warn!(%error, "a funding session names an invalid provider");
-					return;
-				},
-			};
+			let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
 			let moved = match settlement {
 				Settlement::TopUps(top_ups) => {
 					let mut credited: Option<u128> = Some(0);
@@ -1647,19 +1751,13 @@ impl RuntimeServices {
 	async fn resolve_start(
 		self: Arc<Self>,
 		intent: String,
-		provider_id: String,
+		provider_id: ProductId,
 		direction: FundingDirection,
 		funds: StartedFunds,
 	) {
 		let registry = self.funding().clone();
-		let held = match provider_id.parse::<ProductId>() {
-			Ok(product_id) => {
-				let provider =
-					ProductContext::new_with_execution(product_id, ExecutableKind::Worker);
-				engine_holds(&self, &provider, direction, funds.host_id).await
-			},
-			Err(error) => Err(error.to_string()),
-		};
+		let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
+		let held = engine_holds(&self, &provider, direction, funds.host_id).await;
 		let now_ms = current_unix_millis();
 		let lapse_ms = funds.recorded_at_ms.saturating_add(UNKNOWN_FUNDS_GRACE_MS);
 		let retry_ms = now_ms.saturating_add(RESOLVE_RETRY.as_millis() as u64);
@@ -1961,6 +2059,10 @@ mod tests {
 	const NOW: u64 = 1_700_000_000_000;
 	const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
 
+	fn ramp() -> ProductId {
+		ProductId::for_test("ramp.dot")
+	}
+
 	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
 		FundingSession::new(
 			intent.to_string(),
@@ -1986,6 +2088,10 @@ mod tests {
 	struct IdleLink;
 
 	impl FundingProviderLink for IdleLink {
+		fn quote(&self, _ask: FundingQuoteAsk) -> BoxFuture<'static, Option<FundingQuoteAnswer>> {
+			Box::pin(async { None })
+		}
+
 		fn assign(&self, _session: FundingAssignment) -> BoxFuture<'static, bool> {
 			Box::pin(async { false })
 		}
@@ -2009,28 +2115,46 @@ mod tests {
 	#[test]
 	fn an_unanswered_call_leaves_a_connecting_or_running_catch_up_alone() {
 		let registry = FundingRegistry::default();
-		registry.link("ramp.dot", Arc::new(IdleLink));
-		let state = || registry.lock_links()["ramp.dot"].catch_up;
-		let set = |catch_up| {
-			registry.lock_links().get_mut("ramp.dot").expect("linked").catch_up = catch_up
-		};
-		let generation = registry.lock_links()["ramp.dot"].generation;
+		registry.link(&ramp(), Arc::new(IdleLink));
+		let state = || registry.lock_links()[&ramp()].catch_up;
+		let set =
+			|catch_up| registry.lock_links().get_mut(&ramp()).expect("linked").catch_up = catch_up;
+		let generation = registry.lock_links()[&ramp()].generation;
 
-		registry.call_unanswered("ramp.dot", generation);
+		registry.call_unanswered(&ramp(), generation);
 		let connecting = state();
 		set(CatchUp::Running);
-		registry.call_unanswered("ramp.dot", generation);
+		registry.call_unanswered(&ramp(), generation);
 		let running = state();
-		registry.caught_up("ramp.dot", generation, true);
+		registry.caught_up(&ramp(), generation, true);
 		let after_run = matches!(state(), CatchUp::Due { .. });
 		set(CatchUp::Done);
-		registry.call_unanswered("ramp.dot", generation);
+		registry.call_unanswered(&ramp(), generation);
 		let after_done = matches!(state(), CatchUp::Due { .. });
 
 		assert_eq!(
 			(connecting, running, after_run, after_done),
 			(CatchUp::Connecting, CatchUp::RunningThenDue, true, true)
 		);
+	}
+
+	// A worker the host is stopping keeps its link until its connection
+	// closes, so a call that failed on it waits for the worker started in
+	// its place.
+	#[test]
+	fn a_link_a_call_failed_on_is_passed_over_for_the_next_connection() {
+		let registry = FundingRegistry::default();
+		let ramp = ramp();
+		let stopping: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
+		registry.link(&ramp, stopping.clone());
+		registry.connected(&ramp);
+		let mut next = Box::pin(registry.connected_link_besides(&ramp, Some(&stopping)));
+		let waited = futures::FutureExt::now_or_never(&mut next).is_none();
+		let started: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
+		registry.link(&ramp, started.clone());
+		registry.connected(&ramp);
+
+		assert!(waited && Arc::ptr_eq(&block_on(next), &started));
 	}
 
 	// A deadline already past belongs to funds whose call is still in
@@ -2180,7 +2304,7 @@ mod tests {
 	) -> Option<StartRecord> {
 		block_on(registry.record_start(
 			NOW,
-			provider,
+			&ProductId::for_test(provider),
 			intent,
 			FundsAsked { direction: FundingDirection::In, host_id, amount, terms: [0; 32] },
 		))
@@ -2203,7 +2327,7 @@ mod tests {
 				Some(amount),
 				NOW,
 			);
-			assert!(session.assign("ramp.dot", NOW));
+			assert!(session.assign(&ramp(), crate::host_logic::funding::test_choice(), NOW));
 			insert(&registry, session);
 		}
 		let host_id = host_payment_id(&worker("ramp.dot"), [1; 32]);
@@ -2250,7 +2374,11 @@ mod tests {
 		let registry = registry_on(&db);
 		let served = |intent: &str, provider: &str| {
 			let mut session = session(intent, NOW);
-			assert!(session.assign(provider, NOW));
+			assert!(session.assign(
+				&ProductId::for_test(provider),
+				crate::host_logic::funding::test_choice(),
+				NOW
+			));
 			session
 		};
 		for session in

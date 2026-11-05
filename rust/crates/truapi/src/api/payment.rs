@@ -15,7 +15,7 @@ use crate::{
 
 /// Payment request and balance/status subscription methods.
 #[wire_trait(id = 9)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Payment: Send + Sync {
 	/// Subscribe to payment balance updates.
 	///

@@ -236,18 +236,27 @@ jobs:
       - name: Build the E2E simulator app
         run: e2e/host-playground/ios/build.sh
 
-      # Third-party tap, pinned to a reviewed commit.
+      # wix's release binary, pinned by its checksum, which matches the bottle
+      # in their Homebrew formula. It needs only system libraries, and it lives
+      # under RUNNER_TEMP because the Parity Macs are persistent and shared:
+      # it lasts for this job and touches nothing the next one sees. run.mjs
+      # grants the camera and notifications with it.
       - name: Install applesimutils
         env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          WIX_TAP_COMMIT: 8f636f84541e08e850f455d7cffdfbd7ba305d3f
+          VERSION: "0.9.12"
+          SHA256: 3373d85ea6051e77865b0a22960eb0b5d63f3126c7c99232d0b6b9c83ee2c133
         run: |
           set -euo pipefail
-          brew tap wix/brew
-          git -C "$(brew --repo wix/brew)" checkout --quiet "${WIX_TAP_COMMIT}"
-          brew trust wix/brew
-          brew install wix/brew/applesimutils
-          applesimutils --version
+          dir="${RUNNER_TEMP}/applesimutils-${VERSION}"
+          mkdir -p "$dir"
+          archive="${dir}/applesimutils.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/wix/AppleSimulatorUtils/releases/download/${VERSION}/applesimutils-${VERSION}.arm64_big_sur.bottle.tar.gz"
+          echo "${SHA256}  ${archive}" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$dir" --strip-components 3 "applesimutils/${VERSION}/bin/applesimutils"
+          rm "$archive"
+          "${dir}/applesimutils" --version
+          echo "$dir" >> "$GITHUB_PATH"
 
       - name: Write the test account's mnemonic
         env:
