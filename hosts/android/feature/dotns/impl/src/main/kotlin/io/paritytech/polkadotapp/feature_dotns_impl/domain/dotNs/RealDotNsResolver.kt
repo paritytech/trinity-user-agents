@@ -4,6 +4,7 @@ import android.net.Uri
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.data.memory.MapCache
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -32,6 +33,7 @@ internal class RealDotNsResolver @Inject constructor(
     private val carFetcher: CarFetcher,
     private val contentStorage: DotNsContentStorage,
     private val contentHashOverrides: ContentHashOverrides,
+    private val fetchTelemetry: HostBulletinFetchTelemetry,
     private val dispatchers: CoroutineDispatchers
 ) : DotNsResolver, CoroutineScope {
     override val coroutineContext = dispatchers.io + SupervisorJob()
@@ -40,11 +42,15 @@ internal class RealDotNsResolver @Inject constructor(
 
     private val localDomainsCache: MapCache<DomainName, Result<Uri>> = MapCache(this) { domainName ->
         Timber.d("resolving content hash for $domainName")
+        val lookupStartedAtMillis = fetchTelemetry.nowMillis()
 
         resolveContentHash(domainName)
             .logFailure("failed to resolve content hash for $domainName")
             .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
-            .flatMap { contentHash -> resolveContentHash(domainName, contentHash) }
+            .flatMap { contentHash ->
+                val contentHashMillis = fetchTelemetry.nowMillis() - lookupStartedAtMillis
+                resolveContentHash(domainName, contentHash, contentHashMillis)
+            }
             .logFailure("failed to resolve $domainName")
             // A domain with nothing registered behind it never reaches the download that reports its
             // own failures, and a host screen reading progress would wait on it for good.
@@ -69,8 +75,16 @@ internal class RealDotNsResolver @Inject constructor(
             .mapNotNull { it.toHexString() }
     }
 
-    private suspend fun resolveContentHash(dotNsName: String, contentHashHex: ContentHash): Result<Uri> {
+    private suspend fun resolveContentHash(
+        dotNsName: String,
+        contentHashHex: ContentHash,
+        contentHashMillis: Long,
+    ): Result<Uri> {
         val contentHash = contentHashHex.fromHex()
+        val fetchStartedAtMillis = fetchTelemetry.nowMillis()
+        fun reportFetch(outcome: HostEventOutcome, bytes: Long?) = fetchTelemetry.report(
+            BulletinFetch(dotNsName, outcome, contentHashMillis, fetchStartedAtMillis, bytes),
+        )
         Timber.d("resolving content for content hash $contentHashHex ($dotNsName)")
 
         // Check if we already have this content
@@ -78,16 +92,19 @@ internal class RealDotNsResolver @Inject constructor(
         if (existingDir != null) {
             Timber.d("content $contentHashHex already cached on disk for $dotNsName")
             progressRegistry.markCompleted(dotNsName)
+            reportFetch(HostEventOutcome.CACHE_HIT, bytes = null)
             return Result.success(Uri.fromFile(existingDir))
         }
 
         Timber.d("content $contentHashHex not cached — fetching CAR for $dotNsName")
         progressRegistry.markResolving(dotNsName)
+        var carBytes: Long? = null
         return carFetcher.fetchCarToFile(
             contentHash = contentHash,
             onProgress = { downloaded, total -> progressRegistry.markDownloadProgress(dotNsName, downloaded, total) }
         )
             .mapCatching { carFile ->
+                carBytes = carFile.length()
                 progressRegistry.markUnpacking(dotNsName)
                 try {
                     contentStorage.saveContentStreaming(contentHashHex) { writer ->
@@ -102,6 +119,7 @@ internal class RealDotNsResolver @Inject constructor(
             .onSuccess { progressRegistry.markCompleted(dotNsName) }
             .onFailure { progressRegistry.markFailed(dotNsName, it) }
             .logFailure("failed to parse CAR for $contentHashHex")
+            .also { reportFetch(if (it.isSuccess) HostEventOutcome.OK else HostEventOutcome.ERROR, carBytes) }
     }
 
     override fun getProgressByDomain(dotNsName: String): Flow<DotNsLoadProgress> {

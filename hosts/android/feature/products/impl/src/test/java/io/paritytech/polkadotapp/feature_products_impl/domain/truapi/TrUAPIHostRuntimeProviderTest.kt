@@ -96,6 +96,7 @@ class TrUAPIHostRuntimeProviderTest {
         extensionVersions = mockk(),
         pinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
         workerSupervisor = { mockk(relaxed = true) },
+        rpcConnectedTelemetry = mockk(relaxed = true),
         dispatchers = testDispatchers(),
     )
 

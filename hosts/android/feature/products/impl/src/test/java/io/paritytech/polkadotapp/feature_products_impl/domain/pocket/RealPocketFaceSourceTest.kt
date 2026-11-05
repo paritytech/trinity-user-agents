@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -39,7 +40,27 @@ class RealPocketFaceSourceTest {
     private val loyalty = addedCard(gameProduct, "loyalty")
     private val store = RealPocketCollection(FakePinnedPocketCards(emptyList()), InMemoryPocketCardRepository())
     private val streams = FakeStreams()
-    private val source = RealPocketFaceSource(store, streams, NoImages())
+    private val reportedOutcomes = mutableListOf<String?>()
+    private val telemetry = HostPocketFaceLoadedTelemetry(
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        timeProvider = { 0L },
+        capture = { event -> reportedOutcomes += event().tags["outcome"] },
+    )
+    private val source = RealPocketFaceSource(store, streams, NoImages(), telemetry)
+
+    @Test
+    fun `reports the kept face as a cache hit and the first live face as loaded`() = runTest {
+        store.addCard(loyalty)
+
+        val onScreen = source.observeFace(loyalty.card.key).launchIn(this)
+        advanceUntilIdle()
+        streams.faces.emit(faceOf("live 1"))
+        streams.faces.emit(faceOf("live 2"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("cache_hit", "ok"), reportedOutcomes)
+        onScreen.cancel()
+    }
 
     @Test
     fun `shows the kept face first, then every live face`() = runTest {

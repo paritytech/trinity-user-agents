@@ -24,4 +24,5 @@ dependencies {
     implementation(libs.bouncycastle.jdk18)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
 }

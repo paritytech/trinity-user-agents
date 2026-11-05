@@ -35,6 +35,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val telemetry: HostProductResolvedTelemetry,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -48,6 +49,7 @@ internal class RealResolveProductUseCase @Inject constructor(
             // Another caller may have resolved the same product while this one waited.
             cache[productId]?.let { return@withLock Result.success(it) }
 
+            val startedAtMillis = telemetry.startedAtMillis()
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
             runCatching { resolveFromChain(productId) }
                 .flatten()
@@ -57,6 +59,7 @@ internal class RealResolveProductUseCase @Inject constructor(
                     ProductResolutionError.Unknown
                 }
                 .onSuccess { cache[productId] = it }
+                .also { telemetry.report(productId, startedAtMillis, resolved = it.isSuccess) }
         }
     }
 

@@ -86,6 +86,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
+    private val rpcConnectedTelemetry: HostRpcConnectedTelemetry,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -136,8 +137,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
-            onResponse = runtime::notifyChainResponse,
-            onClosed = runtime::notifyChainClosed,
+            onResponse = { connectionId, frame ->
+                runtime.notifyChainResponse(connectionId, frame)
+                rpcConnectedTelemetry.responded(connectionId)
+            },
+            onClosed = { connectionId ->
+                runtime.notifyChainClosed(connectionId)
+                rpcConnectedTelemetry.closedBeforeResponse(connectionId)
+            },
         )
         observeAppLifecycle()
         scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
@@ -288,12 +295,24 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
+        override fun chainConnect(genesisHash: ByteArray): UInt? =
+            chainProvider.connect(genesisHash)?.also { connectionId ->
+                rpcConnectedTelemetry.dialled(connectionId) { chainLabel(genesisHash) }
+            }
 
         override fun chainSend(connectionId: UInt, request: String) =
             chainProvider.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) {
+            chainProvider.close(connectionId)
+            rpcConnectedTelemetry.abandoned(connectionId)
+        }
+
+        private fun chainLabel(genesisHash: ByteArray): String =
+            cachedChains.get().advertised.chains
+                .firstOrNull { it.genesisHash.contentEquals(genesisHash) }
+                ?.identifier?.name?.lowercase()
+                ?: genesisHash.hexKey()
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
