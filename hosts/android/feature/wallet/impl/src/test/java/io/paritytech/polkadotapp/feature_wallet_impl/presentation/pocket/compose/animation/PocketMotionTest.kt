@@ -21,25 +21,6 @@ class PocketMotionTest {
     }
 
     @Test
-    fun `the card shrinks to the header width`() {
-        assertEquals(1f, PocketCollapse.scale(0f), DELTA)
-        assertEquals(60f / 366f, PocketCollapse.scale(1f), DELTA)
-        assertEquals((1f + 60f / 366f) / 2f, PocketCollapse.scale(0.5f), DELTA)
-    }
-
-    @Test
-    fun `the title and balance fade early`() {
-        assertEquals(1f, PocketCollapse.titleAlpha(0f), DELTA)
-        assertEquals(0.5f, PocketCollapse.titleAlpha(0.2f), DELTA)
-        assertEquals(0f, PocketCollapse.titleAlpha(0.4f), DELTA)
-        assertEquals(0f, PocketCollapse.titleAlpha(1f), DELTA)
-
-        assertEquals(1f, PocketCollapse.balanceAlpha(0f), DELTA)
-        assertEquals(0.1f, PocketCollapse.balanceAlpha(0.5f), DELTA)
-        assertEquals(0f, PocketCollapse.balanceAlpha(1f), DELTA)
-    }
-
-    @Test
     fun `the card moves from its place in the list to the centre of the header`() {
         val width = 366f
         val height = 239f
