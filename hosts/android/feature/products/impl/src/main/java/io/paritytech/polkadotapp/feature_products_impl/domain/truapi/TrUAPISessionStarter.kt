@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
@@ -9,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
@@ -31,6 +33,8 @@ class TrUAPISessionStarter @Inject constructor(
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val visibleProducts: VisibleProducts,
     private val hostWebViewCreatedTelemetry: HostWebViewCreatedTelemetry,
+    private val hostPageLoadedTelemetry: HostPageLoadedTelemetry,
+    private val hostSessions: HostSessionRegistry,
 ) {
     fun start(
         provider: BrowserWebViewProvider,
@@ -40,9 +44,12 @@ class TrUAPISessionStarter @Inject constructor(
         card: ExpandedCardFace? = null,
         explicitProductId: ProductId? = null,
     ): ProductTrUAPIHostBridge {
+        val openRequestedAtMillis = hostPageLoadedTelemetry.openRequestedAtMillis()
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId) { productId ->
+                openSession(productId, provider, scope, openRequestedAtMillis)
+            }
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -55,6 +62,7 @@ class TrUAPISessionStarter @Inject constructor(
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
         explicitProductId: ProductId?,
+        openSession: (ProductId) -> String,
     ): Result<Unit> {
         // A debug page served from a loopback url carries no product in its host.
         val productId = explicitProductId ?: run {
@@ -67,12 +75,13 @@ class TrUAPISessionStarter @Inject constructor(
             }
         }
 
+        val hostSessionId = openSession(productId)
+
         provider.addWebViewSetup { webView -> visibleProducts.track(productId, webView) }
         val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
         // WebView is ever pointed at.
-        val hostSessionId = UUID.randomUUID().toString()
         val installBootstrap = runCatching {
             bootstrapInstaller.installerFor(
                 origins = setOf(productUrl.toUri().origin()),
@@ -96,6 +105,25 @@ class TrUAPISessionStarter @Inject constructor(
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }
+    }
+
+    private fun openSession(
+        productId: ProductId,
+        provider: BrowserWebViewProvider,
+        scope: CoroutineScope,
+        openRequestedAtMillis: Long,
+    ): String {
+        val hostSessionId = UUID.randomUUID().toString()
+        hostSessions.open(productId.value, hostSessionId)
+        scope.coroutineContext[Job]?.invokeOnCompletion { hostSessions.close(productId.value, hostSessionId) }
+
+        val pageLoadedReported = AtomicBoolean(false)
+        provider.addOnPageFinishedListener {
+            if (pageLoadedReported.compareAndSet(false, true)) {
+                hostPageLoadedTelemetry.report(hostSessionId, productId, openRequestedAtMillis)
+            }
+        }
+        return hostSessionId
     }
 
     private fun Uri.origin(): String = buildString {

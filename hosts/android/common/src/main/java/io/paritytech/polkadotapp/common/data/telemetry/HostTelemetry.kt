@@ -24,6 +24,29 @@ fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
 
 fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to appBuild)
 
+enum class HostEventOutcome(val tag: String) {
+    OK("ok"),
+    ERROR("error"),
+    CACHE_HIT("cache_hit"),
+}
+
+fun HostEventOrigin.stepEvent(
+    name: String,
+    outcome: HostEventOutcome,
+    monotonicMs: Long,
+    durationMs: Long,
+    sessionId: String?,
+    tags: Map<String, String> = emptyMap(),
+    extras: Map<String, Any> = emptyMap(),
+) = HostEvent(
+    name = name,
+    tags = baseTags() + ("outcome" to outcome.tag) + tags,
+    extras = baseExtras() +
+        mapOf("event.monotonic_ms" to monotonicMs, "duration_ms" to durationMs) +
+        sessionId?.let { mapOf("host.session_id" to it) }.orEmpty() +
+        extras,
+)
+
 fun interface HostEventOriginProvider {
     fun current(): HostEventOrigin
 }

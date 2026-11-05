@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
@@ -38,11 +40,20 @@ class RealResolveProductUseCaseTest {
         override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
+    private val reportedOutcomes = mutableListOf<String?>()
+    private val telemetry = HostProductResolvedTelemetry(
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        timeProvider = { 0L },
+        capture = { event -> reportedOutcomes += event().tags["outcome"] },
+        sessions = HostSessionRegistry(),
+    )
+
     private fun useCase() = RealResolveProductUseCase(
         dotNsResolver,
         manifestParser,
         productRepository,
         debugPocketCards,
+        telemetry,
     )
 
     private fun appJson() = """{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}"""
@@ -123,6 +134,27 @@ class RealResolveProductUseCaseTest {
         useCase.resolve(productId).getOrThrow()
 
         verify(dotNsResolver, times(1)).getMetadataEntry(base, "manifest")
+    }
+
+    @Test
+    fun `a resolution read from the chain is reported once, and the cached answer after it is not`() = runBlocking<Unit> {
+        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        val useCase = useCase()
+
+        useCase.resolve(productId).getOrThrow()
+        useCase.resolve(productId).getOrThrow()
+
+        assertEquals(listOf("ok"), reportedOutcomes)
+    }
+
+    @Test
+    fun `a failed resolution is reported as an error`() = runBlocking {
+        whenever(dotNsResolver.getMetadataEntry(base, "manifest"))
+            .thenReturn(Result.failure(RuntimeException("registry down")))
+
+        useCase().resolve(productId)
+
+        assertEquals(listOf("error"), reportedOutcomes)
     }
 
     @Test
