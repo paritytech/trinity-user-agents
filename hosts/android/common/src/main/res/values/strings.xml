@@ -272,6 +272,7 @@
     <string name="debug_menu_pocket_face_preview">Pocket face preview</string>
     <string name="pocket_face_preview_title">Pocket face preview</string>
     <string name="pocket_face_preview_url_hint">Face JSON URL</string>
+    <string name="pocket_face_preview_back_url_hint">Back JSON URL (optional)</string>
     <string name="pocket_face_preview_draw">Draw</string>
     <string name="pocket_face_preview_empty">Serve a renderer tree over HTTP and enter its URL to see it drawn at card size.</string>
     <string name="pocket_face_preview_failed">The face could not be drawn.</string>
