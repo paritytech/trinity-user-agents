@@ -150,7 +150,7 @@ fn v4_signer_payload(call_data: &[u8], extensions: &[TxPayloadExtension]) -> Vec
 /// signed payload. The chain binding (genesis, spec/tx version, mortality
 /// anchor, nonce, tip) lives inside the caller's extension bytes, so nothing
 /// here is metadata-driven.
-pub fn build_signed_extrinsic_v4(
+fn build_signed_extrinsic_v4(
 	signer: &Sr25519Signer,
 	call_data: &[u8],
 	extensions: &[TxPayloadExtension],
@@ -371,7 +371,7 @@ pub async fn build_local_transaction(
 /// builds V5. Version 0 builds V5 while it includes `VerifyMultiSignature`,
 /// since only then can a general transaction carry a signature, and V4
 /// otherwise.
-pub fn build_signed_transaction(
+fn build_signed_transaction(
 	signer: &Sr25519Signer,
 	genesis_hash: [u8; 32],
 	call_data: &[u8],
@@ -463,7 +463,7 @@ fn traverse_exactly<R: TypeResolver>(
 /// caller that supplies it owns its bytes and gets no host signature, whether
 /// they say `Disabled` (authorizing with a proof in a later extension) or carry
 /// a signature the caller made itself.
-pub fn build_signed_extrinsic_v5(
+fn build_signed_extrinsic_v5(
 	signer: &Sr25519Signer,
 	genesis_hash: [u8; 32],
 	call_data: &[u8],

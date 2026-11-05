@@ -59,7 +59,7 @@ const WORKER_SUBNAME: &str = "worker";
 ///
 /// [tlds]: crate::platform::DOTNS_TLDS
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
-pub async fn fetch_root_manifest(
+async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
@@ -79,7 +79,7 @@ pub async fn fetch_root_manifest(
 /// at its `executable` record. `Ok(None)` means the product publishes no
 /// Worker, as [`fetch_root_manifest`] reads an absent root manifest.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch_worker"))]
-pub async fn fetch_worker_manifest(
+async fn fetch_worker_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
@@ -737,7 +737,7 @@ pub enum DotnsRead {
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
-pub async fn cached_dotns_json<F, E>(
+async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
 	key: CoreStorageKey,
 	fetch: impl FnOnce() -> F,

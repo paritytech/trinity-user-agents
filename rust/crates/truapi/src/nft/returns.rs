@@ -65,7 +65,7 @@ impl ReturnItems {
 	/// in this order, when the import does not exist or is no import, while
 	/// any of its moves can still land or fail, when `operation` exists
 	/// already, and when no item is available.
-	pub fn validate_start(
+	fn validate_start(
 		&self,
 		conn: &Connection,
 		operation: &OperationKey,

@@ -45,7 +45,7 @@ impl PinnedView for PinnedChain<'_> {
 /// bodies concurrently. An unreadable block only ends the unbroken read that
 /// absence is proven over: the search goes on, because a hit is evidence
 /// whatever was skipped.
-pub async fn search_range(
+async fn search_range(
 	blocks: &dyn BlockBackend,
 	genesis: H256,
 	from: u64,

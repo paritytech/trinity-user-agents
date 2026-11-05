@@ -76,18 +76,18 @@ where
 }
 
 /// `CheckSpecVersion`: the runtime's spec version, signed but not carried.
-pub fn check_spec_version(spec_version: u32) -> ConstantExtension<u32, ()> {
+fn check_spec_version(spec_version: u32) -> ConstantExtension<u32, ()> {
 	ConstantExtension { name: "CheckSpecVersion", implicit: spec_version, explicit: () }
 }
 
 /// `CheckTxVersion`: the runtime's transaction version, signed but not
 /// carried.
-pub fn check_tx_version(transaction_version: u32) -> ConstantExtension<u32, ()> {
+fn check_tx_version(transaction_version: u32) -> ConstantExtension<u32, ()> {
 	ConstantExtension { name: "CheckTxVersion", implicit: transaction_version, explicit: () }
 }
 
 /// `CheckGenesis`: the chain's genesis hash, signed but not carried.
-pub fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
+fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
 	ConstantExtension { name: "CheckGenesis", implicit: genesis, explicit: () }
 }
 
@@ -98,14 +98,14 @@ pub fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
 pub struct MortalityEra(pub Era);
 
 /// `CheckMortality`: the era, and the birth block's hash it is signed over.
-pub fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
+fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
 	let birth = mortality.birth();
 	let era = MortalityEra(Era::mortal(mortality.period(), birth.number));
 	ConstantExtension { name: CHECK_MORTALITY, implicit: birth.hash, explicit: era }
 }
 
 /// `CheckNonce`: the sender's nonce.
-pub fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
+fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
 	ConstantExtension { name: "CheckNonce", implicit: (), explicit: nonce }
 }
 
@@ -120,13 +120,13 @@ pub struct AssetTxPayment {
 }
 
 /// `ChargeAssetTxPayment` with no tip, paid in the native asset.
-pub fn charge_asset_tx_payment() -> ConstantExtension<(), AssetTxPayment> {
+fn charge_asset_tx_payment() -> ConstantExtension<(), AssetTxPayment> {
 	let payment = AssetTxPayment { tip: 0, asset_id: None };
 	ConstantExtension { name: "ChargeAssetTxPayment", implicit: (), explicit: payment }
 }
 
 /// `ChargeTransactionPayment` with no tip.
-pub fn charge_transaction_payment() -> ConstantExtension<(), u128> {
+fn charge_transaction_payment() -> ConstantExtension<(), u128> {
 	ConstantExtension { name: "ChargeTransactionPayment", implicit: (), explicit: 0 }
 }
 
@@ -139,7 +139,7 @@ pub enum MetadataHashMode {
 }
 
 /// `CheckMetadataHash` disabled: no metadata hash in the signed content.
-pub fn check_metadata_hash_disabled() -> ConstantExtension<Option<[u8; 32]>, MetadataHashMode> {
+fn check_metadata_hash_disabled() -> ConstantExtension<Option<[u8; 32]>, MetadataHashMode> {
 	let mode = MetadataHashMode::Disabled;
 	ConstantExtension { name: "CheckMetadataHash", implicit: None, explicit: mode }
 }

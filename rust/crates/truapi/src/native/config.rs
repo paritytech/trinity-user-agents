@@ -121,7 +121,7 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 }
 
 /// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
-pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
+fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
 	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
 		reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
 	})

@@ -228,7 +228,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	/// `request_device_permission` cannot disagree. Reporting the stored grant
 	/// alone would send the user looking for a product toggle when the OS is
 	/// what refused. The stored decision is left untouched either way.
-	pub async fn peek_device(
+	async fn peek_device(
 		&self,
 		permission: &HostDevicePermissionRequest,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {

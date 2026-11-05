@@ -68,7 +68,7 @@ impl Observer {
 
 impl Invalidation {
 	/// Records a row change on the writer. Called by `update_hook`.
-	pub fn touch(&self, table: &str) {
+	fn touch(&self, table: &str) {
 		self.touched.lock().insert(table.to_ascii_lowercase());
 	}
 

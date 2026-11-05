@@ -290,7 +290,7 @@ impl SigningHost {
 	}
 
 	/// Shared session holder for connection-status subscriptions.
-	pub fn session_state(&self) -> Arc<SessionState> {
+	fn session_state(&self) -> Arc<SessionState> {
 		self.session_state.clone()
 	}
 

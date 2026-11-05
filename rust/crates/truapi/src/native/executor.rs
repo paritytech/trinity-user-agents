@@ -37,7 +37,7 @@ impl SharedNativeExecutor {
 	}
 
 	/// Number of worker threads the runtime schedules tasks on.
-	pub fn worker_threads(&self) -> usize {
+	fn worker_threads(&self) -> usize {
 		self.runtime.metrics().num_workers()
 	}
 

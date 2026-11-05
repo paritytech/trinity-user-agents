@@ -144,7 +144,7 @@ impl RegistryUpdate<'_> {
 	}
 
 	/// Persist only to the root captured during preparation.
-	pub async fn persist(self) -> Result<(), RingVrfError> {
+	async fn persist(self) -> Result<(), RingVrfError> {
 		self.store.persist_under_guard(self.root_public_key, self.snapshot).await
 	}
 }
@@ -217,7 +217,7 @@ impl RingVrfRegistryStore {
 	}
 
 	/// Load one root's registry while retaining storage serialization.
-	pub async fn prepare_update(
+	async fn prepare_update(
 		&self,
 		root_public_key: [u8; 32],
 	) -> Result<RegistryUpdate<'_>, RingVrfError> {

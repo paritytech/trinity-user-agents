@@ -298,7 +298,7 @@ pub async fn subscribe_match_all(
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
 /// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
 /// rejections surface instead of being silently dropped.
-pub async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
+async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
 	let result = rpc_client
 		.request::<Value>(
 			SUBMIT_STATEMENT_METHOD,
@@ -357,7 +357,7 @@ pub fn is_no_allowance_rejection(reason: &str) -> bool {
 }
 
 /// Statement-store topic filter encoded as JSON-RPC params.
-pub fn filter(kind: TopicFilterKind, topics: &[[u8; 32]]) -> Value {
+fn filter(kind: TopicFilterKind, topics: &[[u8; 32]]) -> Value {
 	let topics = topics.iter().map(hex_topic).collect::<Vec<_>>();
 	match kind {
 		TopicFilterKind::MatchAll => json!({ "matchAll": topics }),
@@ -367,7 +367,7 @@ pub fn filter(kind: TopicFilterKind, topics: &[[u8; 32]]) -> Value {
 
 /// Human-readable JSON-RPC error message, preserving user error text when
 /// provided by the remote endpoint.
-pub fn rpc_error_message(error: subxt_rpcs::Error) -> String {
+fn rpc_error_message(error: subxt_rpcs::Error) -> String {
 	match error {
 		subxt_rpcs::Error::User(error) => error.message,
 		other => other.to_string(),
