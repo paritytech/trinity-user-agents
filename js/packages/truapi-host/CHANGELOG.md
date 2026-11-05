@@ -1,5 +1,60 @@
 # @parity/truapi-host
 
+## 0.29.0
+
+### Major Changes
+
+- b7b5ffe: Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a
+  string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed
+  `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
+
+  Kotlin `ProductId.parse`, `ProductId.fromName`, `productId.executable` and `productId.owner` return
+  `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate
+  the failure.
+
+  Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>`
+  that writes the string value and validates it through Rust when restoring.
+
+  Rust consumers import `ProductId`, `ProductIdError` and `PRODUCT_ID_MAX_BYTES` from the `truapi` crate root; these
+  version-independent items are not exported through `truapi::latest`.
+
+  Callers must pass typed IDs to product configuration, callbacks, proof contexts, registry queries, cross-product
+  storage and NFT purse ownership. Valid IDs retain string wire and storage encodings. Malformed IDs in typed protocol
+  fields fail decoding before dispatch. Persisted permission scopes and manifest labels keep their existing encodings.
+
+  Native product-link and executable-name operations use shared Rust helpers. Product links must match the host-provided
+  network suffix, including `.li` links. Both native hosts stop content loading on product-resolution failures or
+  missing executables.
+
+  The shared host execution enum is named `ExecutableKind` in Rust, Swift, Kotlin and TypeScript. Host consumers must
+  update imports from `ProductExecutionKind`; its variants and wire encoding are unchanged.
+
+### Minor Changes
+
+- d730414: Native hosts keep the Pocket collection in the core database. The core stores which cards are in the Pocket
+  and the newest face of each, and serves product Pocket calls from it. `HostRuntimeConfig.pinned_pocket_cards`
+  (`pinnedPocketCards` in Swift and Kotlin) lists the cards the host pins, in the order they are listed. `addPocketCard`
+  screens the card id and title as a product's, and refuses ones a product could not use with `PocketAddError`. The
+  runtime gains `pocketCards()`, a stream of every card, pinned first, and `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`. The core keeps the newest face of a card from each Pocket card render, at most every two seconds and
+  once more when the render stops. `PocketHostBridge`, the `pocket` argument of `openProductExecution` and
+  `notifyPocketCardsChanged` are removed, `encodeRendererNode` and `decodeRendererNode` are removed, and
+  `NativeRendererSubscription` is now `NativeSubscription`.
+
+### Patch Changes
+
+- 4e13a84: dotNS contract reads encode calls and decode return data through typed Solidity interfaces. A revert reason
+  reads as `revert: <reason>` or `panic: <kind> (<code>)`.
+- Updated dependencies [85ee8d8]
+- Updated dependencies [ab108f7]
+- Updated dependencies [aef8ba1]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [d730414]
+- Updated dependencies [b7b5ffe]
+  - @parity/truapi@0.29.0
+
 ## 0.28.0
 
 ### Minor Changes

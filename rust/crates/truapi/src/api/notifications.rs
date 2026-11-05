@@ -12,7 +12,7 @@ use crate::{
 
 /// Notification methods for locally-rendered push notifications.
 #[wire_trait(id = 8)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Notifications: Send + Sync {
 	/// Send a push notification to the user.
 	///

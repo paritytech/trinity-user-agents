@@ -20,6 +20,8 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
+mod funding_quotes;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -64,7 +66,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::FundingProviderLink;
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -1380,7 +1382,7 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	})
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Contacts for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
 	async fn pick(
@@ -1439,7 +1441,7 @@ impl Contacts for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Chat for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
 	async fn create_room(
@@ -1606,7 +1608,7 @@ impl Chat for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Renderer for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
 	async fn action_subscribe(
@@ -1631,7 +1633,7 @@ impl Renderer for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl FundingProvider for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
 	async fn report(
@@ -1667,7 +1669,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.connection
 					.services
 					.funding()
-					.is_serving(self.connection.product.product_id.as_str(), &intent)
+					.is_serving(&self.connection.product.product_id, &intent)
 				{
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
@@ -1683,7 +1685,7 @@ impl FundingProvider for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Funding for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
 	async fn request(
@@ -1756,7 +1758,7 @@ impl Funding for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Pocket for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "pocket.list_subscribe"))]
 	async fn list_subscribe(

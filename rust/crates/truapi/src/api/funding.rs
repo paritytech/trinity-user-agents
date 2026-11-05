@@ -15,7 +15,7 @@ use crate::{
 /// itself, from the funds that moved, never from the host's or a provider's
 /// word.
 #[wire_trait(id = 22)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Funding: Send + Sync {
 	/// Open the funding modality for a direction and, optionally, an amount.
 	/// Answers at once with the session's `intent`, while the host shows the

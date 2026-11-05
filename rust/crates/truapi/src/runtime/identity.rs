@@ -208,18 +208,17 @@ mod tests {
 
 	use super::*;
 	use crate::{
+		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			ContractResult, DotnsPopController, ExecReturnValue, LabelStore, ProtocolRegistry,
-			REVERT_FLAG, RootGatewayDispatcher, StorageDeposit, StoreFactory, VIEW_CALL_ORIGIN,
-			Weight, account_to_h160, dispatcher_address_key,
+			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
+			account_to_h160, dispatcher_address_key,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
 	};
 	use alloy_primitives::{Address, U256};
 	use alloy_sol_types::{SolCall, SolInterface};
-	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 	use parity_scale_codec::{Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
@@ -312,12 +311,12 @@ mod tests {
 			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
 		ContractResult {
-			weight_consumed: Weight { ref_time: 0, proof_size: 0 },
-			weight_required: Weight { ref_time: 0, proof_size: 0 },
+			_weight_consumed: Weight::default(),
+			weight_required: Weight::default(),
 			storage_deposit: StorageDeposit::Charge(0),
 			max_storage_deposit: StorageDeposit::Charge(0),
-			gas_consumed: 0,
-			result: Ok(ExecReturnValue { flags: if reverted { REVERT_FLAG } else { 0 }, data }),
+			_gas_consumed: 0,
+			result: Ok(ExecReturnValue { flags: u32::from(reverted), data }),
 		}
 		.encode()
 	}
@@ -387,6 +386,10 @@ mod tests {
 				"chainHead_v1_storage" => {
 					*next_operation += 1;
 					let operation_id = format!("storage-{}", *next_operation);
+					assert_eq!(
+						[&request["params"][0], &request["params"][1]],
+						[FOLLOW_ID, BEST_HASH]
+					);
 					let key = request["params"][2][0]["key"].as_str().unwrap();
 					let key_bytes = hex::decode(key.trim_start_matches("0x")).unwrap();
 					let mut frames =
@@ -407,13 +410,17 @@ mod tests {
 				"chainHead_v1_call" => {
 					*next_operation += 1;
 					let operation_id = format!("call-{}", *next_operation);
+					assert_eq!(
+						[&request["params"][0], &request["params"][1]],
+						[FOLLOW_ID, BEST_HASH]
+					);
 					assert_eq!(request["params"][2].as_str(), Some("ReviveApi_call"));
 					let args = hex::decode(
 						request["params"][3].as_str().unwrap().trim_start_matches("0x"),
 					)
 					.unwrap();
 					// origin[32] ‖ dest[20] ‖ value u128 ‖ None ‖ None ‖ Vec(input).
-					assert_eq!(&args[..32], VIEW_CALL_ORIGIN.as_slice());
+					assert_eq!(&args[..32], &[0xEE; 32]);
 					assert_eq!(&args[52..70], &[0u8; 18], "zero value, no gas or deposit limit");
 					let dest: [u8; 20] = args[32..52].try_into().unwrap();
 					let input = Vec::<u8>::decode(&mut &args[70..]).unwrap();
@@ -457,7 +464,7 @@ mod tests {
 		}
 	}
 
-	#[async_trait]
+	#[async_trait::async_trait]
 	impl RuntimeChainProvider for ScriptedAssetHub {
 		async fn connect(
 			&self,
