@@ -19,7 +19,7 @@ use truapi::v01;
 use crate::{
 	chain::EvmContractError,
 	chain_runtime::ChainRuntime,
-	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, protocol_registry, read_view, tld_node},
 	host_internal::{
 		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
@@ -27,8 +27,8 @@ use crate::{
 	},
 	host_logic::{
 		dotns_gateway::{
-			ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
-			DotnsTransport, discover_pop_controller, namehash_under,
+			ContentResolver, DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport,
+			namehash_under,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -114,16 +114,25 @@ async fn fetch_text_record(
 	let mut lookup =
 		DotnsLookup::pinned_to_best_block(chain, asset_hub_chain_genesis_hash, kind).await?;
 
-	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
+	read_text_record(&mut lookup, product_id, subname, key).await
+}
+
+async fn read_text_record<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	product_id: &ProductId,
+	subname: Option<&str>,
+	key: &str,
+) -> Result<Option<String>, DotnsError> {
+	let Some(protocol_registry) = protocol_registry(transport).await? else {
 		return Ok(None);
 	};
 
-	let tld = network_tld(&mut lookup, &protocol_registry).await?;
+	let tld = network_tld(transport, &protocol_registry).await?;
 	let node = record_node(&tld, product_id, subname);
 
-	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
+	let registry = protocol_component(transport, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, DotnsRegistry::resolverCall { node: node.into() })
+		read_view(transport, &registry, DotnsRegistry::resolverCall { node: node.into() })
 			.await
 			.map_err(DotnsError::Resolver)?;
 	if resolver.is_zero() {
@@ -131,7 +140,7 @@ async fn fetch_text_record(
 	}
 
 	let manifest = match read_view(
-		&mut lookup,
+		transport,
 		&resolver.into_array(),
 		ContentResolver::textCall { node: node.into(), key: key.to_string() },
 	)
@@ -141,7 +150,7 @@ async fn fetch_text_record(
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
 		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => return Ok(None),
-		Err(error) => return Err(DotnsError::ManifestText(error)),
+		Err(error) => return Err(DotnsError::TextRecord(error)),
 	};
 	if manifest.is_empty() {
 		return Ok(None);
@@ -149,152 +158,8 @@ async fn fetch_text_record(
 	Ok(Some(manifest))
 }
 
-/// The deployment's `DotnsProtocolRegistry`, read from the controller.
-/// `Ok(None)` when the gateway is not deployed.
-///
-/// [`discover_pop_controller`] resolves the controller, because
-/// `DotnsGateway.DispatcherAddress` holds either the controller or a
-/// `RootGatewayDispatcher` that fronts it, and both are in service. Calling
-/// `protocolRegistry()` on the stored address directly reverts on a chain that
-/// still keeps its dispatcher, which would refuse every grant on that chain
-/// while username resolution kept working.
-async fn protocol_registry<T: DotnsTransport + ?Sized>(
-	transport: &mut T,
-) -> Result<Option<[u8; 20]>, DotnsError> {
-	let Some(controller) = discover_pop_controller(transport).await? else {
-		warn!(
-			"DotnsGateway.DispatcherAddress is unset, so no product manifest resolves and \
-			 trustedProducts grants are refused until the dispatcher is set"
-		);
-		return Ok(None);
-	};
-	read_view(transport, &controller, DotnsPopController::protocolRegistryCall {})
-		.await
-		.map(|registry| Some(registry.into_array()))
-		.map_err(DotnsError::ProtocolRegistry)
-}
-
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// The node a product id resolves to on a network serving `tld`.
-	fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
-		namehash_under(&tld_node(tld), ProductId::for_test(product_id).bare_label())
-	}
-
-	#[test]
-	fn a_node_matches_the_chain_derivation() {
-		// Pinned against paseo-v2, where `ProtocolRegistry.tldNode()` reads
-		// 0x096b43… and the dotNS SDK derives `browse.paseo` as 0x185056….
-		assert_eq!(
-			hex::encode(tld_node(".paseo")),
-			"096b436ee9a398429fe33ad4b359bad4398dd74b412ec1dd043c93dfbf581874"
-		);
-		assert_eq!(
-			hex::encode(node_on(".paseo", "browse.paseo")),
-			"1850561ffded63ac23dac8fd5e793fca1f349729ed6ade91c45f44a9f7b6b781"
-		);
-	}
-
-	#[test]
-	fn the_tld_an_identifier_carries_does_not_change_the_node_it_resolves_to() {
-		// A product id minted on `.dot` has to resolve against a `.paseo`
-		// deployment; the suffix it was written with names no node of its own.
-		let expected = namehash_under(&tld_node(".paseo"), "dim2");
-		assert_eq!(node_on(".paseo", "dim2.dot"), expected);
-		assert_eq!(node_on(".paseo", "dim2.paseo"), expected);
-	}
-
-	#[test]
-	fn one_identifier_resolves_differently_on_two_networks() {
-		// The other half of the same property: the network's TLD is what
-		// separates deployments, so the same id must not collide across them.
-		assert_ne!(node_on(".paseo", "dim2.dot"), node_on(".dot", "dim2.dot"));
-	}
-
-	// The worker subname is the dotNS name `worker.<label>.<tld>`, whichever
-	// spelling of the product id the caller holds.
-	#[test]
-	fn a_worker_subname_is_the_namehash_of_its_full_name() {
-		let namehash = |name: &str| {
-			name.rsplit('.').fold([0u8; 32], |parent, label| namehash_under(&parent, label))
-		};
-
-		assert_eq!(
-			[
-				record_node(".paseo", &ProductId::for_test("browse.dot"), Some(WORKER_SUBNAME)),
-				record_node(
-					".paseo",
-					&ProductId::for_test("worker.browse.dot"),
-					Some(WORKER_SUBNAME)
-				),
-			],
-			[namehash("worker.browse.paseo"); 2]
-		);
-	}
-
-	/// The source each lookup with nothing cached reports, for a host with no
-	/// Asset Hub, a chain that cannot be reached, and one that never answers.
-	#[test]
-	fn an_uncached_lookup_reports_why_it_read_no_manifest() {
-		let lookup = |platform: crate::test_support::StubPlatform,
-		              asset_hub_chain_genesis_hash: [u8; 32],
-		              ceiling: Duration| {
-			let platform = std::sync::Arc::new(platform);
-			let services = RuntimeServices::new(
-				platform.clone(),
-				crate::platform::HostInfo {
-					name: "Polkadot Mobile".to_string(),
-					icon: None,
-					version: None,
-					platform: truapi::latest::HostPlatform::Unknown,
-				},
-				[0; 32],
-				[0xbb; 32],
-				asset_hub_chain_genesis_hash,
-				crate::test_support::test_spawner(),
-			);
-			futures::executor::block_on(root_manifest_within(
-				ceiling,
-				&services,
-				platform.as_ref(),
-				&ProductId::for_test("peopl.dot"),
-			))
-		};
-		assert_eq!(
-			[
-				lookup(Default::default(), [0; 32], MANIFEST_RESOLUTION_CEILING),
-				lookup(
-					crate::test_support::StubPlatform {
-						chain_connect_error: Some("fixture serves no chain"),
-						..Default::default()
-					},
-					[0xcc; 32],
-					MANIFEST_RESOLUTION_CEILING,
-				),
-				lookup(
-					crate::test_support::StubPlatform {
-						chain_connect_pending: true,
-						..Default::default()
-					},
-					[0xcc; 32],
-					Duration::from_millis(10),
-				),
-			],
-			[
-				(None, ManifestSource::NoAssetHub),
-				(
-					None,
-					ManifestSource::LookupFailed {
-						reason: "Asset Hub follow stopped before initialization".to_string(),
-					},
-				),
-				(None, ManifestSource::TimedOut),
-			]
-		);
-	}
-}
+mod tests;
 
 /// How long a cached root manifest is honoured.
 ///

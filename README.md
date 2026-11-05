@@ -422,8 +422,8 @@ A host without a core database, such as the browser core, answers
 
 ### Images
 
-Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
-[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+Native hosts draw images with `loadImage(reference)`, as described in the
+[image loader RFC](docs/rfcs/image-loader.md).
 A reference is a Bulletin CID, with the format its source declares if it
 declares one. The core reads the blob with `bitswap_v1_get` over its own
 Bulletin connection, the call the CLI host's preimage lookup also makes, and
@@ -433,7 +433,12 @@ rejects bytes in a format other than the declared one. A load asks again every
 6 seconds while Bulletin does not hold the blob, and a second after a failed
 request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
-host's disk cache. The browser core does not expose it.
+host's disk cache. JavaScript bindings are deferred.
+
+For avatars, `ImageReference::Username { username, force }` resolves a
+[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
+hosts cache records for one hour; `force` refreshes them. The Rust WASM resolver
+reads the chain on each call.
 
 ### Trinity stack descriptors
 

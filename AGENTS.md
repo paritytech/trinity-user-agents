@@ -22,8 +22,9 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store; its `image_loader` module reads the
-                         images hosts draw from Bulletin by CID and checks them
+                         the statement store; its `public_profile` domain resolves and caches
+                         profile records, and its `image_loader` reads the images they name
+                         from Bulletin by CID and checks them
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol

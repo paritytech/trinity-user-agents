@@ -185,6 +185,7 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 pub struct PairingHostRuntime {
 	services: Arc<RuntimeServices>,
 	pairing_host: Arc<PairingHostRole>,
+	image_loader: crate::image_loader::ImageLoader,
 }
 
 impl PairingHostRuntime {
@@ -250,7 +251,22 @@ impl PairingHostRuntime {
 		}
 		let pairing_host = PairingHostRole::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self { services, pairing_host }
+		Self {
+			image_loader: crate::image_loader::ImageLoader::new(
+				services.clone(),
+				Arc::new(crate::time::RealTimer),
+			),
+			services,
+			pairing_host,
+		}
+	}
+
+	/// The image `reference` names, checked against its CID and the image policy.
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		self.image_loader.load(reference).await
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning

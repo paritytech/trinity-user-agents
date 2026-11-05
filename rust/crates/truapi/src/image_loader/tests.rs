@@ -1,3 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
+mod profiles;
+
 use core::{future::ready, task::Poll};
 use std::{
 	collections::VecDeque,
@@ -169,4 +172,22 @@ fn a_cid_a_host_passes_is_checked_as_it_enters_the_core() {
 			})),
 		]
 	);
+}
+
+#[tokio::test]
+async fn cancelling_a_load_drops_its_in_flight_read() {
+	let loader = image_loader(Arc::default(), Arc::default());
+	let cid = image_cid();
+	let (cancelled, mut cancellation) = futures::channel::oneshot::channel::<()>();
+	let cancelled = Mutex::new(Some(cancelled));
+	let read = || async {
+		let _cancelled = cancelled.lock().unwrap().take().unwrap();
+		futures::future::pending::<Result<Option<Vec<u8>>, BitswapError>>().await
+	};
+	let mut load = Box::pin(loader.read_verified(&cid, read));
+
+	assert_eq!(futures::poll!(&mut load), Poll::Pending);
+	drop(load);
+	let cancellation = futures::poll!(&mut cancellation);
+	assert!(matches!(cancellation, Poll::Ready(Err(_))), "{cancellation:?}");
 }

@@ -7,10 +7,12 @@ use core::{future::Future, ops::ControlFlow, time::Duration};
 use std::sync::Arc;
 
 use futures::FutureExt;
+use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, instrument, warn};
 
 use crate::{
 	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},
+	public_profile::{PublicProfileError, PublicProfiles},
 	runtime::services::RuntimeServices,
 	time::{Timer, retry_on},
 };
@@ -24,16 +26,20 @@ const MISS_PAUSE: Duration = Duration::from_secs(6);
 const FAILURE_PAUSE: Duration = Duration::from_secs(1);
 
 /// An image format the core passes on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ImageFormat {
 	/// PNG.
+	#[codec(index = 0)]
 	Png,
 	/// JPEG.
+	#[codec(index = 1)]
 	Jpeg,
 	/// GIF.
+	#[codec(index = 3)]
 	Gif,
 	/// WebP.
+	#[codec(index = 2)]
 	Webp,
 }
 
@@ -60,6 +66,14 @@ pub enum ImageReference {
 		/// The format the source declares, such as a manifest icon's. Bytes in another format
 		/// are rejected.
 		declared_format: Option<ImageFormat>,
+	},
+	/// The avatar in a dotNS public profile.
+	Username {
+		/// A dotNS username, such as `alice` or `alice.01`.
+		username: String,
+		/// Read the profile from the chain instead of the native record cache. Browsers
+		/// always read the chain.
+		force: bool,
 	},
 }
 
@@ -92,7 +106,7 @@ pub enum ImageError {
 		/// Which check failed.
 		reason: String,
 	},
-	/// Bulletin did not return the bytes.
+	/// The profile could not name an image, or Bulletin did not return its bytes.
 	#[error("image unavailable: {reason}")]
 	Unavailable {
 		/// What failed.
@@ -113,10 +127,28 @@ impl ImageLoader {
 		Self { services, timer }
 	}
 
-	/// The image `reference` names. Dropping the future stops the load.
+	/// The image `reference` names. Dropping the future stops the load. A username without an
+	/// avatar is immediately unavailable; a later call can refresh its record with `force`.
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
-		let ImageReference::Bulletin { cid, declared_format } = reference;
+		let (cid, declared_format) = match reference {
+			ImageReference::Bulletin { cid, declared_format } => (cid, declared_format),
+			ImageReference::Username { username, force } => {
+				let record = PublicProfiles::new(self.services.clone())
+					.resolve(&username, force)
+					.await
+					.map_err(|error| match error {
+						PublicProfileError::InvalidUsername => {
+							ImageError::Unsupported { reason: error.to_string() }
+						},
+						_ => ImageError::Unavailable { reason: error.to_string() },
+					})?;
+				let avatar = record.avatar().ok_or_else(|| ImageError::Unavailable {
+					reason: "the public profile names no avatar".to_string(),
+				})?;
+				(avatar.cid, Some(avatar.format))
+			},
+		};
 		let bytes = self.read_verified(&cid, || self.read(&cid)).await?;
 		let format = policy::check(&bytes, declared_format)
 			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })?;
