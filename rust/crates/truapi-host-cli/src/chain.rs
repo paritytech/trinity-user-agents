@@ -9,7 +9,6 @@ use std::{
 	sync::{Arc, Mutex, PoisonError},
 };
 
-use async_trait::async_trait;
 use clap::ValueEnum;
 use futures::{
 	Stream, StreamExt,
@@ -30,7 +29,7 @@ use crate::network::{ChainEndpoint, NetworkConfig};
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
 
-#[async_trait]
+#[async_trait::async_trait]
 impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 	async fn transaction_extension_versions(
 		&self,
@@ -173,7 +172,7 @@ fn routed_endpoints(
 		.filter(move |endpoint| endpoint.required_for_host || live_chain_routing)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CliChainProvider {
 	async fn connect(
 		&self,
@@ -610,7 +609,7 @@ mod tests {
 		// A light client may have no Bulletin peers yet, so a transient failure is
 		// asked again, as a preimage lookup does.
 		let bitswap = BitswapRpc::new(Arc::clone(&provider), network.bulletin_genesis);
-		let unstored = truapi::preimage_cid(&[0x22; 32]);
+		let unstored = truapi::BulletinCid::from([0x22; 32]);
 		for _ in 0..10 {
 			match bitswap.get(&unstored).await {
 				Ok(None) => return,

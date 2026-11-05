@@ -30,7 +30,7 @@
         <meta-data android:name="io.sentry.attach-screenshot" android:value="false" />
         <meta-data android:name="io.sentry.attach-view-hierarchy" android:value="false" />
 
-        <meta-data android:name="io.sentry.traces.sample-rate" android:value="0" />
+        <meta-data android:name="io.sentry.traces.sample-rate" android:value="0.0" />
 
     </application>
 </manifest>

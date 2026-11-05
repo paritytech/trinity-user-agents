@@ -308,6 +308,18 @@ only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtens
 `AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
 runtime's type by name.
 
+### Contract calls
+
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
+
+```rust
+let transaction = contracts.dry_run(&signer, &contract, &input).await?;
+transaction.execute_until_finalized().await?;
+```
+
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
@@ -408,6 +420,21 @@ backlog in one batch, then each live page.
 A host without a core database, such as the browser core, answers
 `Unsupported` to the served calls.
 
+### Images
+
+Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
+[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+A reference is a Bulletin CID, with the format its source declares if it
+declares one. The core reads the blob with `bitswap_v1_get` over its own
+Bulletin connection, the call the CLI host's preimage lookup also makes, and
+returns the bytes only once they hash to the CID. It passes on PNG, JPEG, GIF
+and WebP, read from the file header, up to 2 MiB and 4096 pixels per side, and
+rejects bytes in a format other than the declared one. A load asks again every
+6 seconds while Bulletin does not hold the blob, and a second after a failed
+request, such as a light client's before its first Bitswap peer connects, for
+up to 30 seconds in all. The content key it returns is the CID, for keying a
+host's disk cache. The browser core does not expose it.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -473,6 +500,7 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Contract response fixtures encode the Revive result structs, re-exported only in test builds.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
 Product ID and link parsing rules are tested in Rust. Native ProductId tests

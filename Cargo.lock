@@ -2638,6 +2638,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "imagesize"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
+
+[[package]]
 name = "impl-codec"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5902,7 +5908,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5922,6 +5928,7 @@ dependencies = [
  "hash-db",
  "hex",
  "hkdf",
+ "imagesize",
  "itertools 0.14.0",
  "js-sys",
  "libc",
@@ -5983,7 +5990,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",

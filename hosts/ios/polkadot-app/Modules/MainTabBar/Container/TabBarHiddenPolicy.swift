@@ -19,7 +19,7 @@ enum TabBarHiddenPolicy {
         let pushed = stack[...targetIndex].dropFirst()
 
         if pushed.contains(where: \.hidesBottomBarWhenPushed) {
-            return .folded
+            return .tucked
         }
 
         return .none
