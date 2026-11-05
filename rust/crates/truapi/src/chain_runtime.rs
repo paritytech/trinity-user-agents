@@ -22,7 +22,7 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
@@ -31,7 +31,7 @@ use std::{
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use web_time::{Duration, Instant};
 
 use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
@@ -321,15 +321,17 @@ impl RuntimeChainProvider for HostChainProvider {
 			.await
 			.map(Arc::from)
 			.map_err(|err| match err {
-				// No connection attempt can succeed for a chain the provider does
-				// not serve, so it is not reported as a connection that is down.
-				ProviderError::UnknownGenesis { .. } | ProviderError::UnknownRelay { .. } => {
-					RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}"))
+				// The node could not be reached, which a later attempt can outlast.
+				ProviderError::Handshake { .. } | ProviderError::Transport { .. } => {
+					RuntimeFailure::unavailable_with_reason(
+						"remote_chain_connect",
+						format!("{err:?}"),
+					)
 				},
-				_ => RuntimeFailure::unavailable_with_reason(
-					"remote_chain_connect",
-					format!("{err:?}"),
-				),
+				// The provider refused: it does not serve the chain, a host
+				// answered without a connection, or it is not set up to connect.
+				// Asking again gets the same answer.
+				_ => RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}")),
 			})
 	}
 }
@@ -1006,14 +1008,27 @@ impl ChainRuntime {
 		(OnlineClient<SubstrateConfig>, OnlineClientAtBlock<SubstrateConfig>),
 		CurrentBlockError,
 	> {
+		debug_assert!(
+			matches!(self.scope, ConnectionScope::Core),
+			"the Subxt backend's driver task defeats release_scope on a product scope",
+		);
 		patiently(
 			&RealTimer,
 			CURRENT_BLOCK_PATIENCE,
 			|| async {
+				let connection = self
+					.connection_for("subxt_connection", genesis_hash)
+					.await
+					.map_err(CurrentBlockError::Client)?;
 				let client =
-					self.online_client(genesis_hash).await.map_err(CurrentBlockError::Client)?;
-				let at_block = client.at_current_block().await.map_err(CurrentBlockError::Block)?;
-				Ok((client, at_block))
+					connection.subxt_connection().await.map_err(CurrentBlockError::Client)?.client;
+				match client.at_current_block().await {
+					Ok(at_block) => Ok((client, at_block)),
+					Err(error) => Err(CurrentBlockError::Block {
+						lost_connection: connection.is_closed() || follow_dropped(&error),
+						error,
+					}),
+				}
 			},
 			CurrentBlockError::is_transient,
 		)
@@ -2428,47 +2443,51 @@ pub enum CurrentBlockError {
 	#[display("cannot load chain metadata: {_0}")]
 	Client(RuntimeFailure),
 	/// The client could not name its current block.
-	#[display("cannot select a metadata block: {_0}")]
-	Block(subxt::error::OnlineClientAtBlockError),
+	#[display("cannot select a metadata block: {error}")]
+	Block {
+		/// What Subxt reported.
+		error: subxt::error::OnlineClientAtBlockError,
+		/// Whether the connection the attempt read over had closed, or its
+		/// follow had ended, by the time the attempt failed.
+		lost_connection: bool,
+	},
 }
 
 impl CurrentBlockError {
 	/// Whether the connection or its follow is down, which a later attempt can
 	/// outlast.
 	///
-	/// Each step of getting the current block reads from the node, and the
-	/// connection can drop under any of them, so the step does not decide.
-	/// What decides is that the read lost its connection or its follow, as
-	/// opposed to the node answering with an error or a malformed reply.
+	/// Every step of getting the current block reads from the node, down to the
+	/// metadata, and Subxt reports some of those failures only as text. So the
+	/// connection itself decides: a block failure is worth waiting on when the
+	/// connection it read over closed or its follow ended. A node that answers
+	/// with an error or a malformed reply on a live connection is not.
 	fn is_transient(&self) -> bool {
-		use subxt::error::OnlineClientAtBlockError as AtBlock;
 		match self {
 			Self::Client(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
-			Self::Block(
-				AtBlock::CannotGetCurrentBlock { reason } |
-				AtBlock::CannotGetBlockHash { reason, .. } |
-				AtBlock::CannotGetBlockHeader { reason, .. } |
-				AtBlock::CannotGetSpecVersion { reason, .. },
-			) => lost_its_connection(reason),
-			Self::Block(_) => false,
+			Self::Block { lost_connection, .. } => *lost_connection,
 		}
 	}
 }
 
-/// Whether a Subxt backend read failed because its connection or its follow
-/// went away.
-fn lost_its_connection(error: &subxt::error::BackendError) -> bool {
-	use subxt::error::{BackendError, RpcError};
-	match error {
-		BackendError::Rpc(RpcError::SubscriptionDropped) => true,
-		BackendError::Rpc(RpcError::ClientError(error)) => is_transport_loss(error),
-		_ => false,
-	}
+/// Whether Subxt's follow ended under a read. Subxt reports a follow that
+/// ended for any reason this way, a follow the node refused included.
+fn follow_dropped(error: &subxt::error::OnlineClientAtBlockError) -> bool {
+	use subxt::error::{BackendError, OnlineClientAtBlockError as AtBlock, RpcError};
+	matches!(
+		error,
+		AtBlock::CannotGetCurrentBlock { reason } |
+			AtBlock::CannotGetBlockHash { reason, .. } |
+			AtBlock::CannotGetBlockHeader { reason, .. } |
+			AtBlock::CannotGetSpecVersion { reason, .. }
+			if matches!(reason, BackendError::Rpc(RpcError::SubscriptionDropped))
+	)
 }
 
 /// Runs `attempt` until it succeeds or fails in a way `is_transient` rejects,
-/// pausing with a backoff after each transient failure. Once the pauses would
-/// pass `patience`, the last transient failure is the answer.
+/// pausing with a backoff after each transient failure. It stops retrying once
+/// the time spent, pauses and attempts together, would pass `patience` with
+/// the next pause, and answers with the last transient failure.
 async fn patiently<T, E, AttemptFuture>(
 	timer: &dyn Timer,
 	patience: Duration,
@@ -2478,6 +2497,7 @@ async fn patiently<T, E, AttemptFuture>(
 where
 	AttemptFuture: Future<Output = Result<T, E>>,
 {
+	let started = Instant::now();
 	let mut backoff = Backoff::new(CURRENT_BLOCK_FIRST_PAUSE, CURRENT_BLOCK_LONGEST_PAUSE);
 	let mut paused = Duration::ZERO;
 	loop {
@@ -2487,7 +2507,9 @@ where
 			Err(failure) => failure,
 		};
 		let pause = backoff.next_pause();
-		if paused + pause > patience {
+		// The timer may not be wall-clock time, so the pauses are counted too.
+		let spent = started.elapsed().max(paused);
+		if spent + pause > patience {
 			return Err(failure);
 		}
 		paused += pause;
@@ -5262,25 +5284,53 @@ mod current_block_tests {
 		assert_eq!(pauses.last(), Some(&CURRENT_BLOCK_LONGEST_PAUSE));
 	}
 
-	/// Only an unavailable chain and a lost current block are worth waiting on.
+	/// Getting the time an attempt took counts against the patience too, so a
+	/// slow attempt is not followed by pauses that run past it.
 	#[test]
-	fn only_a_lost_connection_or_follow_is_transient() {
+	fn slow_attempts_count_against_the_patience() {
+		let timer = RecordingTimer::default();
+		let mut attempts = 0;
+		let done: Result<(), _> = block_on(patiently(
+			&timer,
+			Duration::from_secs(1),
+			|| {
+				attempts += 1;
+				std::thread::sleep(Duration::from_millis(300));
+				ready(Err(Failure::Transient(attempts)))
+			},
+			transient,
+		));
+		// Pauses alone would allow 250 + 500 ms and a third attempt, but the
+		// second attempt ends 600 ms in and a 500 ms pause would pass 1 s.
+		assert_eq!(done, Err(Failure::Transient(2)));
+		assert_eq!(timer.pauses.into_inner().unwrap(), [Duration::from_millis(250)].to_vec());
+	}
+
+	/// A block failure is worth waiting on only when the connection it read over
+	/// was lost, whatever step and whatever text Subxt reports.
+	#[test]
+	fn a_block_failure_waits_only_when_its_connection_was_lost() {
+		let metadata_cut = || subxt::error::OnlineClientAtBlockError::CannotGetMetadata {
+			block_hash: subxt::error::Hex::from([0xab; 32]),
+			reason: "Error calling Metadata_metadata: json-rpc connection closed".into(),
+		};
+		assert!(
+			CurrentBlockError::Block { error: metadata_cut(), lost_connection: true }
+				.is_transient()
+		);
+		assert!(
+			!CurrentBlockError::Block { error: metadata_cut(), lost_connection: false }
+				.is_transient()
+		);
+	}
+
+	/// Subxt reports a follow that ended under a read as a dropped subscription,
+	/// at whichever step the read was.
+	#[test]
+	fn a_dropped_follow_is_recognised_at_every_step() {
 		use subxt::error::{BackendError, OnlineClientAtBlockError as AtBlock, RpcError};
 
 		let block_hash = || subxt::error::Hex::from([0xab; 32]);
-		let dropped = || BackendError::Rpc(RpcError::SubscriptionDropped);
-		let closed = || {
-			BackendError::Rpc(RpcError::ClientError(SubxtRpcError::Client(
-				"json-rpc connection closed".into(),
-			)))
-		};
-		let refused = || {
-			BackendError::Rpc(RpcError::ClientError(SubxtRpcError::User(subxt_rpcs::UserError {
-				code: -32602,
-				message: "Invalid block hash".into(),
-				data: None,
-			})))
-		};
 		let at_each_step = |reason: fn() -> BackendError| {
 			[
 				AtBlock::CannotGetCurrentBlock { reason: reason() },
@@ -5289,36 +5339,71 @@ mod current_block_tests {
 				AtBlock::CannotGetSpecVersion { block_hash: block_hash(), reason: reason() },
 			]
 		};
+		for error in at_each_step(|| BackendError::Rpc(RpcError::SubscriptionDropped)) {
+			assert!(follow_dropped(&error), "{error}");
+		}
+		let invalid_hash = || {
+			BackendError::Rpc(RpcError::ClientError(SubxtRpcError::User(subxt_rpcs::UserError {
+				code: -32602,
+				message: "Invalid block hash".into(),
+				data: None,
+			})))
+		};
+		for error in at_each_step(invalid_hash) {
+			assert!(!follow_dropped(&error), "{error}");
+		}
+		assert!(!follow_dropped(&AtBlock::CannotGetCurrentBlock {
+			reason: BackendError::Rpc(RpcError::LimitReached),
+		}));
+	}
 
-		for error in at_each_step(dropped).into_iter().chain(at_each_step(closed)) {
-			let description = error.to_string();
-			assert!(CurrentBlockError::Block(error).is_transient(), "{description}");
+	/// A node that cannot be reached is worth waiting on. A provider that
+	/// refuses, for a chain it does not serve or a host with no connection to
+	/// give, answers the same way every time.
+	#[test]
+	fn only_an_unreachable_node_is_a_transient_connect_failure() {
+		struct Refusing(fn() -> ProviderError);
+
+		#[async_trait::async_trait]
+		impl ChainProvider for Refusing {
+			async fn connect(
+				&self,
+				_genesis_hash: [u8; 32],
+			) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+				Err((self.0)())
+			}
 		}
-		for error in at_each_step(refused) {
-			let description = error.to_string();
-			assert!(!CurrentBlockError::Block(error).is_transient(), "{description}");
+
+		let kind_for = |error: fn() -> ProviderError| {
+			let provider = HostChainProvider::new(Arc::new(Refusing(error)));
+			match block_on(RuntimeChainProvider::connect(&provider, vec![0xab; 32])) {
+				Ok(_) => panic!("the refusing provider connected"),
+				Err(failure) => failure.kind(),
+			}
+		};
+		let transient = [
+			(|| ProviderError::Handshake { url: "wss://node".into(), reason: "dns".into() })
+				as fn() -> ProviderError,
+			|| ProviderError::Transport { reason: "socket".into() },
+		];
+		for error in transient {
+			assert_eq!(kind_for(error), RuntimeFailureKind::Unavailable, "{}", error());
 		}
-		assert!(
-			!CurrentBlockError::Block(AtBlock::CannotGetCurrentBlock {
-				reason: BackendError::Rpc(RpcError::LimitReached),
-			})
-			.is_transient()
-		);
+		let refused = [
+			(|| ProviderError::UnknownGenesis { genesis: [0xab; 32] }) as fn() -> ProviderError,
+			|| ProviderError::UnknownRelay { relay: [0xcd; 32] },
+			|| ProviderError::Host { reason: "chain provider unavailable".into() },
+			|| ProviderError::MissingRuntime,
+		];
+		for error in refused {
+			assert_eq!(kind_for(error), RuntimeFailureKind::HostFailure, "{}", error());
+		}
 		assert!(
 			CurrentBlockError::Client(RuntimeFailure::unavailable(CONNECT_METHOD)).is_transient()
 		);
 		assert!(
-			!CurrentBlockError::Client(RuntimeFailure::host_failure(
-				CONNECT_METHOD,
-				"unknown chain"
-			))
-			.is_transient()
-		);
-		assert!(
-			!CurrentBlockError::Block(subxt::error::OnlineClientAtBlockError::BlockNotFound {
-				block_number: 1,
-			})
-			.is_transient()
+			!CurrentBlockError::Client(RuntimeFailure::host_failure(CONNECT_METHOD, "refused"))
+				.is_transient()
 		);
 	}
 }

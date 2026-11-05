@@ -1,5 +1,5 @@
 // WebSocket proxy for `scripts/tx-during-outage-e2e.sh`. When a frame carries
-// the trigger key, an outage starts for the given window, in one of three
+// the trigger key, an outage starts for the given window, in one of these
 // modes:
 //
 // - `close`: every open connection closes and new ones are refused.
@@ -9,9 +9,12 @@
 // - `header`: nothing happens until the next `chainHead_v1_header`, which
 //   closes every connection under it and starts the window there, so the
 //   connection drops partway through reading the current block.
+// - `metadata`: the trigger is not needed. The first runtime call fetching
+//   metadata closes every connection under it and starts the window, so the
+//   connection drops in the middle of a cold metadata download.
 //
 // After the window it proxies normally again.
-// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|stop|header>
+// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|stop|header|metadata>
 import { writeFileSync } from "node:fs";
 
 const [upstreamUrl, portFile, trigger, outageArg, mode] = process.argv.slice(2);
@@ -21,10 +24,10 @@ if (
   !portFile ||
   !trigger ||
   !Number.isFinite(outageMs) ||
-  (mode !== "close" && mode !== "stop" && mode !== "header")
+  !["close", "stop", "header", "metadata"].includes(mode ?? "")
 ) {
   console.error(
-    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|stop|header>",
+    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|stop|header|metadata>",
   );
   process.exit(2);
 }
@@ -150,6 +153,20 @@ const server = Bun.serve<Link>({
         if (mode === "close") return;
       }
       const request = parse(frame);
+      if (
+        mode === "metadata" &&
+        !cut &&
+        request?.method === "chainHead_v1_call" &&
+        frame.includes("Metadata_metadata")
+      ) {
+        cut = true;
+        downUntil = Date.now() + outageMs;
+        console.log(
+          `proxy: closing ${links.size} connections under a metadata call and refusing new ones for ${outageMs} ms`,
+        );
+        closeEverything();
+        return;
+      }
       if (armed && request?.method === "chainHead_v1_header") {
         armed = false;
         downUntil = Date.now() + outageMs;

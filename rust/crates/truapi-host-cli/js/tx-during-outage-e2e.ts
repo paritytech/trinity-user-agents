@@ -44,14 +44,15 @@ const createTransaction = () =>
     contacts: [],
   });
 
-// With the connection up, a transaction builds.
+// A first transaction builds, which also loads the metadata. In `metadata`
+// mode the proxy cuts the connection under that load, so it has to wait.
 const before = await within(createTransaction(), "the first transaction");
 assert(
   before.isOk(),
-  "the first transaction failed with the connection up:",
+  "the first transaction failed:",
   before.isErr() ? describe(before.error) : before,
 );
-console.log("a transaction built with the connection up");
+console.log("the first transaction built");
 
 // Reading the trigger key makes the proxy drop every connection and refuse
 // reconnects for the outage window.
