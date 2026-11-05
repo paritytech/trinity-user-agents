@@ -33,7 +33,7 @@ use crate::runtime::{
 	versioning::version,
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Signing for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_payload"))]
 	async fn sign_payload(

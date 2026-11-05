@@ -17,7 +17,7 @@ use crate::{
 
 /// Signing operations.
 #[wire_trait(id = 13)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Signing: Send + Sync {
 	/// Construct a transaction for a product account.
 	///

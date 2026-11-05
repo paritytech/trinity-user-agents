@@ -13,7 +13,7 @@
 //! [`versioned`].
 //! Async API traits use the `async_trait` macro so their concise `async fn` methods
 //! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! blocks with `#[async_trait::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -43,8 +43,6 @@ use std::sync::{Arc, Mutex};
 
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
-
-pub use async_trait::async_trait;
 
 pub mod api;
 mod dotns_name;
@@ -102,9 +100,11 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
 		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
 		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
@@ -863,6 +863,9 @@ mod host_rpc_client;
 mod interrupt;
 #[cfg(feature = "runtime")]
 pub mod logging;
+
+#[cfg(feature = "runtime")]
+pub mod markers;
 #[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
@@ -976,7 +979,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]

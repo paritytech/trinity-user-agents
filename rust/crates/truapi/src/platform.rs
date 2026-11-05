@@ -15,7 +15,6 @@ use futures::stream::BoxStream;
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
-pub use async_trait::async_trait;
 pub use truapi_provider::{
 	ProviderError,
 	platform::{ChainProvider, JsonRpcConnection},
@@ -38,19 +37,20 @@ use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
 		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
@@ -866,7 +866,7 @@ impl ProductStorageKey {
 /// The read error gained a cross-product refusal in v0.2 that the core decides
 /// before it ever calls a host, so a host has no way to produce it and should
 /// not have to match on it.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ProductStorage: Send + Sync {
 	/// Read a value by key.
 	///
@@ -906,14 +906,14 @@ pub trait ProductStorage: Send + Sync {
 /// Open URLs in the system browser. Input is already trimmed, categorized,
 /// and (where needed) normalized by the core; the host implementation only
 /// needs to hand the URL to the OS URL handler.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Navigation: Send + Sync {
 	/// Open the given URL in the system browser.
 	async fn navigate_to(&self, url: String) -> Result<(), HostNavigateToError>;
 }
 
 /// Deliver push notifications.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Notifications: Send + Sync {
 	/// Schedule or immediately display the given notification and return the
 	/// host-assigned id.
@@ -945,7 +945,7 @@ pub enum PermissionDecision {
 /// Permission prompts. Device permissions (camera, mic, NFC, ...) are separate
 /// from remote permissions (domain access, chain submit, ...), so the platform
 /// surface mirrors that split.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Permissions: Send + Sync {
 	/// Prompt the user for a device-level permission `product` requested.
 	async fn device_permission(
@@ -1025,7 +1025,7 @@ pub enum PermissionAuthorizationStatus {
 ///
 /// Hosts call this surface to drive global runtime actions or inspect/update
 /// core-owned state without going through a product-scoped TrUAPI request.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait CoreAdmin: Send + Sync {
 	/// Best-effort logout/disconnect. Clears the active session and emits the
 	/// resulting auth state transition.
@@ -1118,7 +1118,7 @@ pub trait CoreAdmin: Send + Sync {
 }
 
 /// Pairing-host-only administration API exposed to host UI.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait PairingHostAdmin: Send + Sync {
 	/// Cancel any in-flight pairing request.
 	fn cancel_pairing(&self);
@@ -1153,7 +1153,7 @@ pub struct HostChainSet {
 
 /// Feature-support probing. The host answers whether it can service a given
 /// capability (currently scoped to per-chain support).
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Features: Send + Sync {
 	/// Report whether the requested feature is supported.
 	async fn feature_supported(
@@ -1188,7 +1188,7 @@ pub struct ExtensionVersionMap {
 
 /// Which chains the host builds as V5 general transactions. The core builds
 /// its own extrinsics the same way, so both agree on every chain.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ExtrinsicVersionHost: Send + Sync {
 	/// The chains the host builds as V5, each with its pipeline. A host that
 	/// never builds V5 lists none.
@@ -1287,6 +1287,17 @@ pub enum CoreStorageKey {
 		/// Bare product label whose manifest was cached.
 		product_label: String,
 	},
+	/// A product's Worker executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 14)]
+	WorkerManifest {
+		/// Bare label of the product whose Worker manifest was cached.
+		product_label: String,
+	},
+	/// What funding providers' quote answers showed about what they serve,
+	/// each record trusted for twelve hours.
+	#[codec(index = 15)]
+	FundingSupport,
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1398,6 +1409,10 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::ProductManifest { product_label } => {
 			("ProductManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::WorkerManifest { product_label } => {
+			("WorkerManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
+		CoreStorageKey::FundingSupport => ("FundingSupport", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -2241,6 +2256,12 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
+			(
+				CoreStorageKey::WorkerManifest { product_label: "ramp".to_string() },
+				"WorkerManifest",
+				Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
+			),
+			(CoreStorageKey::FundingSupport, "FundingSupport", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description, CoreStorageKeyDescription { kind, owner });
@@ -2591,7 +2612,7 @@ mod tests {
 /// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
 // TODO: introduce SecretStorage to make protection a separate contract.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait CoreStorage: Send + Sync {
 	/// Read a core-owned value by typed slot.
 	async fn read_core_storage(&self, key: CoreStorageKey)
@@ -2928,7 +2949,7 @@ pub enum UserConfirmationReview {
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait UserConfirmation: Send + Sync {
 	/// Preserve the lifetime of consent for identity and account disclosures.
 	async fn confirm_permission(
@@ -2970,7 +2991,7 @@ pub trait LocaleHost: Send + Sync {
 /// Host preimage backend. The core builds, signs, and submits the Bulletin
 /// `TransactionStorage.store` transaction itself; the host only owns preimage
 /// content retrieval (P2P/IPFS lookup).
-#[async_trait]
+#[async_trait::async_trait]
 pub trait PreimageHost: Send + Sync {
 	/// Emits current value/miss immediately, then future updates. `key` is
 	/// the blake2b-256 digest of the preimage.
@@ -3004,7 +3025,7 @@ pub trait PreimageHost: Send + Sync {
 /// `ChatFile::size_bytes` is a product assertion and is not verified against
 /// the resource it names. Contextual output escaping, storage limits, and
 /// anything a host derives from product-supplied values remain host-owned.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ChatPlatform: Send + Sync {
 	/// Create or resolve a product-scoped native chat room.
 	async fn create_chat_room(
@@ -3072,7 +3093,7 @@ pub trait BalancePlatform: Send + Sync {
 /// The core validates the source keys and hashes the product into the id
 /// before calling, so ids never collide across products. The host owns
 /// retries, partial claims and persistence.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait TopUpPlatform: Send + Sync {
 	/// Start a top-up. Returns once the host has accepted it.
 	async fn top_up(
@@ -3100,7 +3121,7 @@ pub trait TopUpPlatform: Send + Sync {
 /// The core hashes the product into the id before calling, so ids never
 /// collide across products. The host owns the approval sheet, the transfer
 /// and its persistence.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait PaymentPlatform: Send + Sync {
 	/// Ask the user to approve `request`. Returns once the user has decided:
 	/// `Ok` when they authorized it and the host took it on; the payment's
@@ -3131,6 +3152,48 @@ pub struct FundingPresentation {
 	pub amount: Option<u128>,
 }
 
+/// One provider's place in the list a quote request fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteRow {
+	/// The provider.
+	pub provider_id: ProductId,
+	/// Where its quote stands.
+	pub state: FundingQuoteState,
+}
+
+/// Where a provider's quote stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteState {
+	/// Asked, not answered yet.
+	Pending,
+	/// The provider's price.
+	Quoted {
+		/// The quote.
+		quote: FundingQuote,
+	},
+	/// The provider cannot be offered for this ask; the host shows it
+	/// disabled.
+	Unavailable {
+		/// Why.
+		reason: FundingQuoteUnavailable,
+	},
+}
+
+/// Why a provider cannot be offered for an ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteUnavailable {
+	/// The provider refused to price it.
+	Refused {
+		/// Why.
+		reason: FundingQuoteRefusal,
+	},
+	/// The provider did not answer in time.
+	Timeout,
+}
+
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -3145,7 +3208,7 @@ pub enum FundingPresentOutcome {
 /// Host-implemented funding surface: the native overlay a funding session
 /// runs in. Optional: a host that omits it leaves funding requests answered
 /// `Unsupported`.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
 	/// host itself when `product` is `None`.
@@ -3171,13 +3234,20 @@ pub trait FundingPlatform: Send + Sync {
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let _ = (intent, status);
 	}
+
+	/// Observe one provider's row of a quote list the host requested, for the
+	/// provider list. Each provider's row arrives `Pending`, then once more
+	/// with its quote or why it is unavailable.
+	fn funding_quote_changed(&self, intent: String, row: FundingQuoteRow) {
+		let _ = (intent, row);
+	}
 }
 
 /// Adapter through which product Pocket calls reach the card collection.
 /// Optional: a host that omits it leaves Pocket requests answered
 /// `Unsupported`. See [`OptionalPlatform`]. Native hosts are served by the
 /// core's own collection in its database.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait PocketPlatform: Send + Sync {
 	/// Emit the calling product's current cards and every later replacement.
 	fn subscribe_pocket_cards(
@@ -3206,7 +3276,7 @@ pub trait PocketPlatform: Send + Sync {
 /// schedule replaces the reminder the same product already holds and leaves
 /// other products' reminders alone. The host keeps each reminder across app
 /// kill and device reboot and drops it once its game has started.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait GamePlatform: Send + Sync {
 	/// Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
 	/// replacing any it holds. An error, including an OS that allows neither
@@ -3257,7 +3327,7 @@ pub enum DevicePermissionStatus {
 /// This is deliberately separate from [`Permissions::device_permission`]: that
 /// call may show UI, so it cannot be used to re-check a decision the user has
 /// already made without prompting them again on every request.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait PermissionStatusHost: Send + Sync {
 	/// Current OS status of a device capability. Must not prompt.
 	async fn device_permission_status(
@@ -3285,7 +3355,7 @@ pub enum ExpandedCardFaceOutcome {
 /// Carried per connection on `ConnectionAdapters`, because the host owns one
 /// drawer per product execution. A connection without one tells products
 /// `Unsupported`.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ExpandedCardHost: Send + Sync {
 	/// Show (`true`) or hide (`false`) the face above the calling Widget.
 	async fn set_expanded_card_face_shown(
@@ -3297,7 +3367,7 @@ pub trait ExpandedCardHost: Send + Sync {
 /// Host store for a product's pending operations, which the host uses to keep
 /// the product's worker runtime alive. Reached only through the `Worker`
 /// protocol trait, so non-worker products never call these.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ProductOperations: Send + Sync {
 	/// Record a pending operation. `label` is a host log and UI hint, empty
 	/// when the product gave none.
@@ -3382,7 +3452,7 @@ pub enum HostContactPick {
 /// reaches the product, and the list never crosses to the core either: the core
 /// asks only about the handles a transaction names. A host omits contacts the
 /// user has blocked, from the picker and from lookups alike.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ContactsPlatform: Send + Sync {
 	/// Resolve `lookup.handles` to the contacts they name.
 	///
@@ -3454,7 +3524,7 @@ pub enum HostScan {
 ///   core's tap check.
 /// - Close the viewfinder when the core drops the future, and close any still open before opening
 ///   another. A JS host is not told about a drop.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ScannerPlatform: Send + Sync {
 	/// Open the viewfinder on behalf of `product` and wait for the user.
 	async fn scan_code(

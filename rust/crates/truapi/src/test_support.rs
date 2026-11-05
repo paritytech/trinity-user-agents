@@ -972,7 +972,7 @@ pub fn signed_statement(topic: [u8; 32]) -> v01::SignedStatement {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductStorage for StubPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		if let Some(reason) = self.local_storage_error {
@@ -1034,7 +1034,7 @@ impl PlatformProductStorage for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductOperations for StubPlatform {
 	async fn begin_operation(
 		&self,
@@ -1087,7 +1087,7 @@ impl PlatformProductOperations for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
@@ -1170,7 +1170,7 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::installation::InstallationIdProvider for StubPlatform {
 	async fn current_installation(
 		&self,
@@ -1179,7 +1179,7 @@ impl crate::installation::InstallationIdProvider for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.navigations.lock().expect("navigation list mutex poisoned").push(url);
@@ -1187,7 +1187,7 @@ impl PlatformNavigation for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
@@ -1209,7 +1209,7 @@ impl PlatformNotifications for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformPermissions for StubPlatform {
 	async fn device_permission(
 		&self,
@@ -1263,7 +1263,7 @@ impl PlatformPermissions for StubPlatform {
 
 impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformFeatures for StubPlatform {
 	async fn feature_supported(
 		&self,
@@ -1850,7 +1850,7 @@ impl Drop for DropFlagGuard {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for StubPlatform {
 	async fn connect(
 		&self,
@@ -1904,7 +1904,7 @@ impl AuthPresenter for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for StubPlatform {
 	async fn confirm_permission(
 		&self,
@@ -2061,7 +2061,7 @@ impl LocaleHost for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,

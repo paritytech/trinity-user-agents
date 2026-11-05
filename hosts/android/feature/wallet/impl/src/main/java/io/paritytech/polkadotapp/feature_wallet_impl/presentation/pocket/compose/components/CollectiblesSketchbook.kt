@@ -18,7 +18,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 @Composable
 fun CollectiblesSketchbook(
     modifier: Modifier = Modifier,
-    blackAndWhite: Boolean = false,
+    saturation: Float = 1f,
     expanded: Boolean = false
 ) {
     val tiltState = LocalCardTilt.current
@@ -32,10 +32,10 @@ fun CollectiblesSketchbook(
             painter = painterResource(R.drawable.img_pocket_collectibles),
             contentDescription = "img_pocket_collectibles",
             contentScale = ContentScale.FillWidth,
-            colorFilter = remember(blackAndWhite) {
-                if (blackAndWhite) {
+            colorFilter = remember(saturation) {
+                if (saturation < 1f) {
                     val matrix = ColorMatrix().apply {
-                        setToSaturation(0f)
+                        setToSaturation(saturation)
                     }
 
                     ColorFilter.colorMatrix(matrix)
