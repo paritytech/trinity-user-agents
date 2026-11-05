@@ -138,14 +138,14 @@ impl FundingProviders {
 
 	/// The amounts a session can take in `scope`, across every provider a
 	/// quote is asked of.
-	pub fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
+	fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
 		let learned = lock(&self.learned).clone();
 		amount_limits(&self.quote_targets(), &learned, scope, current_unix_millis())
 	}
 
 	/// What the providers' manifests and recent quote answers say about each
 	/// country for `direction`, `rail` and `asset`.
-	pub fn countries(
+	fn countries(
 		&self,
 		direction: FundingDirection,
 		rail: FundingRail,
@@ -193,15 +193,6 @@ impl RuntimeServices {
 		}
 		self.refresh_funding_providers();
 		Ok(())
-	}
-
-	/// The providers a session in `direction` can be handed to.
-	pub fn funding_candidates(
-		self: &Arc<Self>,
-		direction: FundingDirection,
-	) -> Vec<FundingCandidate> {
-		self.refresh_funding_providers();
-		self.funding_providers().candidates(direction)
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send
