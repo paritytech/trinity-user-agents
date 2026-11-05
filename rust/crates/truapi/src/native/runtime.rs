@@ -10,11 +10,12 @@ use crate::{
 	logging::{HOST_SINK_DETAIL_MAX_CHARS, truncate_to_chars},
 	markers,
 	platform::{
-		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		ProductContext, ProductId,
+		CoreAdmin, CoreStorageKey, ExecutableKind, PermissionAuthorizationRequest,
+		PermissionAuthorizationStatus, ProductContext, ProductId, ProductPermissionAuthorization,
+		StoredPermissionRequest,
 	},
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{DecodeAll, Encode};
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
@@ -66,6 +67,8 @@ use crate::WorkerTransition;
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
 	runtime: Arc<SigningHostRuntime>,
+	/// The runtime's own platform, served by the callbacks it was built with.
+	platform: Arc<CallbackPlatform>,
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
@@ -138,6 +141,7 @@ impl NativeTrUApiHostRuntime {
 			callbacks: callbacks.clone(),
 			events: events.clone(),
 			storage_events: events.clone(),
+			runtime_callbacks: callbacks.clone(),
 		});
 		let spawner = executor.spawner();
 		let runtime = Arc::new(SigningHostRuntime::new(
@@ -166,7 +170,11 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its installation provider once"
 		);
 		assert!(
-			runtime.set_encrypted_storage(platform),
+			runtime.set_permission_status_host(platform.clone()),
+			"a freshly built runtime installs its permission status host once"
+		);
+		assert!(
+			runtime.set_encrypted_storage(platform.clone()),
 			"a freshly built runtime installs its encrypted storage once"
 		);
 		runtime.start_core_services();
@@ -181,6 +189,7 @@ impl NativeTrUApiHostRuntime {
 		}
 		Ok(Arc::new(Self {
 			runtime,
+			platform,
 			events,
 			spawner,
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
@@ -207,6 +216,7 @@ impl NativeTrUApiHostRuntime {
 			callbacks: callbacks.clone(),
 			events: events.clone(),
 			storage_events: self.events.clone(),
+			runtime_callbacks: self.platform.callbacks.clone(),
 		});
 		let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
 			callback_platform.clone();
@@ -256,6 +266,31 @@ impl NativeTrUApiHostRuntime {
 
 		execution
 	}
+}
+
+fn parse_product_id(product_id: String) -> Result<ProductId, HostRejection> {
+	product_id
+		.parse::<ProductId>()
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+}
+
+/// The product decision a core storage key holds, when it is such a slot.
+/// Slots shared under a bare manifest label and the decisions a product makes
+/// about another product are not listed per product, so they are skipped.
+fn permission_slot(encoded: &[u8]) -> Option<(ProductId, PermissionAuthorizationRequest)> {
+	let Ok(CoreStorageKey::PermissionAuthorization { scope, request }) =
+		CoreStorageKey::decode_all(&mut &*encoded)
+	else {
+		return None;
+	};
+	let request = match request {
+		StoredPermissionRequest::Device(permission) => PermissionAuthorizationRequest::Device(permission),
+		StoredPermissionRequest::Remote(request) => PermissionAuthorizationRequest::Remote(request),
+		StoredPermissionRequest::IdentityDisclosure => PermissionAuthorizationRequest::IdentityDisclosure,
+		StoredPermissionRequest::AccountAccess { .. }
+		| StoredPermissionRequest::CrossProductSignature { .. } => return None,
+	};
+	Some((scope.parse().ok()?, request))
 }
 
 /// A refused pairing call on the signing host's responder side.
@@ -556,6 +591,58 @@ impl NativeTrUApiHostRuntime {
 	/// Releasing with none held is a no-op.
 	pub fn release_worker(&self, product_id: ProductId) {
 		self.runtime.worker_ledger().release(&product_id);
+	}
+
+	/// Every permission decision stored for any product, read from the keys
+	/// the host holds in core storage. Each resolves like a status read, so a
+	/// device capability the OS refuses lists as `Denied` whatever is
+	/// stored, and a slot whose value the core cannot read is left out.
+	pub async fn permission_authorizations(
+		&self,
+	) -> Result<Vec<ProductPermissionAuthorization>, HostRejection> {
+		let mut authorizations = Vec::new();
+		for key in self.platform.callbacks.core_storage_keys().await? {
+			let Some((product_id, request)) = permission_slot(&key) else {
+				continue;
+			};
+			let status = self
+				.runtime
+				.permission_authorization_status(&product_id, request.clone())
+				.await?;
+			if status != PermissionAuthorizationStatus::NotDetermined {
+				authorizations.push(ProductPermissionAuthorization { product_id, request, status });
+			}
+		}
+		Ok(authorizations)
+	}
+
+	/// Read a product's stored permission decision without opening the
+	/// product, resolving the OS gate the same way an execution's read does.
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: String,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, HostRejection> {
+		let product_id = parse_product_id(product_id)?;
+		Ok(self.runtime.permission_authorization_status(&product_id, request).await?)
+	}
+
+	/// Update a product's stored permission decision without opening the
+	/// product. `NotDetermined` clears it, so the product's next request
+	/// prompts again.
+	pub fn set_permission_authorization_status(
+		&self,
+		product_id: String,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), HostRejection> {
+		let product_id = parse_product_id(product_id)?;
+		futures::executor::block_on(self.runtime.set_permission_authorization_status(
+			&product_id,
+			request,
+			status,
+		))?;
+		Ok(())
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -1658,6 +1745,145 @@ mod tests {
 		execution.shutdown();
 		let closed = matches!(authorize(), Err(HostRejection::Rejected { .. }));
 		assert_eq!((undecided, saved, denied, closed), ((false, 1), (true, 1), (false, 1), true));
+	}
+
+	fn permission_runtime(
+		callbacks: Arc<EventCallbacks>,
+	) -> (Arc<NativeTrUApiHostRuntime>, Arc<NativeProductExecution>) {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		let execution = host
+			.open_product_execution(
+				callbacks,
+				None,
+				None,
+				native_execution_config("motion.dot", ExecutableKind::App),
+			)
+			.unwrap();
+		(host, execution)
+	}
+
+	fn listed(host: &NativeTrUApiHostRuntime) -> Vec<ProductPermissionAuthorization> {
+		let mut authorizations =
+			futures::executor::block_on(host.permission_authorizations()).unwrap();
+		authorizations.sort_by(|left, right| left.product_id.cmp(&right.product_id));
+		authorizations
+	}
+
+	fn product_id(id: &str) -> ProductId {
+		id.parse().unwrap()
+	}
+
+	#[test]
+	fn stored_decisions_are_listed_per_product_and_their_changes_reported() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let (host, execution) = permission_runtime(callbacks.clone());
+		let motion = PermissionAuthorizationRequest::Device(
+			truapi::latest::HostDevicePermissionRequest::Motion,
+		);
+		let chain_submit =
+			PermissionAuthorizationRequest::Remote(truapi::latest::RemotePermissionRequest {
+				permission: truapi::latest::RemotePermission::ChainSubmit,
+			});
+		let before = listed(&host);
+		execution
+			.set_permission_authorization_status(
+				motion.clone(),
+				PermissionAuthorizationStatus::Authorized,
+			)
+			.unwrap();
+		host.set_permission_authorization_status(
+			"fetch.dot".to_string(),
+			chain_submit.clone(),
+			PermissionAuthorizationStatus::Denied,
+		)
+		.unwrap();
+		let after = listed(&host);
+		host.set_permission_authorization_status(
+			"fetch.dot".to_string(),
+			chain_submit.clone(),
+			PermissionAuthorizationStatus::NotDetermined,
+		)
+		.unwrap();
+		let cleared = listed(&host);
+		let changes = callbacks.permission_changes.lock().unwrap().clone();
+		assert_eq!(
+			(before, after, cleared, changes),
+			(
+				Vec::new(),
+				vec![
+					ProductPermissionAuthorization {
+						product_id: product_id("fetch.dot"),
+						request: chain_submit,
+						status: PermissionAuthorizationStatus::Denied,
+					},
+					ProductPermissionAuthorization {
+						product_id: product_id("motion.dot"),
+						request: motion.clone(),
+						status: PermissionAuthorizationStatus::Authorized,
+					},
+				],
+				vec![ProductPermissionAuthorization {
+					product_id: product_id("motion.dot"),
+					request: motion,
+					status: PermissionAuthorizationStatus::Authorized,
+				}],
+				vec!["motion.dot".to_string(), "fetch.dot".to_string(), "fetch.dot".to_string()],
+			)
+		);
+	}
+
+	#[test]
+	fn a_decision_set_on_the_runtime_governs_the_products_execution() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let (host, execution) = permission_runtime(callbacks.clone());
+		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
+		let request = PermissionAuthorizationRequest::Device(motion);
+		host.set_permission_authorization_status(
+			"motion.dot".to_string(),
+			request.clone(),
+			PermissionAuthorizationStatus::Authorized,
+		)
+		.unwrap();
+		let authorized = futures::executor::block_on(execution.authorize_device_permission(motion));
+		let read_back = futures::executor::block_on(
+			host.permission_authorization_status("motion.dot".to_string(), request),
+		);
+		let prompts = callbacks.device_permission_calls.load(Ordering::SeqCst);
+		let not_a_product = host.set_permission_authorization_status(
+			"not a product".to_string(),
+			PermissionAuthorizationRequest::IdentityDisclosure,
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(
+			(authorized.unwrap(), read_back.unwrap(), prompts, not_a_product.is_err()),
+			(true, PermissionAuthorizationStatus::Authorized, 0, true)
+		);
+	}
+
+	#[test]
+	fn a_listed_device_decision_resolves_the_os_gate_like_a_status_read() {
+		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
+		let callbacks = Arc::new(EventCallbacks::refusing(motion));
+		let (host, _execution) = permission_runtime(callbacks);
+		let request = PermissionAuthorizationRequest::Device(motion);
+		host.set_permission_authorization_status(
+			"motion.dot".to_string(),
+			request.clone(),
+			PermissionAuthorizationStatus::Authorized,
+		)
+		.unwrap();
+		assert_eq!(
+			listed(&host),
+			vec![ProductPermissionAuthorization {
+				product_id: product_id("motion.dot"),
+				request,
+				status: PermissionAuthorizationStatus::Denied,
+			}]
+		);
 	}
 
 	#[test]

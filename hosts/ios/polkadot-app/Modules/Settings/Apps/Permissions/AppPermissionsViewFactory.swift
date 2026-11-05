@@ -8,10 +8,12 @@ enum AppPermissionsViewFactory {
         productId: ProductId,
         productName: String
     ) -> AppPermissionsViewProtocol? {
+        let coreAuthorizations: TrUAPIPermissionAuthorizing? = RootDependencyLocator.getDependency()
         let interactor = AppPermissionsInteractor(
             productId: productId,
             providerFactory: ProductPermissionDataProviderFactory(),
-            repository: ProductPermissionRepository()
+            repository: ProductPermissionRepository(),
+            coreAuthorizations: coreAuthorizations
         )
 
         let wireframe = AppPermissionsWireframe()

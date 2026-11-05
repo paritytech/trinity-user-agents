@@ -47,6 +47,10 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     func clear(key: Data) throws {
         try withHostRejection { try storage.clear(key: key.toHex()) }
     }
+
+    func keys() throws -> [Data] {
+        try withHostRejection { try storage.keys().map { try Data(hexString: $0) } }
+    }
 }
 
 /// No-op product storage for host-level bridges that have no product scope.

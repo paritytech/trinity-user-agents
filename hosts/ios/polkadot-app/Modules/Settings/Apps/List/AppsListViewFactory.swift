@@ -7,8 +7,10 @@ enum AppsListViewFactory {
     ) -> AppsListViewProtocol? {
         let flowState = flowStateProvider.flowState()
 
+        let coreAuthorizations: TrUAPIPermissionAuthorizing? = RootDependencyLocator.getDependency()
         let interactor = AppsListInteractor(
             providerFactory: ProductPermissionDataProviderFactory(),
+            coreAuthorizations: coreAuthorizations,
             productResolver: flowState.productResolver
         )
 

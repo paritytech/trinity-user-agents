@@ -199,6 +199,17 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
+A native host runtime administers a product it has not opened through the
+same key: `permission_authorization_status(product_id, request)` and
+`set_permission_authorization_status(product_id, request, status)` on
+`NativeTrUApiHostRuntime`, served by the runtime's own platform so the OS gate
+still applies. `permission_authorizations` lists every stored decision across
+products by decoding the keys the host reports through
+`HostCallbacks::core_storage_keys`. Each write or clear of a
+`PermissionAuthorization` slot reaches the runtime's callbacks as
+`permission_authorizations_changed(product_id)`, whichever execution's prompt
+moved it.
+
 The embedder builds a role handle, `PairingHostRuntime::new(...)` or
 `SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:

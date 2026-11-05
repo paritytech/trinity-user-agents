@@ -1,6 +1,7 @@
 import Foundation
 import TrUAPIHost
 import ChainRegistry
+import Products
 import SubstrateSdk
 
 /// `HostBridge` for the process-wide ``TrUAPIHostRuntime``. It has no product
@@ -21,6 +22,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
+    private let osPermissionAsker: OSPermissionAsking
+    private let permissionChanges: TrUAPIPermissionChangeNotifier
     private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
@@ -32,6 +35,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
+        osPermissionAsker: OSPermissionAsking,
+        permissionChanges: TrUAPIPermissionChangeNotifier,
         encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
@@ -40,6 +45,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
         self.backedUpInstallation = backedUpInstallation
+        self.osPermissionAsker = osPermissionAsker
+        self.permissionChanges = permissionChanges
         self.encryptedStorage = encryptedStorage
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
@@ -80,6 +87,16 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         request _: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
         .deny
+    }
+
+    /// The settings screens read decisions through the runtime, so the OS gate
+    /// has to be answered here as well as on a product's own bridge.
+    func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
+        await TrUAPIDevicePermissionStatus.resolve(request, osPermissionAsker: osPermissionAsker)
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        permissionChanges.notify(productId: productId)
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
