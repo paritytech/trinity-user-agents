@@ -26,5 +26,6 @@ class RealProductImageResolver @Inject constructor(
             archive.file(productId, source.path).map(Uri::fromFile)
         }
         is JsImageSource.Bulletin -> ipfsContentLookup.getIpfsLinkFor(source.cid).map { it.toUri() }
+        is JsImageSource.Inline -> Result.failure(IllegalArgumentException("inline image bytes need no lookup"))
     }
 }

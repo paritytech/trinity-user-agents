@@ -14,6 +14,16 @@ sealed interface JsImageSource {
     @Serializable
     @SerialName("archive")
     data class Archive(val path: String) : JsImageSource
+
+    /** Bytes the tree carries itself, which the core has allowed. They need no lookup. */
+    @Serializable
+    @SerialName("inline")
+    class Inline(val bytes: ByteArray) : JsImageSource {
+        // Compared by content, so a redrawn face does not load the same picture again.
+        override fun equals(other: Any?) = other is Inline && bytes.contentEquals(other.bytes)
+
+        override fun hashCode() = bytes.contentHashCode()
+    }
 }
 
 @Serializable

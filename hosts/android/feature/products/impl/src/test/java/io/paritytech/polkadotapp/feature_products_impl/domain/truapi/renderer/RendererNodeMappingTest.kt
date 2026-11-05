@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -17,6 +18,8 @@ import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
+import uniffi.truapi.ImageProps
+import uniffi.truapi.ImageSource
 import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
@@ -104,5 +107,20 @@ class RendererNodeMappingTest {
 
         assertEquals(40, size.width)
         assertEquals(10, size.minHeight)
+    }
+
+    // The core decides which bytes may be drawn. A refused image keeps its size and draws nothing, and
+    // equal bytes map to equal sources, so a redrawn face does not load its picture again.
+    @Test
+    fun `an image carried as bytes is drawn only when the core allows them`() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00)
+        fun imageOf(bytes: ByteArray) =
+            RendererNode.Image(modifiers = listOf(Modifier.Width(40u)), props = ImageProps(source = ImageSource.Inline(bytes), fit = null))
+        val sized = listOf(JsModifier.Size(width = 40))
+
+        assertEquals(
+            listOf(JsWidget.Image(source = JsImageSource.Inline(png.copyOf()), modifiers = sized), JsWidget.Box(modifiers = sized)),
+            listOf(imageOf(png).toJsWidget(), imageOf("<svg/>".toByteArray()).toJsWidget()),
+        )
     }
 }

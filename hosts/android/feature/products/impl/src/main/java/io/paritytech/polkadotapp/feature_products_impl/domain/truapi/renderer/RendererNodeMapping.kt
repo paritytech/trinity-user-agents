@@ -28,6 +28,7 @@ import uniffi.truapi.Shape
 import uniffi.truapi.Size
 import uniffi.truapi.TypographyStyle
 import uniffi.truapi.VerticalAlignment
+import uniffi.truapi.inlineImageAllowed
 
 /**
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
@@ -156,7 +157,7 @@ private fun Shape.toJs(): JsShape = when (this) {
 private fun ImageSource.toJs(): JsImageSource? = when (this) {
     is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
     is ImageSource.Archive -> JsImageSource.Archive(v1)
-    is ImageSource.Inline -> null
+    is ImageSource.Inline -> v1.takeIf(::inlineImageAllowed)?.let(JsImageSource::Inline)
 }
 
 private fun ImageFit.toJs(): JsImageFit = when (this) {
