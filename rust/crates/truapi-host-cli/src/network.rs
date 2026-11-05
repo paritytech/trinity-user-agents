@@ -16,7 +16,7 @@ use self::{
 };
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
+	stack_descriptor::{FETCH_TIMEOUT, Roles, load_descriptor},
 };
 
 mod checks;
@@ -145,21 +145,27 @@ impl NetworkSource {
 			(Some(stack), _) => {
 				let descriptor = load_descriptor(&stack.value).await;
 				let base = descriptor
-					.and_then(|descriptor| stack::stack_network_config(&descriptor))
+					.and_then(|descriptor| {
+						stack::stack_network_config(&descriptor, self.chain_backend)
+					})
 					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
 				(base, None)
 			},
 			// A local copy replaces every route, so the bundled copy is enough.
-			(None, Some(_)) => (self.network.unwrap_or_default().config(), None),
+			(None, Some(_)) => (self.network.unwrap_or_default().config(self.chain_backend), None),
 			(None, None) => {
-				resolve::resolve_built_in(self.network.unwrap_or_default(), fetch_timeout).await?
+				resolve::resolve_built_in(
+					self.network.unwrap_or_default(),
+					fetch_timeout,
+					self.chain_backend,
+				)
+				.await?
 			},
 		};
 		let mut config = apply_chain_overrides(
 			apply_backend_override(base.clone(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
 			overrides,
 		);
-		config.chain_backend = self.chain_backend;
 		if let Some(path) = &local_path {
 			config = local_network::resolve(config, path)?;
 		}
@@ -180,10 +186,11 @@ impl Network {
 		}
 	}
 
-	/// The values compiled into this build, without fetching anything: a
-	/// built-in stack's bundled copy, or Polkadot's pinned values.
-	pub fn config(self) -> NetworkConfig {
-		resolve::bundled_config(self)
+	/// The values compiled into this build, reached over `chain_backend`,
+	/// without fetching anything: a built-in stack's bundled copy, or
+	/// Polkadot's pinned values.
+	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
+		resolve::bundled_config(self, chain_backend)
 	}
 }
 
@@ -203,20 +210,14 @@ pub struct NetworkConfig {
 	/// Identity backend base URL including `/api/v1`. `None` on a network with
 	/// no published backend, where [`IDENTITY_BACKEND_BASE_ENV`] must supply it.
 	pub identity_backend_base: Option<String>,
-	pub people_ws: String,
-	pub bulletin_ws: String,
-	/// Asset Hub RPC, where PGAS allowances are claimed.
-	pub asset_hub_ws: String,
-	pub people_genesis: [u8; 32],
-	pub bulletin_genesis: [u8; 32],
-	/// Asset Hub genesis hash, both the role's identity in
-	/// [`NetworkConfig::host_chain_set`] and its routing key, and the genesis the
-	/// CLI's Asset Hub extrinsics sign in `CheckGenesis`.
+	/// Each role's endpoint. A genesis hash is both the role's identity in
+	/// [`NetworkConfig::host_chain_set`] and its routing key; Asset Hub's is
+	/// also the genesis the CLI's Asset Hub extrinsics sign in `CheckGenesis`.
 	///
-	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
-	/// the chain does not report sends Asset Hub traffic to the fallback chain.
-	pub asset_hub_genesis: [u8; 32],
-	pub live_chain_endpoints: Vec<ChainEndpoint>,
+	/// Wrong here is worse than stale elsewhere: routing matches on the
+	/// genesis, so a value the chain does not report sends that role's traffic
+	/// to the People chain.
+	pub chains: Roles<ChainEndpoint>,
 	/// `DotnsPopController` to use when on-chain discovery finds none, for a
 	/// network whose gateway dispatcher is not set yet. Discovery wins when it
 	/// answers.
@@ -229,13 +230,11 @@ pub struct NetworkConfig {
 	pub chain_backend: ChainBackend,
 }
 
+/// A chain's genesis hash and the WebSocket RPC URL it is reached at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainEndpoint {
 	pub genesis: [u8; 32],
 	pub ws: String,
-	/// Whether host internals require this route even when optional product
-	/// Chain calls are disabled.
-	pub required_for_host: bool,
 }
 
 impl NetworkConfig {
@@ -264,31 +263,21 @@ impl NetworkConfig {
 	}
 
 	/// The chain set this network serves, for `Features::supported_chains`.
-	///
-	/// One entry per role this struct names a genesis hash for. `ChainEndpoint`
-	/// carries no role, so `live_chain_endpoints` cannot supply one — an endpoint's
-	/// identifier is not recoverable from it, which is why a served role needs its
-	/// own field here rather than a lookup into that list.
-	///
-	/// Every role listed must also be routable: `CliChainProvider` answers an
-	/// unmapped genesis with People, so a role the routing filter drops would
-	/// connect to the wrong chain while the host claimed to serve it.
-	/// `chain::tests::every_served_role_routes_to_its_own_chain` holds that.
 	pub fn host_chain_set(&self) -> HostChainSet {
 		HostChainSet {
 			network: self.id.clone(),
 			chains: vec![
 				HostChainEntry {
 					identifier: ChainIdentifier::People,
-					genesis_hash: self.people_genesis,
+					genesis_hash: self.chains.people.genesis,
 				},
 				HostChainEntry {
 					identifier: ChainIdentifier::Bulletin,
-					genesis_hash: self.bulletin_genesis,
+					genesis_hash: self.chains.bulletin.genesis,
 				},
 				HostChainEntry {
 					identifier: ChainIdentifier::AssetHub,
-					genesis_hash: self.asset_hub_genesis,
+					genesis_hash: self.chains.asset_hub.genesis,
 				},
 			],
 		}
@@ -300,28 +289,26 @@ impl NetworkConfig {
 	pub fn extension_versions(&self) -> ExtensionVersionMap {
 		ExtensionVersionMap {
 			chains: vec![
-				ChainExtensionVersion { genesis_hash: self.people_genesis, extension_version: 1 },
 				ChainExtensionVersion {
-					genesis_hash: self.asset_hub_genesis,
+					genesis_hash: self.chains.people.genesis,
+					extension_version: 1,
+				},
+				ChainExtensionVersion {
+					genesis_hash: self.chains.asset_hub.genesis,
 					extension_version: 1,
 				},
 			],
 		}
 	}
 
-	/// The network's own URL for a served role, independent of the genesis-keyed
-	/// routing table. Every genesis test resolves the role this way so that a
-	/// drifted hash cannot silently move them onto the fallback URL.
-	///
-	/// Matched exhaustively on purpose: adding a role to [`ChainIdentifier`]
-	/// should stop this compiling rather than reach a `None` that only a test
-	/// run notices, and one of those tests is `#[ignore]`d.
+	/// The endpoint of a served role; `None` for the relay chain, which no
+	/// network routes.
 	#[cfg(test)]
-	pub fn url_for_role(&self, role: ChainIdentifier) -> Option<&str> {
+	pub fn endpoint_for_role(&self, role: ChainIdentifier) -> Option<&ChainEndpoint> {
 		match role {
-			ChainIdentifier::People => Some(&self.people_ws),
-			ChainIdentifier::Bulletin => Some(&self.bulletin_ws),
-			ChainIdentifier::AssetHub => Some(&self.asset_hub_ws),
+			ChainIdentifier::People => Some(&self.chains.people),
+			ChainIdentifier::Bulletin => Some(&self.chains.bulletin),
+			ChainIdentifier::AssetHub => Some(&self.chains.asset_hub),
 			ChainIdentifier::Relay => None,
 		}
 	}

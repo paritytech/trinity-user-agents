@@ -7,7 +7,10 @@ use anyhow::{Result, anyhow, ensure};
 use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
 use super::{Network, NetworkConfig, polkadot, stack::stack_config};
-use crate::stack_descriptor::{FetchError, StackProjection, fetch, unix_now};
+use crate::{
+	chain::ChainBackend,
+	stack_descriptor::{FetchError, StackProjection, fetch, unix_now},
+};
 
 /// How long a built-in stack's published descriptor may take before the
 /// bundled copy is used instead.
@@ -45,13 +48,15 @@ fn built_in_stack(network: Network) -> Option<BuiltInStack> {
 	}
 }
 
-/// `network`'s values compiled into this build, without fetching anything: a
-/// built-in stack's bundled copy, or Polkadot's pinned values.
-pub fn bundled_config(network: Network) -> NetworkConfig {
-	let Some(built_in) = built_in_stack(network) else { return polkadot::config() };
+/// `network`'s values compiled into this build, reached over `chain_backend`,
+/// without fetching anything: a built-in stack's bundled copy, or Polkadot's
+/// pinned values.
+pub fn bundled_config(network: Network, chain_backend: ChainBackend) -> NetworkConfig {
+	let Some(built_in) = built_in_stack(network) else { return polkadot::config(chain_backend) };
 	let bundled =
 		trinity_stack::open(built_in.bundle, &built_in.pointer()).expect("invalid bundled stack");
-	stack_config(&bundled.descriptor, network.id().to_owned()).expect("invalid bundled stack")
+	stack_config(&bundled.descriptor, network.id().to_owned(), chain_backend)
+		.expect("invalid bundled stack")
 }
 
 /// For a built-in stack, the published descriptor when it is newer than the
@@ -61,8 +66,11 @@ pub fn bundled_config(network: Network) -> NetworkConfig {
 pub async fn resolve_built_in(
 	network: Network,
 	fetch_timeout: Duration,
+	chain_backend: ChainBackend,
 ) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
-	let Some(built_in) = built_in_stack(network) else { return Ok((polkadot::config(), None)) };
+	let Some(built_in) = built_in_stack(network) else {
+		return Ok((polkadot::config(chain_backend), None));
+	};
 	let id = network.id();
 	let pointer = built_in.pointer();
 	let url = pointer.url().as_str();
@@ -83,7 +91,7 @@ pub async fn resolve_built_in(
 		None => {},
 	}
 	let origin = BuiltInOrigin { id, url: url.to_owned(), copy: refresh.copy };
-	Ok((stack_config(&refresh.descriptor, id.to_owned())?, Some(origin)))
+	Ok((stack_config(&refresh.descriptor, id.to_owned(), chain_backend)?, Some(origin)))
 }
 
 /// Which copy of a built-in stack's descriptor a network runs on.

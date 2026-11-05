@@ -1,6 +1,8 @@
 use super::*;
 use tempfile::tempdir;
 
+use crate::chain::ChainBackend;
+
 const MNEMONIC: &str =
 	"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -22,7 +24,7 @@ fn record(name: &str, network: &str, attested: bool) -> AccountRecord {
 #[tokio::test]
 async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<()> {
 	let directory = tempdir()?;
-	let network = crate::network::Network::PaseoNextV2.config();
+	let network = crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let network_id = network.id.as_str();
 	let mut store = AccountStore::load(directory.path())?;
 	let mut pending = record("auto-1", network_id, false);
@@ -91,7 +93,7 @@ fn debug_output_redacts_signer_secrets() {
 
 	let config = ResolveSignerConfig {
 		base_path: Path::new("/tmp"),
-		network: &crate::network::Network::PaseoNextV2.config(),
+		network: &crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 		mnemonic: Some(MNEMONIC.to_string()),
 		account: None,
 		lite_username_prefix: None,
@@ -239,9 +241,12 @@ fn cached_signer_resolves_without_network_access() -> Result<()> {
 	store.upsert(record("auto-1", "paseo-next-v2", true));
 	store.save()?;
 
-	let signer =
-		resolve_cached_signer(dir.path(), &crate::network::Network::PaseoNextV2.config(), None)?
-			.expect("cached signer");
+	let signer = resolve_cached_signer(
+		dir.path(),
+		&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
+		None,
+	)?
+	.expect("cached signer");
 
 	assert_eq!(signer.account_name.as_deref(), Some("auto-1"));
 	assert_eq!(signer.lite_username.as_deref(), Some("auto-1lite.01"));
@@ -259,8 +264,12 @@ fn cached_signer_ignores_legacy_username_base() -> Result<()> {
 	store.save()?;
 
 	assert!(
-		resolve_cached_signer(dir.path(), &crate::network::Network::PaseoNextV2.config(), None)?
-			.is_none()
+		resolve_cached_signer(
+			dir.path(),
+			&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
+			None
+		)?
+		.is_none()
 	);
 	Ok(())
 }
@@ -275,7 +284,10 @@ async fn attest_is_refused_on_a_real_identity_preset() {
 
 /// A preset whose identities are real, standing in for a production one.
 fn production_network() -> NetworkConfig {
-	NetworkConfig { disposable_identities: false, ..crate::network::Network::PaseoNextV2.config() }
+	NetworkConfig {
+		disposable_identities: false,
+		..crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc)
+	}
 }
 
 #[tokio::test]
@@ -323,7 +335,7 @@ fn production_network_never_signs_from_the_account_store() -> Result<()> {
 		public_key: identity.public_key,
 		address: identity.address,
 	};
-	let testnet = crate::network::Network::PaseoNextV2.config();
+	let testnet = crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc);
 	persist_imported_signer(dir.path(), &testnet, &imported)?;
 	let cached = |network| resolve_cached_signer(dir.path(), network, Some(IMPORTED_ACCOUNT_NAME));
 	assert!(cached(&testnet)?.is_some());
@@ -349,7 +361,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 
 	let signer = persist_imported_signer(
 		dir.path(),
-		&crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 		&imported,
 	)?;
 
@@ -358,7 +370,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 	assert!(!signer.auto_managed);
 	let cached = resolve_cached_signer(
 		dir.path(),
-		&crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
 	.expect("imported signer is cached");
@@ -389,13 +401,13 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 	assert!(session_name.starts_with("imported-"));
 	let signer = persist_imported_signer(
 		dir.path(),
-		&crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 		&imported,
 	)?;
 	assert_eq!(signer.lite_username, None);
 	let cached = resolve_cached_signer(
 		dir.path(),
-		&crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
 	.expect("username-less imported signer is cached");

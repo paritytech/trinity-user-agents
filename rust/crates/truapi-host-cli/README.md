@@ -1197,8 +1197,7 @@ one-shot modes.
 
 - **Chain methods** route to real `wss://` nodes from the selected `--network`,
   or to the light client (`--chain-backend`). Every role the network serves is
-  routed unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to endpoints it
-  carries without serving.
+  routed unconditionally.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

@@ -70,13 +70,17 @@ fn stack_with_people_at(url: &str) -> NetworkConfig {
 		.find(|chain| chain.role == "People")
 		.expect("People missing")
 		.rpc = vec![url.to_owned()];
-	stack_network_config(&descriptor).unwrap()
+	stack_network_config(&descriptor, ChainBackend::Rpc).unwrap()
 }
 
 /// The stack on closed ports with a loopback People that reports its own
 /// genesis and `network_suffix`.
 async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> NetworkConfig {
-	let genesis = stack_network_config(&stack_on_closed_ports()).unwrap().people_genesis;
+	let genesis = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc)
+		.unwrap()
+		.chains
+		.people
+		.genesis;
 	stack_with_people_at(&serve_chain(genesis, network_suffix).await)
 }
 
@@ -85,21 +89,15 @@ async fn verify_stack_endpoints(
 	unanswered: Unanswered,
 	built_in: Option<&BuiltInOrigin>,
 ) -> Result<()> {
-	verify_endpoints(
-		config,
-		&config.live_chain_endpoints,
-		unanswered,
-		built_in,
-		Some(config.network_suffix),
-	)
-	.await
+	let endpoints: Vec<_> = config.chains.iter().cloned().collect();
+	verify_endpoints(config, &endpoints, unanswered, built_in, Some(config.network_suffix)).await
 }
 
 /// An endpoint that does not answer is not evidence of a wrong stack, so it
 /// is left to fail on first use.
 #[tokio::test]
 async fn test_stack_endpoint_unreachable() {
-	let config = stack_network_config(&stack_on_closed_ports()).unwrap();
+	let config = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
 	verify_stack_endpoints(&config, Unanswered::Warn, None)
 		.await
 		.expect("unreachable endpoint rejected");
@@ -129,7 +127,7 @@ async fn test_silent_endpoint_deadline() {
 /// cannot answer is an error before anything runs.
 #[tokio::test]
 async fn test_rerouted_endpoint_unreachable_error() {
-	let config = stack_network_config(&stack_on_closed_ports()).unwrap();
+	let config = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
 	let error = verify_stack_endpoints(&config, Unanswered::Fail, None)
 		.await
 		.expect_err("unreachable rerouted endpoint accepted");
@@ -220,7 +218,8 @@ async fn test_network_suffix_absent_or_unreachable() {
 	verify_stack_endpoints(&absent, Unanswered::Warn, None)
 		.await
 		.expect("absent suffix rejected");
-	let closed_port_config = stack_network_config(&stack_on_closed_ports()).unwrap();
+	let closed_port_config =
+		stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
 	verify_stack_endpoints(&closed_port_config, Unanswered::Warn, None)
 		.await
 		.expect("unreachable People rejected");
@@ -232,17 +231,17 @@ async fn test_network_suffix_absent_or_unreachable() {
 /// override reroutes.
 #[test]
 fn test_chain_checks_by_source() {
-	let paseo = Network::PaseoNextV2.config();
+	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let built_in = plan_chain_checks(&paseo, &paseo, false, None);
 	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
 	assert_eq!(built_in.expected_suffix, Some("paseo"));
 
-	let polkadot = Network::Polkadot.config();
+	let polkadot = Network::Polkadot.config(ChainBackend::Rpc);
 	let polkadot_checks = plan_chain_checks(&polkadot, &polkadot, false, None);
 	assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
 	assert_eq!(polkadot_checks.expected_suffix, None);
 
-	let light_client = NetworkConfig { chain_backend: ChainBackend::LightClient, ..paseo.clone() };
+	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
 	let light_client = plan_chain_checks(&light_client, &paseo, false, None);
 	assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
 	assert_eq!(light_client.expected_suffix, None);
@@ -259,33 +258,33 @@ fn test_chain_checks_by_source() {
 /// set to another role's URL, which only its genesis tells apart.
 #[test]
 fn test_split_rerouted() {
-	let base = Network::PaseoNextV2.config();
-	let overrides = ChainOverrides::parse([Some(base.bulletin_ws.clone()), None, None]).unwrap();
+	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
+	let overrides =
+		ChainOverrides::parse([Some(base.chains.bulletin.ws.clone()), None, None]).unwrap();
 	let config = apply_chain_overrides(base.clone(), overrides);
 	let (rerouted, untouched) = split_rerouted(&config, &base);
 	assert_eq!(rerouted.len(), 1);
-	assert_eq!((rerouted[0].genesis, &rerouted[0].ws), (base.people_genesis, &base.bulletin_ws));
+	assert_eq!(
+		(rerouted[0].genesis, &rerouted[0].ws),
+		(base.chains.people.genesis, &base.chains.bulletin.ws)
+	);
 	assert_eq!(untouched.len(), 2);
-	assert!(untouched.iter().all(|endpoint| endpoint.genesis != base.people_genesis));
+	assert!(untouched.iter().all(|endpoint| endpoint.genesis != base.chains.people.genesis));
 }
 
 /// A built-in stack that restarted from genesis after this build has chains
 /// the light client's bundled specs cannot sync.
 #[test]
 fn test_light_client_after_restart_error() {
-	let restarted = NetworkConfig {
-		chain_backend: ChainBackend::LightClient,
-		people_genesis: [0x5a; 32],
-		..Network::PaseoNextV2.config()
-	};
+	let mut restarted = Network::PaseoNextV2.config(ChainBackend::LightClient);
+	restarted.chains.people.genesis = [0x5a; 32];
 	let error = refuse_light_client(&restarted).unwrap_err();
 	assert!(error.to_string().contains("--chain-backend rpc"));
 }
 
 #[test]
 fn test_light_client_unknown_network_error() {
-	let polkadot =
-		NetworkConfig { chain_backend: ChainBackend::LightClient, ..Network::Polkadot.config() };
+	let polkadot = Network::Polkadot.config(ChainBackend::LightClient);
 	let error = refuse_light_client(&polkadot).unwrap_err();
 	assert!(error.to_string().contains("no chain specs for polkadot"));
 }
@@ -297,12 +296,11 @@ fn test_light_client_unknown_network_error() {
 fn test_light_client_catalog_match() {
 	let bundled: Vec<_> = Network::value_variants()
 		.iter()
-		.map(|network| network.config())
+		.map(|network| network.config(ChainBackend::LightClient))
 		.filter(|config| truapi_provider::known_networks().any(|known| known == config.id))
 		.collect();
 	assert!(!bundled.is_empty());
 	for config in bundled {
-		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..config };
-		refuse_light_client(&light).expect("light-client catalog differs");
+		refuse_light_client(&config).expect("light-client catalog differs");
 	}
 }

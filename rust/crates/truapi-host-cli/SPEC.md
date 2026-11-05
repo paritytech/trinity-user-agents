@@ -1838,8 +1838,7 @@ because host internals require all three: statement-store traffic addressed to t
 People genesis, preimage submission, and PGAS claims plus dotNS username reads
 respectively. The SSO sentinel is
 a separate case (an unmapped genesis) and reaches People through the fallback
-below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to endpoints the
-network carries without serving them as a role, of which no network has any.
+below, not through People's own route.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to People, on either chain backend (§14.3).
@@ -2394,7 +2393,6 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `VISUAL` | Preferred script editor. |
 | `EDITOR` | Fallback script editor. |
 | `TRUAPI_HOST_RUNNER` | Override `js/runner.ts`. |
-| `E2E_LIVE_CHAIN` | Value `1` widens routing to endpoints the network does not serve as a role; no effect on any built-in network. |
 | `NO_COLOR` | Disable CLI semantic colors and battery reporter color. |
 | `COLORFGBG` | Infer TUI background color. |
 | `COLORTERM` | Select true-color TUI rendering. |

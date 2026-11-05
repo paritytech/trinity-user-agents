@@ -328,9 +328,11 @@ pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 
 	let chains = CliChainProvider::new(config.network);
 	let people_signing_context =
-		signing_context_of(&chains, config.network.people_genesis, PEOPLE_LITE_PALLET).await?;
+		signing_context_of(&chains, config.network.chains.people.genesis, PEOPLE_LITE_PALLET)
+			.await?;
 	let asset_hub_signing_context =
-		signing_context_of(&chains, config.network.asset_hub_genesis, DOTNS_GATEWAY_PALLET).await?;
+		signing_context_of(&chains, config.network.chains.asset_hub.genesis, DOTNS_GATEWAY_PALLET)
+			.await?;
 	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,

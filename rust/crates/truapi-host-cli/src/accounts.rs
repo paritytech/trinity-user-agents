@@ -703,13 +703,13 @@ async fn wait_for_ring_membership(network: &NetworkConfig, entropy: &[u8]) -> Re
 			)),
 			crate::terminal_ui::ActivityState::Running,
 		);
-		let rpc = match chains.rpc_client(network.people_genesis).await {
+		let rpc = match chains.rpc_client(network.chains.people.genesis).await {
 			Ok(rpc) => alloc::rpc::RpcClient::new(rpc),
 			Err(err) => {
 				warn!(
 					attempt,
 					max_attempts = MAX_ATTEMPTS,
-					location = chains.location(network.people_genesis),
+					location = chains.location(network.chains.people.genesis),
 					error = %err,
 					"could not connect while checking personhood ring membership"
 				);

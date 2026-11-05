@@ -4,6 +4,8 @@ use tokio::{
 	net::TcpListener,
 };
 
+use crate::chain::ChainBackend;
+
 /// The availability response is a flat `{base: status}` map.
 #[test]
 fn availability_reads_flat_and_versioned_status_maps() {
@@ -65,7 +67,7 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 		SigningContexts { people: None, asset_hub: None },
 	)?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-	let mut network = crate::network::Network::default().config();
+	let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
 	network.identity_backend_base = Some(backend_base);
 	let config = AttestConfig {
 		network: &network,

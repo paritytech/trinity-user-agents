@@ -1,5 +1,5 @@
 use super::*;
-use crate::network::Network;
+use crate::{chain::ChainBackend, network::Network};
 
 fn config(network: &str) -> serde_json::Value {
 	serde_json::json!({
@@ -14,28 +14,29 @@ fn config(network: &str) -> serde_json::Value {
 #[test]
 fn test_local_routes_presets() {
 	for network in [Network::Previewnet, Network::PaseoNextV2] {
-		let base = network.config();
+		let base = network.config(ChainBackend::Rpc);
 		let resolved = parse(base.clone(), &config(&base.id).to_string()).unwrap();
 		assert_eq!(resolved.id, base.id);
 		assert_eq!(resolved.network_suffix, base.network_suffix);
 		assert_eq!(resolved.identity_backend_base.as_deref(), Some("http://127.0.0.1:8092/api/v1"));
-		assert_eq!(resolved.live_chain_endpoints.len(), 3);
-		for role in resolved.host_chain_set().chains {
-			let route = resolved
-				.live_chain_endpoints
-				.iter()
-				.find(|route| route.genesis == role.genesis_hash)
-				.unwrap();
-			assert_eq!(Some(route.ws.as_str()), resolved.url_for_role(role.identifier));
-			assert!(route.required_for_host);
-			assert!(route.ws.starts_with("ws://127.0.0.1:"));
-		}
+		let local = |genesis: u8, port: u16| ChainEndpoint {
+			genesis: [genesis; 32],
+			ws: format!("ws://127.0.0.1:{port}"),
+		};
+		assert_eq!(
+			resolved.chains,
+			Roles {
+				people: local(0x11, 10010),
+				asset_hub: local(0x22, 10020),
+				bulletin: local(0x33, 10030)
+			}
+		);
 	}
 }
 
 #[test]
 fn test_namespace_mismatch_or_missing_chain_error() {
-	let base = Network::PaseoNextV2.config();
+	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	assert!(parse(base.clone(), &config("previewnet").to_string()).is_err());
 	let mut incomplete = config(&base.id);
 	incomplete.as_object_mut().unwrap().remove("bulletin");
@@ -44,7 +45,7 @@ fn test_namespace_mismatch_or_missing_chain_error() {
 
 #[test]
 fn test_genesis_malformed_or_duplicate_error() {
-	let base = Network::PaseoNextV2.config();
+	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	for value in ["0x01".to_string(), "0xzz".repeat(32), "11".repeat(32)] {
 		let mut document = config(&base.id);
 		document["people"]["genesis"] = value.into();
@@ -68,7 +69,7 @@ fn test_endpoint_loopback_scheme() {
 	}
 	let mut document = config("previewnet");
 	document["identity_backend_base"] = "https://identity.example/api/v1".into();
-	assert!(parse(Network::Previewnet.config(), &document.to_string()).is_err());
+	assert!(parse(Network::Previewnet.config(ChainBackend::Rpc), &document.to_string()).is_err());
 }
 
 /// A local copy runs on disposable identities, so a network whose
@@ -78,9 +79,9 @@ fn test_real_identity_network_error() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("local-network.json");
 	std::fs::write(&path, config("polkadot").to_string()).unwrap();
-	let error = resolve(Network::Polkadot.config(), path.as_os_str())
+	let error = resolve(Network::Polkadot.config(ChainBackend::Rpc), path.as_os_str())
 		.expect_err("local network accepted on polkadot");
 	assert!(error.to_string().contains("real identities"));
 	std::fs::write(&path, config("previewnet").to_string()).unwrap();
-	assert!(resolve(Network::Previewnet.config(), path.as_os_str()).is_ok());
+	assert!(resolve(Network::Previewnet.config(ChainBackend::Rpc), path.as_os_str()).is_ok());
 }

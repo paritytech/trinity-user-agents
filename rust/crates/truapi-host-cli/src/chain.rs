@@ -53,9 +53,8 @@ pub enum ChainBackend {
 /// Chain provider shared by the host runtime, dotNS reads and Bulletin
 /// preimage lookups.
 ///
-/// Routing is the same on both backends. Every role the network serves (People,
-/// Bulletin and Asset Hub) is routed to its own chain, and the test switch also
-/// routes endpoints the network carries without serving them. The all-zero SSO
+/// Routing is the same on both backends. Each role the network serves (People,
+/// Bulletin and Asset Hub) is routed to its own chain. The all-zero SSO
 /// sentinel and any other genesis are answered by People.
 pub struct CliChainProvider {
 	/// The product namespace, which selects the light client's chain specs.
@@ -74,23 +73,9 @@ enum Backend {
 }
 
 impl CliChainProvider {
-	/// Reads the test switch from the `E2E_LIVE_CHAIN` environment variable.
+	/// A provider for `network`'s chains over its chain backend.
 	pub fn new(network: &NetworkConfig) -> Self {
-		let live_chain_routing = std::env::var("E2E_LIVE_CHAIN").as_deref() == Ok("1");
-		Self::with_live_chain_routing(network, live_chain_routing)
-	}
-
-	fn with_live_chain_routing(network: &NetworkConfig, live_chain_routing: bool) -> Self {
-		// People remains the fallback for the SSO sentinel. Bulletin backs preimage
-		// submission and Asset Hub backs PGAS claims, so all three are host
-		// dependencies and must never be gated by the product-facing Chain/* switch.
-		let routes = network
-			.live_chain_endpoints
-			.iter()
-			.filter(|endpoint| endpoint.required_for_host || live_chain_routing)
-			.cloned()
-			.collect();
-		Self::with_routes(network, routes, network.chain_backend)
+		Self::with_routes(network, network.chains.iter().cloned().collect(), network.chain_backend)
 	}
 
 	/// A provider for `endpoint` alone, over RPC, so a check reaches exactly the
@@ -121,7 +106,7 @@ impl CliChainProvider {
 		};
 		Self {
 			network_id: network.id.clone(),
-			people_genesis: network.people_genesis,
+			people_genesis: network.chains.people.genesis,
 			routes,
 			backend,
 		}
@@ -148,17 +133,6 @@ impl CliChainProvider {
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&ChainEndpoint> {
 		let routed = |genesis| self.routes.iter().find(|endpoint| endpoint.genesis == genesis);
 		routed(genesis_hash).or_else(|| routed(self.people_genesis))
-	}
-
-	/// Whether a genesis is routed to its own chain rather than to People.
-	///
-	/// Test-only because production has no reason to care: `chain_for` resolves
-	/// either way. A test does, since People is the fallback, so asserting on the
-	/// resolved URL cannot tell a routed People from a dropped one.
-	#[cfg(test)]
-	fn routes(&self, genesis_hash: &[u8; 32]) -> bool {
-		self.chain_for(*genesis_hash)
-			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
 	}
 
 	/// Where requests for `genesis_hash` go, for messages: the URL of the RPC

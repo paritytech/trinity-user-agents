@@ -74,12 +74,11 @@ fn split_rerouted(
 	config: &NetworkConfig,
 	base: &NetworkConfig,
 ) -> (Vec<ChainEndpoint>, Vec<ChainEndpoint>) {
-	config.live_chain_endpoints.iter().cloned().partition(|endpoint| {
-		!base
-			.live_chain_endpoints
-			.iter()
-			.any(|chain| chain.genesis == endpoint.genesis && chain.ws == endpoint.ws)
-	})
+	config
+		.chains
+		.iter()
+		.cloned()
+		.partition(|endpoint| !base.chains.iter().any(|chain| chain == endpoint))
 }
 
 /// What a genesis mismatch on a built-in stack's endpoints adds to its error.
@@ -115,7 +114,11 @@ pub fn refuse_light_client(config: &NetworkConfig) -> Result<()> {
 		})?;
 	ensure!(
 		(catalog.people, catalog.assethub, catalog.bulletin) ==
-			(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
+			(
+				config.chains.people.genesis,
+				config.chains.asset_hub.genesis,
+				config.chains.bulletin.genesis
+			),
 		"this build's light-client chain specs for {} predate the stack's restart from genesis; \
 		 use --chain-backend rpc, or `truapi-host update` once a release ships the new specs",
 		config.id
@@ -173,7 +176,8 @@ async fn verify_endpoints(
 	expected_suffix: Option<&str>,
 ) -> Result<()> {
 	let checks = endpoints.iter().map(|endpoint| async move {
-		let expected_suffix = expected_suffix.filter(|_| endpoint.genesis == config.people_genesis);
+		let expected_suffix =
+			expected_suffix.filter(|_| endpoint.genesis == config.chains.people.genesis);
 		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
 		let report = match unanswered {
 			Unanswered::Fail => probe.await,

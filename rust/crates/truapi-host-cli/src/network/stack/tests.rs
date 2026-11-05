@@ -28,24 +28,16 @@ fn test_stack_config_from_descriptor() {
 		}
 	});
 
-	let config = stack_network_config(&descriptor).unwrap();
+	let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
 
 	assert_eq!(config.id, "staging");
 	assert_eq!(config.network_suffix, "testnet");
 	assert_eq!(config.identity_backend_base.as_deref(), Some("https://dub.example/api/v1"));
 	assert_eq!(config.dotns_pop_controller, Some([0xab; 20]));
 	assert!(config.disposable_identities);
-	assert_eq!(config.people_ws, "ws://127.0.0.1:9944");
-	assert_eq!(config.people_genesis, [0x11; 32]);
-	let paseo = Network::PaseoNextV2.config();
-	assert_eq!(
-		(config.asset_hub_ws, config.asset_hub_genesis),
-		(paseo.asset_hub_ws, paseo.asset_hub_genesis)
-	);
-	assert_eq!(
-		(config.bulletin_ws, config.bulletin_genesis),
-		(paseo.bulletin_ws, paseo.bulletin_genesis)
-	);
+	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
+	let people = ChainEndpoint { genesis: [0x11; 32], ws: "ws://127.0.0.1:9944".to_owned() };
+	assert_eq!(config.chains, Roles { people, ..paseo.chains });
 }
 
 /// Reserved identities derive under the TLD, and navigation accepts only the
@@ -53,7 +45,7 @@ fn test_stack_config_from_descriptor() {
 #[test]
 fn test_stack_unserved_tld_error() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let error = stack_network_config(&staging).unwrap_err();
+	let error = stack_network_config(&staging, ChainBackend::Rpc).unwrap_err();
 	assert!(error.to_string().contains("staging"));
 }
 
@@ -61,10 +53,10 @@ fn test_stack_unserved_tld_error() {
 /// would send one role's traffic to the other's chain.
 #[test]
 fn test_stack_shared_genesis_error() {
-	let paseo = Network::PaseoNextV2.config();
-	let shared = format!("0x{}", hex::encode(paseo.people_genesis));
+	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
+	let shared = format!("0x{}", hex::encode(paseo.chains.people.genesis));
 	let descriptor = edit_chain("Bulletin", |chain| chain["genesisHash"] = shared.into());
-	assert!(stack_network_config(&descriptor).is_err());
+	assert!(stack_network_config(&descriptor, ChainBackend::Rpc).is_err());
 }
 
 /// A stack id becomes a state directory name, so one that is not a plain
@@ -72,7 +64,7 @@ fn test_stack_shared_genesis_error() {
 #[test]
 fn test_stack_id_not_label() {
 	let descriptor = edit_stack(|descriptor| descriptor["id"] = "../elsewhere".into());
-	assert!(stack_network_config(&descriptor).is_err());
+	assert!(stack_network_config(&descriptor, ChainBackend::Rpc).is_err());
 }
 
 #[test]
@@ -83,6 +75,6 @@ fn test_stack_missing_role_error() {
 			.unwrap()
 			.retain(|chain| chain["role"] != "Bulletin");
 	});
-	let error = stack_network_config(&descriptor).unwrap_err();
+	let error = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap_err();
 	assert!(error.to_string().contains("no Bulletin chain"));
 }

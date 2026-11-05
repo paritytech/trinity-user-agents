@@ -253,7 +253,7 @@ impl CliPlatform {
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
 		let chain = Arc::new(CliChainProvider::new(network));
-		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.bulletin_genesis);
+		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.chains.bulletin.genesis);
 		Arc::new(Self {
 			chain,
 			chains: network.host_chain_set(),

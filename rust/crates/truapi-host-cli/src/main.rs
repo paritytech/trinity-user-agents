@@ -731,9 +731,9 @@ fn print_network(config: &NetworkConfig) {
 			"network": config.id,
 			"namespace": config.network_suffix,
 			"identity_backend_base": config.identity_backend_base,
-			"people": chain(&config.people_ws, config.people_genesis),
-			"asset_hub": chain(&config.asset_hub_ws, config.asset_hub_genesis),
-			"bulletin": chain(&config.bulletin_ws, config.bulletin_genesis),
+			"people": chain(&config.chains.people.ws, config.chains.people.genesis),
+			"asset_hub": chain(&config.chains.asset_hub.ws, config.chains.asset_hub.genesis),
+			"bulletin": chain(&config.chains.bulletin.ws, config.chains.bulletin.genesis),
 		})
 	);
 }
@@ -779,18 +779,18 @@ async fn run_pgas_check(
 	};
 
 	let chains = chain::CliChainProvider::new(&network);
-	let people_location = chains.location(network.people_genesis);
+	let people_location = chains.location(network.chains.people.genesis);
 	let people_rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.people_genesis)
+			.rpc_client(network.chains.people.genesis)
 			.await
 			.with_context(|| format!("connect to People ({people_location})"))?,
 	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_location = chains.location(network.asset_hub_genesis);
+	let asset_hub_location = chains.location(network.chains.asset_hub.genesis);
 	let asset_hub_rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.asset_hub_genesis)
+			.rpc_client(network.chains.asset_hub.genesis)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
 	);
@@ -891,8 +891,10 @@ async fn run_pgas_check(
 	}
 
 	let extrinsics = extrinsic_service(&network);
-	let asset_hub_target =
-		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.asset_hub_genesis) };
+	let asset_hub_target = ExtrinsicTarget {
+		extrinsics: &extrinsics,
+		genesis: H256(network.chains.asset_hub.genesis),
+	};
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: &asset_hub_rpc,
 		asset_hub_metadata: &asset_hub_metadata,
@@ -951,10 +953,10 @@ async fn run_alloc_check(
 	};
 
 	let chains = chain::CliChainProvider::new(&network);
-	let location = chains.location(network.people_genesis);
+	let location = chains.location(network.chains.people.genesis);
 	let rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.people_genesis)
+			.rpc_client(network.chains.people.genesis)
 			.await
 			.with_context(|| format!("connect to People ({location})"))?,
 	);
@@ -1045,8 +1047,10 @@ async fn run_alloc_check(
 		.await
 		.map_err(anyhow::Error::msg)?;
 		let extrinsics = extrinsic_service(&network);
-		let target_chain =
-			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.people_genesis) };
+		let target_chain = ExtrinsicTarget {
+			extrinsics: &extrinsics,
+			genesis: H256(network.chains.people.genesis),
+		};
 		match alloc::register_statement_account_pooled(
 			&rpc,
 			&metadata,
@@ -1348,9 +1352,9 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
+		network.chains.people.genesis,
+		network.chains.bulletin.genesis,
+		network.chains.asset_hub.genesis,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1895,9 +1899,9 @@ fn build_signing_runtime(
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
+		network.chains.people.genesis,
+		network.chains.bulletin.genesis,
+		network.chains.asset_hub.genesis,
 		network.network_suffix.to_string(),
 	)
 	.context("invalid signing host config")?;
@@ -4156,7 +4160,7 @@ mod cli_tests {
 	const SESSION_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 	async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
-		let network = Network::default().config();
+		let network = Network::default().config(ChainBackend::Rpc);
 		let catalog = SessionCatalog::new(base_path.to_path_buf(), &network.id)?;
 		catalog.set_current(name)?;
 		start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None)
@@ -4403,7 +4407,7 @@ mod cli_tests {
 		// mixes two ledgers.
 		let profile = tempfile::tempdir().unwrap();
 		let (runtime, _platform) = build_signing_runtime(
-			&crate::network::Network::PaseoNextV2.config(),
+			&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 			profile.path().to_path_buf(),
 			profile.path().join("storage"),
 			ApprovalPolicy::AutoAccept,
@@ -4437,7 +4441,7 @@ mod cli_tests {
 			.unwrap();
 		let build = || {
 			build_signing_runtime(
-				&crate::network::Network::PaseoNextV2.config(),
+				&crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc),
 				profile.clone(),
 				profile.join("storage"),
 				ApprovalPolicy::AutoAccept,
@@ -4525,10 +4529,7 @@ mod cli_tests {
 	/// out its timeout. It is refused before a key is derived or a chain dialed.
 	#[tokio::test]
 	async fn pgas_check_refuses_to_submit_on_the_light_client() {
-		let network = NetworkConfig {
-			chain_backend: chain::ChainBackend::LightClient,
-			..Network::default().config()
-		};
+		let network = Network::default().config(ChainBackend::LightClient);
 
 		let error = run_pgas_check(String::new(), network, Some("00".repeat(32)), 8, true)
 			.await
@@ -4951,7 +4952,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 	async fn a_real_identity_network_refuses_local_product_grants() {
 		let production = NetworkConfig {
 			disposable_identities: false,
-			..crate::network::Network::Polkadot.config()
+			..crate::network::Network::Polkadot.config(ChainBackend::Rpc)
 		};
 		let platform = CliPlatform::new(&production, None, ApprovalPolicy::Prompt, None);
 		let error = apply_local_product_grants(
@@ -4966,7 +4967,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 
 	#[test]
 	fn a_real_identity_network_never_approves_without_a_prompt() {
-		let testnet = crate::network::Network::PaseoNextV2.config();
+		let testnet = crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc);
 		let production = NetworkConfig { disposable_identities: false, ..testnet.clone() };
 		assert_eq!(
 			[

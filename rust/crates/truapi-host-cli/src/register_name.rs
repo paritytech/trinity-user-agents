@@ -107,10 +107,10 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
 	let chains = CliChainProvider::new(&config.network);
-	let people_location = chains.location(config.network.people_genesis);
+	let people_location = chains.location(config.network.chains.people.genesis);
 	let people_rpc = RpcClient::new(
 		chains
-			.rpc_client(config.network.people_genesis)
+			.rpc_client(config.network.chains.people.genesis)
 			.await
 			.with_context(|| format!("connect to People ({people_location})"))?,
 	);
@@ -157,10 +157,10 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading Asset Hub metadata and the exponent the subscriber verifies
 	// proofs against.
-	let asset_hub_location = chains.location(config.network.asset_hub_genesis);
+	let asset_hub_location = chains.location(config.network.chains.asset_hub.genesis);
 	let ah_rpc = RpcClient::new(
 		chains
-			.rpc_client(config.network.asset_hub_genesis)
+			.rpc_client(config.network.chains.asset_hub.genesis)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
 	);
@@ -205,7 +205,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsics = crate::extrinsic_service(&config.network);
 	let extrinsic = extrinsics
-		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis))
+		.build_mortal_extrinsic(H256(config.network.chains.asset_hub.genesis))
 		.with_call_args("DotnsGateway", "register_name", call)
 		.with_extension(authorizer)
 		.with_restrict_origins(true)

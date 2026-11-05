@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, task::JoinHandle};
 use tokio_tungstenite::{client_async, tungstenite::client::IntoClientRequest};
 
+use crate::chain::ChainBackend;
+
 struct UnusedRuntimeFactory;
 
 impl ProductRuntimeFactory for UnusedRuntimeFactory {
@@ -66,7 +68,7 @@ async fn start_tcp_server(
 }
 
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
-	let network = crate::network::Network::default().config();
+	let network = crate::network::Network::default().config(ChainBackend::Rpc);
 	let platform = crate::platform::CliPlatform::new(
 		&network,
 		None,
@@ -81,9 +83,9 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
+		network.chains.people.genesis,
+		network.chains.bulletin.genesis,
+		network.chains.asset_hub.genesis,
 		network.network_suffix.to_string(),
 	)?;
 	let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
@@ -464,17 +466,16 @@ mod cross_product_storage {
 	}
 
 	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
-		// The override must land on `live_chain_endpoints`: that is the
-		// table `CliPlatform` resolves a genesis through. `asset_hub_ws`
-		// feeds the standalone `AssetHubReader` subcommands. Only Asset Hub
-		// is rerouted here.
-		let mut network = crate::network::Network::default().config();
-		network.live_chain_endpoints = vec![crate::network::ChainEndpoint {
-			genesis: network.asset_hub_genesis,
-			ws: "ws://127.0.0.1:1".to_owned(),
-			required_for_host: true,
-		}];
-		let asset_hub_genesis = network.asset_hub_genesis;
+		// Every chain routes to a closed port, so nothing reaches live Paseo.
+		let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
+		for chain in [
+			&mut network.chains.people,
+			&mut network.chains.asset_hub,
+			&mut network.chains.bulletin,
+		] {
+			chain.ws = "ws://127.0.0.1:1".to_owned();
+		}
+		let asset_hub_genesis = network.chains.asset_hub.genesis;
 		let platform = crate::platform::CliPlatform::new(
 			&network,
 			None,
@@ -489,13 +490,11 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.people_genesis,
-			network.bulletin_genesis,
-			network.asset_hub_genesis,
+			network.chains.people.genesis,
+			network.chains.bulletin.genesis,
+			network.chains.asset_hub.genesis,
 			network.network_suffix.to_string(),
 		)?;
-		// An override written to a field this path never reads compiles,
-		// changes nothing, and looks identical in timings. Assert it.
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),
 			"ws://127.0.0.1:1",

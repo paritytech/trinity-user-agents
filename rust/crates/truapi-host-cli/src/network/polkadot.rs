@@ -10,7 +10,7 @@
 use anyhow::{Result, ensure};
 
 use super::{ChainEndpoint, NetworkConfig};
-use crate::chain::ChainBackend;
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 /// Polkadot's product namespace.
 pub const ID: &str = "polkadot";
@@ -21,12 +21,6 @@ const TLD: &str = "dot";
 struct PinnedChain {
 	genesis: [u8; 32],
 	ws: &'static str,
-}
-
-impl PinnedChain {
-	fn endpoint(&self) -> ChainEndpoint {
-		ChainEndpoint { genesis: self.genesis, ws: self.ws.to_owned(), required_for_host: true }
-	}
 }
 
 const ASSET_HUB: PinnedChain = PinnedChain {
@@ -50,7 +44,8 @@ const BULLETIN: PinnedChain = PinnedChain {
 	ws: "wss://bulletin-rpc.polkadot.io",
 };
 
-const CHAINS: [PinnedChain; 3] = [ASSET_HUB, PEOPLE, BULLETIN];
+const CHAINS: Roles<PinnedChain> =
+	Roles { people: PEOPLE, asset_hub: ASSET_HUB, bulletin: BULLETIN };
 
 /// The dotNS deployment on Polkadot Asset Hub, copied verbatim from
 /// `deployments/polkadot/420420419.json` in paritytech/dotns at
@@ -63,21 +58,17 @@ const DOTNS_DEPLOYMENT: &str = include_str!("../../deployments/polkadot-42042041
 /// `DotnsGateway.DispatcherAddress` unset, and discovery then finds nothing.
 const DOTNS_POP_CONTROLLER: [u8; 20] = manifest_address(DOTNS_DEPLOYMENT, "DotnsPopController");
 
-pub fn config() -> NetworkConfig {
+/// Polkadot's pinned values, reached over `chain_backend`.
+pub fn config(chain_backend: ChainBackend) -> NetworkConfig {
 	NetworkConfig {
 		id: ID.to_owned(),
 		network_suffix: TLD,
 		identity_backend_base: None,
-		people_ws: PEOPLE.ws.to_owned(),
-		bulletin_ws: BULLETIN.ws.to_owned(),
-		asset_hub_ws: ASSET_HUB.ws.to_owned(),
-		people_genesis: PEOPLE.genesis,
-		bulletin_genesis: BULLETIN.genesis,
-		asset_hub_genesis: ASSET_HUB.genesis,
-		live_chain_endpoints: CHAINS.iter().map(PinnedChain::endpoint).collect(),
+		chains: CHAINS
+			.map(|chain| ChainEndpoint { genesis: chain.genesis, ws: chain.ws.to_owned() }),
 		dotns_pop_controller: Some(DOTNS_POP_CONTROLLER),
 		disposable_identities: false,
-		chain_backend: ChainBackend::Rpc,
+		chain_backend,
 	}
 }
 
@@ -100,7 +91,7 @@ pub fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
 		config.id,
 		config.network_suffix
 	);
-	for endpoint in &config.live_chain_endpoints {
+	for endpoint in config.chains.iter() {
 		ensure!(
 			!CHAINS.iter().any(|chain| chain.genesis == endpoint.genesis),
 			"{} would route to {ID}'s chain at {}, whose identities are real; point it at a test \

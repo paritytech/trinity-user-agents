@@ -5,59 +5,54 @@
 use anyhow::{Result, anyhow, ensure};
 
 use super::{
-	ASSET_HUB_WS_ENV, BULLETIN_WS_ENV, Network, NetworkConfig, PEOPLE_WS_ENV, StackArg,
-	local_network,
+	ASSET_HUB_WS_ENV, BULLETIN_WS_ENV, ChainEndpoint, Network, NetworkConfig, PEOPLE_WS_ENV,
+	StackArg, local_network,
 };
-use crate::chain::ChainBackend;
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
+
+const ENV_NAMES: Roles<&str> =
+	Roles { people: PEOPLE_WS_ENV, asset_hub: ASSET_HUB_WS_ENV, bulletin: BULLETIN_WS_ENV };
 
 /// Chain URL overrides; `None` leaves the network's URL in place.
 #[derive(Debug)]
 pub struct ChainOverrides {
-	people_ws: Option<String>,
-	asset_hub_ws: Option<String>,
-	bulletin_ws: Option<String>,
+	urls: Roles<Option<String>>,
 }
 
 impl ChainOverrides {
 	pub fn from_env() -> Result<Self> {
-		Self::parse(
-			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
-		)
+		let Roles { people, asset_hub, bulletin } = ENV_NAMES.map(|name| std::env::var(name).ok());
+		Self::parse([people, asset_hub, bulletin])
 	}
 
 	/// Blank values are unset. Anything else must be a `ws` or `wss` URL.
-	pub fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> Result<Self> {
-		let url = |name: &str, value: Option<String>| -> Result<Option<String>> {
-			let Some(value) =
-				value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
-			else {
-				return Ok(None);
-			};
-			let url = reqwest::Url::parse(&value)
-				.map_err(|err| anyhow!("{name} is not a URL ({err}): {value}"))?;
-			ensure!(
-				matches!(url.scheme(), "ws" | "wss"),
-				"{name} must be a ws:// or wss:// URL: {value}"
-			);
-			Ok(Some(value))
-		};
-		Ok(Self {
-			people_ws: url(PEOPLE_WS_ENV, people_ws)?,
-			asset_hub_ws: url(ASSET_HUB_WS_ENV, asset_hub_ws)?,
-			bulletin_ws: url(BULLETIN_WS_ENV, bulletin_ws)?,
-		})
+	pub fn parse([people, asset_hub, bulletin]: [Option<String>; 3]) -> Result<Self> {
+		let urls = ENV_NAMES.zip(Roles { people, asset_hub, bulletin }).try_map(
+			|(name, value)| -> Result<Option<String>> {
+				let Some(value) =
+					value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+				else {
+					return Ok(None);
+				};
+				let url = reqwest::Url::parse(&value)
+					.map_err(|err| anyhow!("{name} is not a URL ({err}): {value}"))?;
+				ensure!(
+					matches!(url.scheme(), "ws" | "wss"),
+					"{name} must be a ws:// or wss:// URL: {value}"
+				);
+				Ok(Some(value))
+			},
+		)?;
+		Ok(Self { urls })
 	}
 
 	/// The env vars behind the overrides that are set.
 	pub fn env_names_in_use(&self) -> Vec<&'static str> {
-		[
-			(PEOPLE_WS_ENV, &self.people_ws),
-			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
-			(BULLETIN_WS_ENV, &self.bulletin_ws),
-		]
-		.into_iter()
-		.filter_map(|(name, value)| value.is_some().then_some(name))
-		.collect()
+		ENV_NAMES
+			.zip(self.urls.as_ref())
+			.iter()
+			.filter_map(|(name, url)| url.is_some().then_some(*name))
+			.collect()
 	}
 }
 
@@ -126,30 +121,13 @@ pub fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -
 	config
 }
 
-/// Points each overridden role at its new URL, in both the role field and the
-/// genesis-keyed routing table, so the two cannot disagree.
-pub fn apply_chain_overrides(
-	mut config: NetworkConfig,
-	overrides: ChainOverrides,
-) -> NetworkConfig {
-	let routes = [
-		(overrides.people_ws, config.people_genesis),
-		(overrides.asset_hub_ws, config.asset_hub_genesis),
-		(overrides.bulletin_ws, config.bulletin_genesis),
-	];
-	for endpoint in &mut config.live_chain_endpoints {
-		let rerouted = routes
-			.iter()
-			.find_map(|(url, genesis)| url.as_ref().filter(|_| *genesis == endpoint.genesis));
-		if let Some(url) = rerouted {
-			endpoint.ws.clone_from(url);
-		}
-	}
-	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
-	config.people_ws = people.unwrap_or(config.people_ws);
-	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
-	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
-	config
+/// Points each overridden role at its new URL.
+pub fn apply_chain_overrides(config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
+	let chains = config
+		.chains
+		.zip(overrides.urls)
+		.map(|(chain, url)| ChainEndpoint { ws: url.unwrap_or(chain.ws), ..chain });
+	NetworkConfig { chains, ..config }
 }
 
 #[cfg(test)]

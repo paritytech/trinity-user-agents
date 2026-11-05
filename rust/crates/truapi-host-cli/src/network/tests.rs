@@ -1,44 +1,12 @@
 use super::*;
 
-/// Every served role must match an endpoint that actually routes it, at the
-/// URL the network declares for that role.
-///
-/// `CliChainProvider` falls back to People for an unrecognised genesis, so a
-/// drifted `people_genesis` still resolves to a working URL and satisfies
-/// every routing assertion. Pinning against `live_chain_endpoints` checks
-/// the values themselves rather than the plumbing that reads them.
-#[test]
-fn served_chain_genesis_hashes_match_the_endpoint_routes() {
-	for network in Network::value_variants() {
-		let config = network.config();
-		for entry in config.host_chain_set().chains {
-			let expected_ws = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-				panic!("{} serves {:?} with no URL", config.id, entry.identifier)
-			});
-			let endpoint = config
-				.live_chain_endpoints
-				.iter()
-				.find(|endpoint| endpoint.genesis == entry.genesis_hash)
-				.unwrap_or_else(|| {
-					panic!(
-						"{} serves {:?} at genesis {} which no endpoint routes",
-						config.id,
-						entry.identifier,
-						hex::encode(entry.genesis_hash)
-					)
-				});
-			assert_eq!(endpoint.ws, expected_ws);
-		}
-	}
-}
-
 /// Anchors the served set itself. Every other test that reads it iterates, so
 /// all of them pass on an empty set; this is what notices a dropped role, and it
 /// covers each network rather than only the default.
 #[test]
 fn test_network_served_roles() {
 	for network in Network::value_variants() {
-		let config = network.config();
+		let config = network.config(ChainBackend::Rpc);
 		let served: Vec<ChainIdentifier> =
 			config.host_chain_set().chains.iter().map(|entry| entry.identifier).collect();
 
@@ -68,13 +36,12 @@ const TEST_NETWORK_HOSTS: &[&str] = &[
 #[test]
 fn test_disposable_network_hosts() {
 	for network in Network::value_variants() {
-		let config = network.config();
+		let config = network.config(ChainBackend::Rpc);
 		if !config.disposable_identities {
 			continue;
 		}
 		let mut routes: Vec<&str> = config.identity_backend_base.as_deref().into_iter().collect();
-		routes.extend([&*config.people_ws, &config.bulletin_ws, &config.asset_hub_ws]);
-		routes.extend(config.live_chain_endpoints.iter().map(|chain| chain.ws.as_str()));
+		routes.extend(config.chains.iter().map(|chain| chain.ws.as_str()));
 
 		for route in routes {
 			let host = reqwest::Url::parse(route)
@@ -113,9 +80,12 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 	let mut unreachable = Vec::new();
 
 	for network in Network::value_variants() {
-		let config = network.config();
+		let config = network.config(ChainBackend::Rpc);
 		for entry in config.host_chain_set().chains {
-			let ws = config.url_for_role(entry.identifier).expect("every served role has a URL");
+			let ws = &config
+				.endpoint_for_role(entry.identifier)
+				.expect("every served role has an endpoint")
+				.ws;
 			let probe = async {
 				let rpc = alloc::rpc::RpcClient::connect(ws)
 					.await
@@ -188,7 +158,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 	assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 	let expected_checks: usize = Network::value_variants()
 		.iter()
-		.map(|network| network.config().host_chain_set().chains.len())
+		.map(|network| network.config(ChainBackend::Rpc).host_chain_set().chains.len())
 		.sum();
 	assert!(expected_checks > 0);
 	assert_eq!(checked, expected_checks);

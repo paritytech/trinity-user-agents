@@ -7,10 +7,7 @@ use std::ffi::{OsStr, OsString};
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use super::{
-	ChainEndpoint, NetworkConfig,
-	stack::{endpoint_table, ensure_distinct_genesis},
-};
+use super::{ChainEndpoint, NetworkConfig, stack::ensure_distinct_genesis};
 use crate::stack_descriptor::Roles;
 
 /// Env var with the path of the local-network JSON file; a blank value is unset.
@@ -81,23 +78,17 @@ fn parse(base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 	let local: LocalNetwork = serde_json::from_str(json).context("invalid local-network config")?;
 	ensure!(local.network == base.id, "local-network config must match --network {}", base.id);
 	ensure_local_url(&local.identity_backend_base, &["http", "https"])?;
-	let chains =
+	let local_chains =
 		Roles { people: local.people, asset_hub: local.asset_hub, bulletin: local.bulletin };
-	let roles = chains.try_map(|chain| {
+	let chains = local_chains.try_map(|chain| {
 		ensure_local_url(&chain.ws, &["ws", "wss"])?;
 		let genesis = parse_genesis(&chain.genesis)?;
-		anyhow::Ok(ChainEndpoint { genesis, ws: chain.ws, required_for_host: true })
+		anyhow::Ok(ChainEndpoint { genesis, ws: chain.ws })
 	})?;
-	ensure_distinct_genesis(&roles)?;
+	ensure_distinct_genesis(&chains)?;
 	Ok(NetworkConfig {
 		identity_backend_base: Some(local.identity_backend_base.trim_end_matches('/').to_owned()),
-		people_ws: roles.people.ws.clone(),
-		bulletin_ws: roles.bulletin.ws.clone(),
-		asset_hub_ws: roles.asset_hub.ws.clone(),
-		people_genesis: roles.people.genesis,
-		bulletin_genesis: roles.bulletin.genesis,
-		asset_hub_genesis: roles.asset_hub.genesis,
-		live_chain_endpoints: endpoint_table(roles),
+		chains,
 		..base
 	})
 }

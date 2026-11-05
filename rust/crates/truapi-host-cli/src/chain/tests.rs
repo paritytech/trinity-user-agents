@@ -4,14 +4,10 @@ use tokio_tungstenite::tungstenite::Message;
 use super::*;
 use crate::network::Network;
 
-/// A network whose only route is People at `people_ws`.
-fn people_only(people_ws: String) -> NetworkConfig {
-	let mut network = Network::default().config();
-	network.live_chain_endpoints = vec![ChainEndpoint {
-		genesis: network.people_genesis,
-		ws: people_ws,
-		required_for_host: true,
-	}];
+/// The default network with People at `people_ws`.
+fn people_at(people_ws: String) -> NetworkConfig {
+	let mut network = Network::default().config(ChainBackend::Rpc);
+	network.chains.people.ws = people_ws;
 	network
 }
 
@@ -39,8 +35,8 @@ async fn serve_one_frame_per_connection() -> String {
 /// would leave every later request on that chain waiting forever.
 #[tokio::test]
 async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
-	let network = people_only(serve_one_frame_per_connection().await);
-	let provider = CliChainProvider::with_live_chain_routing(&network, false);
+	let network = people_at(serve_one_frame_per_connection().await);
+	let provider = CliChainProvider::new(&network);
 
 	let closed = provider.connect([0; 32]).await.expect("connect to the loopback server");
 	let mut responses = closed.responses();
@@ -58,11 +54,11 @@ async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
 /// must reach People's RPC node rather than start the light client.
 #[tokio::test]
 async fn an_unrouted_catalog_chain_stays_on_rpc() {
-	let network = people_only(serve_one_frame_per_connection().await);
+	let network = people_at(serve_one_frame_per_connection().await);
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
 		.add_network(&network.id)
 		.expect("the default network is bundled");
-	let provider = CliChainProvider::with_live_chain_routing(&network, false);
+	let provider = CliChainProvider::new(&network);
 
 	let connection = provider.connect(catalog.relay).await.expect("connect to People");
 	let first =
@@ -72,15 +68,15 @@ async fn an_unrouted_catalog_chain_stays_on_rpc() {
 	assert_eq!(first.as_deref(), Some("open"));
 }
 
-/// Without a People route there is nothing to fall back to.
+/// Without a People route there is nothing to fall back to: a provider for
+/// one other endpoint refuses the sentinel.
 #[tokio::test]
-async fn a_network_without_a_people_route_refuses_the_sentinel() {
-	let mut network = Network::default().config();
-	network.live_chain_endpoints.clear();
-	let provider = CliChainProvider::with_live_chain_routing(&network, false);
+async fn a_provider_without_a_people_route_refuses_the_sentinel() {
+	let network = Network::default().config(ChainBackend::Rpc);
+	let provider = CliChainProvider::for_endpoint(&network, &network.chains.bulletin);
 
 	let Err(error) = provider.connect([0; 32]).await else {
-		panic!("nothing is routed, so nothing may connect");
+		panic!("People is not routed, so the sentinel may not connect");
 	};
 	assert_eq!(error.to_string(), format!("no chain registered for genesis 0x{}", "00".repeat(32)));
 }
@@ -162,88 +158,29 @@ fn a_stalled_relay_fails_the_wait() {
 /// start with no peers.
 #[tokio::test]
 async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
-	let mut network = Network::default().config();
-	network.chain_backend = ChainBackend::LightClient;
-	let provider = CliChainProvider::with_live_chain_routing(&network, false);
+	let network = Network::default().config(ChainBackend::LightClient);
+	let provider = CliChainProvider::new(&network);
 
-	drop(provider.connect(network.people_genesis).await.expect("add People"));
+	drop(provider.connect(network.chains.people.genesis).await.expect("add People"));
 
 	let light = light_client(&network.id).expect("the default network is bundled");
-	assert!(light.is_connected(network.people_genesis));
-}
-
-/// Every role the host says it serves has to route to that role's own chain
-/// without the test switch. An unmapped genesis is answered by People, so a
-/// served role that the routing filter drops would connect to the People
-/// chain while the host claimed to serve something else, and
-/// `ChainContextCache` only warns when the reported genesis diverges.
-#[test]
-fn every_served_role_routes_to_its_own_chain() {
-	for network in Network::value_variants() {
-		let config = network.config();
-		let provider = CliChainProvider::with_live_chain_routing(&config, false);
-		for entry in config.host_chain_set().chains {
-			let expected = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-				panic!("{} serves {:?} with no preset URL", config.id, entry.identifier)
-			});
-			assert!(
-				provider.routes(&entry.genesis_hash),
-				"{} serves {:?} but does not route it; the fallback would hide this",
-				config.id,
-				entry.identifier
-			);
-			assert_eq!(
-				provider.location(entry.genesis_hash),
-				expected,
-				"{} serves {:?} but routes it elsewhere",
-				config.id,
-				entry.identifier
-			);
-		}
-	}
-}
-
-/// The switch exists to widen routing to endpoints the preset carries without
-/// serving them as a role. No preset has one now that Asset Hub is served, so
-/// this uses a synthetic endpoint: without a case the preset cannot express,
-/// `required_for_host` and the switch could both be deleted with a green suite.
-#[test]
-fn the_test_switch_widens_routing_to_endpoints_that_are_not_roles() {
-	const PEOPLE: &str = "wss://people.invalid";
-	let mut network = people_only(PEOPLE.to_owned());
-	let optional = ChainEndpoint {
-		genesis: [0x5a; 32],
-		ws: "wss://optional.invalid".to_owned(),
-		required_for_host: false,
-	};
-	network.live_chain_endpoints.push(optional.clone());
-
-	let gated = CliChainProvider::with_live_chain_routing(&network, false);
-	let widened = CliChainProvider::with_live_chain_routing(&network, true);
-
-	assert_eq!(
-		gated.location(optional.genesis),
-		PEOPLE,
-		"an endpoint that is not a role is excluded without the switch"
-	);
-	assert_eq!(widened.location(optional.genesis), optional.ws, "and included with it");
+	assert!(light.is_connected(network.chains.people.genesis));
 }
 
 /// The genesis check of a rerouted endpoint must ask that URL, whatever the
 /// network's routing would do with the hash, and nothing else.
 #[test]
 fn an_endpoint_provider_reaches_only_its_endpoint() {
-	let network = people_only("wss://people.invalid".to_owned());
-	let optional = ChainEndpoint {
-		genesis: [0x5a; 32],
-		ws: "wss://optional.invalid".to_owned(),
-		required_for_host: false,
-	};
+	let network = people_at("wss://people.invalid".to_owned());
+	let optional = ChainEndpoint { genesis: [0x5a; 32], ws: "wss://optional.invalid".to_owned() };
 
 	let alone = CliChainProvider::for_endpoint(&network, &optional);
 
 	assert_eq!(alone.location(optional.genesis), optional.ws);
-	assert!(alone.chain_for(network.people_genesis).is_none(), "People is not this endpoint");
+	assert!(
+		alone.chain_for(network.chains.people.genesis).is_none(),
+		"People is not this endpoint"
+	);
 }
 
 /// Ignored by default; needs network access to paseo-next-v2's chains. The
@@ -263,15 +200,14 @@ async fn rpc_reaches_paseo_next_v2() {
 #[tokio::test]
 #[ignore = "needs network access to the preset's chains"]
 async fn the_light_client_reaches_paseo_next_v2() {
-	let network =
-		NetworkConfig { chain_backend: ChainBackend::LightClient, ..Network::PaseoNextV2.config() };
+	let network = Network::PaseoNextV2.config(ChainBackend::LightClient);
 	CliChainProvider::new(&network)
-		.rpc_client(network.asset_hub_genesis)
+		.rpc_client(network.chains.asset_hub.genesis)
 		.await
 		.expect("connect to Asset Hub");
 	let light = light_client(&network.id).expect("paseo-next-v2 is bundled");
 	let state = light
-		.lifecycle(network.asset_hub_genesis)
+		.lifecycle(network.chains.asset_hub.genesis)
 		.expect("Asset Hub is running")
 		.next()
 		.await;
@@ -290,7 +226,7 @@ async fn reach_paseo_next_v2(backend: ChainBackend) {
 		dotns_read::AssetHubReader,
 	};
 
-	let network = NetworkConfig { chain_backend: backend, ..Network::PaseoNextV2.config() };
+	let network = Network::PaseoNextV2.config(backend);
 	let provider = Arc::new(CliChainProvider::new(&network));
 	let reported_genesis = async |genesis: [u8; 32]| -> String {
 		let rpc = provider.rpc_client(genesis).await.expect("connect");
@@ -299,17 +235,21 @@ async fn reach_paseo_next_v2(backend: ChainBackend) {
 			.expect("genesis hash")
 	};
 
-	for genesis in [network.people_genesis, network.asset_hub_genesis, network.bulletin_genesis] {
+	for genesis in [
+		network.chains.people.genesis,
+		network.chains.asset_hub.genesis,
+		network.chains.bulletin.genesis,
+	] {
 		assert_eq!(reported_genesis(genesis).await, format!("0x{}", hex::encode(genesis)));
 	}
 	provider
-		.connect(network.people_genesis)
+		.connect(network.chains.people.genesis)
 		.await
 		.expect("connect to People")
 		.close();
 	assert_eq!(
-		reported_genesis(network.people_genesis).await,
-		format!("0x{}", hex::encode(network.people_genesis)),
+		reported_genesis(network.chains.people.genesis).await,
+		format!("0x{}", hex::encode(network.chains.people.genesis)),
 		"a new People connection replaces the closed one"
 	);
 
@@ -319,7 +259,7 @@ async fn reach_paseo_next_v2(backend: ChainBackend) {
 
 	// A light client may have no Bulletin peers yet, so a transient failure is
 	// asked again, as a preimage lookup does.
-	let bitswap = BitswapRpc::new(Arc::clone(&provider), network.bulletin_genesis);
+	let bitswap = BitswapRpc::new(Arc::clone(&provider), network.chains.bulletin.genesis);
 	let unstored = truapi::BulletinCid::from([0x22; 32]);
 	for _ in 0..10 {
 		match bitswap.get(&unstored).await {
