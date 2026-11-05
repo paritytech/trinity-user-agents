@@ -60,13 +60,15 @@ class ProductPocketCardDetailsLoadingTest {
     @Composable
     private fun Details(session: SpaHostSession?) {
         PolkadotTheme(theme = PolkadotAppTheme.BerlinNight) {
+            val noFace = ProductFaceBindings(
+                face = MutableStateFlow(null),
+                onFaceAction = { _, _ -> },
+                imageResolver = JsImageResolver { null },
+            )
             ProductPocketCardDetails(
                 card = card,
-                bindings = ProductFaceBindings(
-                    face = MutableStateFlow(null),
-                    onFaceAction = { _, _ -> },
-                    imageResolver = JsImageResolver { null },
-                ),
+                bindings = noFace,
+                backBindings = noFace,
                 shownProduct = session?.let { ShownProduct(card.key.launchUrl(), it) },
                 openingFaceShown = true,
                 cardIndex = 0,

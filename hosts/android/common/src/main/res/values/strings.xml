@@ -915,6 +915,7 @@
     <string name="pocket_digital_dollar_title">Purse</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
     <string name="pocket_collectibles_title">Collectibles</string>
+    <string name="pocket_card_turn_over">Turn over</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>

@@ -66,6 +66,7 @@ fun ProductPocketCardDetails(
     modifier: Modifier = Modifier,
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
+    backBindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     cardIndex: Int,
@@ -135,14 +136,14 @@ fun ProductPocketCardDetails(
         )
 
         FoldableCard(fold = fold) {
-            ProductPocketCard(
+            TurningPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
                     .pocketCardSharedElement(cardIndex),
                 card = card,
-                bindings = bindings,
-                onOpen = null,
-                onRemoveRequested = null
+                front = bindings,
+                back = backBindings,
+                leaving = leaving,
             )
 
             VerticalSpacer { mediumIncreased }

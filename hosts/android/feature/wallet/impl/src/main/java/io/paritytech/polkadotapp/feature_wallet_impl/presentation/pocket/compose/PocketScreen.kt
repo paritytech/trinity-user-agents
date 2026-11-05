@@ -95,6 +95,7 @@ fun PocketScreen() {
         openingFaceShown = openingFaceShown,
         collectiblesProduct = collectiblesProduct,
         bindingsOf = viewModel::bindingsOf,
+        backBindingsOf = viewModel::backBindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
         onSketchbookSelected = viewModel::openCollectibles,
@@ -114,6 +115,7 @@ private fun PocketScreenInternal(
     openingFaceShown: Boolean?,
     collectiblesProduct: ShownProduct?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
+    backBindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
     onCardDismissed: () -> Unit,
     onSketchbookSelected: () -> Unit,
@@ -189,6 +191,7 @@ private fun PocketScreenInternal(
                                     shownProduct = shownProduct,
                                     openingFaceShown = openingFaceShown,
                                     bindingsOf = bindingsOf,
+                                    backBindingsOf = backBindingsOf,
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
                                 )
@@ -216,6 +219,7 @@ private fun SelectedCardDetails(
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
+    backBindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -230,6 +234,7 @@ private fun SelectedCardDetails(
         is PocketCardUiModel.ProductCard -> ProductPocketCardDetails(
             card = selectedCard,
             bindings = bindingsOf(selectedCard),
+            backBindings = backBindingsOf(selectedCard),
             shownProduct = shownProduct,
             openingFaceShown = openingFaceShown,
             cardIndex = cardIndex,
@@ -402,6 +407,13 @@ private fun PocketScreenPreview() {
                 bindingsOf = { card ->
                     ProductFaceBindings(
                         face = MutableStateFlow(JsWidget.Text(text = card.title)),
+                        onFaceAction = { _, _ -> },
+                        imageResolver = JsImageResolver { null },
+                    )
+                },
+                backBindingsOf = {
+                    ProductFaceBindings(
+                        face = MutableStateFlow(null),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
                     )
