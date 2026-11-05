@@ -177,10 +177,12 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use truapi::host_logic::dotns_gateway::{
-	DotnsError, DotnsRegistrar, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, classify_labels,
-	discover_pop_controller, encode_revive_call, is_dotted_lite_username, is_pop_issued,
-	label_available, namehash_under, resolve_labels, view_output,
+use truapi::{
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{
+		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
+		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
+	},
 };
 
 /// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
@@ -208,7 +210,7 @@ fn minted_node() -> [u8; 32] {
 /// `DotnsTransport` over plain RPC, the same two primitives the CLI uses.
 struct PlainRpc(alloc::rpc::RpcClient);
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for PlainRpc {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		self.0
@@ -217,22 +219,23 @@ impl DotnsTransport for PlainRpc {
 			.map_err(|err| DotnsError::Storage(err.to_string()))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(self, dest, &input).await
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeApiCaller for PlainRpc {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		let output = self
 			.0
-			.call(
-				"state_call",
-				serde_json::json!(["ReviveApi_call", format!("0x{}", hex::encode(args))]),
-			)
+			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
 			.await
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
+			.map_err(subxt::Error::other)?;
 		let output = output
 			.as_str()
-			.ok_or_else(|| DotnsViewError::Failed("state_call output is not a string".into()))?;
-		let bytes = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		view_output(&bytes)
+			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
+		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
 	}
 }
 
