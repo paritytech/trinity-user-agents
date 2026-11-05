@@ -18,19 +18,9 @@ extension BundledProducts {
     /// manifest the app ships is the one it goes by, with no dotNS read.
     var fundingProviders: [FundingProviderEntry] {
         all.compactMap { product in
-            guard product.hasWorker(), let manifest = product.workerManifest(), servesFunding(manifest) else {
-                return nil
-            }
+            guard product.hasWorker(), let manifest = product.fundingWorkerManifest() else { return nil }
 
             return FundingProviderEntry(productId: product.id, workerManifest: manifest, origin: .bundled)
         }
-    }
-
-    private func servesFunding(_ manifest: String) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(manifest.utf8)) as? [String: Any],
-              let includes = object["includes"] as? [String: Any]
-        else { return false }
-
-        return includes["funding"] != nil
     }
 }

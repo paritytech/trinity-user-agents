@@ -14,8 +14,10 @@ struct BundledFundingProvidersTests {
         let funding = #"{"includes":{"funding":{}}}"#
         try write(funding, to: root, "ramp.dot/worker-manifest.json")
         try write("export {}", to: root, "ramp.dot/worker/index.js")
-        try write(#"{"includes":{"chat":{}}}"#, to: root, "chat.dot/worker-manifest.json")
+        try write(#"{"includes":{"chat":true}}"#, to: root, "chat.dot/worker-manifest.json")
         try write("export {}", to: root, "chat.dot/worker/index.js")
+        try write(#"{"includes":{"funding":null}}"#, to: root, "null.dot/worker-manifest.json")
+        try write("export {}", to: root, "null.dot/worker/index.js")
         try write(funding, to: root, "noworker.dot/worker-manifest.json")
         try write("export {}", to: root, "nomanifest.dot/worker/index.js")
         try write("not json", to: root, "broken.dot/worker-manifest.json")
