@@ -2,7 +2,8 @@
 //!
 //! v0.2 adds `ChainUnavailable` to `create_transaction`'s error. A v0.1
 //! caller gets `Unknown` with the same reason. The legacy-account method stays
-//! on v0.1, since only a signing host could ever report the new variant.
+//! on v0.1, so a product that calls only it still reaches hosts without v0.2.
+//! It reports `ChainUnavailable` as `Unknown`.
 
 use crate::{
 	v01, v02,
@@ -175,8 +176,8 @@ mod tests {
 
 	#[test]
 	fn create_transaction_with_legacy_account_stays_on_v01() {
-		// Only a signing host could report the v0.2 variant for it, and a V2
-		// request would fail on every host that does not serve one.
+		// A V2 request would fail on every host that does not serve one, so a
+		// product that calls only this method keeps reaching older hosts.
 		assert_eq!(HostCreateTransactionWithLegacyAccountRequest::LATEST, 1);
 	}
 

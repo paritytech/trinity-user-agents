@@ -4,7 +4,6 @@ use core::time::Duration;
 
 use derive_more::Display;
 use futures::{FutureExt, TryFutureExt, pin_mut};
-use parking_lot::Mutex;
 use subxt::{
 	client::OnlineClientAtBlock, config::SubstrateConfig, error::OnlineClientAtBlockError,
 };
@@ -12,13 +11,12 @@ use tracing::instrument;
 use truapi::CancellationToken;
 
 use super::{
-	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::retry_while_halted,
-	follow_retry::FollowEnd,
+	ChainRuntime, RuntimeFailure, chain_halt::retry_while_halted, follow_retry::FollowEnd,
 };
 
 /// Deadline for reading the current block, connecting included. It is longer
 /// than all the halt pauses together, so a late re-follow can still serve.
-const CURRENT_BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
+const CURRENT_BLOCK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One failed attempt at reading the current block.
 #[derive(Display)]
@@ -51,20 +49,18 @@ impl ChainRuntime {
 	/// scope only, like [`Self::online_client`].
 	///
 	/// Retries through a halt. The deadline is there because Subxt never
-	/// abandons a runtime call whose follow stopped; missing it ends that
-	/// follow, so the next call starts a fresh one.
+	/// abandons a runtime call whose follow stopped. Missing it drops only
+	/// this read, so the follow keeps serving the core's other users.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.current_block"))]
 	pub async fn current_block(
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
-		let latest_connection = &Mutex::new(None::<SubxtConnection>);
 		let never_cancelled = CancellationToken::default();
 		let read_block = || async move {
 			let connection = self.subxt_connection(genesis_hash).await.map_err(|failure| {
 				FailedRead { error: CurrentBlockError::NoChainConnection(failure), halted: false }
 			})?;
-			*latest_connection.lock() = Some(connection.clone());
 			let halts = connection.follow.halts();
 			connection.client.at_current_block().await.map_err(|error| {
 				let halted = connection.follow.halts() > halts;
@@ -83,14 +79,9 @@ impl ChainRuntime {
 		pin_mut!(read, deadline);
 		futures::select! {
 			result = read => result,
-			() = deadline => {
-				if let Some(connection) = latest_connection.lock().take() {
-					connection.end_stalled_follow();
-				}
-				Err(CurrentBlockError::ChainUnavailable(format!(
-					"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
-				)))
-			},
+			() = deadline => Err(CurrentBlockError::ChainUnavailable(format!(
+				"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
+			))),
 		}
 	}
 }
@@ -111,11 +102,7 @@ fn classify(
 		OnlineClientAtBlockError::CannotGetBlockHeader { .. } |
 		OnlineClientAtBlockError::CannotGetSpecVersion { .. } |
 		OnlineClientAtBlockError::CannotGetMetadata { .. } => {
-			halted ||
-				matches!(
-					follow_end,
-					Some(FollowEnd::Halted | FollowEnd::Dropped | FollowEnd::Stalled)
-				)
+			halted || matches!(follow_end, Some(FollowEnd::Halted | FollowEnd::Dropped))
 		},
 		_ => false,
 	};
@@ -186,7 +173,6 @@ mod tests {
 		let cases = [
 			(Some(FollowEnd::Halted), false, dropped()),
 			(Some(FollowEnd::Dropped), false, dropped()),
-			(Some(FollowEnd::Stalled), false, dropped()),
 			(Some(FollowEnd::Refused), false, dropped()),
 			(None, false, dropped()),
 			(None, true, metadata_fetch()),
@@ -206,15 +192,14 @@ mod tests {
 			vec![
 				unavailable(&cases[0].2),
 				unavailable(&cases[1].2),
-				unavailable(&cases[2].2),
+				other(&cases[2].2),
 				other(&cases[3].2),
-				other(&cases[4].2),
+				unavailable(&cases[4].2),
 				unavailable(&cases[5].2),
-				unavailable(&cases[6].2),
-				other(&cases[7].2),
-				unavailable(&cases[8].2),
+				other(&cases[6].2),
+				unavailable(&cases[7].2),
+				other(&cases[8].2),
 				other(&cases[9].2),
-				other(&cases[10].2),
 			]
 		);
 	}
@@ -290,11 +275,12 @@ mod tests {
 		assert!(matches!(error, CurrentBlockError::Other(_)), "{error:?}");
 	}
 
-	/// The deadline ends a stuck read and its follow, so the next call starts
-	/// a fresh follow instead of waiting on the same stuck one.
+	/// The follow is shared with the core's transaction watches and Bulletin
+	/// reads, so a read that misses the deadline gives up alone and leaves the
+	/// follow running for them.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
-	fn a_read_that_misses_the_deadline_ends_its_follow() {
+	fn a_read_that_misses_the_deadline_leaves_the_follow_to_its_other_users() {
 		let (provider, chain, timer) =
 			ScriptedChainHead { finishes_calls: false, ..ScriptedChainHead::default() }.serve();
 		let calls_started = |count: usize| {
@@ -307,13 +293,12 @@ mod tests {
 		wait_for_sent(&provider, calls_started(1));
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
 		assert_eq!(first.join().unwrap(), Err(deadline_error()));
-		wait_for_sent(&provider, |sent| {
-			sent.iter().any(|request| request.contains("chainHead_v1_unfollow"))
-		});
 
 		let second = read_current_block(&chain);
 		wait_for_sent(&provider, calls_started(2));
-		assert_eq!(sent_count(&provider, "chainHead_v1_follow"), 2);
+		let follows = ["chainHead_v1_follow", "chainHead_v1_unfollow"]
+			.map(|method| sent_count(&provider, method));
+		assert_eq!(follows, [1, 0]);
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
 		assert_eq!(second.join().unwrap(), Err(deadline_error()));
 	}

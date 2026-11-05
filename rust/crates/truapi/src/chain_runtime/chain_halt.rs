@@ -12,12 +12,14 @@ use crate::time::{Backoff, Timer, retry_until_cancelled};
 /// documents it as safe to retry.
 const CHAIN_HALTED_DATA: &str = "dotli:chain-halted";
 
-/// Pauses between attempts after a halt. They double like dotli's redial
-/// back-off, so each attempt follows another chance to redial.
+/// Pauses between attempts after a halt: 1, 2, 4, 8, 16 and 16 seconds. Once
+/// dotli's redial back-off has grown, it redials a chain at most every 30
+/// seconds, so the last two attempts both come after that wait, the second
+/// with time left for the redial to finish.
 pub const HALT_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(16));
 
 /// How many times an attempt is retried after a halt.
-pub const HALT_RETRIES: usize = 5;
+pub const HALT_RETRIES: usize = 6;
 
 /// Whether `error` says the chain halted, so the request can be retried.
 pub fn says_chain_halted(error: &RpcError) -> bool {
@@ -112,6 +114,25 @@ mod tests {
 		Attempt: Future<Output = Result<Answer, RpcError>>,
 	{
 		retry_while_halted(attempt, says_chain_halted, timer, cancel).await
+	}
+
+	/// A long halt grows dotli's redial back-off to 30 seconds, so only the
+	/// attempts after that wait can reach a redialed chain. One that lands
+	/// just after it may find the redial still running.
+	#[test]
+	fn two_attempts_come_after_dotlis_longest_redial_wait() {
+		let longest_redial_wait = Duration::from_secs(30);
+
+		let attempts_after_it = halt_schedule()
+			.into_iter()
+			.scan(Duration::ZERO, |elapsed, pause| {
+				*elapsed += pause;
+				Some(*elapsed)
+			})
+			.filter(|elapsed| *elapsed > longest_redial_wait)
+			.count();
+
+		assert_eq!(attempts_after_it, 2);
 	}
 
 	/// Only dotli's marker counts. The same error code without it does not.

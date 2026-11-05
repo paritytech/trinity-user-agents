@@ -84,7 +84,7 @@ mod follow_retry;
 
 pub use chain_halt::{retry_while_halted, says_chain_halted};
 pub use current_block::CurrentBlockError;
-use follow_retry::{FollowEnd, FollowReport, FollowRetryingRpcClient};
+use follow_retry::{FollowReport, FollowRetryingRpcClient};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -163,17 +163,6 @@ pub struct SubxtConnection {
 	pub client: OnlineClient<SubstrateConfig>,
 	/// What the backend's RPC client has learned about its follow.
 	follow: Arc<FollowReport>,
-	/// Stops the backend's driver, which ends its follow.
-	driver: AbortHandle,
-}
-
-impl SubxtConnection {
-	/// End a stuck follow, so the node drops its operations and the next
-	/// caller starts a new one.
-	fn end_stalled_follow(&self) {
-		self.follow.record_end(FollowEnd::Stalled);
-		self.driver.abort();
-	}
 }
 
 /// Cached Subxt client over the legacy JSON-RPC methods, which reach any
@@ -992,11 +981,10 @@ impl ChainRuntime {
 	/// the cheap client handle.
 	///
 	/// Core scope only. The Subxt backend spawns a driver task holding a
-	/// `HostRpcClient` handle that only a stalled read aborts, so a connection
-	/// carrying one never reaches a zero handle count and `release_scope`
-	/// cannot close its socket. The product-facing capability uses
-	/// `remote_chain_*` instead, which goes through `connection.methods` and
-	/// spawns no such task.
+	/// `HostRpcClient` handle that nothing aborts, so a connection carrying one
+	/// never reaches a zero handle count and `release_scope` cannot close its
+	/// socket. The product-facing capability uses `remote_chain_*` instead,
+	/// which goes through `connection.methods` and spawns no such task.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.online_client"))]
 	pub async fn online_client(
 		&self,
@@ -1440,10 +1428,8 @@ impl ChainConnection {
 			self.timer.clone(),
 		);
 		let follow = rpc.report();
-		let (backend, driver) =
+		let (backend, mut driver) =
 			ChainHeadBackend::<SubstrateConfig>::builder().build(RpcClient::new(rpc));
-		let (driver_handle, driver_registration) = AbortHandle::new_pair();
-		let mut driver = Abortable::new(driver, driver_registration);
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
@@ -1467,7 +1453,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow, driver: driver_handle })
+		Ok(SubxtConnection { client, follow })
 	}
 
 	/// The config every Subxt client on this connection is built with. It

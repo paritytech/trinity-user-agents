@@ -31,8 +31,6 @@ pub enum FollowEnd {
 	Refused,
 	/// The transport failed, or the follow failed after it started.
 	Dropped,
-	/// The core ended it after a read on it timed out.
-	Stalled,
 }
 
 impl FollowEnd {
@@ -68,7 +66,7 @@ impl FollowReport {
 	}
 
 	/// Record why the follow ended. The first cause recorded wins.
-	pub fn record_end(&self, end: FollowEnd) {
+	fn record_end(&self, end: FollowEnd) {
 		let _ = self.end.set(end);
 	}
 
@@ -209,7 +207,7 @@ mod tests {
 				.serve();
 		let read = select_current_block(&chain);
 
-		let schedule = [1, 2, 4, 8, 16].map(Duration::from_secs);
+		let schedule = [1, 2, 4, 8, 16, 16].map(Duration::from_secs);
 		for (attempt, pause) in schedule.into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == attempt + 1, "the next pause starts");
 			assert_eq!(
