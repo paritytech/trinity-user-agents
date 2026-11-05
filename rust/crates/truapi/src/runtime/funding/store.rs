@@ -13,9 +13,10 @@ use parity_scale_codec::{Decode, Encode};
 use rusqlite::{Transaction, named_params};
 use tracing::error;
 
+use super::PackedSession;
 pub(super) use crate::store::Db;
 use crate::{
-	host_logic::funding::{FundingSession, FundingSessionError, PackedSession},
+	host_logic::funding::{FundingSession, FundingSessionError},
 	store::DbError,
 };
 
