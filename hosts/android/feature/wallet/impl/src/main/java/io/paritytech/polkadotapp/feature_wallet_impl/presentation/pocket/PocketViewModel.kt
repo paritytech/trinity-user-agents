@@ -232,11 +232,11 @@ class PocketViewModel @Inject constructor(
             .onEach { (card, request) -> openRequestedCard(card, request) }
             .launchIn(this)
 
-        // The Docklet stands in for the card's own close: any tab tapped, Pocket included, leaves the card.
+        // Cards have no close button of their own: a tap on any Docklet tab, Pocket included, is their close.
         tabTaps.taps
             .onEach {
-                dismissCard()
-                hideCollectiblesSketchbook()
+                if (selectedCardId.value != null) dismissCard()
+                if (collectiblesShown.value) hideCollectiblesSketchbook()
             }
             .launchIn(this)
     }

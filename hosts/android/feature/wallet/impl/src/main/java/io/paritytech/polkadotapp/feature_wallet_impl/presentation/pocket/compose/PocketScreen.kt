@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Transition
@@ -40,7 +41,6 @@ import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNot
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
-import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScroll
 import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
@@ -132,9 +132,6 @@ private fun PocketScreenInternal(
     LaunchedEffect(onList) {
         if (onList) collectiblesColour.snapTo(0f)
     }
-    // A card opened from a list scrolled under the ID bar would otherwise keep the bar hidden.
-    val statusBarScroll = LocalStatusBarScroll.current
-    LaunchedEffect(screenState.contentKey) { statusBarScroll?.reset() }
 
     PolkadotSurface {
         SharedTransitionLayout {
@@ -283,11 +280,14 @@ private fun PocketList(
         label = "collectibles_press"
     )
 
+    // Reporting stops as the list starts to leave, so the ID bar comes back with the card rather than after the fade.
+    val leaving = LocalNavAnimatedVisibilityScope.current?.transition?.targetState == EnterExitState.PostExit
+
     Box {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .reportsScrollToStatusBar(listState),
+                .then(if (leaving) Modifier else Modifier.reportsScrollToStatusBar(listState)),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
             contentPadding = WindowInsets(

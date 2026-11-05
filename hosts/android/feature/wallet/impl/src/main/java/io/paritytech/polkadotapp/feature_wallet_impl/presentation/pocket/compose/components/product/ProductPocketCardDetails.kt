@@ -33,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
@@ -53,6 +52,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.Product
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardCloseDragState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.rememberCardCloseDragState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.delay
@@ -69,7 +69,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
  */
 @Composable
 fun ProductPocketCardDetails(
-    modifier: Modifier = Modifier,
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
@@ -81,8 +80,7 @@ fun ProductPocketCardDetails(
     BackHandler { onBack() }
 
     val fold = rememberExpandedCardFoldState()
-    val windowHeightPx = LocalWindowInfo.current.containerSize.height.toFloat()
-    val closeDrag = remember(windowHeightPx) { CardCloseDragState(windowHeightPx) }
+    val closeDrag = rememberCardCloseDragState()
 
     // One WebView per product: a screen still drawn for another card must not take it.
     val session = shownProduct?.takeIf { card.key.launches(it.url) }?.session
@@ -97,9 +95,6 @@ fun ProductPocketCardDetails(
     val leaving = arrival?.targetState == EnterExitState.PostExit
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
     var settled by remember(leaving) { mutableStateOf(false) }
-    LaunchedEffect(leaving) {
-        if (!leaving) closeDrag.reset()
-    }
     LaunchedEffect(arrived, openingFaceShown, leaving) {
         if (leaving || !arrived || openingFaceShown == null) return@LaunchedEffect
 
@@ -139,7 +134,7 @@ fun ProductPocketCardDetails(
     }
 
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
     ) {
@@ -201,8 +196,7 @@ private fun FoldableCard(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { delta ->
-                    val pullingDownFromRest = delta > 0f && fold.foldedPx == 0f
-                    if (pullingDownFromRest || closeDrag.offsetPx > 0f) closeDrag.drag(delta) else fold.drag(delta)
+                    if (closeDrag.takesDrag(delta, fold.foldedPx)) closeDrag.drag(delta) else fold.drag(delta)
                 },
                 onDragStarted = {
                     fold.beginDrag()

@@ -59,7 +59,7 @@ class RootNavBarViewModel @Inject constructor(
 
     // Selecting a tab always lands on Main (bringing the user there if needed).
     fun onTabSelected(tab: BottomTab) {
-        tabTaps.tap(tab)
+        tabTaps.tap()
         navigationHolder.requestTab(tab)
         rootRouter.openMain()
     }

@@ -4,7 +4,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -16,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineBreak
@@ -57,9 +54,8 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmou
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.DigitalDollarCardDetailsViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalPocketScreenTransition
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardCloseDragState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.rememberCardCloseDragState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -130,14 +126,7 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
-    val windowHeightPx = LocalWindowInfo.current.containerSize.height.toFloat()
-    val closeDrag = remember(windowHeightPx) { CardCloseDragState(windowHeightPx) }
-
-    // A card picked again while its swipe-close is still fading out comes back with the same state.
-    val leaving = LocalNavAnimatedVisibilityScope.current?.transition?.targetState == EnterExitState.PostExit
-    LaunchedEffect(leaving) {
-        if (!leaving) closeDrag.reset()
-    }
+    val closeDrag = rememberCardCloseDragState()
 
     val scrollState = rememberScrollState()
 
