@@ -8,5 +8,7 @@ import kotlinx.coroutines.flow.Flow
 interface ReadOnlyChatRoomRepository {
     suspend fun getRoomMetadata(chatId: ChatId): RoomMetadata
 
+    suspend fun getRoomsByExtension(extensionId: ChatExtensionId): List<ChatId>
+
     fun subscribeRoomsByExtension(extensionId: ChatExtensionId): Flow<List<ChatId>>
 }

@@ -54,7 +54,7 @@ use truapi::{
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteRow,
-		FundingQuoteState, PaymentPlatform, ProductContext, ProductId, TopUpPlatform, async_trait,
+		FundingQuoteState, PaymentPlatform, ProductContext, ProductId, TopUpPlatform,
 	},
 };
 
@@ -300,7 +300,7 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 	Ok(outcome)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
 	async fn present_funding(
 		&self,
@@ -540,7 +540,7 @@ impl CliPaymentHost {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl TopUpPlatform for CliPaymentHost {
 	async fn top_up(
 		&self,
@@ -575,7 +575,7 @@ impl TopUpPlatform for CliPaymentHost {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl PaymentPlatform for CliPaymentHost {
 	async fn request_payment(
 		&self,

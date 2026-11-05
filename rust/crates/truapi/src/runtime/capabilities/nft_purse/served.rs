@@ -47,7 +47,7 @@ impl ProductConnection {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl NftPurse for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_purse"))]
 	async fn create_purse(
