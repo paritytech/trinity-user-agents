@@ -39,7 +39,7 @@ class ResourceAllocationRequestViewModel @Inject constructor(
     override val state: StateFlow<LoadingState<ResourceAllocationRequestUiState>> = allocating
         .map { isAllocating ->
             ResourceAllocationRequestUiState(
-                productId = context.productId.value,
+                productId = context.productId,
                 resourceLabels = resourceLabels,
                 isAllocating = isAllocating,
             )

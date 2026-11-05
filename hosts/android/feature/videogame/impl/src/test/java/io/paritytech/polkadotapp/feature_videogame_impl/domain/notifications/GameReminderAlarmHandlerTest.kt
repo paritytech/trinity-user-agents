@@ -5,9 +5,9 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class GameReminderAlarmHandlerTest {
     private val publisher: VideoGameNotificationPublisher = mockk(relaxUnitFun = true)
@@ -19,7 +19,7 @@ class GameReminderAlarmHandlerTest {
 
     private val handler = GameReminderAlarmHandler(publisher, lifecycle, reminder, telemetry)
 
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     @Test
     fun `a background alarm for a held game is reported as fired and posts the notification`() {
@@ -64,7 +64,7 @@ class GameReminderAlarmHandlerTest {
     }
 
     private fun withScheduledGame() {
-        every { reminder.scheduledFor(game) } returns ScheduledProductGame(game.value, START)
+        every { reminder.scheduledFor(game) } returns ScheduledProductGame(game, START)
     }
 
     private fun verifyReported(event: GameReminderEvent) {

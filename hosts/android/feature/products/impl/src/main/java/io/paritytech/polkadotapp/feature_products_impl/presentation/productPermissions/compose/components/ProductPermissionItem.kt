@@ -57,7 +57,7 @@ internal fun ProductPermissionItem(
 private fun ProductPermission.displayName(): String {
     return when (this) {
         is ProductPermission.DeviceCapability -> stringResource(capability.nameRes())
-        is ProductPermission.AccountAccess -> targetProductId
+        is ProductPermission.AccountAccess -> targetProductId.value
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
         is ProductPermission.NftPurseRead -> ownerName()

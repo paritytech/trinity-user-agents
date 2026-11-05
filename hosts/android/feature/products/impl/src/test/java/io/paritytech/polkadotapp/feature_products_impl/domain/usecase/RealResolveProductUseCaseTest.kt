@@ -5,12 +5,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
@@ -19,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -30,7 +29,7 @@ class RealResolveProductUseCaseTest {
     private val manifestParser = ManifestParser(Gson())
 
     private val base = "coinflip.dot"
-    private val productId = ProductId.fromStoredValue(base)
+    private val productId = ProductId.parse(base).getOrThrow()
 
     private var debugCard: DebugPocketCard? = null
     private val debugPocketCards = object : DebugPocketCards {
@@ -122,16 +121,6 @@ class RealResolveProductUseCaseTest {
         useCase.resolve(productId).getOrThrow()
 
         coVerify(exactly = 1) { dotNsResolver.getMetadataEntry(base, "manifest") }
-    }
-
-    @Test
-    fun `an executable subname resolves as its product`() = runBlocking {
-        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
-
-        val servingHost = ProductId.fromString("APP.$base", DotNsTld.parse("dot")!!).getOrThrow()
-        val resolved = useCase().resolve(servingHost).getOrThrow()
-
-        assertEquals(base, resolved.product.id.value)
     }
 
     @Test

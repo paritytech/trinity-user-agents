@@ -93,7 +93,7 @@ impl ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Preimage for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
 	async fn lookup_subscribe(

@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -242,7 +243,7 @@ describe("reading a stored value back the way the old package spelled it", () =>
       // id up to the next separator instead of by its length stops at
       // `localhost`, and every lookup answers `undefined`.
       const { client, host, dispose } = await createMockClient({
-        runtimeConfig: { productId: "localhost:3000" },
+        runtimeConfig: { productId: asProductId("localhost:3000") },
       });
       try {
         await client.localStorage.write({ key: "greeting", value: "0x6869" });

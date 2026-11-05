@@ -11,10 +11,11 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
@@ -31,6 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,8 +49,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 
 @HiltViewModel
 class PocketViewModel @Inject constructor(
@@ -62,10 +66,12 @@ class PocketViewModel @Inject constructor(
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
+    private var selectedPageQuery = ""
     private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
+    private var collectiblesOpening: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -91,6 +97,14 @@ class PocketViewModel @Inject constructor(
 
     private val warmedPrivilegedProducts = ConcurrentHashMap.newKeySet<ProductId>()
 
+    private val bindings = ConcurrentHashMap<String, CardBinding>()
+
+    /**
+     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
+     * would otherwise fetch the same image again and show nothing until it arrived.
+     */
+    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
+
     // The balance card keeps its place; the product-backed collection follows, pinned cards first.
     // A collection the host cannot read costs the user their product cards, never the balance card
     // standing beside them.
@@ -115,7 +129,9 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
-    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
+    private val collectiblesUrl = flowOf {
+        collectiblesUrlResolver.resolveUrl().logFailure("Collectibles URL is unavailable").getOrNull()
+    }
         .flowOn(dispatchers.computation)
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 
@@ -143,8 +159,6 @@ class PocketViewModel @Inject constructor(
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
-
-    private val bindings = ConcurrentHashMap<String, CardBinding>()
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
@@ -209,33 +223,43 @@ class PocketViewModel @Inject constructor(
 
     // A tab shown for the first time has no product cards until the collection loads.
     init {
-        combine(cards, cardOpenRequests.requested) { held, requested ->
-            held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == requested }
+        combine(cards, cardOpenRequests.requested) { held, request ->
+            request?.let {
+                held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == request.key }?.to(request)
+            }
         }
             .filterNotNull()
-            .onEach(::openRequestedCard)
+            .onEach { (card, request) -> openRequestedCard(card, request) }
             .launchIn(this)
     }
 
     /**
      * A tap always starts from the list, but a link can arrive with another card open. Switched to
      * straight away, the new card would be drawn over the open one's page until it settled, so the
-     * open card is closed first, as [dismissCard] does, and the list behind it is put back.
+     * open card is closed first, as [dismissCard] does, and the list behind it is put back. A link to
+     * the card already open loads its page with the link's params, or leaves them for it to settle with.
      */
-    private fun openRequestedCard(card: PocketCardUiModel.ProductCard) {
-        cardOpenRequests.consume(card.key)
-        if (selectedCardId.value == card.id) return
+    private fun openRequestedCard(card: PocketCardUiModel.ProductCard, request: PocketCardOpenRequest) {
+        cardOpenRequests.consume(request)
+        if (selectedCardId.value == card.id) {
+            selectedPageQuery = request.pageQuery
+            if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
+            return
+        }
 
         if (selectedCardId.value != null) dismissCard()
-        collectiblesShown.value = false
+        hideCollectiblesSketchbook()
         removalCandidate.value = null
-        selectCard(card)
+        selectCard(card, request.pageQuery)
     }
 
-    fun selectCard(card: PocketCardUiModel) {
+    fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
         selectedCardId.value = card.id
+        selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
-            expandedProduct.showIfHeld(card.key.launchUrl())
+            expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -277,16 +301,24 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = null
     }
 
-    fun showCollectiblesSketchbook() {
-        collectiblesShown.value = true
-    }
-
     fun hideCollectiblesSketchbook() {
+        collectiblesOpening?.cancel()
         collectiblesShown.value = false
     }
 
     fun openCollectibles() {
-        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
+        val page = collectiblesUrl.value ?: return
+        if (selectedCardId.value != null || collectiblesShown.value) return
+
+        collectiblesShown.value = true
+        collectiblesOpening = launch {
+            delay(COLLECTIBLES_OPEN_DELAY)
+            router.openSpaBrowser(SpaBrowserPayload.ByUrl(page.toString()))
+        }
+    }
+
+    fun onShown() {
+        if (collectiblesShown.value && collectiblesOpening?.isActive == false) hideCollectiblesSketchbook()
     }
 
     /**
@@ -297,7 +329,7 @@ class PocketViewModel @Inject constructor(
      * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl())
+        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl(selectedPageQuery))
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */
@@ -308,12 +340,6 @@ class PocketViewModel @Inject constructor(
         }
         interactor.sendFaceAction(card.key, actionId, payload)
     }
-
-    /**
-     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
-     * would otherwise fetch the same image again and show nothing until it arrived.
-     */
-    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
 
     private suspend fun resolveFaceImage(card: PocketCardUiModel.ProductCard, source: JsImageSource): Uri? =
         resolvedFaceImages[card.id to source]
@@ -351,7 +377,7 @@ class PocketViewModel @Inject constructor(
     }
 
     private fun List<PocketCardUiModel>.holdsProductAt(url: String): Boolean =
-        filterIsInstance<PocketCardUiModel.ProductCard>().any { it.key.launchUrl() == url }
+        filterIsInstance<PocketCardUiModel.ProductCard>().any { it.key.launches(url) }
 
     private fun closeExpandedCard() {
         expandedProduct.release()
@@ -362,5 +388,7 @@ class PocketViewModel @Inject constructor(
     private companion object {
         // Long enough to cover a scroll away and back, or a glance at another app.
         const val WORKER_KEEP_ALIVE_MILLIS = 5_000L
+
+        val COLLECTIBLES_OPEN_DELAY = 450.milliseconds
     }
 }

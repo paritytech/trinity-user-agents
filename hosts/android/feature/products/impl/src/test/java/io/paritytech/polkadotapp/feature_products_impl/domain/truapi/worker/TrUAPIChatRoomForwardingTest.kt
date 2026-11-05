@@ -7,7 +7,6 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
 import io.parity.truapi.TrUAPIProductExecution
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
@@ -29,13 +28,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomParticipation
+import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicInteger
 
 private const val ROOM_1 = "room-1"
 private const val ROOM_2 = "room-2"
 
 class TrUAPIChatRoomForwardingTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val execution: TrUAPIProductExecution = mockk(relaxUnitFun = true)
 
     private class Forwarding(val scope: CoroutineScope, val job: Job)

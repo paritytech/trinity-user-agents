@@ -18,6 +18,11 @@ internal class RealEncryptedPreferences @Inject constructor(
         preferences.putString(field, encryptionUtil.encrypt(value))
     }
 
+    override fun putEncryptedStringNow(
+        field: String,
+        value: String,
+    ): Boolean = preferences.putStringNow(field, encryptionUtil.encrypt(value))
+
     override fun getDecryptedString(field: String): String? {
         val encryptedString = preferences.getString(field)
         return encryptedString?.let { encryptionUtil.decrypt(it) }

@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement
 
 import androidx.compose.runtime.Immutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 @Immutable
 data class ProductBotManagementState(
@@ -22,7 +22,7 @@ sealed interface ProductDialogState {
     data object None : ProductDialogState
 
     data class Form(
-        val productId: String? = null,
+        val productId: ProductId? = null,
         val dotNsName: String = "",
         val workerUrl: String = "",
         // A Pocket card on the worker. Optional: a worker can be useful with only chat on it.

@@ -8,7 +8,6 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -24,10 +23,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactorySelectionTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val botApi = BindableProductsBotApi(mockk(), mockk())
 
     private fun TestScope.factory(
@@ -114,7 +114,7 @@ class WorkerBootFactorySelectionTest {
         val runtimeProvider: TrUAPIHostRuntimeProvider = mockk()
         val runtime: TrUAPIHostRuntime = mockk()
         coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
-        every { runtime.acquireWorker(productId.value) } throws IllegalStateException("acquireWorker boom")
+        every { runtime.acquireWorker(productId) } throws IllegalStateException("acquireWorker boom")
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mockk()
         val factory = factory(
             settingsWith(enabled = true),

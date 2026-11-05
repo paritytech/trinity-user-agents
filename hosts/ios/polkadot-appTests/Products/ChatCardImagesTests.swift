@@ -77,7 +77,7 @@ private struct NoWorkers: ProductWorkerManaging {
 
 private func gameProduct() -> ResolvedProduct {
     ResolvedProduct(
-        id: "game.paseo",
+        id: try! ProductId("game.paseo"),
         displayName: "Game",
         description: nil,
         icon: nil,
@@ -85,7 +85,7 @@ private func gameProduct() -> ResolvedProduct {
             app: nil,
             widget: nil,
             worker: ProductExecutable.Worker(
-                identifier: "worker.game.paseo",
+                identifier: try! ProductId("worker.game.paseo"),
                 appVersion: .zero,
                 entrypoint: "index.js",
                 modalities: [.chat]

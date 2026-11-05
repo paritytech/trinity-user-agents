@@ -6,7 +6,6 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
@@ -18,6 +17,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProductGameAutoOpenerTest {
@@ -26,10 +26,10 @@ class ProductGameAutoOpenerTest {
     private val lifecycle: AppLifecycleObserver = mockk()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
-    private val game = ProductId.fromStoredValue("game.dot")
-    private val other = ProductId.fromStoredValue("acme.dot")
-    private val scheduledGame = ScheduledProductGame(game.value, startsAtMillis = 60_000)
-    private val scheduledOther = ScheduledProductGame(other.value, startsAtMillis = 120_000)
+    private val game = ProductId.parse("game.dot").getOrThrow()
+    private val other = ProductId.parse("acme.dot").getOrThrow()
+    private val scheduledGame = ScheduledProductGame(game, startsAtMillis = 60_000)
+    private val scheduledOther = ScheduledProductGame(other, startsAtMillis = 120_000)
 
     @Test
     fun `opens the soonest product at its start while in the foreground and clears it`() = runTest {

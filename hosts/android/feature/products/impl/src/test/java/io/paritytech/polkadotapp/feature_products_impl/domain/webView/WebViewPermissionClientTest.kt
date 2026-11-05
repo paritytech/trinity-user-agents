@@ -12,7 +12,6 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -28,12 +27,13 @@ import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
 import java.net.URI
 
 class WebViewPermissionClientTest {
-    private val productId = ProductId.fromStoredValue("product.paseo")
+    private val productId = ProductId.parse("product.paseo").getOrThrow()
     private var currentProduct = productId
     private val guard = mockk<ProductPermissionGuard>()
     private val execution = mockk<TrUAPIProductExecution>()
@@ -84,7 +84,7 @@ class WebViewPermissionClientTest {
     @Test
     fun `a different current product cannot borrow the execution authorization`() = runBlocking<Unit> {
         client.useTrUAPIPermissions(productId, execution, scope)
-        currentProduct = ProductId.fromStoredValue("other.paseo")
+        currentProduct = ProductId.parse("other.paseo").getOrThrow()
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 

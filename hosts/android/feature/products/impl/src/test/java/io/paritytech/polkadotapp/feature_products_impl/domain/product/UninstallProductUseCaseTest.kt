@@ -5,13 +5,13 @@ import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class UninstallProductUseCaseTest {
     private val productRepository: ProductRepository = mockk(relaxUnitFun = true)
@@ -19,7 +19,7 @@ class UninstallProductUseCaseTest {
     private val productGameReminder: ProductGameReminder = mockk(relaxUnitFun = true)
     private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
 
-    private val productId = ProductId.fromStoredValue("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
 
     @Test
     fun `cancels scheduled notifications before deleting product`() = runBlocking {

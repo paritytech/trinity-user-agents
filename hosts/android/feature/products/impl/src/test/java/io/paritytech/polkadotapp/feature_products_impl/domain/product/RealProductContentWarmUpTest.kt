@@ -6,13 +6,13 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 class RealProductContentWarmUpTest {
     private val dotNsResolver: DotNsResolver = mockk()
@@ -27,7 +27,7 @@ class RealProductContentWarmUpTest {
     }
     private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver, runtimeSettings)
 
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val archive: Uri = mockk()
 
     // The archive is keyed by the host that serves the card, which for a manifest product is its
@@ -35,7 +35,7 @@ class RealProductContentWarmUpTest {
     // paying for the download after all.
     @Test
     fun `warms the archive of the host that actually serves the product`() = runBlocking {
-        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET) } returns "widget.game.dot"
+        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET) } returns Result.success("widget.game.dot")
         coEvery { dotNsResolver.resolveToLocalUri("widget.game.dot") } returns Result.success(archive)
 
         val result = warmUp.warmUp(productId)
@@ -49,7 +49,7 @@ class RealProductContentWarmUpTest {
     @Test
     fun `on the native runtime it warms the app archive the card loads`() = runBlocking {
         truapiRuntime = false
-        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP) } returns "app.game.dot"
+        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP) } returns Result.success("app.game.dot")
         coEvery { dotNsResolver.resolveToLocalUri("app.game.dot") } returns Result.success(archive)
 
         val result = warmUp.warmUp(productId)
@@ -63,7 +63,7 @@ class RealProductContentWarmUpTest {
     @Test
     fun `an archive that cannot be fetched is reported rather than thrown`() = runBlocking {
         val failure = IllegalStateException("chain unreachable")
-        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET) } returns "widget.game.dot"
+        coEvery { servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET) } returns Result.success("widget.game.dot")
         coEvery { dotNsResolver.resolveToLocalUri("widget.game.dot") } returns Result.failure(failure)
 
         val result = warmUp.warmUp(productId)

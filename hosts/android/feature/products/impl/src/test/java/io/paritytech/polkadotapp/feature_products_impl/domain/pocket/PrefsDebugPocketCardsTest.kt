@@ -6,14 +6,14 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class PrefsDebugPocketCardsTest {
     private val prefs: SharedPreferences = mockk()
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
 
     private fun cards(isDebugBuild: Boolean = true) = PrefsDebugPocketCards(prefs, isDebugBuild)
 

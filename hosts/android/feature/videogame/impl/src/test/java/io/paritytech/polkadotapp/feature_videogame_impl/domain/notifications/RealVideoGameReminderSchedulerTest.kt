@@ -3,10 +3,10 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class RealVideoGameReminderSchedulerTest {
     private val alarms: GameReminderAlarms = mockk(relaxUnitFun = true)
@@ -14,7 +14,7 @@ class RealVideoGameReminderSchedulerTest {
 
     private val scheduler = RealVideoGameReminderScheduler(alarms, FakeTimeProvider { NOW }, telemetry)
 
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     @Test
     fun `an exact alarm is reported as scheduled for alarm delivery`() {

@@ -77,6 +77,8 @@ private extension TrUAPIConfirmationPresenter {
             )
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
+        case let .nftPurseDrain(drainReview):
+            await confirmAction(promptMapper.makeActionRequest(from: drainReview))
         case .identityDisclosure,
              .accountAccess,
              .accountAlias:
@@ -107,7 +109,7 @@ private extension TrUAPIConfirmationPresenter {
         return await presentSigning(input: input, requester: requesterName)
     }
 
-    func presentSigning(input: ProductsSignConfirmInput, requester: ProductId) async -> Bool {
+    func presentSigning(input: ProductsSignConfirmInput, requester: String) async -> Bool {
         await awaitDecision(cancelled: false) { [routerFacade] _ in
             await withCheckedContinuation { continuation in
                 let context = ProductsSignConfirmContext(

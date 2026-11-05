@@ -2,12 +2,15 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol
 
 import io.mockk.Called
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropy
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfEntropyDeriver
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingCollectionId
 import io.paritytech.polkadotapp.feature_members_api.domain.model.MemberSource
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.LocatedRing
@@ -19,15 +22,18 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.r
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.RingVrfKeyRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
+import uniffi.truapi.ProductIdException
 
 private val PEOPLE_RING = ringOf("pop:polkadot.network/people")
 private val OTHER_RING = ringOf("pop:polkadot.network/people-lite")
 
-private val OWN_HANDLE = ProductAccountId("game.dot", DerivationIndex32.fromUInt(7u))
-private val PERSONHOOD_HANDLE = ProductAccountId("peopl.dot", DerivationIndex32.fromUInt(0u))
-private val UNKNOWN_HANDLE = ProductAccountId("stranger.dot", DerivationIndex32.fromUInt(3u))
+private val OWN_HANDLE = ProductAccountId(ProductId.parse("game.dot").getOrThrow(), DerivationIndex32.fromUInt(7u))
+private val PERSONHOOD_HANDLE = ProductAccountId(ProductId.parse("peopl.dot").getOrThrow(), DerivationIndex32.fromUInt(0u))
+private val UNKNOWN_HANDLE = ProductAccountId(ProductId.parse("stranger.dot").getOrThrow(), DerivationIndex32.fromUInt(3u))
 
 private fun ringOf(collection: String) = RingLocation(
     chainId = ByteArray(32) { 1 }.toDataByteArray(),
@@ -49,6 +55,26 @@ class RealRingVrfKeySourceTest {
         ringVrfEntropyDeriver = ringVrfEntropyDeriver,
         membersRingLocator = membersRingLocator,
     )
+
+    @Test
+    fun `an unsupported configured network aborts before deriving a key or looking up a member`() {
+        val tldProvider: DotNsTldProvider = mockk {
+            coEvery { getTld() } returns Result.success(DotNsTld.parse("test")!!)
+        }
+        val registry: RingVrfKeyRegistry = mockk {
+            coEvery { declaredRings(PERSONHOOD_HANDLE) } returns emptyList()
+        }
+        val entropyDeriver: RingVrfEntropyDeriver = mockk()
+        val memberLocator: MembersRingLocator = mockk()
+        val source = RealRingVrfKeySource(registry, ReservedRingVrfKeys(mockk(), tldProvider), entropyDeriver, memberLocator)
+
+        assertThrows(ProductIdException::class.java) {
+            runBlocking { source.resolveMember(PERSONHOOD_HANDLE, PEOPLE_RING) }
+        }
+
+        coVerify(exactly = 0) { entropyDeriver.deriveRingVrfEntropy(any()) }
+        coVerify(exactly = 0) { memberLocator.locateRing(any()) }
+    }
 
     @Test
     fun `registered handle resolves to entropy derived at its own path`() = runBlocking<Unit> {

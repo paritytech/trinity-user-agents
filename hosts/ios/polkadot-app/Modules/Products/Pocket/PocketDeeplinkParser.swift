@@ -13,11 +13,14 @@ enum PocketLinkAction: Equatable {
 /// A `polkadotapp://pocket/<action>?product=<id>&card=<id>` link as the core
 /// classifies it. `productHost` is the product's lower-cased dotNS name.
 struct PocketDeeplink: Equatable {
-    let productHost: String
+    let productHost: ProductId
     let action: PocketLinkAction
     /// Already screened, by the core, as part of classifying the link. Nothing
     /// downstream screens it again.
     let cardId: PocketCardId
+    /// An open link's other query params, still percent-encoded and in link
+    /// order, for the card's page. Empty for an add link.
+    let pageQuery: String
     /// The normalized `polkadotapp://` form, with the product and card
     /// percent-encoded, so re-parsing it names the same card.
     let canonicalUrl: String
@@ -42,10 +45,6 @@ enum PocketLinkClassification: Equatable {
 struct PocketDeeplinkParser {
     /// The host every Pocket link names.
     static let host = "pocket"
-    /// The scheme the core reads a Pocket link under: the app's own, without a
-    /// build flavor's suffix. A link under any of this app's schemes is read
-    /// under this one.
-    static let coreScheme = "polkadotapp"
 
     private let deeplinkMatcher: AppDeeplinkMatching
 
@@ -62,13 +61,13 @@ struct PocketDeeplinkParser {
             return .notOurs
         }
 
-        components.scheme = Self.coreScheme
+        components.scheme = appDeeplinkScheme()
         guard let link = components.string else {
             return .notOurs
         }
 
         switch parseNavigate(input: link) {
-        case let .pocket(identifier, action, cardId, _, canonicalUrl):
+        case let .pocket(identifier, action, cardId, pageQuery, canonicalUrl):
             let linkAction: PocketLinkAction =
                 switch action {
                 case .add: .add
@@ -79,6 +78,7 @@ struct PocketDeeplinkParser {
                 productHost: identifier,
                 action: linkAction,
                 cardId: PocketCardId(value: cardId),
+                pageQuery: pageQuery,
                 canonicalUrl: canonicalUrl
             ))
         case .pocketCollection:

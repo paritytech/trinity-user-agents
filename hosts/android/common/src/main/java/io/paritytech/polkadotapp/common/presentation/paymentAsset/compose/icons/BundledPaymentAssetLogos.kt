@@ -7,20 +7,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
-/** The payment asset marks shipped with the app, drawn whenever no published logo is available. */
 internal object BundledPaymentAssetLogos {
-    val Square: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
-        ImageVector.Builder(
-            name = "PaymentAssetSquareLogo",
-            defaultWidth = 50.dp,
-            defaultHeight = 55.dp,
-            viewportWidth = 100f,
-            viewportHeight = 110f,
-        )
-            .addPath(pathData = addPathNodes(MARK_PATH), fill = markGradient())
-            .build()
-    }
-
     val Wide: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
         ImageVector.Builder(
             name = "PaymentAssetWideLogo",

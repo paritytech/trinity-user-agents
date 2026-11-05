@@ -1,7 +1,7 @@
 //! Product-facing account operations and login lifecycle.
 
 use crate::platform::{
-	PermissionAuthorizationStatus, ProductId, ProductSubtreeReview, UserConfirmationReview,
+	PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
 };
 use futures::StreamExt;
 use tracing::instrument;
@@ -35,7 +35,7 @@ use crate::runtime::{
 	versioning::version, vrf_call_error,
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Account for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "account.get_account"))]
 	async fn get_account(
@@ -184,11 +184,10 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountListRingVrfKeysRequest,
 	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
 		version(request)
-			.exec(|mut request| async move {
+			.exec(|request| async move {
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
-				request.owner = request.owner.parse::<ProductId>()?.into();
 				let cx = remote_authority_context(cx);
 				remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
 					.await
@@ -284,18 +283,8 @@ impl Account for ProductRuntimeHost {
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
 
-				match self.connection.identity_disclosure_authorization().await {
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => {
-						return Err(CallError::Domain(
-							latest::HostGetUserIdError::PermissionDenied,
-						));
-					},
-					Err(reason) => return Err(CallError::HostFailure { reason }),
-				}
+				let denied = latest::HostGetUserIdError::PermissionDenied;
+				self.connection.require_identity_disclosure(denied).await?;
 
 				let primary_username = match session.primary_username() {
 					Some(name) => Some(name.to_string()),
