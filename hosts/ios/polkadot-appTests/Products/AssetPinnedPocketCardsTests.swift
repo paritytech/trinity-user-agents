@@ -12,7 +12,11 @@ struct AssetPinnedPocketCardsTests {
     /// id is a function of the network the app is on.
     @Test
     func placesHumanityOnThePersonhoodProduct() async {
-        #expect(pinned.cards() == [PinnedPocketCard(productId: try! ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")])
+        #expect(pinned.cards() == [PinnedPocketCard(
+            productId: try! ProductId("peopl.paseo"),
+            cardId: "humanity",
+            title: "Humanity"
+        )])
     }
 
     @Test

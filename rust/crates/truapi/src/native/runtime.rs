@@ -24,7 +24,7 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	PairedSsoPeer, ResponderExit, SigningHostRuntime,
+	ImageError, ImageReference, LoadedImage, PairedSsoPeer, ResponderExit, SigningHostRuntime,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -781,6 +781,12 @@ impl NativeTrUApiHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
 		self.runtime.core_database_status().await.map_err(Into::into)
+	}
+
+	/// The image `reference` names, read from Bulletin over the core's own connection and
+	/// checked against its CID and the image policy. Dropping the future stops the load.
+	pub async fn load_image(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
+		self.runtime.load_image(reference).await
 	}
 
 	/// Follow the Pocket collection: `observer` gets every card now and
