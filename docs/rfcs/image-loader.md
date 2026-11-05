@@ -16,7 +16,7 @@ Every feature that shows an image builds its own loader. iOS and Android each re
 
 ## Approach
 
-The host calls `load_image(reference)` on the runtime through UniFFI or the WASM bridge. The call is async and cancellable: cancelling it stops the fetch. It returns either `Ready` with the bytes and a content key, the blob's CID, which hosts key their disk caches on, or `Unavailable` with a reason. A failed image draws as a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
+The host calls `load_image(reference)` on the runtime through UniFFI or the WASM bridge. The call is async and cancellable: cancelling it stops the fetch. It returns the bytes, their format as read from the bytes, and a content key, the blob's CID, which hosts key their disk caches on. Otherwise it fails as `Unsupported` when the reference names nothing the core loads, `Rejected` when the bytes fail the policy, or `Unavailable` when Bulletin does not return them. Only `Unavailable` can succeed on a later attempt. A failed image draws as a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
 
 References the core loads, and where it finds each one's CID:
 
@@ -42,4 +42,5 @@ This also amends [unified-renderer.md](unified-renderer.md), where `ImageSource`
 
 - Archive images in a renderer tree and inline `data:` chat icons stay outside the loader. Moving archive resolution into the core is a separate RFC.
 - Images stored as a DAG rather than a single Bulletin blob do not load until the core can read DAGs.
+- The side limit bounds the memory one frame takes, not the number of frames in an animated GIF or WebP.
 - Dropped: HTTP fetching in the core, which has no HTTP client; reading Bulletin through the host's `lookup_preimage`, which iOS and Android answer from an IPFS gateway; host-side byte verification; a byte cache in the core, which would keep a second copy of every image the host already caches; and widening the renderer wire type in place, which would cause deployed hosts to reject entire trees containing unknown variants.
