@@ -33,7 +33,7 @@ use std::{
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-use crate::platform::{ChainProvider, JsonRpcConnection};
+use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -49,6 +49,7 @@ use serde_json::Value;
 use subxt::{
 	OnlineClient,
 	backend::{ChainHeadBackend, LegacyBackend},
+	client::OnlineClientAtBlock,
 	config::{
 		RpcConfigFor,
 		substrate::{SubstrateConfig, SubstrateConfigBuilder},
@@ -72,7 +73,11 @@ use truapi::v01::{
 	RuntimeSpec, RuntimeType, StorageQueryItem, StorageQueryType, StorageResultItem,
 };
 
-use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
+use crate::{
+	host_rpc_client::HostRpcClient,
+	subscription::Spawner,
+	time::{Backoff, RealTimer, Timer},
+};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -311,9 +316,21 @@ impl RuntimeChainProvider for HostChainProvider {
 				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
 			)
 		})?;
-		self.provider.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
+		self.provider
+			.connect(genesis_hash)
+			.await
+			.map(Arc::from)
+			.map_err(|err| match err {
+				// No connection attempt can succeed for a chain the provider does
+				// not serve, so it is not reported as a connection that is down.
+				ProviderError::UnknownGenesis { .. } | ProviderError::UnknownRelay { .. } => {
+					RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}"))
+				},
+				_ => RuntimeFailure::unavailable_with_reason(
+					"remote_chain_connect",
+					format!("{err:?}"),
+				),
+			})
 	}
 }
 
@@ -970,6 +987,37 @@ impl ChainRuntime {
 			"the Subxt backend's driver task defeats release_scope on a product scope",
 		);
 		Ok(self.subxt_connection(genesis_hash).await?.client)
+	}
+
+	/// [`Self::online_client`] and the chain's current block, waiting out a
+	/// dropped connection or follow.
+	///
+	/// A connection that drops takes the Subxt follow with it, and a phone
+	/// briefly without a network refuses the follow that would replace it.
+	/// Each attempt that fails that way is retried with a growing pause until
+	/// the pauses would pass [`CURRENT_BLOCK_PATIENCE`]. A failure no wait can
+	/// fix, such as a chain the host does not know, is returned at once.
+	/// Core scope only, as [`Self::online_client`].
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.current_block"))]
+	pub async fn current_block(
+		&self,
+		genesis_hash: &[u8],
+	) -> Result<
+		(OnlineClient<SubstrateConfig>, OnlineClientAtBlock<SubstrateConfig>),
+		CurrentBlockError,
+	> {
+		patiently(
+			&RealTimer,
+			CURRENT_BLOCK_PATIENCE,
+			|| async {
+				let client =
+					self.online_client(genesis_hash).await.map_err(CurrentBlockError::Client)?;
+				let at_block = client.at_current_block().await.map_err(CurrentBlockError::Block)?;
+				Ok((client, at_block))
+			},
+			CurrentBlockError::is_transient,
+		)
+		.await
 	}
 
 	/// Raw JSON-RPC client for the chain identified by `genesis_hash`.
@@ -2362,6 +2410,69 @@ pub async fn wait_for_chain_head_call_output(
 #[cfg(test)]
 fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 	hex::decode(value.strip_prefix("0x").unwrap_or(value)).map_err(|_| "invalid hex".to_string())
+}
+
+/// How long the pauses between attempts in [`ChainRuntime::current_block`]
+/// may add up to before the chain is reported unavailable. A phone that drops
+/// its network for a moment comes back well within it.
+pub const CURRENT_BLOCK_PATIENCE: Duration = Duration::from_secs(15);
+/// First pause after a failed attempt to get the current block.
+const CURRENT_BLOCK_FIRST_PAUSE: Duration = Duration::from_millis(250);
+/// Longest pause between attempts to get the current block.
+const CURRENT_BLOCK_LONGEST_PAUSE: Duration = Duration::from_secs(2);
+
+/// Why [`ChainRuntime::current_block`] could not get the current block.
+#[derive(Debug, Display)]
+pub enum CurrentBlockError {
+	/// No Subxt client could be had for the chain.
+	#[display("cannot load chain metadata: {_0}")]
+	Client(RuntimeFailure),
+	/// The client could not name its current block.
+	#[display("cannot select a metadata block: {_0}")]
+	Block(subxt::error::OnlineClientAtBlockError),
+}
+
+impl CurrentBlockError {
+	/// Whether the connection or its follow is down, which a later attempt can
+	/// outlast.
+	fn is_transient(&self) -> bool {
+		match self {
+			Self::Client(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
+			Self::Block(error) => matches!(
+				error,
+				subxt::error::OnlineClientAtBlockError::CannotGetCurrentBlock { .. }
+			),
+		}
+	}
+}
+
+/// Runs `attempt` until it succeeds or fails in a way `is_transient` rejects,
+/// pausing with a backoff after each transient failure. Once the pauses would
+/// pass `patience`, the last transient failure is the answer.
+async fn patiently<T, E, AttemptFuture>(
+	timer: &dyn Timer,
+	patience: Duration,
+	mut attempt: impl FnMut() -> AttemptFuture,
+	is_transient: impl Fn(&E) -> bool,
+) -> Result<T, E>
+where
+	AttemptFuture: Future<Output = Result<T, E>>,
+{
+	let mut backoff = Backoff::new(CURRENT_BLOCK_FIRST_PAUSE, CURRENT_BLOCK_LONGEST_PAUSE);
+	let mut paused = Duration::ZERO;
+	loop {
+		let failure = match attempt().await {
+			Ok(done) => return Ok(done),
+			Err(failure) if !is_transient(&failure) => return Err(failure),
+			Err(failure) => failure,
+		};
+		let pause = backoff.next_pause();
+		if paused + pause > patience {
+			return Err(failure);
+		}
+		paused += pause;
+		timer.sleep(pause).await;
+	}
 }
 
 #[cfg(test)]
@@ -5031,6 +5142,133 @@ mod tests {
 			item,
 			Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
 		)
+	}
+}
+
+#[cfg(test)]
+mod current_block_tests {
+	use std::sync::Mutex;
+
+	use futures::{
+		executor::block_on,
+		future::{BoxFuture, ready},
+	};
+
+	use super::*;
+
+	/// Finishes every pause at once and records how long each one was.
+	#[derive(Default)]
+	struct RecordingTimer {
+		pauses: Mutex<Vec<Duration>>,
+	}
+
+	impl Timer for RecordingTimer {
+		fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
+			self.pauses.lock().unwrap().push(duration);
+			Box::pin(ready(()))
+		}
+	}
+
+	#[derive(Debug, PartialEq)]
+	enum Failure {
+		Transient(u32),
+		Final,
+	}
+
+	fn transient(failure: &Failure) -> bool {
+		matches!(failure, Failure::Transient(_))
+	}
+
+	/// A follow that drops while the network is out does not fail the caller:
+	/// attempts continue with a growing pause until one works.
+	#[test]
+	fn a_transient_failure_is_outlasted() {
+		let timer = RecordingTimer::default();
+		let mut attempts = 0;
+		let done = block_on(patiently(
+			&timer,
+			CURRENT_BLOCK_PATIENCE,
+			|| {
+				attempts += 1;
+				ready(if attempts < 4 { Err(Failure::Transient(attempts)) } else { Ok(attempts) })
+			},
+			transient,
+		));
+		assert_eq!(done, Ok(4));
+		assert_eq!(
+			timer.pauses.into_inner().unwrap(),
+			[250, 500, 1000].map(Duration::from_millis).to_vec(),
+		);
+	}
+
+	/// A failure that waiting cannot fix is answered at once.
+	#[test]
+	fn a_final_failure_is_not_retried() {
+		let timer = RecordingTimer::default();
+		let mut attempts = 0;
+		let done: Result<(), _> = block_on(patiently(
+			&timer,
+			CURRENT_BLOCK_PATIENCE,
+			|| {
+				attempts += 1;
+				ready(Err(Failure::Final))
+			},
+			transient,
+		));
+		assert_eq!(done, Err(Failure::Final));
+		assert_eq!(attempts, 1);
+		assert!(timer.pauses.into_inner().unwrap().is_empty());
+	}
+
+	/// A connection that never returns is reported once the pauses would pass
+	/// the patience, with the last failure it gave.
+	#[test]
+	fn an_outage_longer_than_the_patience_reports_the_last_failure() {
+		let timer = RecordingTimer::default();
+		let mut attempts = 0;
+		let done: Result<(), _> = block_on(patiently(
+			&timer,
+			CURRENT_BLOCK_PATIENCE,
+			|| {
+				attempts += 1;
+				ready(Err(Failure::Transient(attempts)))
+			},
+			transient,
+		));
+		let pauses = timer.pauses.into_inner().unwrap();
+		assert_eq!(done, Err(Failure::Transient(attempts)));
+		assert_eq!(attempts as usize, pauses.len() + 1);
+		assert!(pauses.iter().sum::<Duration>() <= CURRENT_BLOCK_PATIENCE);
+		assert_eq!(pauses.last(), Some(&CURRENT_BLOCK_LONGEST_PAUSE));
+	}
+
+	/// Only an unavailable chain and a lost current block are worth waiting on.
+	#[test]
+	fn only_a_lost_connection_or_follow_is_transient() {
+		let lost_follow = CurrentBlockError::Block(
+			subxt::error::OnlineClientAtBlockError::CannotGetCurrentBlock {
+				reason: subxt::error::BackendError::Rpc(
+					subxt::error::RpcError::SubscriptionDropped,
+				),
+			},
+		);
+		assert!(lost_follow.is_transient());
+		assert!(
+			CurrentBlockError::Client(RuntimeFailure::unavailable(CONNECT_METHOD)).is_transient()
+		);
+		assert!(
+			!CurrentBlockError::Client(RuntimeFailure::host_failure(
+				CONNECT_METHOD,
+				"unknown chain"
+			))
+			.is_transient()
+		);
+		assert!(
+			!CurrentBlockError::Block(subxt::error::OnlineClientAtBlockError::BlockNotFound {
+				block_number: 1,
+			})
+			.is_transient()
+		);
 	}
 }
 

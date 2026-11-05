@@ -330,17 +330,11 @@ pub async fn build_local_transaction(
 	tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
 	let started = Instant::now();
-	let at_block = async {
-		let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-		})?;
-		client.at_current_block().await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!(
-				"cannot select a metadata block: {error}"
-			))
-		})
-	}
-	.await;
+	let at_block = chain
+		.current_block(&genesis_hash)
+		.await
+		.map(|(_, at_block)| at_block)
+		.map_err(|error| LocalTransactionError::ChainUnavailable(error.to_string()));
 	let waited = started.elapsed();
 	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
 		let genesis = encode_hex(&genesis_hash);
