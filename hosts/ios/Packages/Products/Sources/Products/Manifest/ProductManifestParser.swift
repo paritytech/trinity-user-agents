@@ -155,10 +155,14 @@ private extension ProductManifestParser {
             return reject("\(identifier): worker missing entrypoint")
         }
 
-        // A modality the worker does not list is one it does not serve. A
-        // worker can serve none of these, such as one that only funds.
-        let includesChat = dto.includes?.chat ?? false
-        let includesPocket = dto.includes?.pocket ?? false
+        // A modality the worker does not list is one it does not serve, so a
+        // worker that only funds need not mention chat or pocket. One that
+        // lists no modality at all is malformed.
+        guard let includes = dto.includes, includes.listsAnyModality else {
+            return reject("\(identifier): worker includes no modality")
+        }
+        let includesChat = includes.chat ?? false
+        let includesPocket = includes.pocket ?? false
 
         // Read whatever the flag says, so cards published without the flag are
         // still reported as the defect they are.
