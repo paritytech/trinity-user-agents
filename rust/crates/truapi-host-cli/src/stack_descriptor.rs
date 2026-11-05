@@ -148,7 +148,7 @@ impl<'a> StackProjection<'a> {
 }
 
 /// Why a descriptor URL served no descriptor.
-#[derive(Debug, derive_more::Display)]
+#[derive(derive_more::Display)]
 pub enum FetchError {
 	/// The server returned a status other than 2xx.
 	#[display("{_0}")]

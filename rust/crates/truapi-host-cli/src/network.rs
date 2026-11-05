@@ -144,7 +144,7 @@ const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
 
 /// Where a command's network comes from: `--chain-backend`, `--network` and
 /// `--stack`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkSource {
 	pub chain_backend: ChainBackend,
 	/// paseo-next-v2 when neither this nor `stack` is set.
@@ -153,7 +153,7 @@ pub struct NetworkSource {
 }
 
 /// A `--stack` value and where it came from, for error messages.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StackArg {
 	/// A descriptor URL, a stack link or a local descriptor file.
 	pub value: String,
