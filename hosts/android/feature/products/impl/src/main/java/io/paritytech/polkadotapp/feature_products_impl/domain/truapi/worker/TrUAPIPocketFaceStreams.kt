@@ -5,10 +5,8 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.isManifestAnswer
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -36,7 +34,8 @@ class TrUAPIPocketFaceStreams @Inject constructor(
         // A card whose product publishes no Pocket worker has nothing to stream, and the reference
         // below is what starts one: the pinned card is on the default tab, so taking it would boot a
         // worker for the personhood product every time the tab is opened.
-        if (!publishedCards.isStreamable(key, side)) return@flow
+        val definition = publishedCards.findAnswered(key.productId, key.cardId).getOrNull()?.definition
+        if (definition == null || (side == PocketCardSide.BACK && definition.back == null)) return@flow
 
         val runtime = runtimeProvider.runtime()
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
@@ -52,17 +51,6 @@ class TrUAPIPocketFaceStreams @Inject constructor(
             )
         } finally {
             runtime.releaseWorker(key.productId)
-        }
-    }
-
-    private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey, side: PocketCardSide): Boolean {
-        var attempt = 0L
-        while (true) {
-            val published = find(key.productId, key.cardId)
-                .logFailure("Pocket face ${key.cardId.value} has no published card; it keeps the face it has")
-            published.getOrNull()?.let { return side == PocketCardSide.FRONT || it.definition.back != null }
-            if (published.exceptionOrNull()?.isManifestAnswer == true) return false
-            delay(reopenBackoff(attempt++))
         }
     }
 

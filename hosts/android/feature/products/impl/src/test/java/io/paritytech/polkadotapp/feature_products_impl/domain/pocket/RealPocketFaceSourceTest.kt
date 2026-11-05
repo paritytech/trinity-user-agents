@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
+import io.mockk.coEvery
 import io.mockk.mockk
+import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -50,15 +53,6 @@ class RealPocketFaceSourceTest {
         }
     }
 
-    private class AnsweringResolver(private val answer: suspend () -> Result<ResolvedProduct>) : ResolveProductUseCase {
-        override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> = answer()
-
-        override suspend fun invalidate(productId: ProductId) = Unit
-    }
-
-    private class ShippedBacks : RemoteFaceSource {
-        override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> = Result.success(faceOf("shipped $url"))
-    }
 
     private class NoImages : ProductImageResolver {
         override suspend fun resolve(productId: ProductId, source: JsImageSource): Result<Uri> =
@@ -70,12 +64,16 @@ class RealPocketFaceSourceTest {
     private val store = RealPocketCollection(FakePinnedPocketCards(emptyList()), repository)
     private val streams = FakeStreams()
     private var lookup: suspend () -> Result<ResolvedProduct> = { awaitCancellation() }
+    private val resolver = mockk<ResolveProductUseCase> { coEvery { resolve(any()) } coAnswers { lookup() } }
+    private val shippedBacks = mockk<RemoteFaceSource> {
+        coEvery { fetch(any(), any()) } answers { Result.success(faceOf("shipped ${firstArg<String>()}")) }
+    }
     private val source = RealPocketFaceSource(
         store,
         streams,
         NoImages(),
-        PublishedPocketCards(AnsweringResolver { lookup() }),
-        PocketPreviewLoader(ProductWorkerArchive(mockk()), ShippedBacks()),
+        PublishedPocketCards(resolver),
+        PocketPreviewLoader(ProductWorkerArchive(mockk()), shippedBacks),
     )
 
     private fun publishing(back: PocketCardPreview?) = ResolvedProduct(
@@ -163,6 +161,19 @@ class RealPocketFaceSourceTest {
         runCurrent()
 
         assertEquals(listOf(faceOf("shipped back.json"), faceOf("live back")).map { it.toJsWidget() }, shown)
+    }
+
+    // A read that did not land, typically a device briefly offline, says nothing about the card's back.
+    @Test
+    fun `the back file still shows when the first lookup does not land`() = runTest {
+        val answers = ArrayDeque(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing(back = PocketCardPreview.Url("back.json")))))
+        lookup = { answers.removeFirst() }
+
+        val shown = backsShown()
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        assertEquals(listOf(faceOf("shipped back.json").toJsWidget()), shown)
     }
 
     // A back the product took away must stop showing, though the core still holds the last one drawn.

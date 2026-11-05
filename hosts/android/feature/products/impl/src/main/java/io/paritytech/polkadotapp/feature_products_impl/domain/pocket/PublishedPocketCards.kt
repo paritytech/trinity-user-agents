@@ -1,11 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.reopenBackoff
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.delay
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -17,10 +20,6 @@ sealed class PocketPublishError(message: String) : Throwable(message) {
     // Variants are singletons, so a captured trace would point at classloading, not the failure.
     override fun fillInStackTrace(): Throwable = this
 }
-
-/** Whether a failed lookup is the manifest's own answer; a read that did not land says nothing about the card. */
-val Throwable.isManifestAnswer: Boolean
-    get() = this is PocketPublishError || this is ProductResolutionError.MalformedManifest
 
 data class PublishedPocketCard(
     val product: Product,
@@ -40,4 +39,21 @@ class PublishedPocketCards @Inject constructor(
                 ?.let { Result.success(PublishedPocketCard(resolved.product, it)) }
                 ?: Result.failure(PocketPublishError.UnknownCard)
         }
+
+    /**
+     * [find], asked again after a backoff until the manifest answers. A read that did not land,
+     * typically a device briefly offline, says nothing about the card.
+     */
+    suspend fun findAnswered(productId: ProductId, cardId: PocketCardId): Result<PublishedPocketCard> {
+        var attempt = 0L
+        while (true) {
+            val published = find(productId, cardId)
+                .logFailure("Pocket card ${cardId.value} has no published card; it keeps the faces it has")
+            val failure = published.exceptionOrNull()
+            if (failure == null || failure is PocketPublishError || failure is ProductResolutionError.MalformedManifest) {
+                return published
+            }
+            delay(reopenBackoff(attempt++))
+        }
+    }
 }
