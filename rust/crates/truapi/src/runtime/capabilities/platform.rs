@@ -52,7 +52,7 @@ use crate::{
 	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl System for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "system.handshake"))]
 	async fn handshake(
@@ -76,10 +76,7 @@ impl System for ProductRuntimeHost {
 				while changes.next().await.is_some() {
 					let Some(connection) = connection.upgrade() else { return };
 					if connection.session_state.current().is_some() {
-						connection
-							.services
-							.funding()
-							.connected(connection.product.product_id.as_str());
+						connection.services.funding().connected(&connection.product.product_id);
 						return;
 					}
 				}
@@ -187,7 +184,7 @@ impl System for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Permissions for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorize_device_permission"))]
 	async fn authorize_device_permission(
@@ -274,7 +271,7 @@ impl Permissions for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl LocalStorage for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "local_storage.read"))]
 	async fn read(
@@ -392,7 +389,7 @@ impl LocalStorage for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Worker for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
 	async fn begin_operation(
@@ -434,7 +431,7 @@ impl Worker for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Theme for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "theme.subscribe"))]
 	async fn subscribe(
@@ -456,7 +453,7 @@ impl Theme for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Locale for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
 	async fn subscribe(
@@ -481,7 +478,7 @@ impl Locale for ProductRuntimeHost {
 // `Notifications` delegates to the platform so hosts can own scheduling and
 // cancellation while the core preserves the typed TrUAPI wire shape.
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Notifications for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "notifications.send_push_notification"))]
 	async fn send_push_notification(

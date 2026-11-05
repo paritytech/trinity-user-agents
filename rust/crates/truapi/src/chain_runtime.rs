@@ -1742,7 +1742,7 @@ impl ChainConnection {
 				.collect::<Vec<_>>()
 				.join(", ");
 			warn!(
-				target: "truapi.chain.follow_budget_reached",
+				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
 				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
 			);
 		}
@@ -2370,7 +2370,6 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
 	use super::*;
 	use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
-	use async_trait::async_trait;
 	use futures::stream;
 	use parity_scale_codec::Encode;
 	use parking_lot::{Condvar, Mutex as ParkingMutex};
@@ -2510,7 +2509,7 @@ mod tests {
 	#[derive(Default)]
 	struct UnavailableChainProvider;
 
-	#[async_trait]
+	#[async_trait::async_trait]
 	impl RuntimeChainProvider for UnavailableChainProvider {
 		async fn connect(
 			&self,
@@ -2932,7 +2931,7 @@ mod tests {
 			inner: ScriptedProvider,
 		}
 
-		#[async_trait]
+		#[async_trait::async_trait]
 		impl RuntimeChainProvider for SlowConnectProvider {
 			async fn connect(
 				&self,
@@ -3271,7 +3270,7 @@ mod tests {
 		struct ParkedProvider {
 			gate: Arc<(ParkingMutex<bool>, Condvar)>,
 		}
-		#[async_trait]
+		#[async_trait::async_trait]
 		impl RuntimeChainProvider for ParkedProvider {
 			async fn connect(
 				&self,
@@ -3574,7 +3573,7 @@ mod tests {
 			inner: ScriptedProvider,
 		}
 
-		#[async_trait]
+		#[async_trait::async_trait]
 		impl RuntimeChainProvider for FailOnceProvider {
 			async fn connect(
 				&self,

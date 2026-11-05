@@ -15,7 +15,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use async_trait::async_trait;
 use futures::{
 	future::{self, FutureExt},
 	stream::{self, BoxStream, StreamExt},
@@ -54,7 +53,7 @@ pub enum SourceError {
 }
 
 /// Where blobs are fetched from, by CID. The seam the subscription logic is tested through.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait BlobSource: Send + Sync {
 	/// The blob stored under `cid`, or `None` when the source does not hold it.
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError>;
@@ -99,7 +98,7 @@ impl BitswapRpc {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl BlobSource for BitswapRpc {
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
 		let client = self.client().await?;
@@ -243,7 +242,7 @@ mod tests {
 		calls: Mutex<u32>,
 	}
 
-	#[async_trait]
+	#[async_trait::async_trait]
 	impl BlobSource for Scripted {
 		async fn get(&self, _cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
 			*self.calls.lock().unwrap() += 1;

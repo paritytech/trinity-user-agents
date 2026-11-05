@@ -20,8 +20,9 @@ use crate::{
 };
 
 /// Format of a stored session. The stored enums pin their SCALE indexes, so
-/// variants added later decode alongside the ones a row was written with.
-const SESSION_FORMAT: u16 = 3;
+/// variants added later decode alongside the ones a row was written with; a
+/// field added to a stored struct or variant takes a new format.
+const SESSION_FORMAT: u16 = 4;
 /// Format of a stored summary.
 const SUMMARY_FORMAT: u16 = 1;
 
@@ -267,8 +268,10 @@ mod tests {
 		let db = open_memory_core_db();
 		block_on(write(&db, &[&session("fs_1"), &session("fs_2")], Vec::new(), &[]))
 			.expect("written");
-		let assigned =
-			FundingSession { provider_id: Some("ramp.dot".to_string()), ..session("fs_1") };
+		let assigned = FundingSession {
+			provider_id: Some(ProductId::for_test("ramp.dot")),
+			..session("fs_1")
+		};
 
 		block_on(write(&db, &[&assigned], vec!["fs_2".to_string()], &[])).expect("written");
 

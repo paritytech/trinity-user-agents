@@ -6,9 +6,13 @@ use std::{
 	},
 };
 
-use crate::platform::{
-	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	ProductContext, ProductId,
+use crate::{
+	logging::{HOST_SINK_DETAIL_MAX_CHARS, truncate_to_chars},
+	markers,
+	platform::{
+		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		ProductContext, ProductId,
+	},
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -109,7 +113,7 @@ impl NativeTrUApiHostRuntime {
 		// that reaches a later condition and sees nothing can tell a quiet core
 		// from a channel that was never wired.
 		tracing::info!(
-			target: "truapi.core.started",
+			target: markers::CORE_STARTED.target,
 			"truapi {} is logging to this host",
 			env!("CARGO_PKG_VERSION"),
 		);
@@ -180,7 +184,7 @@ impl NativeTrUApiHostRuntime {
 			events,
 			spawner,
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
 			worker_executions: Mutex::new(HashMap::new()),
 			top_up: OnceLock::new(),
@@ -309,8 +313,9 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		self.runtime.set_funding_feed(platform.clone()) &&
+			self.runtime.set_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -440,14 +445,39 @@ impl NativeTrUApiHostRuntime {
 		}
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest JSON it ships for it.
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_funding_providers(providers)?)
+	}
+
+	/// The providers funding session `intent` can be handed to.
+	pub fn funding_candidates(
+		&self,
+		intent: String,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.runtime.funding_candidates(&intent)
+	}
+
+	/// Ask every funding provider to price `ask` for funding session `intent`.
+	/// Each provider's row arrives through `funding_quote_changed`. A newer ask
+	/// for the session withdraws this one, so its late rows never arrive.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+		self.runtime.request_funding_quotes(&intent, ask);
+	}
+
 	/// Hand open funding session `intent` to the provider the user chose, by
-	/// product id.
+	/// product id, on the quote it was chosen by.
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
-		provider_id: String,
+		provider_id: ProductId,
+		quote_id: String,
 	) -> Result<bool, HostRejection> {
-		Ok(self.runtime.select_funding_provider(&intent, &provider_id).await?)
+		Ok(self.runtime.select_funding_provider(&intent, &provider_id, &quote_id).await?)
 	}
 }
 
@@ -463,7 +493,7 @@ impl NativeTrUApiHostRuntime {
 		Self::from_resolved(
 			callbacks,
 			runtime_config,
-			"truapi.native.host_runtime.boot",
+			markers::NATIVE_HOST_RUNTIME_BOOT.target,
 			"host runtime ready",
 		)
 	}
@@ -1155,6 +1185,23 @@ impl NativeProductExecution {
 	}
 }
 
+/// Hands one bridge line to `callbacks`, if the table lists its marker.
+///
+/// The bridge raises its markers straight at the host rather than through the
+/// tracing layer, so the table check and the detail cap the layer applies are
+/// applied here instead. Both bridge loggers route through this, the listener's
+/// and each execution's. An unlisted marker is dropped, because nothing
+/// downstream knows what its detail carries.
+pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
+	if markers::class_of(marker).is_none() {
+		return;
+	}
+	callbacks.on_core_log(
+		marker.to_string(),
+		truncate_to_chars(detail, HOST_SINK_DETAIL_MAX_CHARS).to_string(),
+	);
+}
+
 #[uniffi::export]
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
@@ -1170,7 +1217,7 @@ impl NativeProductExecution {
 		let logger: BridgeLogger = {
 			let callbacks = self.callbacks.clone();
 			Arc::new(move |marker: &str, detail: &str| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			})
 		};
 		let runtime = self.runtime.clone();
@@ -1238,13 +1285,16 @@ mod tests {
 
 		crate::logging::testing::forward(
 			&host._host_sink,
-			"truapi.tracing.warn",
+			markers::TRACING_WARN.target,
 			"chain call failed",
 		);
 
 		let logs = callbacks.logs.lock().unwrap();
 		assert!(
-			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			logs.contains(&(
+				markers::TRACING_WARN.target.to_string(),
+				"chain call failed".to_string()
+			)),
 			"{logs:?}"
 		);
 	}
