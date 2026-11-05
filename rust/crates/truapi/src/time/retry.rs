@@ -22,7 +22,7 @@ where
 }
 
 /// [`retry`], sleeping on `timer`.
-async fn retry_on<Done, Failure, AttemptFuture>(
+pub async fn retry_on<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	mut attempt: impl FnMut() -> AttemptFuture,
 	mut pause_after: impl FnMut(Failure) -> Duration,
