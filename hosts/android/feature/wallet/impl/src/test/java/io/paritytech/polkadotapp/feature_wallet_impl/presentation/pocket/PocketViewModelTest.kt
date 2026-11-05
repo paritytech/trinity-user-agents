@@ -20,12 +20,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -68,8 +66,6 @@ class PocketViewModelTest {
         coEvery { faceShownOnOpen(any()) } returns true
     }
 
-    private val router: PocketRouter = mockk(relaxUnitFun = true)
-
     private var collectiblesPage: Uri? = null
     private val collectiblesUrlResolver = mockk<CollectiblesUrlResolver> {
         coEvery { resolveUrl() } answers { Result.success(collectiblesPage) }
@@ -107,7 +103,6 @@ class PocketViewModelTest {
         interactor = interactor,
         tokenAmountMapper = mockk<TokenAmountMapper>(),
         tokenAmountFormatter = mockk<TokenAmountFormatter>(),
-        router = router,
         collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,
@@ -192,34 +187,26 @@ class PocketViewModelTest {
         viewModel.openCollectibles()
         advanceUntilIdle()
 
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
+        assertNull(viewModel.collectiblesProduct.value)
     }
 
     // The collectibles page reads the collection over the host's chain connection, which it gets only
     // when it is opened as a product.
     @Test
-    fun `tapping the collectibles card opens the collectibles page full screen once the card has expanded`() = runTest(testDispatcher) {
+    fun `tapping the collectibles card loads the collectibles page inside the book at once`() = runTest(testDispatcher) {
         val stashUrl = withCollectiblesPage()
         val viewModel = createViewModel()
         advanceUntilIdle()
 
         viewModel.openCollectibles()
         runCurrent()
-        assertEquals(PocketScreenState.Collectibles, viewModel.state.value)
 
-        advanceTimeBy(449)
-        runCurrent()
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
         assertEquals(PocketScreenState.Collectibles, viewModel.state.value)
-
-        advanceTimeBy(1)
-        runCurrent()
-        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
-        verify(exactly = 0) { router.openSpaSheet(any()) }
+        assertEquals(stashUrl, viewModel.collectiblesProduct.value?.url)
     }
 
     @Test
-    fun `a second tap while the card is expanded opens the page once`() = runTest(testDispatcher) {
+    fun `a second tap while the book is open loads the page once`() = runTest(testDispatcher) {
         val stashUrl = withCollectiblesPage()
         val viewModel = createViewModel()
         advanceUntilIdle()
@@ -231,11 +218,13 @@ class PocketViewModelTest {
         viewModel.openCollectibles()
         advanceUntilIdle()
 
-        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
+        verify(exactly = 1) {
+            with(spaHost) { context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(stashUrl, false) } }
+        }
     }
 
     @Test
-    fun `a tap while a card is open neither expands the collectibles card nor opens the page`() = runTest(testDispatcher) {
+    fun `a tap while a card is open neither opens the book nor loads the page`() = runTest(testDispatcher) {
         withCollectiblesPage()
         val viewModel = createViewModel()
         viewModel.selectCard(settledCards(viewModel).single())
@@ -243,16 +232,16 @@ class PocketViewModelTest {
         viewModel.openCollectibles()
         advanceUntilIdle()
         assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
+        assertNull(viewModel.collectiblesProduct.value)
 
         viewModel.dismissCard()
         advanceUntilIdle()
         assertTrue(viewModel.state.value is PocketScreenState.List)
     }
 
-    // The list fades out over the expanding card and still takes taps until it is gone.
+    // The list fades out over the lifting book and still takes taps until it is gone.
     @Test
-    fun `a card tapped while the collectibles card expands is ignored and the page still opens`() = runTest(testDispatcher) {
+    fun `a card tapped while the book opens is ignored and the page stays`() = runTest(testDispatcher) {
         val stashUrl = withCollectiblesPage()
         val viewModel = createViewModel()
         val balanceCard = settledCards(viewModel).single()
@@ -263,11 +252,11 @@ class PocketViewModelTest {
         advanceUntilIdle()
 
         assertEquals(PocketScreenState.Collectibles, viewModel.state.value)
-        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
+        assertEquals(stashUrl, viewModel.collectiblesProduct.value?.url)
     }
 
     @Test
-    fun `back during the delay collapses the card and cancels the open`() = runTest(testDispatcher) {
+    fun `back closes the book and a reopen reuses the page`() = runTest(testDispatcher) {
         val stashUrl = withCollectiblesPage()
         val viewModel = createViewModel()
         advanceUntilIdle()
@@ -277,61 +266,26 @@ class PocketViewModelTest {
         viewModel.hideCollectiblesSketchbook()
         advanceUntilIdle()
         assertTrue(viewModel.state.value is PocketScreenState.List)
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
+        assertNull(viewModel.collectiblesProduct.value)
 
         viewModel.openCollectibles()
         advanceUntilIdle()
-        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
+        assertEquals(stashUrl, viewModel.collectiblesProduct.value?.url)
+        verify(exactly = 1) {
+            with(spaHost) { context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(stashUrl, false) } }
+        }
     }
 
     @Test
-    fun `coming back from the collectibles page collapses the card to the list`() = runTest(testDispatcher) {
+    fun `a back on the list leaves the list as it is`() = runTest(testDispatcher) {
         withCollectiblesPage()
         val viewModel = createViewModel()
         advanceUntilIdle()
-        viewModel.openCollectibles()
-        advanceUntilIdle()
-
-        viewModel.onShown()
-        advanceUntilIdle()
-
-        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
-    }
-
-    @Test
-    fun `a resume or a back on the list leaves the list as it is`() = runTest(testDispatcher) {
-        withCollectiblesPage()
-        val viewModel = createViewModel()
-        advanceUntilIdle()
-
-        val list = PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null)
-
-        viewModel.onShown()
-        runCurrent()
-        assertEquals(list, viewModel.state.value)
 
         viewModel.hideCollectiblesSketchbook()
         runCurrent()
-        assertEquals(list, viewModel.state.value)
-    }
 
-    // The screen also resumes on a return from another tab or from the background, and neither may stop a pending open.
-    @Test
-    fun `a resume before the page has opened neither collapses the card nor stops the open`() = runTest(testDispatcher) {
-        val stashUrl = withCollectiblesPage()
-        val viewModel = createViewModel()
-        advanceUntilIdle()
-
-        viewModel.openCollectibles()
-        advanceTimeBy(100)
-        viewModel.onShown()
-        runCurrent()
-        assertEquals(PocketScreenState.Collectibles, viewModel.state.value)
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
-
-        advanceTimeBy(350)
-        runCurrent()
-        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
+        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
     }
 
     @Test
@@ -529,7 +483,7 @@ class PocketViewModelTest {
         cardOpenRequests.request(linked.key)
         advanceUntilIdle()
         assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
-        verify(exactly = 0) { router.openSpaBrowser(any()) }
+        assertNull(viewModel.collectiblesProduct.value)
 
         viewModel.dismissCard()
         advanceUntilIdle()
