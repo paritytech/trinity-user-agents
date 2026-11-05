@@ -17,7 +17,8 @@ pub enum WatchEvent {
 	NoLongerInBestBlock,
 	/// Included in a finalized block. Terminal.
 	InFinalizedBlock(H256),
-	/// Rejected as invalid. Terminal.
+	/// Rejected as invalid. Terminal, but the extrinsic may still be
+	/// included.
 	Invalid(String),
 	/// The node stopped watching it. Terminal, but the extrinsic may still
 	/// be included.
