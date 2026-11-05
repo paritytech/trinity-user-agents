@@ -344,9 +344,11 @@ missed:
   `getPreimages()` answers the seeded values only, as bytes. Statement entries
   carry `topics` and `data` directly, not under `.statement`. A `Remote`
   permission's value is `{ domains }`, not an array.
-- **Deep links go in `productUrl`.** The host page's own path, query and hash
-  configure the host and do not reach the product, so a spec opening the
-  product at a route passes that route in `productUrl`.
+- **Deep links.** The host page passes its path, its hash and every query
+  parameter it does not read itself on to the product, as a real host does.
+  With the fixture, call `testHost.openDeepLink("/notes/1?view=raw#top")`,
+  which loads the host page again at that link. With the server alone, open
+  `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server`.
 
 ### A suite that submits extrinsics must fund the product account first
 

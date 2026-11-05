@@ -1596,7 +1596,7 @@ impl App {
                     if auto_accept {
                         "Confirmations are approved automatically"
                     } else {
-                        "Confirmations will be denied: there is no terminal to prompt on. On a test network preset, pass --auto-accept"
+                        "Confirmations will be denied: there is no terminal to prompt on. On a disposable-identity network, pass --auto-accept"
                     }
                 )),
             ),
