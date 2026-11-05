@@ -393,9 +393,19 @@ struct ProductManifestParserTests {
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}"#
         )
         #expect(fundingOnly?.modalities.isEmpty == true)
+    }
 
-        let noIncludes = parsedWorker(#"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#)
-        #expect(noIncludes?.modalities.isEmpty == true)
+    @Test func rejectsAWorkerThatListsNoModality() {
+        for manifest in [
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{}}"#
+        ] {
+            #expect(parser.parseExecutable(
+                manifest,
+                kind: .worker,
+                identifier: try! ProductId("worker.hackm3.dot")
+            ) == nil)
+        }
     }
 }
 
