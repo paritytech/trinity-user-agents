@@ -323,6 +323,10 @@ missed:
   `"TransactionSubmit"` is `"ChainSubmit"`, and `grantPermission` with the old
   tag records a decision no request ever matches.
 - **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Declining a signature in one test.** Call `testHost.setConfirmUserActions(false)`
+  before the action and `true` after, rather than booting a second fixture
+  with `mock: { confirmUserActions: false }`. A permission the core has
+  already cached keeps its answer.
 - **Signed out is a boot option.** An empty `accounts` fails the page at boot,
   which a suite sees as the fixture timing out; pass `loginBehavior: "manual"`.
   `simulateDisconnect` drops the chain connections and refuses new ones until
