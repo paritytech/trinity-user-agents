@@ -55,29 +55,12 @@ enum WidgetNodeRaster {
         return drawn
     }
 
-    /// The view drawn on screen in the app's own window under the picked
-    /// theme, as RGBA bytes row by row. Offscreen rendering leaves text fields
-    /// without the colours a window gives them, so colour checks draw here.
-    static func pixels(of view: some View, in size: CGSize, under theme: ThemeSelection) throws -> [UInt8] {
-        let window = try window(showing: view, in: size, under: theme)
-        defer { window.isHidden = true }
-
-        return try pixels(of: snapshot(of: window))
-    }
-
     private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
 
-    private static func window(
-        showing view: some View,
-        in size: CGSize,
-        under theme: ThemeSelection? = nil
-    ) throws -> UIWindow {
+    private static func window(showing view: some View, in size: CGSize) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = RootWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
-        if let theme {
-            window.traitOverrides.appTheme = theme
-        }
 
         let host = UIHostingController(rootView: view)
         host.safeAreaRegions = []
