@@ -6,9 +6,13 @@ use std::{
 	},
 };
 
-use crate::platform::{
-	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	ProductContext, ProductId,
+use crate::{
+	logging::{HOST_SINK_DETAIL_MAX_CHARS, truncate_to_chars},
+	markers,
+	platform::{
+		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		ProductContext, ProductId,
+	},
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
@@ -109,7 +113,7 @@ impl NativeTrUApiHostRuntime {
 		// that reaches a later condition and sees nothing can tell a quiet core
 		// from a channel that was never wired.
 		tracing::info!(
-			target: "truapi.core.started",
+			target: markers::CORE_STARTED.target,
 			"truapi {} is logging to this host",
 			env!("CARGO_PKG_VERSION"),
 		);
@@ -180,7 +184,7 @@ impl NativeTrUApiHostRuntime {
 			events,
 			spawner,
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
 			worker_executions: Mutex::new(HashMap::new()),
 			top_up: OnceLock::new(),
@@ -485,7 +489,7 @@ impl NativeTrUApiHostRuntime {
 		Self::from_resolved(
 			callbacks,
 			runtime_config,
-			"truapi.native.host_runtime.boot",
+			markers::NATIVE_HOST_RUNTIME_BOOT.target,
 			"host runtime ready",
 		)
 	}
@@ -1185,6 +1189,23 @@ impl NativeProductExecution {
 	}
 }
 
+/// Hands one bridge line to `callbacks`, if the table lists its marker.
+///
+/// The bridge raises its markers straight at the host rather than through the
+/// tracing layer, so the table check and the detail cap the layer applies are
+/// applied here instead. Both bridge loggers route through this, the listener's
+/// and each execution's. An unlisted marker is dropped, because nothing
+/// downstream knows what its detail carries.
+pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
+	if markers::class_of(marker).is_none() {
+		return;
+	}
+	callbacks.on_core_log(
+		marker.to_string(),
+		truncate_to_chars(detail, HOST_SINK_DETAIL_MAX_CHARS).to_string(),
+	);
+}
+
 #[uniffi::export]
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
@@ -1200,7 +1221,7 @@ impl NativeProductExecution {
 		let logger: BridgeLogger = {
 			let callbacks = self.callbacks.clone();
 			Arc::new(move |marker: &str, detail: &str| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			})
 		};
 		let runtime = self.runtime.clone();
@@ -1268,13 +1289,16 @@ mod tests {
 
 		crate::logging::testing::forward(
 			&host._host_sink,
-			"truapi.tracing.warn",
+			markers::TRACING_WARN.target,
 			"chain call failed",
 		);
 
 		let logs = callbacks.logs.lock().unwrap();
 		assert!(
-			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			logs.contains(&(
+				markers::TRACING_WARN.target.to_string(),
+				"chain call failed".to_string()
+			)),
 			"{logs:?}"
 		);
 	}

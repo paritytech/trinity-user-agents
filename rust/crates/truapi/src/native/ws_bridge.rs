@@ -44,7 +44,7 @@ use tokio_tungstenite::{
 
 use super::executor::shared_native_executor;
 use crate::{
-	FrameSink, ProductRuntime,
+	FrameSink, ProductRuntime, markers,
 	time::{Backoff, RealTimer, Timer, retry},
 };
 
@@ -254,7 +254,7 @@ impl SharedWsBridge {
 				let running_port = guard.as_ref().expect("just checked Some").port;
 				if bind_port != running_port {
 					pending_logs.push((
-						"truapi.ws_bridge.bind_port_ignored",
+						markers::WS_BRIDGE_BIND_PORT_IGNORED.target,
 						format!("requested={bind_port} running={running_port}"),
 					));
 				}
@@ -303,8 +303,10 @@ impl SharedWsBridge {
 			}
 		};
 		match relistened {
-			Ok(port) => (self.logger)("truapi.ws_bridge.relistened", &format!("port={port}")),
-			Err(err) => (self.logger)("truapi.ws_bridge.relisten_failed", &err.to_string()),
+			Ok(port) => {
+				(self.logger)(markers::WS_BRIDGE_RELISTENED.target, &format!("port={port}"))
+			},
+			Err(err) => (self.logger)(markers::WS_BRIDGE_RELISTEN_FAILED.target, &err.to_string()),
 		}
 	}
 }
@@ -382,8 +384,10 @@ impl WsBridge {
 		let registry = Arc::new(WsBridgeRegistry::default());
 		let listener = Listener::serve(socket, &handle, registry.clone(), logger.clone())?;
 
-		let pending_logs =
-			vec![("truapi.ws_bridge.started", format!("port={port} runtime_id={runtime_id}"))];
+		let pending_logs = vec![(
+			markers::WS_BRIDGE_STARTED.target,
+			format!("port={port} runtime_id={runtime_id}"),
+		)];
 
 		Ok((Self { listener: Some(listener), runtime_id, registry, logger, port }, pending_logs))
 	}
@@ -491,7 +495,7 @@ async fn accept_loop(
 			// Shutdown first, so a stopping loop never binds its port again.
 			biased;
 			_ = &mut shutdown => {
-				logger("truapi.ws_bridge.shutdown", "accept loop exiting");
+				logger(markers::WS_BRIDGE_SHUTDOWN.target, "accept loop exiting");
 				for task in &setup_tasks {
 					task.abort();
 				}
@@ -510,12 +514,12 @@ async fn accept_loop(
 					Ok(pair) => pair,
 					Err(err) if is_listener_gone(&err) => {
 						// Dropping the socket frees its port for the rebind.
-						logger("truapi.ws_bridge.listener_lost", &err.to_string());
+						logger(markers::WS_BRIDGE_LISTENER_LOST.target, &err.to_string());
 						listener = None;
 						continue;
 					}
 					Err(err) => {
-						logger("truapi.ws_bridge.accept_error", &err.to_string());
+						logger(markers::WS_BRIDGE_ACCEPT_ERROR.target, &err.to_string());
 						// A shortage such as EMFILE fails every accept until it passes.
 						tokio::time::sleep(ACCEPT_RETRY_PAUSE).await;
 						continue;
@@ -528,7 +532,7 @@ async fn accept_loop(
 					&& let Some(oldest) = setup_tasks.pop_front()
 				{
 					oldest.abort();
-					logger("truapi.ws_bridge.handshake_backlog_evicted", &peer.to_string());
+					logger(markers::WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED.target, &peer.to_string());
 				}
 				let registry = registry.clone();
 				let logger = logger.clone();
@@ -537,7 +541,7 @@ async fn accept_loop(
 				}));
 			}
 			rebound = rebind(port, &logger), if listener.is_none() => {
-				logger("truapi.ws_bridge.relistened", &format!("port={port}"));
+				logger(markers::WS_BRIDGE_RELISTENED.target, &format!("port={port}"));
 				listener = Some(rebound);
 			}
 		}
@@ -557,7 +561,7 @@ async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
 			})
 		},
 		|err| {
-			logger("truapi.ws_bridge.relisten_failed", &err.to_string());
+			logger(markers::WS_BRIDGE_RELISTEN_FAILED.target, &err.to_string());
 			pauses.next_pause()
 		},
 	)
@@ -578,7 +582,7 @@ async fn connection_setup(
 	let Some((ws, entry, guard)) = (match auth_result {
 		Ok(resolved) => resolved,
 		Err(_) => {
-			logger("truapi.ws_bridge.handshake_timeout", &peer.to_string());
+			logger(markers::WS_BRIDGE_HANDSHAKE_TIMEOUT.target, &peer.to_string());
 			return;
 		},
 	}) else {
@@ -600,7 +604,7 @@ async fn connection_setup(
 	};
 	// Host callbacks may re-enter revocation, so logging must stay outside the lock.
 	if revoked {
-		logger("truapi.ws_bridge.connection_revoked_during_setup", &peer.to_string());
+		logger(markers::WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP.target, &peer.to_string());
 	}
 }
 
@@ -665,7 +669,7 @@ async fn authenticate_and_upgrade(
 	let callback = move |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
 		let path_and_query = req.uri().path_and_query().map(|p| p.as_str());
 		let Some(entry) = auth_registry.find_matching(path_and_query) else {
-			auth_logger("truapi.ws_bridge.reject_unauthorized", &peer.to_string());
+			auth_logger(markers::WS_BRIDGE_REJECT_UNAUTHORIZED.target, &peer.to_string());
 			let mut err: ErrorResponse = HttpResponse::new(Some("invalid token".to_string()));
 			*err.status_mut() = StatusCode::UNAUTHORIZED;
 			return Err(err);
@@ -673,7 +677,7 @@ async fn authenticate_and_upgrade(
 
 		// Reject over-cap connections before acknowledging the HTTP upgrade.
 		if !try_reserve(&entry.connection_count, MAX_WS_CONNECTIONS_PER_EXECUTION) {
-			(entry.logger)("truapi.ws_bridge.connection_limit_execution", &peer.to_string());
+			(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_EXECUTION.target, &peer.to_string());
 			let mut err: ErrorResponse =
 				HttpResponse::new(Some("execution connection limit reached".to_string()));
 			*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
@@ -681,7 +685,7 @@ async fn authenticate_and_upgrade(
 		}
 		if !try_reserve(&auth_registry.total_connections, MAX_TOTAL_WS_CONNECTIONS) {
 			entry.connection_count.fetch_sub(1, Ordering::AcqRel);
-			(entry.logger)("truapi.ws_bridge.connection_limit_total", &peer.to_string());
+			(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_TOTAL.target, &peer.to_string());
 			let mut err: ErrorResponse =
 				HttpResponse::new(Some("listener at capacity".to_string()));
 			*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
@@ -709,7 +713,7 @@ async fn authenticate_and_upgrade(
 	{
 		Ok(ws) => ws,
 		Err(err) => {
-			logger("truapi.ws_bridge.handshake_error", &err.to_string());
+			logger(markers::WS_BRIDGE_HANDSHAKE_ERROR.target, &err.to_string());
 			return None;
 		},
 	};
@@ -721,7 +725,7 @@ async fn authenticate_and_upgrade(
 		.expect("a successful upgrade always resolved a matching registry entry");
 	let open = entry.connection_count.load(Ordering::Acquire);
 	(entry.logger)(
-		"truapi.ws_bridge.connection_open",
+		markers::WS_BRIDGE_CONNECTION_OPEN.target,
 		&format!(
 			"{peer} connected; this execution now holds {open} of {MAX_WS_CONNECTIONS_PER_EXECUTION} connections"
 		),
@@ -755,7 +759,7 @@ async fn connection_lifecycle(
 		let writer = async {
 			while let Some(bytes) = out_rx.recv().await {
 				if let Err(err) = sink.send(WsMessage::Binary(bytes)).await {
-					logger("truapi.ws_bridge.send_error", &err.to_string());
+					logger(markers::WS_BRIDGE_SEND_ERROR.target, &err.to_string());
 					break;
 				}
 			}
@@ -773,17 +777,17 @@ async fn connection_lifecycle(
 					let frame_logger = logger.clone();
 					in_flight.spawn(async move {
 						if let Err(err) = product_runtime.receive_frame(bytes.to_vec()).await {
-							frame_logger("truapi.ws_bridge.frame_error", &err.to_string());
+							frame_logger(markers::WS_BRIDGE_FRAME_ERROR.target, &err.to_string());
 						}
 					});
 				},
 				Some(Ok(WsMessage::Text(_))) => {
-					logger("truapi.ws_bridge.text_frame_ignored", "");
+					logger(markers::WS_BRIDGE_TEXT_FRAME_IGNORED.target, "");
 				},
 				None | Some(Ok(WsMessage::Close(_))) => break,
 				Some(Ok(_)) => {},
 				Some(Err(err)) => {
-					logger("truapi.ws_bridge.read_error", &err.to_string());
+					logger(markers::WS_BRIDGE_READ_ERROR.target, &err.to_string());
 					break;
 				},
 			}
@@ -797,7 +801,7 @@ async fn connection_lifecycle(
 	drop(counted);
 	let open = entry.connection_count.load(Ordering::Acquire);
 	logger(
-		"truapi.ws_bridge.connection_closed",
+		markers::WS_BRIDGE_CONNECTION_CLOSED.target,
 		&format!(
 			"{peer} disconnected; this execution now holds {open} of {MAX_WS_CONNECTIONS_PER_EXECUTION} connections"
 		),
@@ -1519,11 +1523,11 @@ mod tests {
 			rt.block_on(async { tokio_tungstenite::connect_async(&url).await.expect("dial") });
 
 		crate::test_support::wait_until(
-			|| logged_detail(&lines, "truapi.ws_bridge.connection_open").is_some(),
+			|| logged_detail(&lines, markers::WS_BRIDGE_CONNECTION_OPEN.target).is_some(),
 			"the connection never reported itself open",
 		);
-		let opened =
-			logged_detail(&lines, "truapi.ws_bridge.connection_open").expect("an open marker");
+		let opened = logged_detail(&lines, markers::WS_BRIDGE_CONNECTION_OPEN.target)
+			.expect("an open marker");
 		assert!(
 			opened.contains("holds 1 of"),
 			"open marker did not count the connection: {opened}"
@@ -1532,11 +1536,11 @@ mod tests {
 		drop(ws);
 		drop(rt);
 		crate::test_support::wait_until(
-			|| logged_detail(&lines, "truapi.ws_bridge.connection_closed").is_some(),
+			|| logged_detail(&lines, markers::WS_BRIDGE_CONNECTION_CLOSED.target).is_some(),
 			"the connection never reported itself closed",
 		);
-		let closed =
-			logged_detail(&lines, "truapi.ws_bridge.connection_closed").expect("a closed marker");
+		let closed = logged_detail(&lines, markers::WS_BRIDGE_CONNECTION_CLOSED.target)
+			.expect("a closed marker");
 		assert!(closed.contains("holds 0 of"), "closed marker did not release the slot: {closed}");
 		listener.stop(true);
 	}
@@ -1638,7 +1642,7 @@ mod tests {
 					.lock()
 					.expect("markers mutex poisoned")
 					.iter()
-					.any(|marker| marker == "truapi.ws_bridge.relistened")
+					.any(|marker| marker == markers::WS_BRIDGE_RELISTENED.target)
 			},
 			"the torn-down listener was not rebound",
 		);
@@ -1651,7 +1655,10 @@ mod tests {
 			.filter(|marker| marker.contains("listener_lost") || marker.contains("relisten"))
 			.cloned()
 			.collect();
-		assert_eq!(lifecycle, ["truapi.ws_bridge.listener_lost", "truapi.ws_bridge.relistened"]);
+		assert_eq!(
+			lifecycle,
+			[markers::WS_BRIDGE_LISTENER_LOST.target, markers::WS_BRIDGE_RELISTENED.target]
+		);
 		listener.stop(true);
 	}
 
@@ -1680,7 +1687,7 @@ mod tests {
 			.collect();
 		assert_eq!(
 			relisten_markers,
-			["truapi.ws_bridge.relisten_failed", "truapi.ws_bridge.relistened"]
+			[markers::WS_BRIDGE_RELISTEN_FAILED.target, markers::WS_BRIDGE_RELISTENED.target]
 		);
 	}
 
