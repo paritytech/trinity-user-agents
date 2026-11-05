@@ -325,7 +325,7 @@ extension ServiceCoordinator {
         // attached, if a provider was still working on a session when the app
         // last ran. The core says again whether one still is, so a launch with
         // nothing left stops starting it.
-        if FundingResumeMarker.inProgress {
+        if SettingsManager.shared.isFundingInProgress {
             Task.detached {
                 do {
                     _ = try truapiRuntimeProvider.sharedRuntime()
