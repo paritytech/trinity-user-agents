@@ -17,7 +17,7 @@ async function importSandbox(): Promise<typeof import("./sandbox.js")> {
 
 type MessageListener = (event: MessageEvent) => void;
 
-function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?: string[] }) {
+function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?: string[]; origin?: string }) {
     const listeners = new Set<MessageListener>();
     const intervals = new Map<number, () => void>();
     let intervalId = 0;
@@ -32,6 +32,7 @@ function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?:
         top: {} as Window,
         location: {
             ancestorOrigins: options.ancestorOrigins,
+            origin: options.origin,
         },
         addEventListener(name: string, callback: EventListener) {
             if (name === "message") listeners.add(callback as MessageListener);
@@ -200,6 +201,36 @@ describe("sandbox iframe MessagePort handshake", () => {
         await Promise.resolve();
         expect(currentWindow.win.__HOST_API_PORT__).toBe(accepted.port1);
         expect(currentWindow.listeners.size).toBe(0);
+    });
+
+    it("addresses the host, not its own previous page, after navigating its frame", async () => {
+        // A product that sets `location.href` loads a new document whose
+        // referrer is the page it left, on the product's own origin.
+        currentWindow = installFakeIframeWindow({
+            referrer: "https://product.example/a",
+            ancestorOrigins: ["https://host.example"],
+            origin: "https://product.example",
+        });
+        const sandbox = await importSandbox();
+
+        expect(sandbox.getClientSync()).not.toBeNull();
+        expect(currentWindow.parentPostMessage.mock.calls).toEqual([
+            [{ type: "truapi-ready" }, "https://host.example"],
+        ]);
+    });
+
+    it("sets aside its own origin as a referrer when no ancestor origin is known", async () => {
+        currentWindow = installFakeIframeWindow({
+            referrer: "https://product.example/a",
+            ancestorOrigins: ["null"],
+            origin: "https://product.example",
+        });
+        const sandbox = await importSandbox();
+
+        expect(sandbox.getClientSync()).not.toBeNull();
+        expect(currentWindow.parentPostMessage.mock.calls).toEqual([
+            [{ type: "truapi-ready" }, "*"],
+        ]);
     });
 
     it("uses a data-free wildcard ready ping only when the host origin is hidden", async () => {
