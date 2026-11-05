@@ -107,11 +107,14 @@ mod tests {
 	#[test]
 	fn a_hit_reports_its_block_and_the_outcome_read_there() {
 		let chain = FakeChain::new(130, 140);
-		chain.include(110, TX, DispatchOutcome::Failed);
+		chain.include(110, TX, DispatchOutcome::Failed(String::new()));
 
 		assert_eq!(
 			search(&chain, 100, 130),
-			SearchResult::Found { block: block(110), outcome: Some(DispatchOutcome::Failed) }
+			SearchResult::Found {
+				block: block(110),
+				outcome: Some(DispatchOutcome::Failed(String::new()))
+			}
 		);
 	}
 

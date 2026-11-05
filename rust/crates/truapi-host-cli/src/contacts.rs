@@ -17,7 +17,6 @@ use truapi::{
 	latest::GenericError,
 	platform::{
 		ContactsPlatform, HostContactLookup, HostContactMatches, HostContactPick, ProductContext,
-		async_trait,
 	},
 };
 
@@ -91,7 +90,7 @@ fn development_contacts() -> Vec<HostContact> {
 		.collect()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ContactsPlatform for CliContactsHost {
 	async fn contacts(
 		&self,
