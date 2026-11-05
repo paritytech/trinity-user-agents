@@ -67,6 +67,7 @@ internal class ManifestParser @Inject constructor(
                         appVersion = appVersion,
                         includesChat = remote.includes?.chat ?: false,
                         includesPocket = includesPocket,
+                        includesFunding = remote.includes?.funding?.isJsonObject == true,
                         pocketCards = remote.pocket.toCardDefinitions(includesPocket),
                     )
                 }

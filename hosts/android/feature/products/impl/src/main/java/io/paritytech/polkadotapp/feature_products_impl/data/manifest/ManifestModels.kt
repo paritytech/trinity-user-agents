@@ -40,6 +40,9 @@ internal class ExecutableManifestRemote(
 internal class IncludesRemote(
     val chat: Boolean? = null,
     val pocket: Boolean? = null,
+    // Kept raw and read only for its presence: the core reads the routes from the manifest itself, and a
+    // malformed section must cost the worker its Funding, not the whole record with its chat.
+    val funding: JsonElement? = null,
 )
 
 internal class PocketRemote(

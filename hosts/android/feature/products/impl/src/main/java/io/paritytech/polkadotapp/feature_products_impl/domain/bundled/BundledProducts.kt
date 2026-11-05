@@ -7,11 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import uniffi.truapi.ExecutableKind
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonObject
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
@@ -95,8 +90,6 @@ class BundledProducts internal constructor(
         private const val WORKER_MANIFEST = "worker-manifest.json"
     }
 
-    private val json = Json { ignoreUnknownKeys = true }
-
     private class Shipped(val products: Map<ProductId, BundledProduct>, val files: Set<String>)
 
     // Listed once, on first use, so serving a request looks a path up instead of opening the asset to see
@@ -129,7 +122,9 @@ class BundledProducts internal constructor(
 
     /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
     fun fundingProviders(): List<FundingProviderEntry> = shipped.products.values.sortedBy { it.id.value }.mapNotNull { product ->
-        val manifest = workerManifest(product)?.takeIf { hasWorker(product) && includes(it, "funding") } ?: return@mapNotNull null
+        val manifest = workerManifest(product)
+            ?.takeIf { hasWorker(product) && worker(product, it)?.includesFunding == true }
+            ?: return@mapNotNull null
         FundingProviderEntry(productId = product.id, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
     }
 
@@ -174,14 +169,4 @@ class BundledProducts internal constructor(
     private fun worker(product: BundledProduct, manifest: String): ProductExecutable.Worker? =
         manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(product.workerHost))
             .getOrNull() as? ProductExecutable.Worker
-
-    // `funding` is included by its section.
-    private fun includes(manifest: String, modality: String): Boolean = runCatching {
-        val includes = json.parseToJsonElement(manifest).jsonObject["includes"] as? JsonObject
-        when (val entry = includes?.get(modality)) {
-            is JsonObject -> true
-            is JsonPrimitive -> entry.booleanOrNull == true
-            else -> false
-        }
-    }.getOrDefault(false)
 }

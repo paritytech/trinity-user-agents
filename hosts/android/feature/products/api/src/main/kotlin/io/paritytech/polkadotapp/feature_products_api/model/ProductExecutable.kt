@@ -22,6 +22,7 @@ sealed interface ProductExecutable {
         override val appVersion: SemVer,
         val includesChat: Boolean,
         val includesPocket: Boolean,
+        val includesFunding: Boolean,
         val pocketCards: List<PocketCardDefinition>,
     ) : ProductExecutable
 }
