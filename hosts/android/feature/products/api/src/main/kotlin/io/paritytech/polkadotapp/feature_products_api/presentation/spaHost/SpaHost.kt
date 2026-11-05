@@ -54,6 +54,9 @@ interface SpaHostSession {
     /** Page load progress for the hosted product, for a progress indicator. */
     val loadProgress: StateFlow<DotNsLoadProgress>
 
+    /** True once the page is visible, which is later than [loadProgress] reaching Completed. */
+    val pageRevealed: StateFlow<Boolean>
+
     /** Current page title, updated as the product navigates. */
     val title: StateFlow<String>
 

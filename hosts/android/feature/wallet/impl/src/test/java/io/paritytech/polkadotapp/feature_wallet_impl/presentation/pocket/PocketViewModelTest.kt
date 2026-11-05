@@ -88,6 +88,7 @@ class PocketViewModelTest {
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
         override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
+        override val pageRevealed = MutableStateFlow(false)
         override val title = MutableStateFlow("")
         override fun pauseConnections() = Unit
         override fun resumeConnections() = Unit

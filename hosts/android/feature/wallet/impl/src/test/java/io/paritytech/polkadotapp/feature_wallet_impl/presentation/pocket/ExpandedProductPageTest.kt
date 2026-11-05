@@ -21,6 +21,7 @@ class ExpandedProductPageTest {
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
         override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
+        override val pageRevealed = MutableStateFlow(false)
         override val title = MutableStateFlow("")
 
         var paused = 0

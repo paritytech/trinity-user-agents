@@ -145,6 +145,8 @@ private class NativeSpaHostSession(
     override val title: StateFlow<String>,
     private val provider: BrowserWebViewProvider,
 ) : SpaHostSession {
+    override val pageRevealed: StateFlow<Boolean> = provider.pageRevealed
+
     override fun pauseConnections() {
         provider.pauseConnections()
     }

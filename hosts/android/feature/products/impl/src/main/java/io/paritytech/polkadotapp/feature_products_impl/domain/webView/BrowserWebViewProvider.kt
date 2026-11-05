@@ -31,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 
@@ -92,6 +93,9 @@ class BrowserWebViewProvider @AssistedInject constructor(
     val loadProgress: Flow<DotNsLoadProgress> =
         if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
 
+    private val pageVisible = MutableStateFlow(!waitForInitialTheme)
+    val pageRevealed: StateFlow<Boolean> = pageVisible
+
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
         logPrefix = "Browser: $initialUrl",
@@ -106,6 +110,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
             setBackgroundColor(Color.TRANSPARENT)
             if (waitForInitialTheme) {
                 alpha = 0f
+                pageVisible.value = false
                 // WebView takes touches even when disabled, so a hidden page is shielded by consuming them.
                 setOnTouchListener { _, _ -> true }
                 isFocusable = false
@@ -168,6 +173,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private fun reveal(view: WebView) {
         if (getWebViewOrNull() !== view || view.alpha == 1f) return
         view.alpha = 1f
+        pageVisible.value = true
         view.setOnTouchListener(null)
         view.isFocusable = true
         view.isFocusableInTouchMode = true

@@ -82,7 +82,6 @@ private const val SKELETON_DOT_ALPHA = 0.25f
 private const val SKELETON_DOT_COLUMNS = 12
 
 private val PageCornerRadius = 20.dp
-private val AttachedWebViewSize = 1.dp
 private val SkeletonTitleSize = DpSize(136.dp, 16.dp)
 private val SkeletonSubtitleSize = DpSize(180.dp, 10.dp)
 private val SkeletonButtonSize = 40.dp
@@ -106,8 +105,10 @@ fun PocketCollectibles(
 
     val noProgressYet = remember { MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle) }
     val noWebViewYet = remember { MutableStateFlow<WebView?>(null) }
+    val notRevealedYet = remember { MutableStateFlow(false) }
     val loadProgress by (product?.session?.loadProgress ?: noProgressYet).collectAsStateWithLifecycle()
     val webView by (product?.session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
+    val pageRevealed by (product?.session?.pageRevealed ?: notRevealedYet).collectAsStateWithLifecycle()
 
     val book = remember { CollectiblesBookMotion() }
     var stage by remember { mutableStateOf(BookStage.Closed) }
@@ -118,10 +119,10 @@ fun PocketCollectibles(
         stage = BookStage.Opened
         book.openCover()
 
-        val outcome = withTimeoutOrNull(ReadyTimeout) {
-            snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
+        withTimeoutOrNull(ReadyTimeout) {
+            snapshotFlow { pageRevealed || loadProgress is DotNsLoadProgress.Failed }.first { it }
         }
-        if (outcome is DotNsLoadProgress.Completed) book.handOff() else stage = BookStage.Failed
+        if (pageRevealed) book.handOff() else stage = BookStage.Failed
     }
 
     Column(
@@ -189,11 +190,7 @@ private fun CollectiblesPage(
         } else {
             CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = stage == BookStage.Opened)
 
-            // The first full-size paint of the page blocks the UI thread for ~300 ms and would freeze the sweep.
-            ProductWebViewHost(
-                modifier = if (stage == BookStage.Opened) Modifier.fillMaxSize() else Modifier.size(AttachedWebViewSize),
-                webView = webView
-            )
+            ProductWebViewHost(modifier = Modifier.fillMaxSize(), webView = webView)
         }
     }
 }
