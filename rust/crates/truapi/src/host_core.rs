@@ -623,6 +623,8 @@ pub struct SigningHostRuntime {
 	services: Arc<RuntimeServices>,
 	signing_host: Arc<SigningHostRole>,
 	sso_responder: Arc<SsoResponderService>,
+	#[cfg(not(target_arch = "wasm32"))]
+	image_loader: crate::image_loader::ImageLoader,
 }
 
 impl SigningHostRuntime {
@@ -743,7 +745,16 @@ impl SigningHostRuntime {
 		}
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
-		Self { services, signing_host, sso_responder }
+		Self {
+			#[cfg(not(target_arch = "wasm32"))]
+			image_loader: crate::image_loader::ImageLoader::new(
+				services.clone(),
+				Arc::new(crate::time::RealTimer),
+			),
+			services,
+			signing_host,
+			sso_responder,
+		}
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -1132,7 +1143,7 @@ impl SigningHostRuntime {
 		&self,
 		reference: crate::ImageReference,
 	) -> Result<crate::LoadedImage, crate::ImageError> {
-		crate::image_loader::load_image(&self.services, &crate::time::RealTimer, reference).await
+		self.image_loader.load(reference).await
 	}
 
 	/// Build a product-facing runtime from this signing host.

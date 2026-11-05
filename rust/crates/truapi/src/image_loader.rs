@@ -1,9 +1,10 @@
-//! Images for hosts to draw: [`load_image`] reads the bytes an [`ImageReference`] names from
+//! Images for hosts to draw: [`ImageLoader`] reads the bytes an [`ImageReference`] names from
 //! Bulletin, checks them against their CID and the policy, and hands them over.
 
 mod policy;
 
 use core::{future::Future, ops::ControlFlow, time::Duration};
+use std::sync::Arc;
 
 use futures::FutureExt;
 use tracing::{debug, instrument, warn};
@@ -83,71 +84,84 @@ pub enum ImageError {
 	},
 }
 
-/// The image `reference` names. Dropping the future stops the load.
-#[instrument(skip_all, fields(runtime.method = "image_loader.load_image"))]
-pub async fn load_image(
-	services: &RuntimeServices,
-	timer: &dyn Timer,
-	reference: ImageReference,
-) -> Result<LoadedImage, ImageError> {
-	let ImageReference::Bulletin { cid, declared_format } = reference;
-	let key = preimage_key_from_cid(&cid).ok_or_else(|| ImageError::Unsupported {
-		reason: format!("{cid} is not a raw blake2b-256 Bulletin CID"),
-	})?;
-	let read = || async {
-		let client = services
-			.bulletin
-			.client("image_loader.load_image")
-			.await
-			.map_err(|failure| BitswapError::Connection(failure.reason()))?;
-		bitswap_get(&client, &cid).await
-	};
-	let bytes = read_verified(timer, &cid, key, read).await?;
-	let format = policy::check(&bytes, declared_format)
-		.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })?;
-	Ok(LoadedImage { bytes, format, content_key: cid })
+/// Reads the images hosts draw from Bulletin and checks them against their CID and the policy.
+pub struct ImageLoader {
+	services: Arc<RuntimeServices>,
+	timer: Arc<dyn Timer>,
 }
 
-/// Reads `cid` until the bytes hash to `key`, Bulletin refuses for good, or [`LOAD_TIMEOUT`]
-/// passes.
-async fn read_verified<Read, ReadFuture>(
-	timer: &dyn Timer,
-	cid: &str,
-	key: [u8; 32],
-	read: Read,
-) -> Result<Vec<u8>, ImageError>
-where
-	Read: Fn() -> ReadFuture,
-	ReadFuture: Future<Output = Result<Option<Vec<u8>>, BitswapError>>,
-{
-	let attempt = || {
-		let read = &read;
-		async move {
-			match read().await {
-				Ok(Some(bytes)) if preimage_key(&bytes) == key => ControlFlow::Break(Ok(bytes)),
-				Ok(Some(_)) => {
-					warn!(cid, "Bulletin returned bytes that do not hash to the CID");
-					ControlFlow::Continue(MISS_PAUSE)
-				},
-				Ok(None) => {
-					debug!(cid, "Bulletin does not hold the image yet");
-					ControlFlow::Continue(MISS_PAUSE)
-				},
-				Err(BitswapError::Unanswerable(reason) | BitswapError::MethodMissing(reason)) => {
-					ControlFlow::Break(Err(ImageError::Unavailable { reason }))
-				},
-				Err(error) => {
-					debug!(cid, %error, "Bulletin read failed, asking again");
-					ControlFlow::Continue(FAILURE_PAUSE)
-				},
+impl ImageLoader {
+	/// A loader reading over the Bulletin connection of `services`, pausing between attempts and
+	/// timing out on `timer`.
+	pub fn new(services: Arc<RuntimeServices>, timer: Arc<dyn Timer>) -> Self {
+		Self { services, timer }
+	}
+
+	/// The image `reference` names. Dropping the future stops the load.
+	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
+	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
+		let ImageReference::Bulletin { cid, declared_format } = reference;
+		let key = preimage_key_from_cid(&cid).ok_or_else(|| ImageError::Unsupported {
+			reason: format!("{cid} is not a raw blake2b-256 Bulletin CID"),
+		})?;
+		let bytes = self.read_verified(&cid, key, || self.read(&cid)).await?;
+		let format = policy::check(&bytes, declared_format)
+			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })?;
+		Ok(LoadedImage { bytes, format, content_key: cid })
+	}
+
+	async fn read(&self, cid: &str) -> Result<Option<Vec<u8>>, BitswapError> {
+		let client = self
+			.services
+			.bulletin
+			.client("image_loader.load")
+			.await
+			.map_err(|failure| BitswapError::Connection(failure.reason()))?;
+		bitswap_get(&client, cid).await
+	}
+
+	/// Reads `cid` until the bytes hash to `key`, Bulletin refuses for good, or [`LOAD_TIMEOUT`]
+	/// passes.
+	async fn read_verified<Read, ReadFuture>(
+		&self,
+		cid: &str,
+		key: [u8; 32],
+		read: Read,
+	) -> Result<Vec<u8>, ImageError>
+	where
+		Read: Fn() -> ReadFuture,
+		ReadFuture: Future<Output = Result<Option<Vec<u8>>, BitswapError>>,
+	{
+		let attempt = || {
+			let read = &read;
+			async move {
+				match read().await {
+					Ok(Some(bytes)) if preimage_key(&bytes) == key => ControlFlow::Break(Ok(bytes)),
+					Ok(Some(_)) => {
+						warn!(cid, "Bulletin returned bytes that do not hash to the CID");
+						ControlFlow::Continue(MISS_PAUSE)
+					},
+					Ok(None) => {
+						debug!(cid, "Bulletin does not hold the image yet");
+						ControlFlow::Continue(MISS_PAUSE)
+					},
+					Err(
+						BitswapError::Unanswerable(reason) | BitswapError::MethodMissing(reason),
+					) => ControlFlow::Break(Err(ImageError::Unavailable { reason })),
+					Err(error) => {
+						debug!(cid, %error, "Bulletin read failed, asking again");
+						ControlFlow::Continue(FAILURE_PAUSE)
+					},
+				}
 			}
+		};
+		let timer = &*self.timer;
+		futures::select_biased! {
+			result = retry_on(timer, attempt, |pause| pause).fuse() => result,
+			() = timer.sleep(LOAD_TIMEOUT).fuse() => Err(ImageError::Unavailable {
+				reason: format!("no verified bytes within {} s", LOAD_TIMEOUT.as_secs()),
+			}),
 		}
-	};
-	futures::select_biased! {
-		result = retry_on(timer, attempt, |pause| pause).fuse() => result,
-		() = timer.sleep(LOAD_TIMEOUT).fuse() => Err(ImageError::Unavailable {
-			reason: format!("no verified bytes within {} s", LOAD_TIMEOUT.as_secs()),
-		}),
 	}
 }
 
