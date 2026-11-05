@@ -139,6 +139,8 @@ fun ProductPocketCardDetails(
             .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
     ) {
         FoldableCard(fold = fold, closeDrag = closeDrag, onClose = onBack) {
+            VerticalSpacer { mediumIncreased }
+
             ProductPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
