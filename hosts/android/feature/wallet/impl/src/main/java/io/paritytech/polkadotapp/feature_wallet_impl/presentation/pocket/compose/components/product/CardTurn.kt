@@ -11,6 +11,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import uniffi.truapi.PocketCardSide
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -24,6 +28,7 @@ internal class CardTurnState {
     val shownSide: PocketCardSide
         get() = if (cos(Math.toRadians(angle.toDouble())) >= 0) PocketCardSide.FRONT else PocketCardSide.BACK
 
+    private var dragging = false
     private var homing = false
     private val animations = MutatorMutex()
 
@@ -35,7 +40,9 @@ internal class CardTurnState {
 
     /** Stops a settle under way: the finger outranks it. A card turning home is not stopped. */
     suspend fun beginDrag() {
-        if (!homing) animations.mutate(MutatePriority.UserInput) {}
+        if (homing) return
+        dragging = true
+        animations.mutate(MutatePriority.UserInput) {}
     }
 
     fun drag(deltaPx: Float, widthPx: Float) {
@@ -50,10 +57,24 @@ internal class CardTurnState {
         val reach = MAX_HALF_TURNS * HALF_TURN
         val rest = nearest(angle + velocity * FLING_PROJECTION_SECONDS, HALF_TURN).coerceIn(faceUp - reach, faceUp + reach)
         settle(rest, velocity, MutatePriority.Default)
+        // Cleared only once the settle ends: one cut short by a new drag leaves the flag that drag set.
+        dragging = false
     }
 
     suspend fun turnTo(side: PocketCardSide) {
         if (side != shownSide) settle(nearest(angle, HALF_TURN) + HALF_TURN, 0f, MutatePriority.Default)
+    }
+
+    /**
+     * Turns the card for its page, answering as the turn starts. The user's drag wins, and asking for
+     * the front of a card without a back succeeds.
+     */
+    suspend fun requestSide(side: PocketCardSide, hasBack: Boolean): FaceShownAnswer {
+        if (side == PocketCardSide.BACK && !hasBack) return FaceShownAnswer.NO_BACK
+        if (dragging) return FaceShownAnswer.USER_MOVING
+
+        CoroutineScope(currentCoroutineContext()).launch { turnTo(side) }
+        return FaceShownAnswer.APPLIED
     }
 
     /** Turns the card back to its front for closing, which a drag cannot interrupt. */

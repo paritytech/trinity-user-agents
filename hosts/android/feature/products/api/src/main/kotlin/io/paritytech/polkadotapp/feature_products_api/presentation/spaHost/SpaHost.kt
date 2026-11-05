@@ -30,8 +30,11 @@ interface SpaHost {
     fun createSession(initialUrl: String, underCard: Boolean = false): SpaHostSession
 }
 
-/** A request from the card's product to show or hide the card face, answered by the screen drawing the card. */
-class FaceShownRequest(val shown: Boolean, val reply: CompletableDeferred<FaceShownAnswer>)
+/**
+ * A request from the card's product to show or hide the card face, or with [back] to show or hide the
+ * card's back, answered by the screen drawing the card.
+ */
+class FaceShownRequest(val shown: Boolean, val reply: CompletableDeferred<FaceShownAnswer>, val back: Boolean = false)
 
 /** What the screen answers a [FaceShownRequest] with; a request that reaches no screen is never sent. */
 enum class FaceShownAnswer {
@@ -43,6 +46,9 @@ enum class FaceShownAnswer {
 
     /** The card left before the face could move. */
     NOT_PRESENTED,
+
+    /** The card has no back to show. */
+    NO_BACK,
 }
 
 interface SpaHostSession {

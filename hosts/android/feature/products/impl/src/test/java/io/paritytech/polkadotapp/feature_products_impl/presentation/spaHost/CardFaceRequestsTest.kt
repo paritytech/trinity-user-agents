@@ -22,6 +22,24 @@ class CardFaceRequestsTest {
     @Test
     fun `a request nobody is watching for is not presented`() = runTest {
         assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setFaceShown(true))
+        assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setBackShown(true))
+    }
+
+    // Only the screen knows whether the card it draws has a back right now.
+    @Test
+    fun `a back request reaches the screen as one, and the screen's answer reaches the product`() = runTest {
+        val received = mutableListOf<FaceShownRequest>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            requests.requests.collect {
+                received += it
+                it.reply.complete(FaceShownAnswer.NO_BACK)
+            }
+        }
+
+        val outcome = requests.setBackShown(true)
+
+        assertEquals(listOf(true to true), received.map { it.back to it.shown })
+        assertEquals(ExpandedCardFaceOutcome.NO_BACK, outcome)
     }
 
     // Only the fold knows whether the user is dragging, so the product must get the screen's answer.

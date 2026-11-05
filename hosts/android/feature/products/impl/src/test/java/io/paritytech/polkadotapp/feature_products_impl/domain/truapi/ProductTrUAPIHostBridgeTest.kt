@@ -124,20 +124,20 @@ class ProductTrUAPIHostBridgeTest {
         val hostBridge = attachCapturingBridge(card = null)
 
         assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardFaceShown(true))
+        assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardBackShown(true))
     }
 
     @Test
     fun `a product under a card asks that card and gets its answer`() = runTest {
-        val asked = mutableListOf<Boolean>()
-        val hostBridge = attachCapturingBridge(ExpandedCardFace { shown ->
-            asked += shown
-            ExpandedCardFaceOutcome.USER_MOVING
-        })
+        val card = mockk<ExpandedCardFace> {
+            coEvery { setFaceShown(false) } returns ExpandedCardFaceOutcome.USER_MOVING
+            coEvery { setBackShown(true) } returns ExpandedCardFaceOutcome.NO_BACK
+        }
+        val hostBridge = attachCapturingBridge(card)
 
-        val outcome = hostBridge.setExpandedCardFaceShown(false)
+        val outcomes = listOf(hostBridge.setExpandedCardFaceShown(false), hostBridge.setExpandedCardBackShown(true))
 
-        assertEquals(listOf(false), asked)
-        assertEquals(ExpandedCardFaceOutcome.USER_MOVING, outcome)
+        assertEquals(listOf(ExpandedCardFaceOutcome.USER_MOVING, ExpandedCardFaceOutcome.NO_BACK), outcomes)
     }
 
     @Test

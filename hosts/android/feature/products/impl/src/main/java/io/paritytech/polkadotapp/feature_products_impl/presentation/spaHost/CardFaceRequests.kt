@@ -10,8 +10,10 @@ import uniffi.truapi.ExpandedCardFaceOutcome
 import kotlin.time.Duration.Companion.seconds
 
 /** What the product under an expanded card asks of that card. */
-fun interface ExpandedCardFace {
+interface ExpandedCardFace {
     suspend fun setFaceShown(shown: Boolean): ExpandedCardFaceOutcome
+
+    suspend fun setBackShown(shown: Boolean): ExpandedCardFaceOutcome
 }
 
 /**
@@ -23,12 +25,16 @@ internal class CardFaceRequests : ExpandedCardFace {
 
     val requests: Flow<FaceShownRequest> get() = outgoing
 
-    override suspend fun setFaceShown(shown: Boolean): ExpandedCardFaceOutcome {
+    override suspend fun setFaceShown(shown: Boolean) = send(shown, back = false)
+
+    override suspend fun setBackShown(shown: Boolean) = send(shown, back = true)
+
+    private suspend fun send(shown: Boolean, back: Boolean): ExpandedCardFaceOutcome {
         if (outgoing.subscriptionCount.value == 0) return ExpandedCardFaceOutcome.NOT_PRESENTED
         val reply = CompletableDeferred<FaceShownAnswer>()
         val answer = try {
             withTimeoutOrNull(REPLY_TIMEOUT) {
-                outgoing.emit(FaceShownRequest(shown, reply))
+                outgoing.emit(FaceShownRequest(shown, reply, back))
                 reply.await()
             }
         } finally {
@@ -37,6 +43,7 @@ internal class CardFaceRequests : ExpandedCardFace {
         return when (answer) {
             FaceShownAnswer.APPLIED -> ExpandedCardFaceOutcome.APPLIED
             FaceShownAnswer.USER_MOVING -> ExpandedCardFaceOutcome.USER_MOVING
+            FaceShownAnswer.NO_BACK -> ExpandedCardFaceOutcome.NO_BACK
             FaceShownAnswer.NOT_PRESENTED, null -> ExpandedCardFaceOutcome.NOT_PRESENTED
         }
     }

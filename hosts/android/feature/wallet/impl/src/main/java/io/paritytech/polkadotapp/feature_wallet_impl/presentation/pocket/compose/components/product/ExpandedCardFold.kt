@@ -30,7 +30,9 @@ internal class ExpandedCardFoldState(initialFoldPx: Float = 0f) {
 
     var maxFoldPx by mutableFloatStateOf(0f)
 
-    private var dragging = false
+    /** The user holds the face from the start of a drag until its settle ends. */
+    var dragging = false
+        private set
     private val animations = MutatorMutex()
 
     /** [delta] is a drag in screen terms, so dragging up — a negative delta — folds the card away. */
