@@ -71,6 +71,7 @@ class ProductBotManagementViewModel @Inject constructor(
                         cardId = card?.cardId?.value.orEmpty(),
                         cardTitle = card?.title.orEmpty(),
                         previewUrl = card?.previewUrl.orEmpty(),
+                        backUrl = card?.backUrl.orEmpty(),
                         appUrl = appUrl,
                         openWithFaceAway = card?.faceShown == false,
                     )
@@ -120,6 +121,13 @@ class ProductBotManagementViewModel @Inject constructor(
         state.update {
             val form = it.dialogState as? ProductDialogState.Form ?: return@update it
             it.copy(dialogState = form.copy(previewUrl = url))
+        }
+    }
+
+    override fun onBackUrlChanged(url: String) {
+        state.update {
+            val form = it.dialogState as? ProductDialogState.Form ?: return@update it
+            it.copy(dialogState = form.copy(backUrl = url))
         }
     }
 
@@ -189,6 +197,7 @@ class ProductBotManagementViewModel @Inject constructor(
             title = cardTitle.ifBlank { cardId }.trim(),
             previewUrl = previewUrl.trim(),
             faceShown = !openWithFaceAway,
+            backUrl = backUrl.trim().ifBlank { null },
         )
     }
 }
