@@ -10,7 +10,15 @@ use truapi::{
 	},
 };
 
-use crate::chain::ChainBackend;
+use crate::{
+	chain::ChainBackend,
+	stack_descriptor::{
+		FETCH_TIMEOUT, FetchError, ROLE_NAMES, Roles, StackProjection, fetch, load_descriptor,
+		unix_now,
+	},
+};
+
+pub mod local_network;
 
 /// Networks the headless hosts know by name.
 ///
@@ -211,7 +219,7 @@ impl NetworkSource {
 			return Err(error);
 		}
 		tracing::info!("{error}; fetching the published descriptor again");
-		let (config, checks) = self.resolve_routes(crate::stack::FETCH_TIMEOUT).await?;
+		let (config, checks) = self.resolve_routes(FETCH_TIMEOUT).await?;
 		if checks.copy_in_use() != Some(BuiltInCopy::Published) {
 			return Err(error);
 		}
@@ -233,7 +241,7 @@ impl NetworkSource {
 	) -> Result<(NetworkConfig, ChainChecks)> {
 		let overrides = ChainOverrides::from_env()?;
 		let override_names = overrides.env_names_in_use();
-		let local_path = crate::local_network::config_path();
+		let local_path = local_network::config_path();
 		ensure_sources_compatible(
 			self.stack.as_ref(),
 			self.network,
@@ -243,7 +251,7 @@ impl NetworkSource {
 		)?;
 		let (base, built_in) = match (&self.stack, &local_path) {
 			(Some(stack), _) => {
-				let descriptor = crate::stack::load_descriptor(&stack.value).await;
+				let descriptor = load_descriptor(&stack.value).await;
 				let base = descriptor
 					.and_then(|descriptor| stack_network_config(&descriptor))
 					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
@@ -261,7 +269,7 @@ impl NetworkSource {
 		);
 		config.chain_backend = self.chain_backend;
 		if let Some(path) = &local_path {
-			config = crate::local_network::resolve(config, path)?;
+			config = local_network::resolve(config, path)?;
 		}
 		refuse_light_client(&config)?;
 		ensure_no_real_identity_values(&config)?;
@@ -302,7 +310,7 @@ fn ensure_sources_compatible(
 	local_network: bool,
 	chain_backend: ChainBackend,
 ) -> Result<()> {
-	let local_env = crate::local_network::CONFIG_ENV;
+	let local_env = local_network::CONFIG_ENV;
 	let light_client = chain_backend == ChainBackend::LightClient;
 	if let Some(stack) = stack {
 		let source = stack.source;
@@ -396,9 +404,9 @@ impl Network {
 		let Some(built_in) = self.built_in_stack() else { return Ok((POLKADOT, None)) };
 		let pointer = built_in.pointer();
 		let url = pointer.url().as_str();
-		let fetched = crate::stack::fetch(url, fetch_timeout).await;
+		let fetched = fetch(url, fetch_timeout).await;
 		match &fetched {
-			Err(cause @ crate::stack::FetchError::Http(_)) => tracing::warn!(
+			Err(cause @ FetchError::Http(_)) => tracing::warn!(
 				"the {} stack descriptor at {url} returned {cause}; using the bundled copy",
 				self.id()
 			),
@@ -406,7 +414,7 @@ impl Network {
 			Ok(_) => {},
 		}
 		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
-		let now = crate::stack::unix_now() as i64;
+		let now = unix_now() as i64;
 		let refresh = refresh_stack(self.id(), &pointer, built_in.bundle, fetched, now)?;
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
@@ -455,46 +463,6 @@ fn format_restart_hint(origin: &BuiltInOrigin) -> String {
 			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
 			 and the published copy at {url} was rejected, as the warning above reports"
 		),
-	}
-}
-
-/// Roles a stack-derived network routes, in the order [`StackProjection`] and
-/// [`stack_config`] read them.
-const ROLES: [&str; 3] = ["People", "AssetHub", "Bulletin"];
-
-/// The descriptor fields a stack-derived network is built from, and
-/// `generation`. Only a change to these makes the runtime notice print.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct StackProjection<'a> {
-	generation: &'a str,
-	tld: &'a str,
-	/// `rpc[0]` and `genesisHash` of each of [`ROLES`], when present.
-	roles: [Option<(&'a str, &'a str)>; 3],
-	dub: Option<&'a str>,
-	pop_controller: Option<&'a str>,
-}
-
-impl<'a> StackProjection<'a> {
-	pub(crate) fn of(descriptor: &'a Descriptor) -> Self {
-		Self {
-			generation: &descriptor.generation,
-			tld: &descriptor.tld,
-			roles: ROLES.map(|role| {
-				let chain = descriptor.chain(role)?;
-				Some((chain.rpc[0].as_str(), chain.genesis_hash.as_str()))
-			}),
-			dub: descriptor
-				.services
-				.iter()
-				.find(|service| service.kind == "dub")
-				.and_then(|service| service.urls.first())
-				.map(String::as_str),
-			pop_controller: descriptor
-				.dotns
-				.as_ref()
-				.and_then(|dotns| dotns.get("popController"))
-				.map(String::as_str),
-		}
 	}
 }
 
@@ -613,16 +581,14 @@ fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
 /// the core serves.
 fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConfig> {
 	let projection = StackProjection::of(descriptor);
-	let endpoint = |index: usize| -> Result<ChainEndpoint> {
-		let (ws, genesis_hash) = projection.roles[index].with_context(|| {
-			format!("the {} stack has no {} chain", descriptor.id, ROLES[index])
-		})?;
+	let roles = ROLE_NAMES.zip(projection.roles).try_map(|(role, chain)| {
+		let (ws, genesis_hash) =
+			chain.with_context(|| format!("the {} stack has no {role} chain", descriptor.id))?;
 		let mut genesis = [0u8; 32];
 		hex::decode_to_slice(genesis_hash.trim_start_matches("0x"), &mut genesis)
 			.expect("invalid genesisHash in a validated descriptor");
-		Ok(ChainEndpoint { genesis, ws: leak_str(ws), required_for_host: true })
-	};
-	let roles = [endpoint(0)?, endpoint(1)?, endpoint(2)?];
+		anyhow::Ok(ChainEndpoint { genesis, ws: leak_str(ws), required_for_host: true })
+	})?;
 	let network_suffix =
 		DOTNS_TLDS.iter().find(|tld| **tld == projection.tld).with_context(|| {
 			format!(
@@ -641,51 +607,48 @@ fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConf
 			.expect("invalid dotns address in a validated descriptor");
 		bytes
 	});
-	let unrouted = NetworkConfig {
+	roles.ensure_distinct_genesis()?;
+	Ok(NetworkConfig {
 		id,
 		network_suffix,
 		identity_backend_base,
-		people_ws: "",
-		bulletin_ws: "",
-		asset_hub_ws: "",
-		people_genesis: [0; 32],
-		bulletin_genesis: [0; 32],
-		asset_hub_genesis: [0; 32],
-		live_chain_endpoints: &[],
+		people_ws: roles.people.ws,
+		bulletin_ws: roles.bulletin.ws,
+		asset_hub_ws: roles.asset_hub.ws,
+		people_genesis: roles.people.genesis,
+		bulletin_genesis: roles.bulletin.genesis,
+		asset_hub_genesis: roles.asset_hub.genesis,
+		live_chain_endpoints: roles.leak_endpoints(),
 		dotns_pop_controller,
 		disposable_identities: true,
 		chain_backend: ChainBackend::Rpc,
-	};
-	route_roles(unrouted, roles)
+	})
 }
 
-/// `config` with People, Asset Hub and Bulletin routed to these endpoints, in
-/// both the role fields and the genesis-keyed routing table. Fails when two
-/// roles share a genesis hash, since the host routes each role by its genesis.
-pub(crate) fn route_roles(
-	mut config: NetworkConfig,
-	[people, asset_hub, bulletin]: [ChainEndpoint; 3],
-) -> Result<NetworkConfig> {
-	ensure!(
-		people.genesis != asset_hub.genesis &&
-			people.genesis != bulletin.genesis &&
-			asset_hub.genesis != bulletin.genesis,
-		"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each role \
-		 by its genesis"
-	);
-	config.people_ws = people.ws;
-	config.asset_hub_ws = asset_hub.ws;
-	config.bulletin_ws = bulletin.ws;
-	config.people_genesis = people.genesis;
-	config.asset_hub_genesis = asset_hub.genesis;
-	config.bulletin_genesis = bulletin.genesis;
-	config.live_chain_endpoints = Box::leak(Box::new([people, asset_hub, bulletin]));
-	Ok(config)
+impl Roles<ChainEndpoint> {
+	/// Fails when two roles share a genesis hash, since the host routes each
+	/// role by its genesis.
+	fn ensure_distinct_genesis(&self) -> Result<()> {
+		let Self { people, asset_hub, bulletin } = self;
+		ensure!(
+			people.genesis != asset_hub.genesis &&
+				people.genesis != bulletin.genesis &&
+				asset_hub.genesis != bulletin.genesis,
+			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each \
+			 role by its genesis"
+		);
+		Ok(())
+	}
+
+	/// The genesis-keyed routing table of a [`NetworkConfig`].
+	fn leak_endpoints(self) -> &'static [ChainEndpoint] {
+		Box::leak(Box::new([self.people, self.asset_hub, self.bulletin]))
+	}
 }
 
 /// `NetworkConfig` is `Copy` with process-lifetime fields; the CLI resolves a
 /// network a handful of times per process.
-pub(crate) fn leak_str(value: &str) -> &'static str {
+fn leak_str(value: &str) -> &'static str {
 	Box::leak(value.to_owned().into_boxed_str())
 }
 
@@ -1908,7 +1871,7 @@ mod tests {
 		let error = ensure_sources_compatible(None, None, &[], true, ChainBackend::LightClient)
 			.expect_err("light client accepted with a local network");
 		let message = error.to_string();
-		assert!(message.contains(crate::local_network::CONFIG_ENV));
+		assert!(message.contains(local_network::CONFIG_ENV));
 		assert!(message.contains("--chain-backend light-client"));
 	}
 
@@ -1921,7 +1884,7 @@ mod tests {
 		let error = ensure_sources_compatible(None, None, &overrides, true, ChainBackend::Rpc)
 			.expect_err("chain URL override accepted with a local network");
 		let message = error.to_string();
-		assert!(message.contains(crate::local_network::CONFIG_ENV));
+		assert!(message.contains(local_network::CONFIG_ENV));
 		assert!(message.contains(PEOPLE_WS_ENV) && message.contains(BULLETIN_WS_ENV));
 
 		let stack = stack_arg("--stack");

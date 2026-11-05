@@ -7,7 +7,8 @@ use std::ffi::{OsStr, OsString};
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use crate::network::{ChainEndpoint, NetworkConfig, leak_str, route_roles};
+use super::{ChainEndpoint, NetworkConfig, leak_str};
+use crate::stack_descriptor::Roles;
 
 /// Env var with the path of the local-network JSON file; a blank value is unset.
 pub const CONFIG_ENV: &str = "HOST_CLI_LOCAL_NETWORK_CONFIG";
@@ -73,18 +74,29 @@ fn parse_genesis(value: &str) -> Result<[u8; 32]> {
 		.map_err(|_| anyhow::anyhow!("genesis must be exactly 32 bytes"))
 }
 
-fn parse(mut base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
+fn parse(base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 	let local: LocalNetwork = serde_json::from_str(json).context("invalid local-network config")?;
 	ensure!(local.network == base.id, "local-network config must match --network {}", base.id);
 	ensure_local_url(&local.identity_backend_base, &["http", "https"])?;
-	let endpoint = |chain: &LocalChain| -> Result<ChainEndpoint> {
+	let chains =
+		Roles { people: local.people, asset_hub: local.asset_hub, bulletin: local.bulletin };
+	let roles = chains.try_map(|chain| {
 		ensure_local_url(&chain.ws, &["ws", "wss"])?;
 		let genesis = parse_genesis(&chain.genesis)?;
-		Ok(ChainEndpoint { genesis, ws: leak_str(&chain.ws), required_for_host: true })
-	};
-	let roles = [endpoint(&local.people)?, endpoint(&local.asset_hub)?, endpoint(&local.bulletin)?];
-	base.identity_backend_base = Some(leak_str(local.identity_backend_base.trim_end_matches('/')));
-	route_roles(base, roles)
+		anyhow::Ok(ChainEndpoint { genesis, ws: leak_str(&chain.ws), required_for_host: true })
+	})?;
+	roles.ensure_distinct_genesis()?;
+	Ok(NetworkConfig {
+		identity_backend_base: Some(leak_str(local.identity_backend_base.trim_end_matches('/'))),
+		people_ws: roles.people.ws,
+		bulletin_ws: roles.bulletin.ws,
+		asset_hub_ws: roles.asset_hub.ws,
+		people_genesis: roles.people.genesis,
+		bulletin_genesis: roles.bulletin.genesis,
+		asset_hub_genesis: roles.asset_hub.genesis,
+		live_chain_endpoints: roles.leak_endpoints(),
+		..base
+	})
 }
 
 #[cfg(test)]

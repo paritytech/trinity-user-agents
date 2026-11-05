@@ -25,7 +25,6 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
-mod local_network;
 mod network;
 mod platform;
 mod pocket;
@@ -38,6 +37,7 @@ mod script_runner;
 mod sessions;
 mod signing_shell;
 mod stack;
+mod stack_descriptor;
 mod terminal_ui;
 mod transcript;
 mod update;
@@ -84,7 +84,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg},
+	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg, local_network},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
