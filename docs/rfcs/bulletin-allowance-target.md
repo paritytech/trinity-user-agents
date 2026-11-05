@@ -60,29 +60,17 @@ Requirements:
 
 The design depends on six runtime changes:
 
-- The People chain accepts a long-term storage claim for the next People period, and no longer one for a previous
-  People period within a grace window, so that a claim for the next People period replaces the grace window.
+- The People chain accepts a long-term storage claim for the next People period
 - The People chain sends each claim's authorization with a window in relay-chain block numbers, derived from the
   People period boundary: a claim for the current People period opens an authorization slot that is active now and
   expires at the boundary, and a claim for the next People period opens an authorization slot from that boundary for
-  one full People period. The chain estimates each People period's end in relay-chain blocks once, from its clock and
-  the relay-chain slot duration, rounded up, and stores it, so every claim of a People period has the same window and
-  the authorization slots of consecutive People periods follow each other without a gap or an overlap. Today it sends
-  the authorization without a window. This change and the previous one exist as an open proposal on the People chain.
+  one full People period.
 - The People chain stores the allowance account of each long-term storage claim that authorized the account, as it does
-  for statement-store allowances, so that the Account Holder can read the claims of each account per People period. A
-  claim that didn't authorize the account spends the person's alias, so it isn't among the stored claims of the
-  account.
+  for statement-store allowances, so that the Account Holder can read the claims of each account per People period.
 - Bulletin stores authorizations as authorization slots. An authorization slot has the window of relay-chain blocks
   over which it is valid, its caps, and the counters of what submissions, registrations and renewals used. Grants for
-  the same window add up in one authorization slot, and Bulletin stores a bounded number of authorization slots per
-  account, so that the authorization slot for the next People period can exist before the current one expires. A
-  renewal takes its bytes from the active authorization slot, and the cap of permanent bytes is per authorization
-  slot. This change exists as an open proposal on Bulletin, with two authorization slots per account, enough for the
-  current and the next People period, and windows that start up to 30 days ahead.
-- Bulletin lets the account that registered auto-renew turn it off before the prepaid first renewal has run, and takes
-  the item's size out of the permanent storage accounting that turning auto-renew on added, so that a product can turn
-  auto-renew on and off for an item within one People period.
+  the same window add up in one authorization slot but the proposal here doesn't create overlapping authorization slots
+- Bulletin lets the account that registered auto-renew turn it off before the prepaid first renewal has run
 - Bulletin indexes auto-renew registrations by the account that registered them, so that `list` reads the registrations
   of one account.
 
