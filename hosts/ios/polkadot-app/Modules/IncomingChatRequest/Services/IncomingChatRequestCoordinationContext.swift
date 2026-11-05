@@ -159,7 +159,7 @@ private extension IncomingChatRequestCoordinationContext {
             existingOutgoingRequest.requestId,
             remoteIncoming: remoteRequest,
             acceptorDevice: acceptorDevice,
-            peerDevice: nil
+            peerAcceptance: nil
         )
 
         await erasePushToken(contact)
