@@ -42,11 +42,11 @@ extension TabBarAction {
 }
 
 private extension TabBarAction {
-    var title: String? {
+    var title: LocalizedStringResource? {
         switch self {
         case .scan: nil
-        case .spaTabs: String(localized: .tabApps)
-        case .connectionStatus: String(localized: .tabNetwork)
+        case .spaTabs: .tabApps
+        case .connectionStatus: .tabNetwork
         }
     }
 
@@ -61,14 +61,14 @@ private extension TabBarAction {
         }
     }
 
-    func accessibilityLabel(spaTabCount: Int) -> String {
+    func accessibilityLabel(spaTabCount: Int) -> LocalizedStringResource {
         switch self {
         case .scan:
-            String(localized: .Products.productTabsAccessibilityScanner)
+            .Products.productTabsAccessibilityScanner
         case .spaTabs:
-            String(localized: .Products.productTabsAccessibilityOpenApps(spaTabCount))
+            .Products.productTabsAccessibilityOpenApps(spaTabCount)
         case .connectionStatus:
-            String(localized: .Common.connectionStatusAccessibilityLabel)
+            .Common.connectionStatusAccessibilityLabel
         }
     }
 }

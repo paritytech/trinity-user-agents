@@ -23,7 +23,7 @@ struct IncomingChatAcceptanceServiceTests {
     }
 
     @Test func requesterReceivesAcceptanceFromAnySigner() async throws {
-        try await publishAcceptance(requestId: "request")
+        let published = try await publishAcceptance(requestId: "request")
 
         let service = IncomingChatAcceptanceService(
             encryptionManager: requester.encryptionManager(),
@@ -35,16 +35,16 @@ struct IncomingChatAcceptanceServiceTests {
         var iterator = service.subscribe(to: [requester.request(toward: acceptor)]).makeAsyncIterator()
         let received = try await iterator.next()
 
-        #expect(received == IncomingChatAcceptanceInput(
-            peerAccountId: acceptor.identityAccountId,
-            requestId: "request",
-            device: device
-        ))
+        #expect(received?.peerAccountId == acceptor.identityAccountId)
+        #expect(received?.requestId == "request")
+        #expect(received?.device == device)
+        #expect(received?.message.messageId == published.messageId)
+        #expect(received?.message.timestamp == published.timestamp)
     }
 }
 
 private extension IncomingChatAcceptanceServiceTests {
-    func publishAcceptance(requestId: String) async throws {
+    func publishAcceptance(requestId: String) async throws -> Chat.LocalMessage {
         let message = Chat.LocalMessage(
             messageId: UUID().uuidString,
             chatId: .person(requester.identityAccountId),
@@ -69,6 +69,7 @@ private extension IncomingChatAcceptanceServiceTests {
             .signed(by: StatementStoreKeypairSigner(keypair: oneShot))
 
         try await store.submitStatement(with: statement)
+        return message
     }
 }
 
