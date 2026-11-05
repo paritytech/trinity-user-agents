@@ -159,6 +159,7 @@ class FundingUiMapperTest {
 
         assertEquals(9L, offer.secondsLeft(nowMs = 1_000))
         assertEquals(0L, offer.secondsLeft(nowMs = 12_000))
-        assertEquals(null, FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH").secondsLeft(nowMs = 0))
+        val open = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAtMs = null)
+        assertEquals(null, open.secondsLeft(nowMs = 0))
     }
 }

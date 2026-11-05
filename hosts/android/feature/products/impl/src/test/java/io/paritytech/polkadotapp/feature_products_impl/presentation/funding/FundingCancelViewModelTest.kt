@@ -186,7 +186,7 @@ class FundingCancelViewModelTest {
         runCurrent()
 
         assertEquals(FundingScreen.CANCEL_OFFER, screen(model))
-        assertEquals(FundingCancelUiState.Offered(fee = "$2.50 CASH", refund = "$1,000.25 CASH"), deposit(model).cancel)
+        assertEquals(FundingCancelUiState.Offered(fee = "$2.50 CASH", refund = "$1,000.25 CASH", expiresAtMs = null), deposit(model).cancel)
         assertFalse(deposit(model).canCancel)
 
         val messages = messages(model)
