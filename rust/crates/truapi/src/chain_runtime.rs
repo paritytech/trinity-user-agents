@@ -2435,14 +2435,34 @@ pub enum CurrentBlockError {
 impl CurrentBlockError {
 	/// Whether the connection or its follow is down, which a later attempt can
 	/// outlast.
+	///
+	/// Each step of getting the current block reads from the node, and the
+	/// connection can drop under any of them, so the step does not decide.
+	/// What decides is that the read lost its connection or its follow, as
+	/// opposed to the node answering with an error or a malformed reply.
 	fn is_transient(&self) -> bool {
+		use subxt::error::OnlineClientAtBlockError as AtBlock;
 		match self {
 			Self::Client(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
-			Self::Block(error) => matches!(
-				error,
-				subxt::error::OnlineClientAtBlockError::CannotGetCurrentBlock { .. }
-			),
+			Self::Block(
+				AtBlock::CannotGetCurrentBlock { reason } |
+				AtBlock::CannotGetBlockHash { reason, .. } |
+				AtBlock::CannotGetBlockHeader { reason, .. } |
+				AtBlock::CannotGetSpecVersion { reason, .. },
+			) => lost_its_connection(reason),
+			Self::Block(_) => false,
 		}
+	}
+}
+
+/// Whether a Subxt backend read failed because its connection or its follow
+/// went away.
+fn lost_its_connection(error: &subxt::error::BackendError) -> bool {
+	use subxt::error::{BackendError, RpcError};
+	match error {
+		BackendError::Rpc(RpcError::SubscriptionDropped) => true,
+		BackendError::Rpc(RpcError::ClientError(error)) => is_transport_loss(error),
+		_ => false,
 	}
 }
 
@@ -5245,14 +5265,45 @@ mod current_block_tests {
 	/// Only an unavailable chain and a lost current block are worth waiting on.
 	#[test]
 	fn only_a_lost_connection_or_follow_is_transient() {
-		let lost_follow = CurrentBlockError::Block(
-			subxt::error::OnlineClientAtBlockError::CannotGetCurrentBlock {
-				reason: subxt::error::BackendError::Rpc(
-					subxt::error::RpcError::SubscriptionDropped,
-				),
-			},
+		use subxt::error::{BackendError, OnlineClientAtBlockError as AtBlock, RpcError};
+
+		let block_hash = || subxt::error::Hex::from([0xab; 32]);
+		let dropped = || BackendError::Rpc(RpcError::SubscriptionDropped);
+		let closed = || {
+			BackendError::Rpc(RpcError::ClientError(SubxtRpcError::Client(
+				"json-rpc connection closed".into(),
+			)))
+		};
+		let refused = || {
+			BackendError::Rpc(RpcError::ClientError(SubxtRpcError::User(subxt_rpcs::UserError {
+				code: -32602,
+				message: "Invalid block hash".into(),
+				data: None,
+			})))
+		};
+		let at_each_step = |reason: fn() -> BackendError| {
+			[
+				AtBlock::CannotGetCurrentBlock { reason: reason() },
+				AtBlock::CannotGetBlockHash { block_number: 1, reason: reason() },
+				AtBlock::CannotGetBlockHeader { block_hash: block_hash(), reason: reason() },
+				AtBlock::CannotGetSpecVersion { block_hash: block_hash(), reason: reason() },
+			]
+		};
+
+		for error in at_each_step(dropped).into_iter().chain(at_each_step(closed)) {
+			let description = error.to_string();
+			assert!(CurrentBlockError::Block(error).is_transient(), "{description}");
+		}
+		for error in at_each_step(refused) {
+			let description = error.to_string();
+			assert!(!CurrentBlockError::Block(error).is_transient(), "{description}");
+		}
+		assert!(
+			!CurrentBlockError::Block(AtBlock::CannotGetCurrentBlock {
+				reason: BackendError::Rpc(RpcError::LimitReached),
+			})
+			.is_transient()
 		);
-		assert!(lost_follow.is_transient());
 		assert!(
 			CurrentBlockError::Client(RuntimeFailure::unavailable(CONNECT_METHOD)).is_transient()
 		);

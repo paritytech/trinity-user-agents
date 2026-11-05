@@ -1,13 +1,17 @@
 // WebSocket proxy for `scripts/tx-during-outage-e2e.sh`. When a frame carries
-// the trigger key, an outage starts for the given window, in one of two modes:
+// the trigger key, an outage starts for the given window, in one of three
+// modes:
 //
 // - `close`: every open connection closes and new ones are refused.
 // - `stop`: connections stay open, every follow they carry is stopped, and a
 //   follow opened during the window is answered with an error after a delay,
 //   the way a node whose upstream lost DNS refuses to follow.
+// - `header`: nothing happens until the next `chainHead_v1_header`, which
+//   closes every connection under it and starts the window there, so the
+//   connection drops partway through reading the current block.
 //
 // After the window it proxies normally again.
-// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|stop>
+// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|stop|header>
 import { writeFileSync } from "node:fs";
 
 const [upstreamUrl, portFile, trigger, outageArg, mode] = process.argv.slice(2);
@@ -17,10 +21,10 @@ if (
   !portFile ||
   !trigger ||
   !Number.isFinite(outageMs) ||
-  (mode !== "close" && mode !== "stop")
+  (mode !== "close" && mode !== "stop" && mode !== "header")
 ) {
   console.error(
-    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|stop>",
+    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|stop|header>",
   );
   process.exit(2);
 }
@@ -38,6 +42,8 @@ interface Link {
 
 const links = new Set<Bun.ServerWebSocket<Link>>();
 let cut = false;
+/** In `header` mode, set once the trigger arms the cut. */
+let armed = false;
 let downUntil = 0;
 const down = () => Date.now() < downUntil;
 
@@ -50,17 +56,26 @@ function parse(frame: string): Record<string, unknown> | undefined {
   }
 }
 
+function closeEverything() {
+  for (const link of links) {
+    link.data.upstream.close();
+    link.close();
+  }
+}
+
 function startOutage() {
   cut = true;
+  if (mode === "header") {
+    armed = true;
+    console.log("proxy: armed, the next chainHead_v1_header closes every connection");
+    return;
+  }
   downUntil = Date.now() + outageMs;
   if (mode === "close") {
     console.log(
       `proxy: closing ${links.size} connections and refusing new ones for ${outageMs} ms`,
     );
-    for (const link of links) {
-      link.data.upstream.close();
-      link.close();
-    }
+    closeEverything();
     return;
   }
   let stopped = 0;
@@ -86,7 +101,7 @@ const server = Bun.serve<Link>({
   hostname: "127.0.0.1",
   port: 0,
   fetch(request, server) {
-    if (mode === "close" && down()) {
+    if (mode !== "stop" && down()) {
       return new Response("outage", { status: 503 });
     }
     const upstream = new WebSocket(upstreamUrl);
@@ -135,6 +150,15 @@ const server = Bun.serve<Link>({
         if (mode === "close") return;
       }
       const request = parse(frame);
+      if (armed && request?.method === "chainHead_v1_header") {
+        armed = false;
+        downUntil = Date.now() + outageMs;
+        console.log(
+          `proxy: closing ${links.size} connections under chainHead_v1_header and refusing new ones for ${outageMs} ms`,
+        );
+        closeEverything();
+        return;
+      }
       if (
         mode === "stop" &&
         down() &&

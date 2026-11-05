@@ -539,7 +539,7 @@ e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head cal
 e2e-follow-after-transport-cut: ## Cut the chain connection under a chain-head read on the signing-host CLI; the follow must end and a fresh one must work.
 	scripts/follow-after-transport-cut-e2e.sh
 
-e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=stop|close.
+e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=stop|close|header.
 	scripts/tx-during-outage-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
