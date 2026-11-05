@@ -22,7 +22,7 @@ use crate::{
 
 /// Account lookup, aliasing, and proof generation.
 #[wire_trait(id = 2)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Account: Send + Sync {
 	/// Subscribe to account connection status changes.
 	///

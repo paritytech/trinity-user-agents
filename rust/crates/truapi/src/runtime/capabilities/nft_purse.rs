@@ -38,7 +38,7 @@ mod browser {
 
 	use crate::runtime::ProductRuntimeHost;
 
-	#[truapi::async_trait]
+	#[async_trait::async_trait]
 	impl NftPurse for ProductRuntimeHost {
 		async fn create_purse(
 			&self,

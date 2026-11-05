@@ -48,6 +48,7 @@ const topology = params.get("topology");
 const allowances = params.get("allowances");
 const withheld = params.get("withheld");
 const logLevel = params.get("logLevel") ?? undefined;
+const rawStorage = params.get("storage");
 
 void startTestHost({
   productUrl,
@@ -65,6 +66,9 @@ void startTestHost({
   allowances: allowances === "chain" ? "chain" : "granted",
   withheldResources: withheld ? withheld.split(",").filter(Boolean) : undefined,
   logLevel,
+  productStorage: rawStorage
+    ? (JSON.parse(rawStorage) as Record<string, string>)
+    : undefined,
 }).catch((error: unknown) => {
   // Surface boot failures in the page rather than only the console: a fixture
   // that times out waiting for the control surface should be able to read why.
