@@ -9,11 +9,6 @@ protocol TURNCredentialsRequestMaking: Sendable {
     ) async throws -> TURNCredentials
 }
 
-struct TURNCredentialsError: Error {
-    let statusCode: Int
-    let details: String?
-}
-
 final class TURNCredentialsRequestFactory: TURNCredentialsRequestMaking {
     private let urlSession: any HTTPDataLoading
 
@@ -40,17 +35,9 @@ final class TURNCredentialsRequestFactory: TURNCredentialsRequestMaking {
 
         let (data, urlResponse) = try await urlSession.data(for: urlRequest)
 
-        guard let httpResponse = urlResponse as? HTTPURLResponse else {
-            throw NetworkBaseError.unexpectedResponseObject
-        }
-
-        guard httpResponse.statusCode == 201 else {
-            throw TURNCredentialsError(
-                statusCode: httpResponse.statusCode,
-                details: String(data: data, encoding: .utf8)
-            )
-        }
-
-        return try JSONDecoder().decode(TURNCredentials.self, from: data)
+        // Rejections surface as `BackendApiError`, so a 401 makes `withAuthorizedToken` replace the token.
+        return try UsernameJsonResultFactory<TURNCredentials>()
+            .createResult(data: data, response: urlResponse, error: nil)
+            .get()
     }
 }

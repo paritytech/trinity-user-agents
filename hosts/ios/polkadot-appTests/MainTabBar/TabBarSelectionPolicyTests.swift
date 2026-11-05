@@ -7,7 +7,7 @@ import Testing
 struct TabBarSelectionPolicyTests {
     @Test("The pill marks the current tab when no product is mounted")
     func marksTabWithoutMountedProduct() {
-        let placement = TabBarSelectionPolicy.placement(
+        let placement = TabBarSelectionPlacement(
             tabItemIndex: 1,
             mountedProductId: nil,
             isShelfOpen: false
@@ -17,7 +17,7 @@ struct TabBarSelectionPolicyTests {
 
     @Test("Opening the shelf alone leaves the pill on the current tab")
     func shelfOpenWithoutMountedProductKeepsTab() {
-        let placement = TabBarSelectionPolicy.placement(
+        let placement = TabBarSelectionPlacement(
             tabItemIndex: 1,
             mountedProductId: nil,
             isShelfOpen: true
@@ -27,7 +27,7 @@ struct TabBarSelectionPolicyTests {
 
     @Test("The pill marks the Apps item while a product is on screen")
     func marksAppsItemWithMountedProductAndShelfClosed() {
-        let placement = TabBarSelectionPolicy.placement(
+        let placement = TabBarSelectionPlacement(
             tabItemIndex: 1,
             mountedProductId: UUID(),
             isShelfOpen: false
@@ -38,7 +38,7 @@ struct TabBarSelectionPolicyTests {
     @Test("The pill moves to the product's cell while the shelf is open")
     func marksProductCellWithMountedProductAndShelfOpen() {
         let productId = UUID()
-        let placement = TabBarSelectionPolicy.placement(
+        let placement = TabBarSelectionPlacement(
             tabItemIndex: 1,
             mountedProductId: productId,
             isShelfOpen: true
