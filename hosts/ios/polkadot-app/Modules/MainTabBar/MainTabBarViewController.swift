@@ -230,7 +230,7 @@ private extension MainTabBarViewController {
         case .chat: String(localized: .chatMainTitle)
         case .wallet,
              .browse,
-             .settings: item.title
+             .settings: String(localized: item.title)
         }
     }
 
