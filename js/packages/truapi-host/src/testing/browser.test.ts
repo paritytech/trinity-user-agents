@@ -180,15 +180,15 @@ suite("the test host in a browser", () => {
     try {
       const frame = await productFrame(page);
 
-      // Either order works for an answer, so neither step waits on timing:
-      // one given before the request answers it when it arrives.
+      // A decline answers the request whichever reaches the host first.
       const declined = requestLogin(frame);
       await control("declineLogin");
       expect(await declined).toBe("Rejected");
 
-      const approved = requestLogin(frame);
+      // Approving signs in before it answers, so a request racing it can find
+      // the session first. Given before the request, the answer is certain.
       await control("approveLogin", "alice");
-      expect(await approved).toBe("Success");
+      expect(await requestLogin(frame)).toBe("Success");
 
       // A reset signs the host out again, so the next case starts held.
       await control("reset");

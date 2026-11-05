@@ -423,7 +423,8 @@ for its resources on connect, so a later call would land after that.
   request then waits, as on a host's login prompt, until the test calls
   `approveLogin("alice")` (answered `Success`) or `declineLogin()`
   (`Rejected`). Either may come before the product asks, and then answers
-  its next request, so a test can click and answer without waiting.
+  its next request, so a test can answer and then click. A request that
+  arrives while `approveLogin` signs in is answered `AlreadyConnected`.
   `switchAccount` and `signOut` answer nothing, and `reset` signs the host
   out again.
 - **Deep links:** `await testHost.goto("/item/7?tab=history#top")` reopens the

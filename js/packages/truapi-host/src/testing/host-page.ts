@@ -155,8 +155,9 @@ export interface AccountControl {
    *
    * Under `loginBehavior: "manual"`, a signed-out product's login request
    * waits for this or `declineLogin`, as it would on a host's login prompt.
-   * Called before the request arrives, it answers the next one. Throws unless
-   * `loginBehavior` is `"manual"`.
+   * Called before the request arrives, it answers the next one. A request
+   * that arrives while it signs in finds the session and is answered
+   * `AlreadyConnected`. Throws unless `loginBehavior` is `"manual"`.
    */
   approveLogin(name: string): Promise<void>;
   /**

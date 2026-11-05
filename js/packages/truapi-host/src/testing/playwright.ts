@@ -343,7 +343,8 @@ export interface TestHost {
    * Sign in as `name` and answer the product's held login request `Success`.
    * Under `loginBehavior: "manual"` that request waits for this or
    * `declineLogin`. Called before the request arrives, it answers the next
-   * one. Throws unless `loginBehavior` is `"manual"`.
+   * one. A request that arrives while it signs in finds the session and is
+   * answered `AlreadyConnected`. Throws unless `loginBehavior` is `"manual"`.
    */
   approveLogin(name: string): Promise<void>;
   /**
