@@ -67,7 +67,7 @@ internal fun TurningPocketCard(
                 if (turnable) {
                     customActions = listOf(
                         CustomAccessibilityAction(turnOver) {
-                            scope.launch { turn.turnTo(turn.shownSide.other()) }
+                            scope.launch { turn.turnOver() }
                             true
                         }
                     )
@@ -99,7 +99,5 @@ private fun CardFace(card: PocketCardUiModel.ProductCard, bindings: ProductFaceB
         onRemoveRequested = null,
     )
 }
-
-private fun PocketCardSide.other() = if (this == PocketCardSide.FRONT) PocketCardSide.BACK else PocketCardSide.FRONT
 
 private const val CAMERA_DISTANCE_DP = 12f
