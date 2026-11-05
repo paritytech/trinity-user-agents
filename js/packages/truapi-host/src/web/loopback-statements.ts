@@ -106,7 +106,10 @@ export interface RetainedStatement {
 
 /** A statement to inject, in the decoded shape a suite writes. */
 export interface StatementInput {
-  /** Up to four `0x`-hex topics; an empty list matches a bare subscription. */
+  /**
+   * Up to four 32-byte `0x`-hex topics; an empty list matches a bare
+   * subscription.
+   */
   topics: string[];
   /** `0x`-hex payload. */
   data?: string;
@@ -114,7 +117,8 @@ export interface StatementInput {
   channel?: string;
   /**
    * Expiry as the store encodes it: the expiration timestamp in seconds in the
-   * high 32 bits and a sequence number in the low 32.
+   * high 32 bits and a sequence number in the low 32. A number must be a safe
+   * integer, so a realistic expiry is passed as a bigint.
    */
   expiry?: bigint | number;
   /** `0x`-hex 32-byte decryption key. */
@@ -137,6 +141,47 @@ const UNVERIFIED_PROOF = {
   },
 };
 
+/** Largest value a statement's `u64` expiry holds. */
+const MAX_EXPIRY = 2n ** 64n - 1n;
+
+/**
+ * `value` as a 32-byte field, refused when it is anything else.
+ *
+ * The codec would truncate a longer value and misalign every field after a
+ * shorter one, so the statement either says something other than what the
+ * test wrote or decodes as nothing.
+ */
+function field32(name: string, value: string): `0x${string}` {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(
+      `testHost injectStatement: \`${name}\` must be 32 bytes of \`0x\` hex, ` +
+        `got "${value}".`,
+    );
+  }
+  return value as `0x${string}`;
+}
+
+/**
+ * `value` as a `u64`, refused when the codec would wrap it or a number has
+ * already lost precision.
+ */
+function expiryOf(value: bigint | number): bigint {
+  if (typeof value === "number" && !Number.isSafeInteger(value)) {
+    throw new Error(
+      `testHost injectStatement: \`expiry\` ${value} is not a safe integer, ` +
+        "so its low bits are already lost. Pass it as a bigint.",
+    );
+  }
+  const expiry = BigInt(value);
+  if (expiry < 0n || expiry > MAX_EXPIRY) {
+    throw new Error(
+      `testHost injectStatement: \`expiry\` ${expiry} is outside a u64, ` +
+        "which the store would wrap rather than keep.",
+    );
+  }
+  return expiry;
+}
+
 /** Encode `input` the way a product's submission arrives. */
 export function encodeStatement(input: StatementInput): string {
   if (input.topics.length > TOPIC_TAGS.length) {
@@ -155,16 +200,26 @@ export function encodeStatement(input: StatementInput): string {
       { tag: "Proof", value: UNVERIFIED_PROOF },
       ...(input.decryptionKey === undefined
         ? []
-        : [{ tag: "DecryptionKey" as const, value: input.decryptionKey }]),
+        : [
+            {
+              tag: "DecryptionKey" as const,
+              value: field32("decryptionKey", input.decryptionKey),
+            },
+          ]),
       ...(input.expiry === undefined
         ? []
-        : [{ tag: "Expiry" as const, value: BigInt(input.expiry) }]),
+        : [{ tag: "Expiry" as const, value: expiryOf(input.expiry) }]),
       ...(input.channel === undefined
         ? []
-        : [{ tag: "Channel" as const, value: input.channel }]),
+        : [
+            {
+              tag: "Channel" as const,
+              value: field32("channel", input.channel),
+            },
+          ]),
       ...input.topics.map((topic, index) => ({
         tag: TOPIC_TAGS[index]!,
-        value: topic as `0x${string}`,
+        value: field32(`topics[${index}]`, topic),
       })),
       ...(input.data === undefined
         ? []

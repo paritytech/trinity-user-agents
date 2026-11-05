@@ -304,6 +304,39 @@ describe("the statement encoding the store actually sees", () => {
     expect(fields.find((field) => field.tag === "Expiry")?.value).toBe(42n);
   });
 
+  it("refuses a field that is not 32 bytes rather than mangling it", () => {
+    // Longer would be truncated, and shorter misaligns every later field so
+    // the statement decodes as nothing.
+    for (const value of ["0xabcd", `0x${"cc".repeat(33)}`, "cc".repeat(32)]) {
+      expect(() => encodeStatement({ topics: [], channel: value })).toThrow(
+        /`channel` must be 32 bytes/,
+      );
+      expect(() =>
+        encodeStatement({ topics: [], decryptionKey: value }),
+      ).toThrow(/`decryptionKey` must be 32 bytes/);
+      expect(() => encodeStatement({ topics: [value] })).toThrow(
+        /`topics\[0\]` must be 32 bytes/,
+      );
+    }
+  });
+
+  it("refuses an expiry the store would wrap or a number has already rounded", () => {
+    for (const expiry of [-1, -1n, 2n ** 64n]) {
+      expect(() => encodeStatement({ topics: [], expiry })).toThrow(
+        /outside a u64/,
+      );
+    }
+    expect(() =>
+      encodeStatement({ topics: [], expiry: 1_700_000_000 * 2 ** 32 + 7 }),
+    ).toThrow(/not a safe integer/);
+    const max = decodeStatement(
+      encodeStatement({ topics: [], expiry: 2n ** 64n - 1n }),
+    )!;
+    expect(max.find((field) => field.tag === "Expiry")?.value).toBe(
+      2n ** 64n - 1n,
+    );
+  });
+
   it("refuses a fifth topic rather than dropping it", () => {
     // The store has four topic fields. Silently keeping the first four would
     // read as a filter that failed to match.
