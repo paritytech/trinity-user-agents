@@ -10,7 +10,6 @@ use std::{
 use truapi::{
 	installation::{InstallationId, InstallationIdProvider},
 	latest::GenericError,
-	platform::async_trait,
 };
 
 /// The installation id stored at one path.
@@ -59,7 +58,7 @@ impl CliInstallation {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl InstallationIdProvider for CliInstallation {
 	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
 		match self.read_stored()? {

@@ -21,7 +21,7 @@ use crate::runtime::{
 	versioning::version,
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl ResourceAllocation for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "resource_allocation.request"))]
 	async fn request(
@@ -79,7 +79,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Entropy for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "entropy.derive"))]
 	async fn derive(

@@ -11,7 +11,9 @@ rust/crates/
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
                          its `chain` module builds the core's own extrinsics through
-                         `ExtrinsicService`, and, on native targets, its `durable` module follows presigned
+                         `ExtrinsicService` and reads and writes contracts through
+                         `EvmContractCaller` with signer-bound prepared transactions;
+                         on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
                          scheduled ones through their submission policies, and its
                          `encrypted_storage` module holds the host store encrypted at

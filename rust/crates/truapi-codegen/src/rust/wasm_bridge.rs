@@ -255,7 +255,7 @@ fn emit_trait_impl(
 ) -> Result<String> {
 	let mut out = String::new();
 	if trait_def.methods.iter().any(|method| method.return_shape.is_async) {
-		out.push_str("#[crate::platform::async_trait]\n");
+		out.push_str("#[async_trait::async_trait]\n");
 	}
 	writeln!(out, "impl crate::platform::{} for WasmPlatform {{", trait_def.name).unwrap();
 	for (idx, method) in trait_def.methods.iter().enumerate() {
