@@ -31,6 +31,9 @@ internal class CardTurnState(initialAngle: Float = 0f) {
 
     /** Where the card is going: the end of a turn under way, else where it is. */
     private var heading = initialAngle
+
+    /** The face up when the current drag began: a swipe turns the card at most one flip from it. */
+    private var dragFace = initialAngle
     private var dragging = false
     private var homing = false
     private val animations = MutatorMutex()
@@ -45,22 +48,22 @@ internal class CardTurnState(initialAngle: Float = 0f) {
     suspend fun beginDrag() {
         if (homing) return
         dragging = true
+        dragFace = nearest(heading, HALF_TURN)
         animations.mutate(MutatePriority.UserInput) {}
     }
 
     fun drag(deltaPx: Float, widthPx: Float) {
         if (homing) return
-        angle += deltaPx * HALF_TURN / widthPx
+        angle = (angle + deltaPx * HALF_TURN / widthPx).withinOneFlip()
         heading = angle
     }
 
-    /** Lands on the face the release heads for, at most [MAX_HALF_TURNS] half turns from the face then up. */
+    /** Lands on the face the release heads for, never more than one flip from the face the drag began on. */
     suspend fun release(velocityPxPerSec: Float, widthPx: Float) {
         if (homing) return
-        val velocity = velocityPxPerSec * HALF_TURN / widthPx
-        val faceUp = nearest(angle, HALF_TURN)
-        val reach = MAX_HALF_TURNS * HALF_TURN
-        val rest = nearest(angle + velocity * FLING_PROJECTION_SECONDS, HALF_TURN).coerceIn(faceUp - reach, faceUp + reach)
+        // Capped so a hard flick still settles on the next face instead of swinging past it.
+        val velocity = (velocityPxPerSec * HALF_TURN / widthPx).coerceIn(-MAX_SETTLE_SPEED, MAX_SETTLE_SPEED)
+        val rest = nearest(angle + velocity * FLING_PROJECTION_SECONDS, HALF_TURN).withinOneFlip()
         settle(rest, velocity, MutatePriority.UserInput)
         // Cleared only once the settle ends: one cut short by a new drag leaves the flag that drag set.
         dragging = false
@@ -119,11 +122,13 @@ internal class CardTurnState(initialAngle: Float = 0f) {
 
     private fun nearest(degrees: Float, step: Float) = (degrees / step).roundToInt() * step
 
+    private fun Float.withinOneFlip() = coerceIn(dragFace - HALF_TURN, dragFace + HALF_TURN)
+
     companion object {
         private const val HALF_TURN = 180f
         private const val FULL_TURN = 360f
         private const val FLING_PROJECTION_SECONDS = 0.3f
-        private const val MAX_HALF_TURNS = 4
+        private const val MAX_SETTLE_SPEED = 720f
         private const val SETTLE_DAMPING = 0.85f
 
         val Saver: Saver<CardTurnState, Float> =
