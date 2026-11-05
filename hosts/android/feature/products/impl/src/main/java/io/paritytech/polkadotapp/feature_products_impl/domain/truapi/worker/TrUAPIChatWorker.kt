@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -143,13 +144,15 @@ class TrUAPIChatWorker(
     // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
     // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
     // the scope that drains flatMapLatest's channel.
-    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> =
-        flow {
+    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> = flow {
+        var drewAny = false
+        val streams = flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
                 .retryWhileConnecting()
                 .collect { node ->
                     drew = true
+                    drewAny = true
                     emit(Result.success(node.toJsWidget()))
                 }
             // A stream closed before its first tree would otherwise leave the cell loading for the
@@ -158,7 +161,11 @@ class TrUAPIChatWorker(
         }
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
-            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}")
+            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}", reopens = RENDER_STREAMS - 1)
+            // Past the last stream a cell that drew keeps its face; one that never did reads the failure.
+            .catch { cause -> if (!drewAny) emit(Result.failure(cause)) }
+        emitAll(streams)
+    }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 
@@ -171,5 +178,8 @@ class TrUAPIChatWorker(
 
     private companion object {
         const val NATIVE_PEER = "native"
+
+        // Streams opened for one cell on one execution before its failure is reported, as on iOS.
+        const val RENDER_STREAMS = 3L
     }
 }

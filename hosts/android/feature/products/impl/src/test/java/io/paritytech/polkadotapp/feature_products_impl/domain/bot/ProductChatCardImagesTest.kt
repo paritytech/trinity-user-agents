@@ -16,7 +16,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.Produc
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
+import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -74,6 +76,8 @@ class ProductChatCardImagesTest {
             workerRefCounter = mockk(),
             imageResolver = RealProductImageResolver(archive, ipfsContentLookup, FakePinnedPocketCards(emptyList())),
             resolveProduct = mockk(),
+            dispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
+            renderObservers = emptySet(),
         )
         val extension = factory.create(product, ProductChatExtensionOrigin.InstalledByUser)
         val renderer = extension.customMessageRenderers().single() as ProductsMessageRenderer

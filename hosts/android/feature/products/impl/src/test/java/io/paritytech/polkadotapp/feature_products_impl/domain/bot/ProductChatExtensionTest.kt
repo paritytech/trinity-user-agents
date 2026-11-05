@@ -23,7 +23,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
+import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -46,8 +48,21 @@ class ProductChatExtensionTest {
     private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
-    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), ProductChatExtensionOrigin.PlacedByHost)
+    private fun extension(
+        refCounter: ProductWorkerRefCounter,
+        origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
+    ) = ProductChatExtension(
+        appContext = mockk<Context>(relaxed = true),
+        product = product,
+        workerRefCounter = refCounter,
+        imageResolver = mockk(),
+        resolveProduct = mockk(),
+        dispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
+        renderObservers = emptySet(),
+        origin = origin,
+    )
+
+    private fun placedByHost(refCounter: ProductWorkerRefCounter) = extension(refCounter, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -107,7 +122,7 @@ class ProductChatExtensionTest {
         )
 
         withChatHost(incoming = flowOf(message)) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk()).startGlobalWork()
+            extension(FakeRefCounter(worker)).startGlobalWork()
         }
 
         assertEquals(listOf<Pair<ProductChatIdParameter?, String>>(ProductChatIdParameter(ROOM) to "hello"), worker.delivered)
@@ -116,7 +131,7 @@ class ProductChatExtensionTest {
     @Test
     fun `a boot failure does not take the chat host down with it`() = runTest {
         val refCounter = FakeRefCounter(bootFailure = IllegalStateException("core runtime unavailable"))
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        val extension = extension(refCounter)
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -133,7 +148,7 @@ class ProductChatExtensionTest {
     fun `disposing stops the inbound collector instead of leaking it`() = runTest {
         val worker = RecordingWorker()
         val incoming = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 4)
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk())
+        val extension = extension(FakeRefCounter(worker))
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -162,7 +177,7 @@ class ProductChatExtensionTest {
     @Test
     fun `an empty footer hides the input of that room alone`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        val extension = extension(refCounter)
 
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
@@ -181,7 +196,7 @@ class ProductChatExtensionTest {
         val ownRooms = flowOf(listOf(ChatId.forExtension(extensionId), ChatId.forExtensionRoom(extensionId, ROOM)))
 
         withChatHost(ownRooms) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk()).startGlobalWork()
+            extension(refCounter).startGlobalWork()
         }
 
         val rooms = requireNotNull(refCounter.chatSurface).subscribeChatRooms().first()
@@ -209,7 +224,7 @@ class ProductChatExtensionTest {
 
     @Test
     fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+        val extension = extension(FakeRefCounter(RecordingWorker()))
 
         assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
     }
@@ -217,7 +232,7 @@ class ProductChatExtensionTest {
     // Until the worker registers an icon for its room, the chat shows the one the manifest declares.
     @Test
     fun `a product's chat defaults to its manifest icon`() {
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+        val extension = extension(FakeRefCounter(RecordingWorker()))
 
         assertEquals(product.id.productIconUri(), extension.defaultRoomMetadata.icon)
     }
