@@ -6,6 +6,8 @@ use subxt_rpcs::{
 	client::{RpcClient, rpc_params},
 };
 
+use super::BulletinCid;
+
 // `bitswap_v1_get` errors by code, the only part of the error the bitswap JSON-RPC spec
 // (`bitswap_unstable_get`) makes stable.
 /// The data is not held. It can still arrive.
@@ -30,8 +32,12 @@ pub enum BitswapError {
 
 /// The blob the node behind `client` holds under `cid`, or `None` while it holds none. The
 /// bytes are unchecked: the caller compares them with the CID.
-pub async fn bitswap_get(client: &RpcClient, cid: &str) -> Result<Option<Vec<u8>>, BitswapError> {
-	let value = match client.request::<Value>("bitswap_v1_get", rpc_params![cid]).await {
+pub async fn bitswap_get(
+	client: &RpcClient,
+	cid: &BulletinCid,
+) -> Result<Option<Vec<u8>>, BitswapError> {
+	let value = match client.request::<Value>("bitswap_v1_get", rpc_params![cid.to_string()]).await
+	{
 		Ok(value) => value,
 		Err(subxt_rpcs::Error::User(error)) => return call_error(&error),
 		Err(error) => return Err(BitswapError::Connection(format!("bitswap_v1_get: {error}"))),

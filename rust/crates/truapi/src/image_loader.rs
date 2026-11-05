@@ -130,7 +130,7 @@ impl ImageLoader {
 			.client("image_loader.load")
 			.await
 			.map_err(|failure| BitswapError::Connection(failure.reason()))?;
-		bitswap_get(&client, &cid.to_string()).await
+		bitswap_get(&client, cid).await
 	}
 
 	/// Reads `cid` until the bytes hash to it, Bulletin refuses for good, or [`LOAD_TIMEOUT`]

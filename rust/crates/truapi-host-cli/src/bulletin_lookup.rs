@@ -22,7 +22,7 @@ use futures::{
 use subxt_rpcs::client::RpcClient;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
-use truapi::{BitswapError, bitswap_get, latest as api, preimage_cid, preimage_key};
+use truapi::{BitswapError, BulletinCid, bitswap_get, latest as api};
 
 use crate::chain::CliChainProvider;
 
@@ -43,7 +43,7 @@ pub enum SourceError {
 #[async_trait::async_trait]
 pub trait BlobSource: Send + Sync {
 	/// The blob stored under `cid`, or `None` when the source does not hold it.
-	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError>;
+	async fn get(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError>;
 }
 
 /// `bitswap_v1_get` on the Bulletin chain's JSON-RPC. The connection is opened on first use and
@@ -87,7 +87,7 @@ impl BitswapRpc {
 
 #[async_trait::async_trait]
 impl BlobSource for BitswapRpc {
-	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+	async fn get(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		let client = self.client().await?;
 		match tokio::time::timeout(RPC_TIMEOUT, bitswap_get(&client, cid)).await {
 			Ok(Ok(blob)) => Ok(blob),
@@ -135,22 +135,18 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		let lookup = Arc::clone(self);
 		async move {
-			let cid = preimage_cid(&key);
-			match lookup.read(&cid, &key).await {
+			let cid = BulletinCid::from(key);
+			match lookup.read(&cid).await {
 				Ok(Some(value)) => return stream::once(future::ready(Ok(Some(value)))).boxed(),
 				Ok(None) => {},
 				Err(SourceError::Transient(reason)) => {
-					warn!(
-						key = %hex::encode(key),
-						%reason,
-						"preimage lookup failed, still trying"
-					)
+					warn!(%cid, %reason, "preimage lookup failed, still trying")
 				},
 				Err(SourceError::Permanent(reason)) => {
 					return stream::iter([Ok(None), Err(api::GenericError { reason })]).boxed();
 				},
 			}
-			let held = lookup.until_held(cid, key).map(|held| held.map(Some));
+			let held = lookup.until_held(cid).map(|held| held.map(Some));
 			stream::once(future::ready(Ok(None))).chain(stream::once(held)).boxed()
 		}
 		.flatten_stream()
@@ -159,41 +155,30 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 
 	/// Asks again every poll interval until the source holds the blob, or fails once it never
 	/// can.
-	async fn until_held(
-		self: Arc<Self>,
-		cid: String,
-		key: [u8; 32],
-	) -> Result<Vec<u8>, api::GenericError> {
+	async fn until_held(self: Arc<Self>, cid: BulletinCid) -> Result<Vec<u8>, api::GenericError> {
 		loop {
 			tokio::time::sleep(self.poll_interval).await;
-			match self.read(&cid, &key).await {
+			match self.read(&cid).await {
 				Ok(Some(value)) => return Ok(value),
 				Ok(None) => {},
 				Err(SourceError::Transient(reason)) => {
-					debug!(
-						key = %hex::encode(key),
-						%reason,
-						"preimage lookup failed, still trying"
-					)
+					debug!(%cid, %reason, "preimage lookup failed, still trying")
 				},
 				Err(SourceError::Permanent(reason)) => return Err(api::GenericError { reason }),
 			}
 		}
 	}
 
-	/// One read: the blob if the source holds it and it hashes to `key`.
-	async fn read(&self, cid: &str, key: &[u8; 32]) -> Result<Option<Vec<u8>>, SourceError> {
+	/// One read: the blob if the source holds it and it hashes to `cid`.
+	async fn read(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		let Some(value) = self.source.get(cid).await? else {
 			return Ok(None);
 		};
-		if preimage_key(&value) != *key {
-			warn!(
-				key = %hex::encode(key),
-				"preimage source returned bytes that do not hash to the key"
-			);
+		if !cid.matches(&value) {
+			warn!(%cid, "preimage source returned bytes that do not hash to the CID");
 			return Ok(None);
 		}
-		info!(key = %hex::encode(key), size = value.len(), "preimage read from Bulletin");
+		info!(%cid, size = value.len(), "preimage read from Bulletin");
 		Ok(Some(value))
 	}
 }
@@ -201,6 +186,8 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 #[cfg(test)]
 mod tests {
 	use std::{collections::VecDeque, sync::Mutex};
+
+	use truapi::preimage_key;
 
 	use super::*;
 
@@ -212,7 +199,7 @@ mod tests {
 
 	#[async_trait::async_trait]
 	impl BlobSource for Scripted {
-		async fn get(&self, _cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+		async fn get(&self, _cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 			*self.calls.lock().unwrap() += 1;
 			self.answers
 				.lock()

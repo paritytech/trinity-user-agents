@@ -948,10 +948,7 @@ pub use host_core::{
 #[cfg(feature = "runtime")]
 pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
 #[cfg(feature = "runtime")]
-pub use host_internal::{
-	bulletin::{preimage_cid, preimage_key},
-	extrinsic::Sr25519Signer,
-};
+pub use host_internal::{bulletin::preimage_key, extrinsic::Sr25519Signer};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,

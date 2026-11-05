@@ -19,38 +19,9 @@ pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 /// Call name within [`STORE_PALLET_NAME`].
 pub const STORE_CALL_NAME: &str = "store";
 
-/// CIDv1, the `raw` codec, then the multihash header: blake2b-256 (0xb220 as a
-/// varint) of 32 bytes.
-const PREIMAGE_CID_PREFIX: [u8; 6] = [0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
-/// Lower-case RFC 4648 base32, the multibase `b` alphabet.
-const BASE32_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
 	sp_crypto_hashing::blake2_256(value)
-}
-
-/// The CID transaction storage serves a preimage under, as a Bulletin node's
-/// `bitswap_v1_get` takes it: CIDv1, the `raw` codec and the blake2b-256 multihash of the
-/// content, which is the preimage key itself, in lower-case base32 with the multibase `b`
-/// prefix.
-pub fn preimage_cid(key: &[u8; 32]) -> String {
-	let mut bytes = PREIMAGE_CID_PREFIX.to_vec();
-	bytes.extend_from_slice(key);
-	let mut cid = String::from("b");
-	let (mut buffer, mut bits) = (0u32, 0u32);
-	for byte in bytes {
-		buffer = (buffer << 8) | u32::from(byte);
-		bits += 8;
-		while bits >= 5 {
-			cid.push(char::from(BASE32_ALPHABET[((buffer >> (bits - 5)) & 31) as usize]));
-			bits -= 5;
-		}
-	}
-	if bits > 0 {
-		cid.push(char::from(BASE32_ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
-	}
-	cid
 }
 
 /// Build the signed store transaction for `data` on the Bulletin chain
@@ -145,21 +116,6 @@ mod tests {
 		assert_eq!(
 			hex::encode(preimage_key(b"")),
 			"0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"
-		);
-	}
-
-	/// A blob stored on Paseo Bulletin: `bitswap_v1_get` with this CID returns the bytes whose
-	/// blake2b-256 is the key.
-	#[test]
-	fn preimage_cid_is_cidv1_raw_blake2b_256_in_base32() {
-		let key: [u8; 32] =
-			hex::decode("0bd1bb57e3f9ea801956a770fe1068f950383547aca45e1d3d354d57d014cb0c")
-				.unwrap()
-				.try_into()
-				.unwrap();
-		assert_eq!(
-			preimage_cid(&key),
-			"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy"
 		);
 	}
 

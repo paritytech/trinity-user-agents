@@ -6,7 +6,7 @@ use std::{
 
 use super::*;
 use crate::{
-	host_internal::bulletin::{preimage_cid, preimage_key},
+	host_internal::bulletin::preimage_key,
 	platform::HostInfo,
 	test_support::{StubPlatform, test_spawner},
 	time::ManualTimer,
@@ -20,7 +20,7 @@ fn image() -> Vec<u8> {
 }
 
 fn image_cid() -> BulletinCid {
-	preimage_cid(&preimage_key(&image())).parse().unwrap()
+	BulletinCid::from(preimage_key(&image()))
 }
 
 /// Answers each read from `answers`, then as a node that does not hold the blob.
