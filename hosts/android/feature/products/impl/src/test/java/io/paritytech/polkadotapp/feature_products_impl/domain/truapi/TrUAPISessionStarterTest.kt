@@ -50,6 +50,7 @@ class TrUAPISessionStarterTest {
     private val pageLoadedTelemetry = mockk<HostPageLoadedTelemetry>()
     private val hostSessions = HostSessionRegistry()
     private val pageFinishedListeners = mutableListOf<() -> Unit>()
+    private val mainFrameFailedListeners = mutableListOf<() -> Unit>()
 
     private val starter = TrUAPISessionStarter(
         hostBridgeFactory = hostBridgeFactory,
@@ -107,7 +108,28 @@ class TrUAPISessionStarterTest {
         pageFinishedListeners.forEach { it() }
         pageFinishedListeners.forEach { it() }
 
-        verify(exactly = 1) { pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT) }
+        verify(exactly = 1) {
+            pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = true)
+        }
+    }
+
+    @Test
+    fun `a page whose main document failed is reported as a failed load`() = runBlocking<Unit> {
+        starter.start(
+            provider = provider,
+            productUrl = PRODUCT_URL,
+            scope = this,
+            hostApiNavigation = navigation,
+            explicitProductId = PRODUCT_ID,
+        )
+        yield()
+
+        mainFrameFailedListeners.forEach { it() }
+        pageFinishedListeners.forEach { it() }
+
+        verify(exactly = 1) {
+            pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = false)
+        }
     }
 
     // Shared dotNS loading finds the session through the product's name or an executable's subname, and a
@@ -151,8 +173,9 @@ class TrUAPISessionStarterTest {
         coEvery { provider.loadInitialContent() } just Runs
         every { telemetry.report(capture(reportedSessionId)) } just Runs
         every { pageLoadedTelemetry.openRequestedAtMillis() } returns OPEN_REQUESTED_AT
-        every { pageLoadedTelemetry.report(any(), any(), any()) } just Runs
+        every { pageLoadedTelemetry.report(any(), any(), any(), any()) } just Runs
         every { provider.addOnPageFinishedListener(capture(pageFinishedListeners)) } just Runs
+        every { provider.addOnMainFrameFailedListener(capture(mainFrameFailedListeners)) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
             Result.success(execution)

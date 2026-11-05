@@ -24,6 +24,7 @@ abstract class WebViewProvider(
 
     private val onPageFinishedListeners = mutableListOf<() -> Unit>()
     private val onPageStartedListeners = mutableListOf<(String) -> Unit>()
+    private val onMainFrameFailedListeners = mutableListOf<() -> Unit>()
     private val onWebViewDestroyedListeners = mutableListOf<() -> Unit>()
 
     abstract val callingProductIdProvider: CallingProductIdProvider
@@ -86,6 +87,10 @@ abstract class WebViewProvider(
         onPageStartedListeners += listener
     }
 
+    fun addOnMainFrameFailedListener(listener: () -> Unit) {
+        onMainFrameFailedListeners += listener
+    }
+
     /** Detaches and destroys [dead] after its renderer is gone: Android never lets it render again. */
     protected fun discardDeadWebView(dead: WebView) {
         (dead.parent as? ViewGroup)?.removeView(dead)
@@ -110,6 +115,10 @@ abstract class WebViewProvider(
 
     protected fun notifyOnPageStarted(url: String) {
         onPageStartedListeners.forEach { it.invoke(url) }
+    }
+
+    protected fun notifyMainFrameFailed() {
+        onMainFrameFailedListeners.forEach { it.invoke() }
     }
 
     fun pauseConnections() {

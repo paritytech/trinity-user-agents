@@ -117,10 +117,13 @@ class TrUAPISessionStarter @Inject constructor(
         hostSessions.open(productId.value, hostSessionId)
         scope.coroutineContext[Job]?.invokeOnCompletion { hostSessions.close(productId.value, hostSessionId) }
 
+        val mainFrameFailed = AtomicBoolean(false)
+        provider.addOnMainFrameFailedListener { mainFrameFailed.set(true) }
         val pageLoadedReported = AtomicBoolean(false)
         provider.addOnPageFinishedListener {
             if (pageLoadedReported.compareAndSet(false, true)) {
-                hostPageLoadedTelemetry.report(hostSessionId, productId, openRequestedAtMillis)
+                val loaded = !mainFrameFailed.get()
+                hostPageLoadedTelemetry.report(hostSessionId, productId, openRequestedAtMillis, loaded)
             }
         }
         return hostSessionId
