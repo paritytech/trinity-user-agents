@@ -5,16 +5,17 @@ use std::{sync::Arc, time::Duration};
 
 use subxt_rpcs::client::RpcClient;
 use tokio::sync::Mutex as AsyncMutex;
-use truapi::{BlobSource, SourceError, bitswap_get};
+use truapi::{BlobSource, SourceError, bitswap_answer, bitswap_request};
 
 use crate::chain::CliChainProvider;
 
 /// Bound on one round trip to the node.
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+/// The JSON-RPC code of a node without `bitswap_v1_get`.
+const METHOD_NOT_FOUND: i32 = -32601;
 
 /// `bitswap_v1_get` on the Bulletin chain's JSON-RPC. The connection is opened on first use and
-/// dropped after a failure, so the next call reconnects, possibly to a load-balanced node that
-/// can answer.
+/// dropped after a transport failure, so the next call reconnects.
 pub struct BitswapRpc {
 	chains: Arc<CliChainProvider>,
 	bulletin_genesis: [u8; 32],
@@ -46,20 +47,30 @@ impl BitswapRpc {
 		*slot = Some(client.clone());
 		Ok(client)
 	}
+
+	async fn disconnect(&self) {
+		*self.client.lock().await = None;
+	}
 }
 
 #[async_trait::async_trait]
 impl BlobSource for BitswapRpc {
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
 		let client = self.client().await?;
-		let answer = tokio::time::timeout(RPC_TIMEOUT, bitswap_get(&client, cid))
-			.await
-			.unwrap_or_else(|_| {
-				Err(SourceError::Transient("bitswap_v1_get timed out".to_string()))
-			});
-		if answer.is_err() {
-			*self.client.lock().await = None;
+		let Ok(result) = tokio::time::timeout(RPC_TIMEOUT, bitswap_request(&client, cid)).await
+		else {
+			self.disconnect().await;
+			return Err(SourceError::Transient("bitswap_v1_get timed out".to_string()));
+		};
+		// A load-balanced endpoint may put the next connection on a node that has it.
+		let reconnect = match &result {
+			Ok(_) => false,
+			Err(subxt_rpcs::Error::User(error)) => error.code == METHOD_NOT_FOUND,
+			Err(_) => true,
+		};
+		if reconnect {
+			self.disconnect().await;
 		}
-		answer
+		bitswap_answer(result)
 	}
 }

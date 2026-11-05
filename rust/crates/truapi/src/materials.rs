@@ -2,9 +2,10 @@
 //! database, or fetched from Bulletin and kept there.
 //!
 //! Every caller of one ID shares one fetch, which stops once no caller is
-//! left. Only bytes that hash to the ID count. Once [`FETCH_DEADLINE`] passes
-//! without them, the fetch reports `NotFound`, or `Integrity` when only wrong
-//! bytes came back, and goes on, so a material that arrives late still draws.
+//! left. Only bytes that hash to the ID count: the core's Bulletin lookup
+//! already reads others as a miss. Once [`FETCH_DEADLINE`] passes without
+//! them, the fetch reports `NotFound` and goes on, so a material that arrives
+//! late still draws.
 //! A material a saved Pocket face draws is never evicted. The others share
 //! [`UNPINNED_BYTES`], and the oldest kept goes first.
 
@@ -141,7 +142,13 @@ impl Materials {
 		if own.is_aborted() {
 			return;
 		}
-		for caller in fetches.remove(&id).into_iter().flat_map(|fetch| fetch.callers) {
+		let Some(fetch) = fetches.remove(&id) else {
+			return;
+		};
+		if fetch.failure.is_some() && answer.as_ref().err() == fetch.failure.as_ref() {
+			return;
+		}
+		for caller in fetch.callers {
 			let _ = caller.unbounded_send(answer.clone());
 		}
 	}
@@ -154,24 +161,19 @@ impl Materials {
 		}
 		let mut lookup = self.0.lookup.lookup_preimage(id).fuse();
 		let mut deadline = self.0.timer.sleep(FETCH_DEADLINE).fuse();
-		let mut wrong_bytes = false;
-		let missing = |wrong_bytes: bool| {
-			if wrong_bytes { MaterialFailure::Integrity } else { MaterialFailure::NotFound }
-		};
 		loop {
 			// An answer already in hand beats the deadline.
 			select_biased! {
 				answer = lookup.next() => match answer {
 					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => return self.keep(id, bytes).await,
-					Some(Ok(Some(_))) => wrong_bytes = true,
-					Some(Ok(None)) => {},
+					Some(Ok(_)) => {},
 					Some(Err(error)) => {
 						tracing::warn!(reason = %error.reason, "a material lookup failed for good");
-						return Err(missing(wrong_bytes));
+						return Err(MaterialFailure::NotFound);
 					},
-					None => return Err(missing(wrong_bytes)),
+					None => return Err(MaterialFailure::NotFound),
 				},
-				() = deadline => self.report(id, missing(wrong_bytes)),
+				() = deadline => self.report(id, MaterialFailure::NotFound),
 			}
 		}
 	}
@@ -253,6 +255,10 @@ impl Drop for Caller {
 /// [`UNPINNED_BYTES`]. Runs in the write that keeps a material, so a face kept
 /// meanwhile cannot lose its material.
 fn evict(tx: &Transaction<'_>) -> Result<(), DbError> {
+	let total: usize = tx.prepare_cached(TOTAL_BYTES)?.query_row([], |row| row.get(0))?;
+	if total <= UNPINNED_BYTES {
+		return Ok(());
+	}
 	let mut pinned = HashSet::new();
 	for face in saved_faces(tx)? {
 		collect_material_ids(&face, &mut pinned);
@@ -298,6 +304,8 @@ fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
 const KEPT: &str = "SELECT text FROM material WHERE id = ?1";
 
 const KEEP: &str = "INSERT OR IGNORE INTO material (id, text) VALUES (?1, ?2)";
+
+const TOTAL_BYTES: &str = "SELECT COALESCE(SUM(length(text)), 0) FROM material";
 
 const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid DESC";
 

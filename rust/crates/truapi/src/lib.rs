@@ -972,7 +972,9 @@ pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError, bitswap_get};
+pub use bulletin_lookup::{
+	BlobSource, BulletinLookup, SourceError, bitswap_answer, bitswap_request,
+};
 #[cfg(feature = "runtime")]
 pub use host_core::{
 	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,

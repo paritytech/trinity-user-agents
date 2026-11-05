@@ -191,10 +191,10 @@ fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 	assert_eq!(next(&mut answers), None);
 }
 
-/// Bytes that do not hash to the ID are never drawn, and when they are all
-/// that came back, the product hears why.
+/// Bytes that do not hash to the ID are never drawn, whatever the lookup
+/// hands over.
 #[test]
-fn only_wrong_bytes_by_the_deadline_is_integrity() {
+fn bytes_that_do_not_hash_to_the_id_are_never_drawn() {
 	let (_dir, db) = open_temporary_core_db();
 	let device = Device::over(db);
 	let id = preimage_key(TEXT);
@@ -203,10 +203,27 @@ fn only_wrong_bytes_by_the_deadline_is_integrity() {
 
 	device.bulletin.answer(id, b"forged".to_vec());
 	device.pass_the_deadline(0);
-	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::Integrity)));
+	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
 
 	device.bulletin.answer(id, TEXT.to_vec());
 	assert_eq!(next(&mut answers), Some(Ok(TEXT.to_vec())));
+}
+
+/// A node that fell back at the deadline is told once: a lookup that then
+/// gives up for good adds no second report.
+#[test]
+fn a_lookup_that_ends_after_the_deadline_reports_once() {
+	let (_dir, db) = open_temporary_core_db();
+	let device = Device::over(db);
+	let id = preimage_key(TEXT);
+	let mut answers = device.materials.observe(id);
+	wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
+	device.pass_the_deadline(0);
+	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
+
+	device.bulletin.end(id);
+
+	assert_eq!(next(&mut answers), None);
 }
 
 /// A face naming one material in many places, or open in two places at once,

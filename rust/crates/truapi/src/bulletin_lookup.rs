@@ -65,10 +65,17 @@ pub trait BlobSource: Send + Sync {
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError>;
 }
 
-/// One `bitswap_v1_get` call on `client`. A CID the node does not hold is answered with an
-/// error, not with null, so the answer is read from the error's code.
-pub async fn bitswap_get(client: &RpcClient, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
-	let value = match client.request::<Value>("bitswap_v1_get", rpc_params![cid]).await {
+/// A `bitswap_v1_get` request for `cid` on `client`. Its result is read by [`bitswap_answer`].
+pub async fn bitswap_request(client: &RpcClient, cid: &str) -> Result<Value, subxt_rpcs::Error> {
+	client.request::<Value>("bitswap_v1_get", rpc_params![cid]).await
+}
+
+/// What a [`bitswap_request`] result says about the blob. A CID the node does not hold is
+/// answered with an error, not with null, so the answer is read from the error's code.
+pub fn bitswap_answer(
+	result: Result<Value, subxt_rpcs::Error>,
+) -> Result<Option<Vec<u8>>, SourceError> {
+	let value = match result {
 		Ok(value) => value,
 		Err(subxt_rpcs::Error::User(error)) => return call_error(&error),
 		Err(error) => return Err(SourceError::Transient(format!("bitswap_v1_get: {error}"))),
@@ -103,10 +110,10 @@ impl BlobSource for Weak<RuntimeServices> {
 			services.bulletin.client("bitswap_v1_get").await.map_err(|error| {
 				SourceError::Transient(format!("connecting to Bulletin: {error}"))
 			})?;
-		let request = bitswap_get(&client, cid);
+		let request = bitswap_request(&client, cid);
 		pin_mut!(request);
 		match future::select(request, RealTimer.sleep(RPC_TIMEOUT)).await {
-			Either::Left((answer, _)) => answer,
+			Either::Left((result, _)) => bitswap_answer(result),
 			Either::Right(_) => Err(SourceError::Transient("bitswap_v1_get timed out".to_string())),
 		}
 	}
