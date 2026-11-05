@@ -21,6 +21,13 @@ extension TrUAPIHostRuntime: FundingRuntime {}
 
 extension FundingRail {
     static let displayOrder: [FundingRail] = [.crypto, .card, .bank]
+
+    /// The first rail in display order a candidate routes, card when none does.
+    static func `default`(candidates: [FundingCandidate], direction: FundingDirection) -> FundingRail {
+        displayOrder.first { rail in
+            candidates.contains { $0.serves(rail: rail, direction: direction) }
+        } ?? .card
+    }
 }
 
 extension FundingCandidate {
