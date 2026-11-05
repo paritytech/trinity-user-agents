@@ -71,6 +71,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 fun ProductPocketCardDetails(
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
+    backBindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     cardIndex: Int,
@@ -141,14 +142,14 @@ fun ProductPocketCardDetails(
         FoldableCard(fold = fold, closeDrag = closeDrag, onClose = onBack) {
             VerticalSpacer { mediumIncreased }
 
-            ProductPocketCard(
+            TurningPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
                     .pocketCardSharedElement(cardIndex),
                 card = card,
-                bindings = bindings,
-                onOpen = null,
-                onRemoveRequested = null
+                front = bindings,
+                back = backBindings,
+                leaving = leaving,
             )
 
             VerticalSpacer { mediumIncreased }
