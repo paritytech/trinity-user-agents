@@ -110,6 +110,15 @@ export interface StatementInput {
   topics: string[];
   /** `0x`-hex payload. */
   data?: string;
+  /** `0x`-hex 32-byte channel. */
+  channel?: string;
+  /**
+   * Expiry as the store encodes it: the expiration timestamp in seconds in the
+   * high 32 bits and a sequence number in the low 32.
+   */
+  expiry?: bigint | number;
+  /** `0x`-hex 32-byte decryption key. */
+  decryptionKey?: string;
 }
 
 /**
@@ -140,9 +149,19 @@ export function encodeStatement(input: StatementInput): string {
         `${TOPIC_TAGS.length} topics, and this one has ${input.topics.length}.`,
     );
   }
+  // Fields go in their tag order, which is the only order a store decodes.
   return hex(
     StatementFields.enc([
       { tag: "Proof", value: UNVERIFIED_PROOF },
+      ...(input.decryptionKey === undefined
+        ? []
+        : [{ tag: "DecryptionKey" as const, value: input.decryptionKey }]),
+      ...(input.expiry === undefined
+        ? []
+        : [{ tag: "Expiry" as const, value: BigInt(input.expiry) }]),
+      ...(input.channel === undefined
+        ? []
+        : [{ tag: "Channel" as const, value: input.channel }]),
       ...input.topics.map((topic, index) => ({
         tag: TOPIC_TAGS[index]!,
         value: topic as `0x${string}`,

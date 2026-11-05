@@ -255,6 +255,55 @@ describe("the statement encoding the store actually sees", () => {
     expect(fields!.find((field) => field.tag === "Data")?.value).toBe("0x6869");
   });
 
+  it("reads the expiry a product really submitted, before its topics", () => {
+    const fields = decodeStatement(REAL_SUBMISSION)!;
+    expect(fields.map((field) => field.tag)).toEqual([
+      "Proof",
+      "Expiry",
+      "Topic1",
+      "Topic2",
+      "Data",
+    ]);
+    // Past 2^53, so only a bigint carries it exactly.
+    expect(fields.find((field) => field.tag === "Expiry")?.value).toBe(
+      7688681351006057567n,
+    );
+  });
+
+  it("encodes channel, expiry and decryption key in the order a store decodes", () => {
+    const channel = `0x${"cc".repeat(32)}`;
+    const decryptionKey = `0x${"dd".repeat(32)}`;
+    const fields = decodeStatement(
+      encodeStatement({
+        topics: [TOPIC_A],
+        data: "0x6869",
+        channel,
+        expiry: 7688681351006057567n,
+        decryptionKey,
+      }),
+    )!;
+    expect(fields.map((field) => field.tag)).toEqual([
+      "Proof",
+      "DecryptionKey",
+      "Expiry",
+      "Channel",
+      "Topic1",
+      "Data",
+    ]);
+    const value = (tag: string) =>
+      fields.find((field) => field.tag === tag)?.value;
+    expect(value("Channel")).toBe(channel);
+    expect(value("Expiry")).toBe(7688681351006057567n);
+    expect(value("DecryptionKey")).toBe(decryptionKey);
+  });
+
+  it("takes an expiry given as a number", () => {
+    const fields = decodeStatement(
+      encodeStatement({ topics: [], expiry: 42 }),
+    )!;
+    expect(fields.find((field) => field.tag === "Expiry")?.value).toBe(42n);
+  });
+
   it("refuses a fifth topic rather than dropping it", () => {
     // The store has four topic fields. Silently keeping the first four would
     // read as a filter that failed to match.
