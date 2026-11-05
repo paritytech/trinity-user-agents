@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product
 
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.APPLIED
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.NO_BACK
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.USER_MOVING
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -114,6 +117,26 @@ class CardTurnStateTest {
 
         assertEquals(0f, snapped.mod(360f), 0f)
         assertEquals(snapped, state.angle, 0f)
+    }
+
+    // A page asking while the user turns the card would fight the finger, so it is told the user is moving.
+    @Test
+    fun `the page turns the card, unless there is no back or the user is turning it`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+        val answers = mutableListOf(
+            state.requestSide(PocketCardSide.BACK, hasBack = false),
+            state.requestSide(PocketCardSide.FRONT, hasBack = false),
+            state.requestSide(PocketCardSide.BACK, hasBack = true),
+        )
+        advanceUntilIdle()
+        val turned = state.angle
+
+        state.beginDrag()
+        answers += state.requestSide(PocketCardSide.FRONT, hasBack = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf(NO_BACK, APPLIED, APPLIED, USER_MOVING), answers)
+        assertEquals(listOf(180f, 180f), listOf(turned, state.angle))
     }
 
     @Test

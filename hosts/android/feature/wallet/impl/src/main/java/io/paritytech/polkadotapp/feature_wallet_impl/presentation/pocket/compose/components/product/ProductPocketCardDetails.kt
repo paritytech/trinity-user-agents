@@ -53,6 +53,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import uniffi.truapi.PocketCardSide
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -76,6 +77,7 @@ fun ProductPocketCardDetails(
     BackHandler { onBack() }
 
     val fold = rememberExpandedCardFoldState()
+    val turn = rememberCardTurnState()
 
     // One WebView per product: a screen still drawn for another card must not take it.
     val session = shownProduct?.takeIf { card.key.launches(it.url) }?.session
@@ -109,7 +111,15 @@ fun ProductPocketCardDetails(
             val handling = launch {
                 try {
                     snapshotFlow { settled }.first { it }
-                    request.reply.complete(fold.showFace(request.shown))
+                    val answer = when {
+                        !request.back -> fold.showFace(request.shown)
+                        fold.dragging -> FaceShownAnswer.USER_MOVING
+                        else -> turn.requestSide(
+                            side = if (request.shown) PocketCardSide.BACK else PocketCardSide.FRONT,
+                            hasBack = backBindings.face.value != null,
+                        )
+                    }
+                    request.reply.complete(answer)
                 } finally {
                     request.reply.complete(FaceShownAnswer.NOT_PRESENTED)
                 }
@@ -144,6 +154,7 @@ fun ProductPocketCardDetails(
                 front = bindings,
                 back = backBindings,
                 leaving = leaving,
+                turn = turn,
             )
 
             VerticalSpacer { mediumIncreased }
