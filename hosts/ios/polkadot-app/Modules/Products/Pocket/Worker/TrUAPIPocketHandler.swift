@@ -24,12 +24,8 @@ protocol PocketFaceStreaming: Sendable {
 /// A render stream that ends or fails leaves the last face on screen and is
 /// opened again; a worker that restarts gets a fresh stream.
 final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
-    private enum Retry {
-        /// A worker that has just booted is not yet listening, so the first
-        /// renders are expected to be refused.
-        static let connectWindow = Duration.seconds(10)
-        static let connectDelay = Duration.milliseconds(250)
-    }
+    /// How long a card waits for a worker that has just booted to attach.
+    private static let connectWindow = Duration.seconds(10)
 
     private let productId: ProductId
     private let workers: any TrUAPIWorkerManaging
@@ -201,20 +197,15 @@ private extension TrUAPIPocketHandler {
         }
     }
 
-    /// The worker registers its handler after it connects, so the first renders
-    /// are refused rather than answered. They are asked again at a fixed short
-    /// interval instead of backing off, because the wait is a boot, not a fault.
+    /// A worker that has just booted is not yet attached, so the execution is
+    /// asked to say when it is before the card is asked for its face.
     func connect(
         _ execution: TrUAPIProductExecutionProtocol,
         for key: PocketCardKey
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
         let request = ProductRendererRenderRequest(context: .pocketCard(cardId: key.cardId.value), payload: Data())
 
-        return try await execution.renderWhenConnected(
-            request,
-            until: .now + Retry.connectWindow,
-            retryEvery: Retry.connectDelay
-        )
+        return try await execution.renderWhenConnected(request, until: .now + Self.connectWindow)
     }
 }
 

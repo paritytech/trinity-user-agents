@@ -223,10 +223,14 @@ card has one to show while its worker is down and at cold start.
 
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
-republishes the room list; `render` returns a stream of `RendererNode` trees
-for one render context; `publishRendererAction` delivers a renderer action
-back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
+republishes the room list; `waitUntilConnected(timeoutMs:)` returns once a
+product is attached, so a host asks for a render instead of polling `render`
+for `NotConnected` (it also returns when the execution stops without one, or at
+the timeout, and `render` then names the reason); `render` returns a stream of
+`RendererNode` trees for one render context; `publishRendererAction` delivers
+a renderer action back to the product; and `sessionChatIdentityKey` reads the
+session's X25519 chat identity private key, which must not be logged or
+persisted. An open
 render stream is one worker reference the core holds on the product's behalf;
 the transition it causes arrives on the runtime bridge's
 `requestWorkerTransition`, never on the execution's. Two rules the core
