@@ -573,10 +573,9 @@ mod tests {
 	async fn reach_paseo_next_v2(backend: ChainBackend) {
 		use subxt_rpcs::client::rpc_params;
 
-		use crate::{
-			bulletin_lookup::{BitswapRpc, BlobSource, SourceError},
-			dotns_read::AssetHubReader,
-		};
+		use truapi::{BlobSource, SourceError};
+
+		use crate::{bulletin_lookup::BitswapRpc, dotns_read::AssetHubReader};
 
 		let network = NetworkConfig { chain_backend: backend, ..Network::PaseoNextV2.config() };
 		let provider = Arc::new(CliChainProvider::new(&network));
