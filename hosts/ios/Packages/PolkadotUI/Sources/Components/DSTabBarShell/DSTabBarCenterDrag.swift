@@ -35,12 +35,5 @@ public struct DSTabBarCenterDrag {
 
 public extension EnvironmentValues {
     /// Set on the content of an open center panel. Nil elsewhere.
-    var centerPanelDrag: DSTabBarCenterDrag? {
-        get { self[CenterPanelDragKey.self] }
-        set { self[CenterPanelDragKey.self] = newValue }
-    }
-}
-
-private struct CenterPanelDragKey: EnvironmentKey {
-    static let defaultValue: DSTabBarCenterDrag? = nil
+    @Entry var centerPanelDrag: DSTabBarCenterDrag? = nil
 }
