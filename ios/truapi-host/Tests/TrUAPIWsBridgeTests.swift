@@ -4,6 +4,33 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    /// The core raises a start marker as a runtime comes up, so a host log opens
+    /// with proof that the channel carrying every later marker reaches Swift at
+    /// all. It is raised below the core's console floor on purpose, so this also
+    /// covers a host log that does not depend on the trace level.
+    ///
+    /// The core's sink is process-wide and tests here run in parallel, so a
+    /// sibling building its own runtime can take it in the window before the
+    /// marker is raised. A miss is retried; a sink that does not route misses
+    /// every attempt.
+    @Test(.timeLimit(.minutes(1)))
+    func testStartingARuntimeReportsTheCoreLogChannel() throws {
+        var lastSeen: [String] = []
+        for _ in 0 ..< 8 {
+            let bridge = StubHostBridge()
+            let runtime = try TrUAPIHostRuntime(
+                bridge: bridge,
+                runtimeConfig: Self.makeHostRuntimeConfig()
+            )
+            let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
+            if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
+                return
+            }
+            lastSeen = seen
+        }
+        Issue.record("the core's start marker did not reach the host: \(lastSeen)")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func testFeatureSupportedRoundTripOverWsBridge() async throws {
         let bridge = StubHostBridge()
@@ -14,7 +41,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -51,7 +78,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -89,7 +116,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -298,12 +325,4 @@ final class StubChatHostBridge: ChatHostBridge {
     func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
     func listRooms() async throws -> [ChatRoom] { [] }
-}
-
-// Conforms to `PocketHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
-final class StubPocketHostBridge: PocketHostBridge {
-    func listCards() throws -> [PocketCard] { [] }
-
-    func removeCard(cardId _: String) throws -> NativePocketRemoval { .absent }
 }

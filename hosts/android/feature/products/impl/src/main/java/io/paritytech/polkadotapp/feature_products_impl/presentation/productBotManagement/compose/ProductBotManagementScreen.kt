@@ -40,11 +40,11 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductBotManagementContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductBotManagementState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductDialogState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductUiModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -77,8 +77,8 @@ private fun ProductBotManagementScreenInternal(
     onBackClick: () -> Unit,
     onAddProductClick: () -> Unit,
     onProductClick: (ProductId) -> Unit,
-    onEditProductClick: (String) -> Unit,
-    onDeleteProductClick: (String) -> Unit,
+    onEditProductClick: (ProductId) -> Unit,
+    onDeleteProductClick: (ProductId) -> Unit,
     onDialogDismiss: () -> Unit,
     onNameChanged: (String) -> Unit,
     onWorkerUrlChanged: (String) -> Unit,
@@ -135,8 +135,8 @@ private fun ProductBotManagementScreenInternal(
                         ProductItem(
                             product = product,
                             onClick = { onProductClick(product.id) },
-                            onEditClick = { onEditProductClick(product.id.value) },
-                            onDeleteClick = { onDeleteProductClick(product.id.value) },
+                            onEditClick = { onEditProductClick(product.id) },
+                            onDeleteClick = { onDeleteProductClick(product.id) },
                         )
                     }
                 }
@@ -365,8 +365,8 @@ private fun ProductBotManagementScreenPreview() {
         ProductBotManagementScreenInternal(
             state = ProductBotManagementState(
                 products = listOf(
-                    ProductUiModel(id = ProductId.fromStoredValue("1.dot"), name = "Test Product", appUrl = "https://1.dot"),
-                    ProductUiModel(id = ProductId.fromStoredValue("2.dot"), name = "Another Product", appUrl = "https://2.dot"),
+                    ProductUiModel(id = ProductId.parse("1.dot").getOrThrow(), name = "Test Product", appUrl = "https://1.dot"),
+                    ProductUiModel(id = ProductId.parse("2.dot").getOrThrow(), name = "Another Product", appUrl = "https://2.dot"),
                 ),
             ),
             onBackClick = {},

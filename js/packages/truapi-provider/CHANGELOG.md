@@ -1,5 +1,12 @@
 # @parity/truapi-provider
 
+## 0.3.2
+
+### Patch Changes
+
+- b4a1e6e: The bundled Paseo and previewnet relay chain specs carry fresh warp-sync checkpoints, so a cold-start light
+  client syncs from a recent finalized block.
+
 ## 0.3.1
 
 ### Patch Changes

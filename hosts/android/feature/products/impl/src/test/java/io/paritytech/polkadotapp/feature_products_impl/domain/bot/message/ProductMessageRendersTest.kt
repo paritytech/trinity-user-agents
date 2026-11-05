@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import kotlinx.coroutines.Job
@@ -24,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -31,7 +31,7 @@ private const val ROOM = "jollity"
 private const val MESSAGE_TYPE = "weekly-draw"
 
 class ProductMessageRendersTest {
-    private val product = Product(ProductId.fromStoredValue("dim2.dot"), "Jollity", icon = null)
+    private val product = Product(ProductId.parse("dim2.dot").getOrThrow(), "Jollity", icon = null)
     private val room = ProductChatIdParameter(ROOM)
     private val content = ProductsMessageContent(MESSAGE_TYPE, ByteArray(0).toDataByteArray())
     private val window = 5.seconds

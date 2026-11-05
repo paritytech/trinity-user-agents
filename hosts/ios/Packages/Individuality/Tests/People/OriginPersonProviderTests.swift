@@ -50,13 +50,24 @@ struct OriginPersonProviderTests {
         #expect(waiter.waits.first?.input.collection == Self.liteCollection)
     }
 
-    @Test("the default strategy waits fifteen seconds")
+    @Test("the default strategy waits twenty seconds")
     func defaultDelay() async throws {
         waiter.ringIndex = 1
 
         _ = try await makeProvider().pickPersonOrigins()
 
         #expect(waiter.waits.first?.timeout == .seconds(20))
+    }
+
+    @Test("a claim waits for ring inclusion with no bound of its own")
+    func untilIncluded() async throws {
+        waiter.ringIndex = 4
+
+        let origin = try await makeProvider(strategy: .untilIncluded).pickPersonOrigin()
+
+        #expect(origin.ringIndex == 4)
+        #expect(waiter.waits.count == 1)
+        #expect(waiter.waits.first?.timeout == nil)
     }
 
     @Test("a lite person that never lands within the delay is no person")
@@ -124,11 +135,17 @@ private final class StubMembershipStatusChecker: MembershipStatusChecking {
 private final class StubMembershipStatusWaiter: MembershipStatusWaiting {
     struct Wait {
         let input: MembershipStatusInput
-        let timeout: Duration
+        let timeout: Duration?
     }
 
     var ringIndex: MembersPallet.RingIndex?
     private(set) var waits: [Wait] = []
+
+    func waitForStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex {
+        waits.append(Wait(input: input, timeout: nil))
+        guard let ringIndex else { throw MembershipStatusWaiterError.subscriptionEnded }
+        return ringIndex
+    }
 
     func waitForStatus(of input: MembershipStatusInput, timeout: Duration) async throws -> MembersPallet.RingIndex? {
         waits.append(Wait(input: input, timeout: timeout))

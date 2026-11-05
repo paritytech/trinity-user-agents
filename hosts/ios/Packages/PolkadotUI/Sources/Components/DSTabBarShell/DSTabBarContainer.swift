@@ -78,7 +78,12 @@ public struct DSTabBarContainer<
 
     public var body: some View {
         VStack(spacing: 0) {
-            shelfPanel
+            DSTabBarShelfPanel(
+                isShelfOpen: isShelfOpen,
+                shelfContentHeight: $shelfContentHeight,
+                availableHeight: availableHeight,
+                shelf: shelf
+            )
             HStack(spacing: 0) {
                 slot(first, at: 0)
                 slot(second, at: 1)
@@ -96,9 +101,9 @@ public struct DSTabBarContainer<
             .opacity(1 - (1 - DSTabBarStyle.openItemOpacity) * openProgress)
         }
         .environment(\.dsTabBarSelectionNamespace, selectionNamespace)
-        .background(DSTabBarBarMaterial())
+        .background { DSTabBarBarMaterial() }
         .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
-        .overlay(border)
+        .overlay { border }
         .offset(y: -DSTabBarStyle.openBarRise * openProgress)
         .opacity(isBarHidden ? 0 : 1)
         .allowsHitTesting(!isBarHidden)
@@ -120,59 +125,27 @@ private struct DSTabBarShelfHeightKey: PreferenceKey {
     }
 }
 
-private extension DSTabBarContainer {
-    func slot(_ content: some View, at index: Int) -> some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .simultaneousGesture(TapGesture().onEnded { slotTapCount += 1 })
-            .background {
-                if selectedSlot == index {
-                    selectionPill
-                }
-            }
-    }
+/// The scroll view takes the content's height until it reaches the cap, then stays there and scrolls. Measuring the
+/// content is what keeps a short shelf short: a scroll view offered a height is otherwise greedy and would always
+/// fill the cap.
+private struct DSTabBarShelfPanel<Shelf: View>: View {
+    let isShelfOpen: Bool
+    @Binding var shelfContentHeight: CGFloat
+    let availableHeight: CGFloat
+    let shelf: Shelf
 
-    var selectionPill: some View {
-        DSTabBarSelectionPill.fill(Capsule(style: .continuous))
-            .padding(.vertical, DSTabBarStyle.selectionInset)
-            .frame(width: DSTabBarStyle.selectionWidth)
-            .matchedGeometryEffect(id: DSTabBarSelectionPill.matchedGeometryId, in: selectionNamespace)
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Eased in every mode: a fade has no travel for Reduce Motion to remove.
-    var barFadeAnimation: Animation {
-        .easeInOut(duration: DSTabBarStyle.shelfFadeDuration)
-    }
-
-    /// Snaps under Reduce Motion so the pill jumps between slots without the travel.
-    var selectionAnimation: Animation? {
-        guard !reduceMotion else { return nil }
-        return DSTabBarStyle.selectionCurve
-    }
-
-    /// Eased rather than sprung under Reduce Motion, so the shelf reveals without the overshoot
-    /// that makes the growth read as motion.
-    var shelfAnimation: Animation {
-        guard !reduceMotion else { return .easeInOut(duration: DSTabBarStyle.shelfFadeDuration) }
-        return .spring(
-            response: DSTabBarStyle.shelfSpringResponse,
-            dampingFraction: DSTabBarStyle.shelfSpringDamping
-        )
-    }
-
-    /// The scroll view takes the content's height until it reaches the cap, then stays there and
-    /// scrolls. Measuring the content is what keeps a short shelf short: a scroll view offered a
-    /// height is otherwise greedy and would always fill the cap.
-    var shelfPanel: some View {
+    var body: some View {
         ScrollView(.vertical) {
             shelf
                 // Clears the hole, which reaches up into the shelf's bottom edge.
                 .padding(.bottom, DSTabBarStyle.notchOverhang)
-                .background(
+                .background {
                     GeometryReader { proxy in
                         Color.clear.preference(key: DSTabBarShelfHeightKey.self, value: proxy.size.height)
                     }
-                )
+                }
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: isShelfOpen ? min(shelfContentHeight, availableHeight) : 0)
@@ -188,13 +161,53 @@ private extension DSTabBarContainer {
         .allowsHitTesting(isShelfOpen)
         .accessibilityHidden(!isShelfOpen)
     }
+}
 
-    /// Strokes the outline of the bar. The stroke is clipped back to the bar, which keeps only the inner half of
-    /// every line, so its width is doubled first. The notch edge is stroked too.
+private extension DSTabBarShelfPanel {
+    /// Eased rather than sprung under Reduce Motion, so the shelf reveals without the overshoot
+    /// that makes the growth read as motion.
+    var shelfAnimation: Animation {
+        guard !reduceMotion else { return .easeInOut(duration: DSTabBarStyle.shelfFadeDuration) }
+        return .spring(
+            response: DSTabBarStyle.shelfSpringResponse,
+            dampingFraction: DSTabBarStyle.shelfSpringDamping
+        )
+    }
+}
+
+private extension DSTabBarContainer {
+    func slot(_ content: some View, at index: Int) -> some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .simultaneousGesture(TapGesture().onEnded { slotTapCount += 1 })
+            .background {
+                if selectedSlot == index {
+                    selectionPill
+                }
+            }
+    }
+
+    var selectionPill: some View {
+        DSTabBarSelectionPill.fill(Capsule(style: .continuous))
+            .padding(.vertical, DSTabBarStyle.selectionInset)
+            .frame(maxWidth: DSTabBarStyle.selectionWidth)
+            .matchedGeometryEffect(id: DSTabBarSelectionPill.matchedGeometryId, in: selectionNamespace)
+    }
+
+    /// Eased in every mode: a fade has no travel for Reduce Motion to remove.
+    var barFadeAnimation: Animation {
+        .easeInOut(duration: DSTabBarStyle.shelfFadeDuration)
+    }
+
+    /// Snaps under Reduce Motion so the pill jumps between slots without the travel.
+    var selectionAnimation: Animation? {
+        guard !reduceMotion else { return nil }
+        return DSTabBarStyle.selectionCurve
+    }
+
+    /// Strokes the outline of the bar from inside its edges. The notch edge is stroked too.
     var border: some View {
-        DSTabBarShape()
-            .stroke(DSTabBarStyle.Palette.strokeGlass, lineWidth: DSTabBarStyle.strokeWidth * 2)
-            .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
+        DSTabBarShape().strokeBorder(DSTabBarStyle.Palette.strokeGlass, lineWidth: DSTabBarStyle.strokeWidth)
     }
 }
 

@@ -20,6 +20,8 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
+mod funding_quotes;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -44,6 +46,8 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(test)]
+pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 mod versioning;
@@ -53,7 +57,7 @@ use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
-	collections::HashSet,
+	collections::{BTreeMap, HashSet},
 	sync::{Arc, Mutex},
 };
 
@@ -62,6 +66,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -72,7 +77,6 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
-use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
@@ -99,7 +103,7 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
@@ -118,6 +122,11 @@ use truapi::{
 			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
 			HostFundingStatusSubscribeRequest,
 		},
+		funding_provider::{
+			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
+			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
+			HostFundingReportResponse,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -135,7 +144,7 @@ use web_time::Instant;
 #[cfg(test)]
 use crate::subscription::Spawner;
 use crate::{
-	chain_runtime::RuntimeFailure,
+	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
 		bulletin::preimage_key,
 		permissions::{PermissionsService, TemporaryPermissions},
@@ -147,7 +156,7 @@ use crate::{
 			derivation_index_bytes, derive_product_public_key, public_key_from_address,
 		},
 		session::{SessionInfo, SessionState},
-		sso::pairing::x25519_public_key,
+		x25519_seal::X25519PrivateKey,
 	},
 };
 
@@ -378,7 +387,7 @@ impl ProductConnection {
 	}
 
 	/// Trusted executable kind attached to this product connection.
-	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
+	pub fn execution_kind(&self) -> crate::platform::ExecutableKind {
 		self.product.execution_kind
 	}
 
@@ -461,6 +470,19 @@ impl ProductConnection {
 		denied_error: E,
 	) -> Result<(), CallError<E>> {
 		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	/// Require the user's consent to disclose their identity to this product,
+	/// prompting only when no decision is stored.
+	async fn require_identity_disclosure<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		match self.identity_disclosure_authorization().await {
 			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
 			Ok(
 				PermissionAuthorizationStatus::Denied |
@@ -631,12 +653,26 @@ impl ProductConnection {
 	}
 
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
 		{
 			return Err(CallError::Denied);
 		}
 		self.pocket_platform.clone().ok_or(CallError::Unsupported)
+	}
+
+	/// Funding provider access policy for this connection: a provider serves
+	/// sessions only from a Worker execution with an active session, and only
+	/// where the host has a funding surface.
+	fn funding_provider_access<E>(
+		&self,
+	) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.services.funding().platform().ok_or(CallError::Unsupported)
 	}
 }
 
@@ -1059,7 +1095,124 @@ fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 }
 
 fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	report_chain_call_failure(&failure);
 	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// How long a chain call has to go without failing before the next failure
+/// counts as a new episode rather than more of the last one.
+const CHAIN_FAILURE_QUIET: Duration = Duration::from_secs(30);
+
+/// Most conditions tracked at once. A reason is part of what tells two
+/// failures apart, and a reason carries text, so the map is bounded rather
+/// than left to grow with however many distinct failures a run produces.
+const CHAIN_FAILURE_CONDITIONS_MAX: usize = 64;
+
+/// What tells one chain call failure from another: its classification, the
+/// method it came from, and why it failed.
+///
+/// The reason is part of it because a connection that drops and a payload that
+/// will not decode are different conditions, and one must not stand in for the
+/// other.
+type ChainFailureKey = (RuntimeFailureKind, &'static str, String, Option<Vec<u8>>);
+
+/// When each condition was last seen, and how many times it has happened in
+/// the episode it belongs to.
+type ChainFailureReports = BTreeMap<ChainFailureKey, (Instant, u64)>;
+
+/// What each chain call failure has done recently.
+static CHAIN_FAILURES: Mutex<ChainFailureReports> = Mutex::new(BTreeMap::new());
+
+/// Report a failed chain call on a widening schedule: the first, the second,
+/// then every doubling.
+///
+/// A connection that drops fails every call made over it afterwards, and each
+/// line reaches a host's log and from there wherever the host ships logs. A
+/// line per call buries the first one, which is the only one that says when the
+/// trouble started. Reporting on a schedule keeps that line, bounds a long
+/// outage to a handful more, and carries the running count on each, so how bad
+/// it is reads off the lines themselves rather than waiting for a tally that
+/// may never come.
+fn report_chain_call_failure(failure: &RuntimeFailure) {
+	// The lock is released before the line is raised: a host's sink runs host
+	// code, which must not be able to re-enter this.
+	let seen = {
+		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		count_failure(
+			&mut reported,
+			(
+				failure.kind(),
+				failure.method(),
+				failure.reason(),
+				failure.chain().map(<[u8]>::to_vec),
+			),
+			Instant::now(),
+			CHAIN_FAILURE_QUIET,
+		)
+	};
+	if !reports_at(seen) {
+		return;
+	}
+	// The chain is named because a failing call says little without it. The
+	// report that sent us looking at this code turned on which chain a
+	// transaction was being built against, and the line never said.
+	match failure.chain() {
+		Some(chain) => tracing::warn!(
+			kind = ?failure.kind(),
+			chain = %hex::encode(chain),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+		None => tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+	}
+}
+
+/// Whether the `seen`th failure of one condition is one of the reported ones.
+///
+/// The first two, then every doubling, so a thousand failures speak eleven
+/// times rather than a thousand.
+fn reports_at(seen: u64) -> bool {
+	seen <= 2 || seen.is_power_of_two()
+}
+
+/// Count one failure of `key` and answer how many times it has happened in
+/// this episode.
+///
+/// A gap of `quiet` since the last one starts the count again, so a connection
+/// that drops twice in a day reads as two episodes rather than one long one.
+fn count_failure(
+	reported: &mut ChainFailureReports,
+	key: ChainFailureKey,
+	now: Instant,
+	quiet: Duration,
+) -> u64 {
+	// Forgetting everything is the cheap bound: the conditions worth counting
+	// are the ones happening now, and a run that has produced this many
+	// distinct ones has already said so.
+	if reported.len() >= CHAIN_FAILURE_CONDITIONS_MAX && !reported.contains_key(&key) {
+		reported.clear();
+	}
+	let seen = reported.entry(key).or_insert((now, 0));
+	if now.duration_since(seen.0) >= quiet {
+		*seen = (now, 1);
+	} else {
+		seen.0 = now;
+		seen.1 += 1;
+	}
+	seen.1
+}
+
+/// Forget which chain calls have reported, so a test asserting on the line is
+/// not answered by a quiet period another test opened.
+#[cfg(test)]
+pub(crate) fn forget_chain_failures() {
+	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
 /// Host-UI projection of an active session for `AuthState::Connected`.
@@ -1067,7 +1220,9 @@ fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
 		identity_account_id: session.identity_account_id,
-		chat_public_key: session.identity_chat_private_key.map(x25519_public_key),
+		chat_public_key: session
+			.identity_chat_private_key
+			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
 		device_enc_public_key: session.device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
@@ -1227,7 +1382,7 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	})
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Contacts for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
 	async fn pick(
@@ -1286,7 +1441,7 @@ impl Contacts for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Chat for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
 	async fn create_room(
@@ -1453,7 +1608,7 @@ impl Chat for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Renderer for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
 	async fn action_subscribe(
@@ -1478,7 +1633,59 @@ impl Renderer for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+	async fn report(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingReportRequest,
+	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+		version(request)
+			.exec(|latest::HostFundingReportRequest { intent, update }| async move {
+				self.connection.funding_provider_access()?;
+				let reported = self
+					.connection
+					.services
+					.funding()
+					.report(crate::current_unix_millis(), &self.connection.product, &intent, update)
+					.await?;
+				reported.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+	async fn present_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingPresentFrameRequest,
+	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
+				let domain = CallError::Domain;
+				let platform = self.connection.funding_provider_access()?;
+				if !self
+					.connection
+					.services
+					.funding()
+					.is_serving(&self.connection.product.product_id, &intent)
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
+				}
+				let target = crate::host_logic::funding::checked_frame_target(target)
+					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				let outcome = platform
+					.present_provider_frame(&self.connection.product, intent, target)
+					.await
+					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
 impl Funding for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
 	async fn request(
@@ -1487,7 +1694,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingRequest,
 	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
 		version(request)
-			.exec(|latest::HostFundingRequest { id, direction, amount }| async move {
+			.exec(|latest::HostFundingRequest { direction, amount }| async move {
 				// A capability the host does not serve is a framework answer; a
 				// missing session is one the product handles.
 				if self.connection.services.funding().platform().is_none() {
@@ -1496,37 +1703,22 @@ impl Funding for ProductRuntimeHost {
 				if self.accounts.current_session().is_none() {
 					return Err(CallError::Domain(latest::HostFundingError::NotConnected));
 				}
-				self.connection
+				let intent = funding::new_funding_intent();
+				// The overlay finishes on its own; the product watches the
+				// outcome by the intent, so nothing waits for it here.
+				let _overlay = self
+					.connection
 					.services
-					.open_funding(
-						Some(&self.connection.product),
-						host_funding_intent(&self.connection.product, id),
-						direction,
-						amount,
-					)
+					.show_funding(Some(&self.connection.product), intent.clone(), direction, amount)
 					.await
 					.map_err(|error| match error {
 						funding::OpenFundingError::Unsupported => CallError::Unsupported,
-						funding::OpenFundingError::Dismissed => {
-							CallError::Domain(latest::HostFundingError::Rejected)
-						},
 						funding::OpenFundingError::InvalidAmount => {
 							CallError::Domain(latest::HostFundingError::InvalidAmount)
 						},
-						funding::OpenFundingError::AlreadyExists => {
-							CallError::Domain(latest::HostFundingError::AlreadyExists)
-						},
-						funding::OpenFundingError::Stopped => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
-						funding::OpenFundingError::Present(error) => {
-							CallError::HostFailure { reason: error.reason }
-						},
-						funding::OpenFundingError::Session(error) => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
+						error => CallError::HostFailure { reason: error.to_string() },
 					})?;
-				Ok(())
+				Ok(latest::HostFundingResponse { intent })
 			})
 			.await
 	}
@@ -1538,7 +1730,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingStatusSubscribeRequest,
 	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
 		version(request)
-			.exec(|latest::HostFundingStatusSubscribeRequest { id }| async move {
+			.exec(|latest::HostFundingStatusSubscribeRequest { intent }| async move {
 				let registry = self.connection.services.funding();
 				if registry.platform().is_none() {
 					return Subscription::interrupted(CallError::Unsupported);
@@ -1546,8 +1738,7 @@ impl Funding for ProductRuntimeHost {
 				if let Err(error) = self.require_session() {
 					return Subscription::interrupted(error);
 				}
-				let intent = host_funding_intent(&self.connection.product, id);
-				if let Err(error) = registry.load(&self.connection.services).await {
+				if let Err(error) = registry.load().await {
 					return Subscription::interrupted(CallError::HostFailure {
 						reason: error.to_string(),
 					});
@@ -1567,7 +1758,7 @@ impl Funding for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Pocket for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "pocket.list_subscribe"))]
 	async fn list_subscribe(

@@ -23,7 +23,7 @@ pub trait PinnedView: Send + Sync {
 }
 
 /// Where a transaction was found, if anywhere.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SearchResult {
 	/// In `block`, with its outcome, or `None` when the outcome could not be
 	/// read: inclusion alone is not success.
@@ -128,7 +128,7 @@ fn searched(tx: &DurableTxEntry, result: SearchResult, window_closed: bool) -> R
 		SearchResult::Found { block, outcome: Some(DispatchOutcome::Succeeded) } => {
 			decided(VerdictStatus::FinalizedSuccess { at: Some(block) })
 		},
-		SearchResult::Found { outcome: Some(DispatchOutcome::Failed), .. } => {
+		SearchResult::Found { outcome: Some(DispatchOutcome::Failed(_)), .. } => {
 			decided(VerdictStatus::Failure(VerdictFailureKind::DispatchFailed))
 		},
 		SearchResult::NotFound { read_advanced_to } => absent(tx, read_advanced_to, window_closed),
@@ -463,8 +463,10 @@ mod tests {
 	#[test]
 	fn rule_5_a_failed_dispatch_found_fails_as_dispatch_failed() {
 		block_on(async {
-			let found =
-				SearchResult::Found { block: block(110), outcome: Some(DispatchOutcome::Failed) };
+			let found = SearchResult::Found {
+				block: block(110),
+				outcome: Some(DispatchOutcome::Failed(String::new())),
+			};
 
 			let outcome = evaluate(tx(), says(), 130, RecordedCanonicity::Unknown, found).await;
 

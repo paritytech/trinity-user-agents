@@ -17,27 +17,31 @@ final class TabBarBarViewModel {
     var isBarHidden = false
     /// Whether the next `isBarHidden` change plays the container's medium impact.
     var playsBarHiddenFeedback = true
-    var onSlotTapped: ((Int) -> Void)?
+    /// The opacity of the bar's icons and labels, written by the chrome during a quiet hide.
+    let contentFade = DSTabBarContentFade()
+    @ObservationIgnored var onSlotTapped: ((Int) -> Void)?
 
     /// Whether the shelf is open. Written by the chrome from the open panel, never by the shelf itself.
     var isShelfOpen = false
     /// The room open panels may take above the bar row, measured from the chrome's own safe area.
     var availablePanelHeight: CGFloat = 0
+    /// How far the bar sits above its resting place to clear the keyboard. Non-zero only while the scan panel is open.
+    var keyboardLift: CGFloat = 0
     /// The shelf content's measured height, written back by the bar row. The shelf is capped at `availablePanelHeight`.
     var shelfContentHeight: CGFloat = 0 {
         didSet { onShelfContentHeightChanged?() }
     }
 
-    var onShelfContentHeightChanged: (() -> Void)?
+    @ObservationIgnored var onShelfContentHeightChanged: (() -> Void)?
     var shelfChips: [TabBarShelfChip] = []
     var mountedChipId: UUID?
-    var onShelfChipTapped: ((UUID) -> Void)?
-    var onShelfChipCloseRequested: ((UUID) -> Void)?
-    var onShelfSettingsTapped: (() -> Void)?
-    var onShelfConnectionStatusTapped: (() -> Void)?
+    @ObservationIgnored var onShelfChipTapped: ((UUID) -> Void)?
+    @ObservationIgnored var onShelfChipCloseRequested: ((UUID) -> Void)?
+    @ObservationIgnored var onShelfSettingsTapped: (() -> Void)?
+    @ObservationIgnored var onShelfConnectionStatusTapped: (() -> Void)?
 
     var selectionPlacement: TabBarSelectionPlacement {
-        TabBarSelectionPolicy.placement(
+        TabBarSelectionPlacement(
             tabItemIndex: selectedItemIndex,
             mountedProductId: mountedChipId,
             isShelfOpen: isShelfOpen
@@ -60,16 +64,17 @@ final class TabBarBarViewModel {
     /// UIKit moves it through `setCenterPanelOpen`.
     var centerProgress: CGFloat = 0
     var centerContentHeight: CGFloat = 0
-    var makeCenterContent: () -> UIViewController? = { nil }
+    @ObservationIgnored var makeCenterContent: () -> UIViewController? = { nil }
     /// Fires only when the progress settles at either end, not on every intermediate frame of a drag.
-    var onCenterPanelOpenChanged: ((Bool) -> Void)?
+    @ObservationIgnored var onCenterPanelOpenChanged: ((Bool) -> Void)?
     /// Fires when the centre control would settle closed from open. The chrome closes the panel, so the close
     /// animates through `centerProgress` like an outside tap. It receives the close's duration, nil for the default.
-    var onCenterPanelCloseRequested: ((TimeInterval?) -> Void)?
-    /// Forwarded from the centre control's swipe open. Nil keeps a swipe opening like a tap.
+    @ObservationIgnored var onCenterPanelCloseRequested: ((TimeInterval?) -> Void)?
+    /// Forwarded from the centre control's swipe open. Nil keeps a swipe opening like a tap. Observed, because the
+    /// centre control branches on whether it is set.
     var onCenterPanelSwipeOpenBegan: (() -> Void)?
     /// Forwarded from the centre control's swipe landing, once the open is nearly done.
-    var onCenterPanelSwipeOpenLanding: (() -> Void)?
+    @ObservationIgnored var onCenterPanelSwipeOpenLanding: (() -> Void)?
 
     /// Matches the centre control's own settle, so a UIKit-driven move looks like a tap. Snaps under Reduce Motion.
     /// Once the move has logically finished it reports through `onCenterPanelOpenChanged`, as a settle from the

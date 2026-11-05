@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -17,10 +18,10 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
@@ -31,7 +32,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +52,8 @@ import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
@@ -80,8 +81,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
@@ -107,11 +108,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
-    private var pocketBridge: ProductPocketHostBridge? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -131,12 +131,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         card: ExpandedCardFace?,
     ) = object : HostBridge {
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
+            EncryptedHostStorage(encryptedPreferences, callingProductId)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         /**
@@ -189,11 +189,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * ([TrUAPIHostRuntimeProvider.sessionState]); an execution only logs it.
          */
         override fun authStateChanged(state: AuthState) {
-            Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
+            Timber.tag("truapi.auth").i("%s: %s", callingProductId.value, state.marker())
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+            confirmationLauncher.decide(review, requesterFallback = callingProductId)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -275,7 +275,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         productId: ProductId,
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
-        kind: ProductExecutionKind,
+        kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
@@ -288,19 +288,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
             cachedChains.set(chains)
-            val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
-                configuration = ProductExecutionConfig(productId.value, kind),
+                configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
-                pocket = pocket,
                 game = gameBridge(productId),
             )
             execution = opened
-            pocketBridge = pocket
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            pocket.start(opened::notifyPocketCardsChanged)
             chainProvider.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
@@ -308,6 +304,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val endpoint = opened.startWsBridge()
             observeAppTheme()
             observeAppLifecycle()
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -346,10 +343,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
-        // Before the execution closes: a card change arriving afterwards would republish through a
-        // handle that no longer exists.
-        pocketBridge?.stop()
-        pocketBridge = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()
@@ -365,11 +358,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
  * answers yes/no and never produces a signature. A review the app cannot
  * describe fails closed, but that is a mapping bug rather than the normal
  * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * not carry a product id itself; null denotes the host.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
-    requesterFallback: String,
+    requesterFallback: ProductId? = null,
 ): Boolean {
     val confirmation = runCatching { review.toConfirmation(requesterFallback) }
         .getOrElse {
@@ -419,7 +412,7 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
 }
 
 /** The owning product, or `null` for purses of the user's own account. */
-private val NftPurseOwner.productId: String?
+private val NftPurseOwner.productId: ProductId?
     get() = when (this) {
         is NftPurseOwner.Product -> v1
         NftPurseOwner.Root -> null
@@ -430,6 +423,23 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
+
+// Info lines leave the device; everything else stays on it.
+internal fun logCoreLine(marker: String, detail: String) {
+    val exported = EXPORTED_CORE_MARKER_PREFIXES.any { prefix -> marker.startsWith(prefix) }
+    val priority = if (exported) Log.INFO else Log.DEBUG
+    Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+// An allowlist rather than the inverse: a marker the core adds later stays local until someone says
+// what it carries. `truapi.native.*` is what stays behind, because those lines carry notification
+// bodies, URLs and permission requests. The iOS host keeps the same list in `logCoreLine`.
+private val EXPORTED_CORE_MARKER_PREFIXES = listOf(
+    "truapi.tracing.",
+    "truapi.chain.",
+    "truapi.core.",
+    "truapi.ws_bridge.",
+)
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"

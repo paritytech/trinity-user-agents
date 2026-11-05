@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.search
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.search.ChatListSearchResult
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -15,6 +14,8 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
+import uniffi.truapi.ProductId
 
 class ProductChatSearchResultProviderTest {
     private val productRepository: ProductRepository = mock()
@@ -25,17 +26,17 @@ class ProductChatSearchResultProviderTest {
     fun setUp() {
         val products = listOf(
             Product(
-                id = ProductId.fromStoredValue("coinflip.dot"),
+                id = ProductId.parse("coinflip.dot").getOrThrow(),
                 name = "Coinflip",
                 icon = null,
             ),
             Product(
-                id = ProductId.fromStoredValue("gamble.dot"),
+                id = ProductId.parse("gamble.dot").getOrThrow(),
                 name = "Gamble Game",
                 icon = null,
             ),
             Product(
-                id = ProductId.fromStoredValue("nft.dot"),
+                id = ProductId.parse("nft.dot").getOrThrow(),
                 name = "NFT Gallery",
                 icon = null,
             ),
@@ -104,7 +105,14 @@ class ProductChatSearchResultProviderTest {
     fun `opens spa browser for the selected result`() = runBlocking<Unit> {
         provider.onAppResultSelected(appResult("coinflip.dot"))
 
-        verify(productsRouter).openSpaBrowser(SpaBrowserPayload.ByProductId("coinflip.dot"))
+        verify(productsRouter).openSpaBrowser(SpaBrowserPayload.ByProductId(ProductId.parse("coinflip.dot").getOrThrow()))
+    }
+
+    @Test
+    fun `ignores selected results with invalid product ids`() = runBlocking<Unit> {
+        provider.onAppResultSelected(appResult("some invalid product"))
+
+        verifyNoInteractions(productsRouter)
     }
 
     @Test

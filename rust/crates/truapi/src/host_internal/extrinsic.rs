@@ -8,7 +8,10 @@
 //! runtime's extension pipeline, and signs only when the caller leaves
 //! `VerifyMultiSignature` to the host.
 
+use core::time::Duration;
 use std::collections::BTreeSet;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use parity_scale_codec::Encode;
 use schnorrkel::{PublicKey, SecretKey};
@@ -30,9 +33,18 @@ use subxt::{
 	tx::Signer,
 	utils::{AccountId32, H256, MultiAddress, MultiSignature},
 };
+use tracing::warn;
 use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
-use crate::{chain_runtime::ChainRuntime, host_logic::product_account::SR25519_SIGNING_CONTEXT};
+use crate::{
+	chain_runtime::{ChainRuntime, encode_hex},
+	host_logic::product_account::SR25519_SIGNING_CONTEXT,
+};
+
+/// Waiting longer than this for the current block is named in the host log.
+const SLOW_CURRENT_BLOCK: Duration = Duration::from_secs(2);
 
 /// The runtime name of the V5 authorization extension.
 ///
@@ -317,12 +329,31 @@ pub async fn build_local_transaction(
 	extensions: &[TxPayloadExtension],
 	tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
-	let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-	})?;
-	let at_block = client.at_current_block().await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
-	})?;
+	let started = Instant::now();
+	let at_block = async {
+		let client = chain.online_client(&genesis_hash).await.map_err(|error| {
+			LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
+		})?;
+		client.at_current_block().await.map_err(|error| {
+			LocalTransactionError::ChainUnavailable(format!(
+				"cannot select a metadata block: {error}"
+			))
+		})
+	}
+	.await;
+	let waited = started.elapsed();
+	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
+		let genesis = encode_hex(&genesis_hash);
+		match &at_block {
+			Err(error) => warn!(
+				"createTransaction could not get the current block of {genesis} after {waited:?}: {error}"
+			),
+			Ok(_) => {
+				warn!("createTransaction waited {waited:?} for the current block of {genesis}")
+			},
+		}
+	}
+	let at_block = at_block?;
 	let transaction = build_signed_transaction(
 		&Sr25519Signer::from_keypair(keypair),
 		genesis_hash,

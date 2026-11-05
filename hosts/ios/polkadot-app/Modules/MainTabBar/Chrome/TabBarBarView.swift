@@ -18,37 +18,18 @@ struct TabBarBarView: View {
             isBarHidden: model.isBarHidden,
             playsBarHiddenFeedback: model.playsBarHiddenFeedback,
             openProgress: model.centerProgress,
-            first: { slot(at: 0) },
-            second: { slot(at: 1) },
-            third: { slot(at: 2) },
-            fourth: { slot(at: 3) },
+            first: { TabBarSlotView(index: 0, model: model) },
+            second: { TabBarSlotView(index: 1, model: model) },
+            third: { TabBarSlotView(index: 2, model: model) },
+            fourth: { TabBarSlotView(index: 3, model: model) },
             center: {
-                DSTabBarCenterControl(
-                    progress: $model.centerProgress,
-                    contentHeight: model.centerContentHeight,
-                    accessibilityLabel: String(localized: .Products.productTabsAccessibilityScanner),
-                    openAccessibilityLabel: String(localized: .Products.productTabsAccessibilityCloseSearch),
-                    onSettled: { model.onCenterPanelOpenChanged?($0) },
-                    onCloseRequested: { model.onCenterPanelCloseRequested?($0) },
-                    onSwipeOpenBegan: model.onCenterPanelSwipeOpenBegan,
-                    onSwipeOpenLanding: model.onCenterPanelSwipeOpenLanding,
-                    content: {
-                        TabBarScanPanelContent(makeController: model.makeCenterContent)
-                    }
-                )
+                TabBarCenterSlot(model: model)
             },
             shelf: {
-                TabBarShelfView(
-                    chips: model.shelfChips,
-                    mountedChipId: model.mountedChipId,
-                    pillProductId: pillProductId,
-                    onChipTapped: { model.onShelfChipTapped?($0) },
-                    onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
-                    onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
-                    onSettingsTapped: { model.onShelfSettingsTapped?() }
-                )
+                TabBarShelfView(model: model, pillProductId: pillProductId)
             }
         )
+        .padding(.bottom, model.keyboardLift)
         // The bar sits at the bottom of a host sized once to the room above it.
         .frame(maxHeight: .infinity, alignment: .bottom)
     }
@@ -57,40 +38,62 @@ struct TabBarBarView: View {
         guard case let .productCell(id) = model.selectionPlacement else { return nil }
         return id
     }
+}
 
-    @ViewBuilder
-    private func slot(at index: Int) -> some View {
-        if let item = model.items[safe: index] {
-            TabBarSlotView(
-                item: item,
-                isSelected: index == model.selectedSlot,
-                isActive: index == model.activeActionItemIndex,
-                action: { model.onSlotTapped?(index) }
-            )
-        }
+/// The centre control. It reads the content fade through its own leaf view, so a fade does not re-run it.
+private struct TabBarCenterSlot: View {
+    @Bindable var model: TabBarBarViewModel
+
+    var body: some View {
+        DSTabBarCenterControl(
+            progress: $model.centerProgress,
+            contentHeight: model.centerContentHeight,
+            accessibilityLabel: .Products.productTabsAccessibilityScanner,
+            openAccessibilityLabel: .Products.productTabsAccessibilityCloseSearch,
+            onSettled: { model.onCenterPanelOpenChanged?($0) },
+            onCloseRequested: { model.onCenterPanelCloseRequested?($0) },
+            onSwipeOpenBegan: model.onCenterPanelSwipeOpenBegan,
+            onSwipeOpenLanding: { model.onCenterPanelSwipeOpenLanding?() },
+            contentFade: model.contentFade,
+            content: {
+                TabBarScanPanelContent(makeController: { model.makeCenterContent() })
+            }
+        )
     }
 }
 
 private struct TabBarSlotView: View {
-    private static let iconSize: CGFloat = 28
+    let index: Int
+    let model: TabBarBarViewModel
 
-    let item: TabBarBarItem
-    let isSelected: Bool
-    let isActive: Bool
-    let action: () -> Void
+    var body: some View {
+        if let item = model.items[safe: index] {
+            slotButton(for: item)
+        }
+    }
+}
 
-    private var isEmphasized: Bool {
-        isSelected || isActive
+private extension TabBarSlotView {
+    static let iconSize: CGFloat = 28
+
+    var isSelected: Bool {
+        index == model.selectedSlot
     }
 
-    private var iconColor: Color {
+    var isEmphasized: Bool {
+        isSelected || index == model.activeActionItemIndex
+    }
+
+    var iconColor: Color {
         isEmphasized ? .fgPrimary : .fgSecondary
     }
 
-    var body: some View {
-        Button(action: action) {
+    func slotButton(for item: TabBarBarItem) -> some View {
+        Button {
+            model.onSlotTapped?(index)
+        } label: {
             VStack(spacing: 0) {
-                icon
+                icon(for: item)
                 if let title = item.title {
                     Text(title)
                         .font(Font(UIFont.labelSmallEmphasized))
@@ -98,20 +101,21 @@ private struct TabBarSlotView: View {
                         .padding(.top, 2)
                 }
             }
+            .modifier(TabBarContentFadeModifier(fade: model.contentFade))
             .padding(.vertical, item.title == nil ? 0 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .animation(DSTabBarStyle.selectionCurve, value: isEmphasized)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(item.accessibilityLabel)
-        .accessibilityValue(item.accessibilityValue ?? "")
+        .accessibilityLabel(Text(item.accessibilityLabel))
+        .accessibilityValue(Text(item.accessibilityValue ?? ""))
         .accessibilityId(item.accessibilityID)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder
-    private var icon: some View {
+    func icon(for item: TabBarBarItem) -> some View {
         switch item.content {
         case let .icon(image):
             Image(uiImage: image)
@@ -121,9 +125,18 @@ private struct TabBarSlotView: View {
                 .foregroundStyle(iconColor)
                 .frame(width: Self.iconSize, height: Self.iconSize)
         case let .tabsGlyph(count):
-            TabsGlyph(count: count, color: UIColor(iconColor))
+            TabsGlyph(count: count, isEmphasized: isEmphasized)
                 .frame(width: Self.iconSize, height: Self.iconSize)
         }
+    }
+}
+
+/// Applies the bar's content fade. Its body reads the fade, so a fade re-runs only the views that use it.
+private struct TabBarContentFadeModifier: ViewModifier {
+    let fade: DSTabBarContentFade
+
+    func body(content: Content) -> some View {
+        content.opacity(fade.opacity)
     }
 }
 
@@ -322,7 +335,7 @@ private extension TabBarScanPanelContent {
 /// Renders the open-apps count glyph from the bar's UIKit component.
 private struct TabsGlyph: UIViewRepresentable {
     let count: Int
-    let color: UIColor
+    let isEmphasized: Bool
 
     func makeUIView(context _: Context) -> DSTabBarTabsGlyphView {
         DSTabBarTabsGlyphView(frame: .zero)
@@ -330,6 +343,6 @@ private struct TabsGlyph: UIViewRepresentable {
 
     func updateUIView(_ view: DSTabBarTabsGlyphView, context _: Context) {
         view.count = count
-        view.glyphColor = color
+        view.glyphColor = isEmphasized ? .fgPrimary : .fgSecondary
     }
 }

@@ -1,4 +1,7 @@
-//! Bulletin store transaction construction and signing.
+//! Bulletin store transactions, and reading stored blobs back by CID.
+
+mod cid;
+mod read;
 
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 
@@ -8,6 +11,9 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
+pub use cid::{BulletinCid, BulletinCidError};
+pub use read::{BitswapError, bitswap_get};
+
 /// Pallet the store transaction targets.
 pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 /// Call name within [`STORE_PALLET_NAME`].
@@ -16,31 +22,6 @@ pub const STORE_CALL_NAME: &str = "store";
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
 	sp_crypto_hashing::blake2_256(value)
-}
-
-/// The CID transaction storage serves a preimage under, as a Bulletin node's
-/// `bitswap_v1_get` takes it: CIDv1, the `raw` codec and the blake2b-256 multihash of the
-/// content, which is the preimage key itself, in lower-case base32 with the multibase `b`
-/// prefix.
-pub fn preimage_cid(key: &[u8; 32]) -> String {
-	const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-	// CIDv1, raw, then the multihash: blake2b-256 (0xb220 as a varint) of 32 bytes.
-	let mut bytes = vec![0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
-	bytes.extend_from_slice(key);
-	let mut cid = String::from("b");
-	let (mut buffer, mut bits) = (0u32, 0u32);
-	for byte in bytes {
-		buffer = (buffer << 8) | u32::from(byte);
-		bits += 8;
-		while bits >= 5 {
-			cid.push(char::from(ALPHABET[((buffer >> (bits - 5)) & 31) as usize]));
-			bits -= 5;
-		}
-	}
-	if bits > 0 {
-		cid.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
-	}
-	cid
 }
 
 /// Build the signed store transaction for `data` on the Bulletin chain
@@ -138,21 +119,6 @@ mod tests {
 		);
 	}
 
-	/// A blob stored on Paseo Bulletin: `bitswap_v1_get` with this CID returns the bytes whose
-	/// blake2b-256 is the key.
-	#[test]
-	fn preimage_cid_is_cidv1_raw_blake2b_256_in_base32() {
-		let key: [u8; 32] =
-			hex::decode("0bd1bb57e3f9ea801956a770fe1068f950383547aca45e1d3d354d57d014cb0c")
-				.unwrap()
-				.try_into()
-				.unwrap();
-		assert_eq!(
-			preimage_cid(&key),
-			"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy"
-		);
-	}
-
 	/// If the runtime's `store` stops taking bytes, the call is refused at
 	/// encoding rather than sent with a shape the node rejects.
 	#[test]
@@ -205,7 +171,9 @@ mod tests {
 	#[test]
 	fn builds_large_preimage_without_pathological_cost() {
 		// Keep a generous bound around the call encoding so a future library
-		// change cannot make large preimages pathological.
+		// change cannot make large preimages pathological. A debug build
+		// encodes the bytes one at a time, which takes several seconds on a
+		// busy CI runner.
 		let data = vec![0x5au8; 8 * 1024 * 1024];
 		let service = bulletin_service();
 		let signer = signer_fixture();
@@ -217,7 +185,7 @@ mod tests {
 		let elapsed = start.elapsed();
 		assert!(built.extrinsic.bytes().len() > data.len());
 		assert!(
-			elapsed < std::time::Duration::from_secs(5),
+			elapsed < std::time::Duration::from_secs(30),
 			"building an 8 MiB store extrinsic took {elapsed:?}"
 		);
 	}

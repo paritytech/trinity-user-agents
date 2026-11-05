@@ -40,6 +40,8 @@ interface ChatFeedContract {
     val scrollToPosition: SharedFlow<Int>
     val toolbarActions: StateFlow<ImmutableList<ChatToolbarAction>>
 
+    val showPrivacyWarning: StateFlow<Boolean>
+
     val highlightEvents: Flow<HighlightedMessage>
 
     fun onBackClick()
@@ -53,12 +55,18 @@ interface ChatFeedContract {
     fun onUnreadMessageVisible(message: ChatMessageUiModel)
     fun onMessageRevealComplete(messageId: ChatMessageId)
     fun onMenuClick()
+
+    fun onPrivacyWarningClick()
     fun onCopyUsernameClick()
     fun onLeaveChatRequest()
     fun onLeaveChatConfirm()
     fun onBlockUserRequest()
     fun onBlockUserConfirm()
     fun onUnblockUserClick()
+
+    fun onAllowIdentitySigningClick()
+
+    fun onDeclineIdentitySigningClick()
     fun onStartCallClick(withVideo: Boolean)
     fun onCloseMenu()
 

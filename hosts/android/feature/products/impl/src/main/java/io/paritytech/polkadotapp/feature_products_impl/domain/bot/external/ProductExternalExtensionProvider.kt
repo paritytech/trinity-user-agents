@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.external
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtension
@@ -14,6 +13,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import javax.inject.Inject
 import javax.inject.Singleton
+import uniffi.truapi.ProductId
 
 @Singleton
 class ProductExternalExtensionProvider @Inject constructor(

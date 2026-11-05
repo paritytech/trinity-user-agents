@@ -143,6 +143,11 @@ final class MainTabBarViewController: UIViewController {
         applyWidgetLayout(for: chromeContext(for: container.selectedController))
     }
 
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        super.pressesBegan(presses, with: event)
+        chromeController.foldController.recordKeyPress()
+    }
+
     override var childForStatusBarStyle: UIViewController? {
         container.selectedController
     }
@@ -316,7 +321,7 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
 extension MainTabBarViewController {
     func openScanPanel() {
-        chromeController.setPanel(.content(.scan))
+        chromeController.openPanelShowingDocklet(.content(.scan))
     }
 
     func makeScanPanel() -> UIViewController? {
@@ -392,14 +397,5 @@ extension MainTabBarViewController {
 
     func detachWidget(for id: AppWidgetID) {
         widgetController.detach(for: id)
-    }
-}
-
-extension MainTabBarViewController {
-    /// The chrome sits over every tab, so a Pocket card flying out of the
-    /// Wallet fades it along with the Pocket's own content.
-    func setChromeAlpha(_ alpha: CGFloat) {
-        statusBarHost.view.alpha = alpha
-        chromeController.view.alpha = alpha
     }
 }

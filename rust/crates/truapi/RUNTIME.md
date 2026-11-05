@@ -232,10 +232,28 @@ of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
 it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
-purse item keys are derived under with `set_installation_provider`, then calls
-`start_core_services` once, which starts the durable engine and NFT purses over
+purse item keys are derived under with `set_installation_provider`, and the
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
+`set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
+
+The database also holds the Pocket collection (`pocket_cards` module): the
+cards in the Pocket and the newest face of each. The host lists the cards it
+pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
+approves with `add_pocket_card`, and follows the collection with
+`observe_pocket_cards`. A card no longer pinned stays only if the user added
+it. The core keeps the newest face of a card from every
+`RenderContext::PocketCard` render, at most every two seconds and once more
+when the render stops, so a card has a face offline and at cold start.
+
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
 
 ### Durable transactions
 
@@ -402,7 +420,7 @@ flows, permission state, and auth state transitions.
 
 Most host-facing wire types are imported from `truapi::latest` by this module and
 are exposed through the trait signatures below. `ProductContext` and
-`ProductExecutionKind` are defined here instead, and codegen emits their host
+`ExecutableKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
 `parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
@@ -455,8 +473,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PermissionStatusHost`: report the OS status of a device capability without
   prompting, so a stored grant can be revalidated before it is acted on.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
-  card from it. The host owns the collection and decides which cards are
-  privileged.
+  card from it. Native hosts do not implement it: the core serves it from its
+  own database (see Core database). The CLI host passes an in-memory one.
 - `FundingPlatform`: show the native funding overlay for a session, with its
   direction and amount and the product that opened it, and report whether the
   user started or dismissed it. Installed with `set_funding_platform`; the
@@ -466,7 +484,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_sessions`, `funding_history`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `set_funding_providers`,
+  `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
+  `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
+  strings.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
@@ -481,16 +502,105 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `funding_history` lists every ended session the host recorded or the core
   compacted, as a summary newest first, so a host that lost its history
   rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
+  `request({ direction, amount? })`, which answers at once with its `intent`,
+  and watches it with `statusSubscribe({ intent })`; another product's
+  session reads as `NotFound`. The overlay runs on a task of its own, so no
+  call waits on it; a session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. Sessions and the pack live in the core database,
+  one versioned row per session: a row that does not decode or is of an older
+  format is skipped and left in place, and one in a newer format is left
+  untouched while funding answers a host failure. Funding
+  needs the core database: natively the configured `database_directory`,
+  otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
+  The host lists its providers with `set_funding_providers`, each with the
+  Worker manifest it ships for it. `funding_candidates(intent)` answers the
+  providers serving that session's direction, with their routes, from what the
+  `includes.funding` configuration of each provider's Worker manifest declares:
+  dotNS's answer once the core has read it (cached for a day, re-checked in the
+  background on every query), the shipped snapshot until then, so the list
+  renders with no chain read. A provider whose manifest no longer serves
+  Funding drops out.
+  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
+  country) with every funding provider, whatever its manifest says it serves,
+  since a provider can serve more or less than it last published: the core
+  calls each provider's worker with `quote`, holding the worker while it
+  waits, and the worker answers priced from its own API. The manifest names no backend: a provider signs in to its own API
+  itself and keeps its tokens with the host.
+  Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
+  provider that does not answer within 10 seconds is unavailable. A provider's
+  answer is reused for the same ask for 30 seconds. What an answer shows (a
+  quote or an out-of-range amount: served; a refused country: not served
+  there, only for an ask that named the country) is stored under
+  `FundingSupport` and folded into `funding_candidates` for 12 hours, as
+  routes the manifest did not declare and as `unsupported` entries the host
+  can filter by the user's country, while the provider's current manifest
+  serves Funding. Natively the rows arrive
+  through `funding_quote_changed`. At most eight providers are asked at
+  once, each with its own deadline. Answers are reused for 30 seconds within
+  the session that asked, never across sessions, and a newer ask for the
+  session withdraws the one before it, its late rows and the quotes it
+  offered. A quote that does not price the ask's amount, moves nothing,
+  charges more in fees than the user sends, has an unusable id or has
+  expired shows as the provider being unable to serve the ask.
+  `select_funding_provider` hands a session to the provider the user chose,
+  on the quote they chose it by, which must be one the core offered for the
+  session, not yet expired and, when the session has an amount, pricing that
+  amount in balance units (what it credits inbound, what it debits outbound);
+  a session opened without an amount takes the quote's. The provider
+  receives it in `assign`, and the
+  session keeps it with the rail and asset it priced. A session's offered
+  quotes are dropped once it is assigned or ends.
+  A native host's `funding_session_changed` carries the session's
+  progress, so the host never reads it back: the steps it draws for the
+  session's direction and rail, each with when it was reached: in, `Started`,
+  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
+  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  the provider skipped takes the time of the first later one. It also carries
+  when the session failed, the latest transaction id and reference the
+  provider reported with `Details`, the latest `Deposit` instructions for the
+  host to draw (a crypto address with network, asset, amount, whether it is
+  exact, an optional payment URI for the QR code and expiry, or bank details
+  with the reference), and what arrived when a `PaymentReceived` reports a
+  short or wrong-asset payment. `Deposit` is inbound only and allowed until
+  funds move, so a provider can ask for the rest of a short payment.
+  That provider's worker runs it through the `FundingProvider` trait. The
+  core calls the worker with host-initiated calls the worker answers with one
+  item: `assign` hands it a session, `cancel` asks it to stop one, and
+  `settleCancel` passes on the user's answer to its offer. When a worker's
+  connection completes its handshake, the core assigns it every session it
+  still serves, with its last step, and repeats any cancel or decision it
+  never answered; the worker keeps its own state in its storage. The worker
+  calls the core: `report` stores each update on the session (only from the
+  assigned provider, only forward; `Details` may come at any point while the
+  session is open), and `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`. The core holds the
+  provider's worker while a session is assigned and open, and stores an
+  assigned session from then on, even while its overlay is up. It records each
+  top-up (inbound) or payment request (outbound) the worker starts while
+  serving a session, and a `Crediting` or `Collecting` report must name one of
+  those records at its amount, once. It ends a session as `Delivered` or
+  `Released` itself, from the recorded amounts of the named top-ups once their
+  claims are final (`Crediting`, then `Delivered`) or of the named payment once
+  it completes (`Collecting`); a partial claim counts what the host claimed.
+  Statuses are read again with backoff until the host decides, and a top-up
+  or payment the host still does not know an hour after it was named counts
+  as nothing moved. Money moved once the provider started funds for the
+  session, named or not, or saw the user's payment; from then on only the
+  provider ends the session, and it cannot fail it once funds started.
+  Before that, an unassigned session expires 24 hours after it opened and an
+  assigned one 7 days after its provider last reported. `cancel_funding`
+  answers what a cancel did: it ends an unassigned session; before money
+  moved it asks the provider and ends the session when asked again; after,
+  it asks the provider, who answers `Refused` or `Offer`, one offer per
+  cancel, and the host answers the offer with
+  `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
+  showed (`None` declines), which the provider hears through `settleCancel`;
+  terms other than the offer's answer `NoOffer`, and an inbound session whose
+  credit started answers `TooLate`. A provider asked before money moved
+  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  provider keeps the session as started and asks the provider to stop unless
+  money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

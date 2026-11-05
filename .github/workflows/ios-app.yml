@@ -2,13 +2,14 @@ name: iOS app
 
 # The iOS app's suite, called by ci.yml for a pull request that reaches the
 # app or the Swift packages, by ios-main.yml for a push to main that reaches the
-# app, and by on-label.yml for the simulator preview. Every job here runs on the
-# Parity machines, which are persistent and shared, so no caller starts it for a
-# pull request from a fork.
+# app, and by on-label.yml for the simulator preview and for the suite on a
+# draft or stacked pull request labelled ci:ios-tests. Every job here runs on
+# the Parity machines, which are persistent and shared, so no caller starts it
+# for a pull request from a fork.
 #
 # A suite run builds the core once, then the device archive, the unit tests and
 # the TrUAPIHost package check against it. A preview run builds the core and the
-# simulator preview only, so a label never runs the tests a second time.
+# simulator preview only, so the simulator label never runs the tests.
 on:
   workflow_call:
     inputs:
@@ -166,23 +167,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Everything the bootstrap reads: the crates and their lockfile, the
-      # toolchain pins, codegen and its npm manifests, the TypeScript client and
-      # container bundled into the host, the scripts that stage the bindings,
-      # the Xcode pin, and the packaging below.
       - name: Hash the core inputs
         id: key
-        run: |
-          set -euo pipefail
-          inputs=(
-            rust ios js/packages/truapi js/container scripts
-            Makefile Cargo.toml Cargo.lock nightly-toolchain
-            package.json package-lock.json
-            .github/actions/bootstrap-ios-core .github/actions/rust-nightly
-            hosts/ios/.github/actions/install .github/workflows/ios-app.yml
-          )
-          hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
-          echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/ios-core-key
 
       - name: Find a core main built from them
         id: find
@@ -276,12 +263,14 @@ jobs:
           ls -lh "$RUNNER_TEMP/ios-core.tgz"
 
       # github.run_id is stable across attempts, so a rerun uploads the same
-      # name. Overwriting rather than adding the attempt to the name, because
+      # name. The mode is part of it because on-label.yml can call this
+      # workflow for a preview and for the suite in one run, and the preview's
+      # core has no device slice. Overwriting rather than adding the attempt to the name, because
       # "re-run failed jobs" does not rerun core, and the app jobs would then
       # look for a name that was never uploaded.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}/ios-core.tgz
           retention-days: 1
           if-no-files-found: error
@@ -291,7 +280,7 @@ jobs:
       # them. Published again when main reuses it, so a core in use never expires.
       - name: Publish the core for reuse
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ needs.core-lookup.outputs.key }}
           path: ${{ runner.temp }}/ios-core.tgz
@@ -335,7 +324,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       # The core carries the generated Swift, both xcframeworks and the
@@ -458,7 +447,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core
@@ -478,7 +467,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build app
         env:
@@ -557,7 +545,7 @@ jobs:
           retention-days: 3
 
   # An installable build for every commit on a pull request labelled
-  # ios-simulator-build. The simulator
+  # ci:ios-simulator. The simulator
   # slice needs no provisioning profile and no signing identity, so it needs
   # nothing the build job does not already have, and a reviewer can run the
   # change rather than read it.
@@ -588,7 +576,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core
@@ -608,7 +596,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       # DevCI to match the build job, so the preview exercises the same chains
       # and configuration the checks do.
@@ -700,7 +687,7 @@ jobs:
 
           An arm64 simulator slice, so it needs an Apple Silicon Mac and does not
           install on a device. Kept for 14 days, after which the link stops
-          resolving and a new push rebuilds it while \`ios-simulator-build\` is
+          resolving and a new push rebuilds it while \`ci:ios-simulator\` is
           set.
           EOF
 
@@ -731,7 +718,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core
@@ -751,7 +738,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Run tests
         working-directory: hosts/ios
@@ -801,7 +787,7 @@ jobs:
           KEY: ${{ needs.bindings.outputs.key }}
         run: echo "$KEY $GITHUB_SHA" > "$RUNNER_TEMP/bindings.txt"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ needs.bindings.outputs.key }}
           path: ${{ runner.temp }}/bindings.txt

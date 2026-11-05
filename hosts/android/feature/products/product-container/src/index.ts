@@ -557,6 +557,7 @@ container.handleAccountConnectionStatusSubscribe((_params, send, _interrupt) => 
 
 // --- Theme ---
 
+let initialThemeDelivered = false;
 container.handleThemeSubscribe((_params, send, interrupt) => {
   return subscribeNative(
     'themeSubscribe',
@@ -567,6 +568,13 @@ container.handleThemeSubscribe((_params, send, interrupt) => {
           ? { tag: 'Custom' as const, value: payload.name.value ?? '' }
           : { tag: 'Default' as const, value: undefined };
       send({ name, variant: payload.variant });
+      if (!initialThemeDelivered && window === window.top) {
+        initialThemeDelivered = true;
+        // `send` reaches the SDK over MessageChannel; let its DOM update paint before Android reveals.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          (window as any).Android.call('__initial_theme_delivered__', '{}');
+        }));
+      }
     },
     () => interrupt(),
   );

@@ -5,9 +5,11 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -182,6 +184,10 @@ class ProductChatExtension(
             val chatId = request.chatIdParameter.toChatId(id)
             val roomRequest = CreateRoomRequest(chatId, request.name, request.icon?.value)
             val response = extensionContext.createRoom(roomRequest)
+            // A product registers its room on every start, and a later version may rename it or change its icon.
+            if (response.status == CreateRoomStatus.Exists) {
+                extensionContext.updateRoomMetadata(chatId, RoomMetadata(request.name, request.icon?.value))
+            }
             return Result.success(CreateProductRoomResult(response.status))
         }
 

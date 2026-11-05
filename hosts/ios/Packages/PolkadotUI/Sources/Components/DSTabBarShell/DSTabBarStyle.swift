@@ -28,6 +28,13 @@ public enum DSTabBarStyle {
         min(max(0, availableWidth - horizontalMargin * 2), maxWidth)
     }
 
+    /// Trailing edge of the bar row in a host `availableWidth` wide: the row is centred, so this is its x offset
+    /// plus its width.
+    public static func rowMaxX(inAvailableWidth availableWidth: CGFloat) -> CGFloat {
+        let width = rowWidth(inAvailableWidth: availableWidth)
+        return ((availableWidth - width) / 2).rounded() + width
+    }
+
     /// Height the bar occupies once it has settled, which is what a host publishes as bottom
     /// clearance for its content.
     public static func restingHeight(bottomSafeAreaInset: CGFloat) -> CGFloat {
@@ -35,10 +42,10 @@ public enum DSTabBarStyle {
     }
 
     static var cornerRadius: CGFloat { height / 2 }
-    static let itemInset: CGFloat = 4
-    /// Vertical inset of the selection pill inside the bar row.
-    static let selectionInset: CGFloat = 4
-    /// Width of the selection pill. It is centred on its slot and may overflow the slot.
+    /// Inset of the selection pill inside the bar row, the same on every side.
+    static let selectionInset: CGFloat = 2
+    static let itemInset: CGFloat = selectionInset
+    /// Widest the selection pill grows. It is centred on its slot and never wider than it.
     static let selectionWidth: CGFloat = 80
     /// Length of the ease that carries the selection pill between slots and recolours the slot icons.
     static let selectionDuration: Double = 0.238
@@ -59,13 +66,6 @@ public enum DSTabBarStyle {
     /// Gap the two inner slots leave around the notch. It is the cutout's width at the bar's top edge.
     static let notchShoulderWidth: CGFloat = 74
 
-    /// Whether a point in the bar row's coordinate space falls on the centre button, which the
-    /// fold gesture must not claim.
-    public static func isInCenterHole(_ point: CGPoint, inRowOfWidth width: CGFloat) -> Bool {
-        let center = CGPoint(x: width / 2, y: notchCenterY)
-        return hypot(point.x - center.x, point.y - center.y) <= notchRadius
-    }
-
     /// Strength of the bar's variable blur. The public API cannot set the backdrop blur radius or saturation,
     /// so this is tuned by eye toward the brief's radius.
     static let barBlurIntensity: Double = 0.35
@@ -77,6 +77,8 @@ public enum DSTabBarStyle {
     static let centerBlurIntensityLight: Double = 0.7
     /// Strength of the scrim behind the bar while the centre panel is open, tuned by eye like `barBlurIntensity`.
     static let dimBlurIntensity: Double = 0.3
+    /// `dimBlurIntensity` on iOS 26 and later, lighter under Liquid Glass.
+    static let dimBlurIntensityGlass: Double = 0.15
 
     /// Horizontal radius of the bar's wash ellipse as a fraction of the bar's width. Its vertical radius is the bar
     /// height.

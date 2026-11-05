@@ -13,7 +13,7 @@
 //! [`versioned`].
 //! Async API traits use the `async_trait` macro so their concise `async fn` methods
 //! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! blocks with `#[async_trait::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -44,11 +44,10 @@ use std::sync::{Arc, Mutex};
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
-pub use async_trait::async_trait;
-
 pub mod api;
 mod dotns_name;
 mod product_id;
+pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -94,8 +93,6 @@ uniffi::custom_type!(u128, String, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
-
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
@@ -103,24 +100,30 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
+		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage,
-		NftPurseItemKey, NftPurseOwner, NftPursePurse, OperationStartedResult, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
+		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
+		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
+		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
+		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
+		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -307,6 +310,7 @@ pub mod latest {
 	/// Failure watching a funding session.
 	pub type HostFundingStatusSubscribeError =
 		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -316,6 +320,20 @@ pub mod latest {
 	/// Payment balance subscription failure.
 	pub type HostPaymentBalanceSubscribeError =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// A provider's progress report.
+	pub type HostFundingReportRequest =
+		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+	/// Failure reporting progress.
+	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+	/// Request to show a provider screen.
+	pub type HostFundingPresentFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+	/// How a provider screen closed.
+	pub type HostFundingPresentFrameResponse =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+	/// Failure showing a provider screen.
+	pub type HostFundingPresentFrameError =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -375,6 +393,87 @@ pub mod latest {
 	/// NFT purse page failure.
 	pub type HostNftPurseQueryPurseError =
 		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseError>;
+	/// NFT purse rebalance request.
+	pub type HostNftPurseRebalancePurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseRequest>;
+	/// NFT purse rebalance failure.
+	pub type HostNftPurseRebalancePurseError =
+		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseError>;
+	/// NFT receive key creation request.
+	pub type HostNftPurseCreateReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyRequest>;
+	/// A created NFT receive key.
+	pub type HostNftPurseCreateReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse>;
+	/// NFT receive key creation failure.
+	pub type HostNftPurseCreateReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyError>;
+	/// NFT cheque creation request.
+	pub type HostNftPurseCreateChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeRequest>;
+	/// A created NFT cheque.
+	pub type HostNftPurseCreateChequeResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeResponse>;
+	/// NFT cheque creation failure.
+	pub type HostNftPurseCreateChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
+	/// NFT cheque deposit request.
+	pub type HostNftPurseDepositRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
+	/// NFT cheque deposit failure.
+	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
+	/// NFT cheque revoke request.
+	pub type HostNftPurseRevokeChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeRequest>;
+	/// NFT cheque revoke failure.
+	pub type HostNftPurseRevokeChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
+	/// NFT cheque refund request.
+	pub type HostNftPurseRefundRequest = LatestOf<versioned::nft_purse::HostNftPurseRefundRequest>;
+	/// NFT cheque refund response.
+	pub type HostNftPurseRefundResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseRefundResponse>;
+	/// NFT cheque refund failure.
+	pub type HostNftPurseRefundError = LatestOf<versioned::nft_purse::HostNftPurseRefundError>;
+	/// NFT item transfer request.
+	pub type HostNftPurseTransferItemRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;
+	/// NFT item transfer failure.
+	pub type HostNftPurseTransferItemError =
+		LatestOf<versioned::nft_purse::HostNftPurseTransferItemError>;
+	/// NFT operation status request.
+	pub type HostNftPurseObserveOperationStatusRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusRequest>;
+	/// NFT operation status failure.
+	pub type HostNftPurseObserveOperationStatusError =
+		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusError>;
+	/// NFT one-time payment listen request.
+	pub type HostNftPurseListenOneTimePaymentRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest>;
+	/// NFT one-time payment listen item.
+	pub type HostNftPurseListenOneTimePaymentItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem>;
+	/// NFT one-time payment listen failure.
+	pub type HostNftPurseListenOneTimePaymentError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>;
+	/// NFT payment inbox listen request.
+	pub type HostNftPurseListenPaymentInboxRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxRequest>;
+	/// NFT payment inbox listen item.
+	pub type HostNftPurseListenPaymentInboxItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxItem>;
+	/// NFT payment inbox listen failure.
+	pub type HostNftPurseListenPaymentInboxError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxError>;
+	/// NFT static receive key request.
+	pub type HostNftPurseStaticReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;
+	/// The host's NFT static receive key.
+	pub type HostNftPurseStaticReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse>;
+	/// NFT static receive key failure.
+	pub type HostNftPurseStaticReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
@@ -761,6 +860,9 @@ mod host_rpc_client;
 mod interrupt;
 #[cfg(feature = "runtime")]
 pub mod logging;
+
+#[cfg(feature = "runtime")]
+pub mod markers;
 #[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
@@ -769,6 +871,8 @@ mod protocol_error;
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
+#[cfg(feature = "runtime")]
+mod stream_extensions;
 #[cfg(feature = "runtime")]
 pub mod subscription;
 #[cfg(feature = "runtime")]
@@ -807,7 +911,15 @@ pub mod store;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+#[macro_use]
 pub mod durable;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod encrypted_storage;
+
+#[cfg(feature = "runtime")]
+mod image_loader;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -822,6 +934,10 @@ mod nft;
 mod nft_purse;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod pocket_cards;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -830,10 +946,9 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::{
-	bulletin::{preimage_cid, preimage_key},
-	extrinsic::Sr25519Signer,
-};
+pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
+#[cfg(feature = "runtime")]
+pub use host_internal::{bulletin::preimage_key, extrinsic::Sr25519Signer};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
@@ -841,18 +956,22 @@ pub use host_logic::session::{
 #[cfg(feature = "runtime")]
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
+pub use host_rpc_client::HostRpcClient;
+#[cfg(feature = "runtime")]
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
+#[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_debug::{DebugSinkError, WsDebugSink};
 #[cfg(feature = "runtime")]
 pub use platform::{
-	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-	SigningHostConfig, describe_core_storage_key,
+	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner, HostIdentity,
+	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
+	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
@@ -861,7 +980,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
