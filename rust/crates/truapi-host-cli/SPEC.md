@@ -274,7 +274,7 @@ when it points inside the version store.
 ## 4. Top-level command line
 
 ```text
-truapi-host [--log-level <level>] [--debugger <url>] <command>
+truapi-host [--log-level <level>] [--debugger <url>] [--chain-backend <backend>] <command>
 ```
 
 Commands:
@@ -331,6 +331,13 @@ and the switch clap read it from, or `Wire debugger off`.
 
 Each accepted connection gets its own channel id, `<product-id>#<n>`, so
 concurrent peers under one host do not share a trace key.
+
+### 4.3 Global chain-backend option
+
+`--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
+default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
+explicit flag over it. The option is global. A combination the light client
+cannot serve fails when the command resolves its network, before it starts.
 
 ## 5. `pairing-host`
 
@@ -523,8 +530,9 @@ The script installs the shared browser container and publishes
 `window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
 stable client, sharing one WebSocket and one Rust execution. The container
 consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Interrupted calls
-fail, subscriptions end, and neither is replayed. Older SDKs use the compatibility
+same TCP port. After a disconnect, the SDK replaces the socket. Calls and
+subscriptions already sent fail and are not replayed. Calls not yet sent go out
+on the replacement once its handshake completes. Older SDKs use the compatibility
 `window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
 disconnect.
 Production builds must omit the tag.
@@ -1246,7 +1254,13 @@ A new auto account:
    unminted on the dotNS registrar (`DotnsRegistrar.ownerOf` reverts for its
    node under the network TLD): a reservation for a registered name could never
    be claimed and would hold that stem's reservation queue for the whole
-   reservation window;
+   reservation window. Each account signature follows the runtime of the
+   chain that checks it, read from that chain's metadata at this step: a
+   runtime that publishes a `SigningContext` constant on the verifying pallet
+   (`PeopleLite` on People for the candidate and consumer registration
+   signatures, `DotnsGateway` on Asset Hub for the reservation signature)
+   checks the signature over that context followed by the message. A runtime
+   without the constant checks the message alone;
 8. polls the dotNS contracts on Asset Hub for the final `name.discriminator`;
 9. waits for inclusion in a personhood ring; and
 10. marks and saves the account as attested.
@@ -1744,10 +1758,7 @@ below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to
 preset carries without serving them as a role, of which no preset has any.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
-route map fall back to the People RPC.
-
-A rustls ring crypto provider is installed at process startup for `wss://`
-connections.
+route map fall back to People, on either chain backend (§14.3).
 
 ### 14.2 Product-frame WebSocket
 
@@ -1794,14 +1805,42 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 ### 14.3 Chain JSON-RPC
 
-Every chain connection opens a fresh WebSocket. Outgoing requests use an
-unbounded channel. Incoming text frames and UTF-8 binary frames enter a
-1,024-message broadcast buffer.
+Every chain connection the CLI makes goes through `CliChainProvider`
+(`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
+(§4.3). Routing (§14.1) is the same on both. Only a routed genesis reaches the
+provider, which would otherwise look the hash up in its bundled catalog and
+start the light client. The genesis check of a rerouted endpoint (§14.1) uses a
+provider for that endpoint alone, over RPC. A request from one of the CLI's own
+commands, or the setup of a subscription, fails once its connection has
+delivered nothing for 30 seconds while it waits.
 
-The first response receiver is created before the reader task, preventing a
-fast initial RPC response from being lost. A lagged subscriber drops missed
-responses and emits a warning. `close()` prevents further sends; background
-socket tasks end when their channels or sockets close.
+With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
+connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
+the limits and timeouts. The connection sends a ping after the keepalive
+interval without an outgoing request, and is treated as dead if nothing arrives
+within the read timeout. The response stream ends when the socket closes or
+dies, a send fails, the queue fills, a message exceeds the size limit, or
+`close()` is called. The core's chain runtime then opens a new connection on its
+next call for that chain.
+
+With `light-client`, the embedded smoldot light client syncs the chains from the
+specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
+cannot be combined with the `HOST_CLI_*_WS` overrides or
+`HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
+and keeps one idle connection per chain, since smoldot stops a chain when its
+last connection closes.
+
+CLI commands wait for the chain to sync before their first request, since
+smoldot sends nothing until then and the 30-second limit above would fail it.
+The wait fails if the chain or its relay stalls.
+
+The light client drops PGAS claims on Asset Hub, whose nodes return an
+incomplete proof for the check smoldot runs before broadcasting.
+`pgas-check --submit` refuses to run on it.
+
+`wss://` certificates are verified with the root certificates built into the
+binary, on both backends, not with certificate authorities added to the
+operating system.
 
 ## 15. TrUAPI capability surface
 
@@ -2237,6 +2276,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | --- | --- |
 | `TRUAPI_HOST_LOG` | Per-process `--log-level` override. |
 | `TRUAPI_DEBUGGER_URL` | Default `--debugger` dial. |
+| `TRUAPI_CHAIN_BACKEND` | Default `--chain-backend`: `rpc` or `light-client` (§14.3). |
 | `RUST_LOG` | Full startup tracing filter. |
 | `TRUAPI_HOST_BASE_PATH` | Default `--base-path`. |
 | `TRUAPI_HOST_NO_UPDATE` | Any value disables the self-update check. |
@@ -2246,8 +2286,8 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. |
-| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps, and each overridden endpoint must report that genesis before a command runs. A test preset is also refused when a route carries a real-identity preset's genesis (§14.1). Blank keeps the preset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `TRUAPI_LIGHT_CLIENT=1`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints with their own genesis hashes, keeping the preset's product namespace; see `docs/local-network.md`. Takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`. Unset or blank, the presets are unchanged; an invalid file is an error, and so is setting it together with `TRUAPI_LIGHT_CLIENT=1` or with a `HOST_CLI_*_WS` chain override. `truapi-host local-network-check` validates it without contacting a chain. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps, and each overridden endpoint must report that genesis before a command runs. A test preset is also refused when a route carries a real-identity preset's genesis (§14.1). Blank keeps the preset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints with their own genesis hashes, keeping the preset's product namespace; see `docs/local-network.md`. Takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`. Unset or blank, the presets are unchanged; an invalid file is an error, and so is setting it together with `--chain-backend light-client` or with a `HOST_CLI_*_WS` chain override. `truapi-host local-network-check` validates it without contacting a chain. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; the polkadot preset carries its own (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
@@ -2279,7 +2319,7 @@ These are part of the as-built specification:
 - corrupt core storage is treated as empty after a warning;
 - non-loopback product listeners can bind but reject every TCP frame peer;
 - product text WebSocket frames are accepted as protocol bytes;
-- product-frame and chain outbound queues are unbounded;
+- product-frame outbound queues are unbounded;
 - unknown chain genesis hashes fall back to People;
 - interactive child ANSI styling is stripped rather than parsed; and
 - pairing and signing state are local plaintext test state.

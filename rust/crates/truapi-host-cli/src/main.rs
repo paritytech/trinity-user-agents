@@ -17,12 +17,14 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
+mod cleartext_storage;
 mod contacts;
 mod dotns_read;
 mod frame_server;
 #[cfg(feature = "test-host")]
 mod funding_host;
 mod game;
+mod installation;
 mod local_network;
 mod network;
 mod platform;
@@ -43,8 +45,9 @@ mod update;
 use std::{
 	collections::HashMap,
 	fmt,
-	future::Future,
+	future::{Future, ready},
 	net::{Ipv4Addr, SocketAddr},
+	ops::ControlFlow,
 	path::{Path, PathBuf},
 	process::ExitStatus,
 	str::FromStr,
@@ -58,25 +61,29 @@ use clap::{
 	parser::ValueSource,
 };
 use futures::future::BoxFuture;
+use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
 	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
 	WsDebugSink,
+	chain::ExtrinsicService,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
 	latest::GenericError,
 	platform::{
-		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+		ChatPlatform, ExecutableKind, HostInfo, PermissionStatusHost, PlatformInfo, ProductId,
 	},
 	statement_allowance as alloc,
-	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
+	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
+	time::{Backoff, retry},
 };
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
+	chain::ChainBackend,
 	network::{Network, NetworkConfig},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -121,6 +128,11 @@ struct Cli {
 	/// `pairing-host`, `dev` and `signing-host` read this.
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
+	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
+	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
+	/// and `previewnet` only).
+	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
+	chain_backend: ChainBackend,
 	#[command(subcommand)]
 	command: Command,
 }
@@ -361,10 +373,10 @@ enum ExecutionKind {
 }
 
 impl ExecutionKind {
-	fn context(self) -> ProductExecutionKind {
+	fn context(self) -> ExecutableKind {
 		match self {
-			Self::App => ProductExecutionKind::App,
-			Self::Worker => ProductExecutionKind::Worker,
+			Self::App => ExecutableKind::App,
+			Self::Worker => ExecutableKind::Worker,
 		}
 	}
 
@@ -392,7 +404,7 @@ struct PairingHostArgs {
 	script: Option<PathBuf>,
 	/// Product id the host serves; scopes storage and product accounts.
 	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
+	product_id: ProductId,
 	/// TCP address to serve product WebSocket frames on. When omitted, use a
 	/// private per-process Unix-domain socket.
 	#[arg(long)]
@@ -425,7 +437,7 @@ struct DevArgs {
 	/// Product id the host serves. Defaults to the development server's own
 	/// origin, which is what a product derives for itself locally.
 	#[arg(long = "product-id")]
-	product_id: Option<String>,
+	product_id: Option<ProductId>,
 	/// Network preset that supplies all RPC/backend/genesis config.
 	#[arg(long, value_enum, default_value = "paseo-next-v2")]
 	network: Network,
@@ -450,7 +462,7 @@ struct DevArgs {
 	command: Vec<String>,
 }
 
-#[derive(Args, Default)]
+#[derive(Args)]
 struct SigningHostArgs {
 	/// Execution kind the served product runs as. `worker` installs the CLI's
 	/// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
@@ -462,7 +474,7 @@ struct SigningHostArgs {
 	script: Option<PathBuf>,
 	/// Product id used by scripts and product-scoped operations.
 	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
+	product_id: ProductId,
 	/// Pairing deeplink to add. Managed interactive and serve sessions also
 	/// restore responders for every previously paired host.
 	#[arg(long)]
@@ -513,6 +525,28 @@ struct SigningHostArgs {
 	action: Option<SigningHostAction>,
 }
 
+impl Default for SigningHostArgs {
+	fn default() -> Self {
+		Self {
+			execution_kind: ExecutionKind::default(),
+			script: None,
+			product_id: DEFAULT_PRODUCT_ID.parse().expect("default product id is valid"),
+			deeplink: None,
+			mnemonic: None,
+			account: None,
+			session: None,
+			reserved_username: None,
+			base_path: None,
+			network: Network::default(),
+			frame_listen: None,
+			auto_accept: false,
+			serve: false,
+			product_config: Vec::new(),
+			action: None,
+		}
+	}
+}
+
 #[derive(Subcommand)]
 enum SigningHostAction {
 	/// Execute one slash command and exit.
@@ -542,10 +576,6 @@ fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-	// Install a rustls crypto provider so `wss://` chain connections work;
-	// rustls 0.23 panics without a process-level default provider.
-	let _ = rustls::crypto::ring::default_provider().install_default();
-
 	let matches = Cli::command().get_matches();
 	let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 	let debugger = cli
@@ -596,7 +626,8 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	let outcome = dispatch(cli.command, log_filter, log_controller, debugger).await;
+	let outcome =
+		dispatch(cli.command, log_filter, log_controller, debugger, cli.chain_backend).await;
 
 	if let Some(check) = check {
 		update::finish_background_check(check).await;
@@ -613,6 +644,7 @@ async fn dispatch(
 	log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	// The switch is global but resolved per command, by the three arms that build
 	// a frame server and still before they bind a port. `update`,
@@ -628,7 +660,7 @@ async fn dispatch(
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config().await?;
+			let config = network.cli_config(chain_backend).await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -644,17 +676,19 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::PairingHost(args) => {
-			run_pairing_host(args, log_filter, log_controller, debugger).await
+			run_pairing_host(args, log_filter, log_controller, debugger, chain_backend).await
 		},
-		Command::Dev(args) => run_dev(args, log_filter, log_controller, debugger).await,
+		Command::Dev(args) => {
+			run_dev(args, log_filter, log_controller, debugger, chain_backend).await
+		},
 		Command::SigningHost(args) => {
-			run_signing_host(args, log_filter, log_controller, None, debugger).await
+			run_signing_host(args, log_filter, log_controller, None, debugger, chain_backend).await
 		},
 		Command::IdentityCheck { mnemonic, network } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config().await?, &entropy).await
+			attestation::check_identity(network.cli_config(chain_backend).await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -670,7 +704,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config().await?,
+				network: network.cli_config(chain_backend).await?,
 				entropy,
 				label,
 				link_lite,
@@ -679,15 +713,32 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_alloc_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_pgas_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::Attest { mnemonic, network, username } => {
-			let attested =
-				accounts::attest_mnemonic(network.cli_config().await?, &mnemonic, &username)
-					.await?;
+			let attested = accounts::attest_mnemonic(
+				network.cli_config(chain_backend).await?,
+				&mnemonic,
+				&username,
+			)
+			.await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -715,10 +766,14 @@ async fn run_pgas_check(
 	lookback: u32,
 	submit: bool,
 ) -> Result<()> {
-	use std::sync::Arc;
-
 	use truapi::statement_allowance::pgas;
 
+	if submit && network.chain_backend == chain::ChainBackend::LightClient {
+		bail!(
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
+		);
+	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
@@ -738,26 +793,36 @@ async fn run_pgas_check(
 		None => [0u8; 32],
 	};
 
-	let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let chains = chain::CliChainProvider::new(&network);
+	let people_location = chains.location(network.people_genesis);
+	let people_rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.people_genesis)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let asset_hub_location = chains.location(network.asset_hub_genesis);
+	let asset_hub_rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.asset_hub_genesis)
+			.await
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
+	);
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_state =
-		alloc::fetch_chain_state(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash =
+		alloc::fetch_genesis_hash(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
 		.await
 		.map_err(anyhow::Error::msg)?;
 	println!(
-		"asset hub: metadata V{} specVersion={} txVersion={} genesis=0x{}",
+		"asset hub: metadata V{} specVersion={spec_version} txVersion={transaction_version} \
+		 genesis=0x{}",
 		asset_hub_metadata.metadata_version(),
-		asset_hub_state.spec_version,
-		asset_hub_state.transaction_version,
-		hex::encode(asset_hub_state.genesis_hash),
+		hex::encode(genesis_hash),
 	);
 
 	for candidate in &candidates {
@@ -840,11 +905,13 @@ async fn run_pgas_check(
 		return Ok(());
 	}
 
-	let asset_hub =
-		alloc::ChainContext { metadata: Arc::new(asset_hub_metadata), state: asset_hub_state };
+	let extrinsics = extrinsic_service(&network);
+	let asset_hub_target =
+		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.asset_hub_genesis) };
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: &asset_hub_rpc,
-		asset_hub: &asset_hub,
+		asset_hub_metadata: &asset_hub_metadata,
+		asset_hub_target,
 		people_rpc: &people_rpc,
 		people_metadata: &people_metadata,
 		signer: &signer,
@@ -898,18 +965,23 @@ async fn run_alloc_check(
 		None => [0u8; 32],
 	};
 
-	let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let chains = chain::CliChainProvider::new(&network);
+	let location = chains.location(network.people_genesis);
+	let rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.people_genesis)
+			.await
+			.with_context(|| format!("connect to People ({location})"))?,
+	);
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
-	let chain_state = alloc::fetch_chain_state(&rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash = alloc::fetch_genesis_hash(&rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix =
 		alloc::slot::read_network_suffix(&rpc).await.map_err(anyhow::Error::msg)?;
 	println!(
-		"chain: specVersion={} txVersion={} genesis=0x{}",
-		chain_state.spec_version,
-		chain_state.transaction_version,
-		hex::encode(chain_state.genesis_hash),
+		"chain: specVersion={spec_version} txVersion={transaction_version} genesis=0x{}",
+		hex::encode(genesis_hash),
 	);
 
 	for candidate in &candidates {
@@ -987,10 +1059,13 @@ async fn run_alloc_check(
 		)
 		.await
 		.map_err(anyhow::Error::msg)?;
+		let extrinsics = extrinsic_service(&network);
+		let target_chain =
+			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.people_genesis) };
 		match alloc::register_statement_account_pooled(
 			&rpc,
 			&metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			&scans,
 			&memberships,
@@ -1090,6 +1165,14 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 		network.id
 	);
 	Ok(ApprovalPolicy::AutoAccept)
+}
+
+/// Builds the CLI's own extrinsics over `network`'s chains, with the
+/// network's V5 pipelines as the default extrinsic versions.
+fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
+	let provider = Arc::new(chain::CliChainProvider::new(network));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -1242,6 +1325,7 @@ async fn run_pairing_host(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	let script_projects = script_project_directory(args.base_path.clone());
 	let interactive = args.script.is_none();
@@ -1250,10 +1334,10 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
-		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
+		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1350,6 +1434,7 @@ async fn run_signing_host(
 	log_controller: LogController,
 	dev_command: Option<Vec<String>>,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	if let Err(error) = validate_signing_args(&args) {
 		invalid_invocation(error);
@@ -1365,12 +1450,10 @@ async fn run_signing_host(
 	let exec_command = exec_input
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
-	let product = frame_server::ProductSelection::new(
-		args.product_id.clone(),
-		args.execution_kind.context(),
-	)?;
+	let product =
+		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -1806,7 +1889,12 @@ fn build_signing_runtime(
 	let core_db = futures::executor::block_on(truapi::store::Db::open(
 		truapi::store::core_db_config(&storage_path),
 	))
-	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
+	.with_context(|| core_db_cleanup_request(&storage_path))?;
+	let installation_path = storage_path.join("installation");
+	let installation = Arc::new(installation::CliInstallation::new(installation_path));
+	let cleartext_storage_path = storage_path.join("cleartext-storage.json");
+	let cleartext_storage =
+		Arc::new(cleartext_storage::CliCleartextStorage::new(cleartext_storage_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
@@ -1838,8 +1926,23 @@ fn build_signing_runtime(
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
+	runtime.set_installation_provider(installation);
+	runtime.set_encrypted_storage(cleartext_storage);
+	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
+}
+
+fn core_db_cleanup_request(storage_path: &Path) -> String {
+	let database = storage_path.join(truapi::store::CORE_DB_FILE).display().to_string();
+	let files = ["", "-wal", "-shm"].map(|suffix| format!("{database}{suffix}"));
+	let cleanup = shlex::try_join(["rm", "-f"].into_iter().chain(files.iter().map(String::as_str)))
+		.expect("paths contain no NUL byte");
+	format!(
+		"cannot open the core database {database}. A newer truapi-host may have written it, \
+		 or it is damaged. Run a newer truapi-host, or delete it to start clean; the session \
+		 keeps its accounts and pairings:\n  {cleanup}"
+	)
 }
 
 impl Drop for SigningHostSession {
@@ -1957,6 +2060,11 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
+/// Pauses between restarts of a paired responder, also used when removing a
+/// host that disconnected.
+const RESPONDER_RETRY_PAUSES: Backoff =
+	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+
 fn spawn_supervised_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
@@ -1964,59 +2072,66 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let mut retry_delay = std::time::Duration::from_secs(1);
-		loop {
-			let result = runtime.resume_pairing(peer).await;
-			match result {
-				Ok(ResponderExit::PeerDisconnected) => {
-					if let Some((catalog, profile)) = &persisted {
-						loop {
-							match catalog.remove_paired_host(profile, &peer.statement_account_id) {
-								Ok(_) => break,
-								Err(error) => {
-									terminal_ui::output_event(SystemEvent::SigningHostError {
-										reason: format!(
-											"failed to remove disconnected paired device: {error}"
-										),
-									});
-									tokio::time::sleep(retry_delay).await;
-									retry_delay =
-										(retry_delay * 2).min(std::time::Duration::from_secs(30));
-								},
-							}
-						}
-						if let Err(error) = runtime
-							.untrack_statement_renewal_account(&peer.statement_account_id)
-							.await
-						{
-							terminal_ui::output_event(SystemEvent::SigningHostError {
-								reason: format!(
-									"failed to stop renewing disconnected paired device: {}",
-									error.reason
-								),
-							});
-						}
-					}
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::PeerDisconnected),
-					});
-					return;
-				},
-				Ok(ResponderExit::SubscriptionEnded) => {
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
-					});
-				},
-				Err(error) => {
-					terminal_ui::output_event(SystemEvent::SigningHostError {
+		let mut pauses = RESPONDER_RETRY_PAUSES;
+		retry(
+			|| async {
+				match runtime.resume_pairing(peer).await {
+					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
+					Ok(exit @ ResponderExit::SubscriptionEnded) => {
+						ControlFlow::Continue(SystemEvent::SigningHostExit {
+							outcome: format!("{exit:?}"),
+						})
+					},
+					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
 						reason: error.reason,
-					});
-				},
-			}
-			tokio::time::sleep(retry_delay).await;
-			retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(30));
+					}),
+				}
+			},
+			|event| {
+				terminal_ui::output_event(event);
+				pauses.next_pause()
+			},
+		)
+		.await;
+		if let Some((catalog, profile)) = &persisted {
+			forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
 		}
+		terminal_ui::output_event(SystemEvent::SigningHostExit {
+			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+		});
 	})
+}
+
+/// Remove a disconnected pairing host from the session and stop renewing its
+/// statement allowance.
+async fn forget_disconnected_peer(
+	runtime: &SigningHostRuntime,
+	peer: PairedSsoPeer,
+	catalog: &SessionCatalog,
+	profile: &SessionProfile,
+	pauses: &mut Backoff,
+) {
+	retry(
+		|| {
+			ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
+				Ok(_) => ControlFlow::Break(()),
+				Err(error) => ControlFlow::Continue(error),
+			})
+		},
+		|error| {
+			terminal_ui::output_event(SystemEvent::SigningHostError {
+				reason: format!("failed to remove disconnected paired device: {error}"),
+			});
+			pauses.next_pause()
+		},
+	)
+	.await;
+	if let Err(error) = runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
+	{
+		terminal_ui::output_event(SystemEvent::SigningHostError {
+			reason: format!("failed to stop renewing disconnected paired device: {}", error.reason),
+		});
+	}
 }
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
@@ -2118,9 +2233,15 @@ async fn run_dev(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
-	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
+	let product_id = match args.product_id {
+		Some(product_id) => product_id,
+		None => format!("localhost:{}", args.app_port)
+			.parse()
+			.expect("localhost with a u16 port is a valid product id; qed"),
+	};
 	let signing = SigningHostArgs {
 		product_id,
 		network: args.network,
@@ -2136,7 +2257,8 @@ async fn run_dev(
 		..Default::default()
 	};
 	let command = (!args.command.is_empty()).then_some(args.command);
-	run_signing_host(signing, initial_log_filter, log_controller, command, debugger).await
+	run_signing_host(signing, initial_log_filter, log_controller, command, debugger, chain_backend)
+		.await
 }
 
 /// Run the wrapped development command, returning the code to exit with.
@@ -4312,6 +4434,47 @@ mod cli_tests {
 		);
 	}
 
+	#[tokio::test]
+	async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
+		// Running an older build on a session a newer build migrated must tell
+		// the user how to restart cleanly instead of only reporting the failure.
+		let root = tempfile::tempdir().unwrap();
+		let profile = root.path().join("my session");
+		std::fs::create_dir_all(&profile).unwrap();
+		let database = profile.join(truapi::store::CORE_DB_FILE);
+		rusqlite::Connection::open(&database)
+			.unwrap()
+			.pragma_update(None, "user_version", 1000)
+			.unwrap();
+		let build = || {
+			build_signing_runtime(
+				crate::network::Network::PaseoNextV2.config(),
+				profile.clone(),
+				profile.join("storage"),
+				ApprovalPolicy::AutoAccept,
+				None,
+				None,
+				None,
+			)
+		};
+
+		let error = build().err().expect("a newer schema is rejected");
+
+		let database = database.display();
+		let cleanup = format!("rm -f '{database}' '{database}-wal' '{database}-shm'");
+		assert_eq!(
+			error.to_string(),
+			format!(
+				"cannot open the core database {database}. A newer truapi-host may have \
+				 written it, or it is damaged. Run a newer truapi-host, or delete it to \
+				 start clean; the session keeps its accounts and pairings:\n  {cleanup}"
+			)
+		);
+		let status = std::process::Command::new("sh").arg("-c").arg(&cleanup).status().unwrap();
+		assert!(status.success());
+		build().expect("the session starts cleanly after cleanup");
+	}
+
 	#[test]
 	fn pairing_deeplink_becomes_a_public_persistable_host_record() {
 		use truapi::host_logic::sso::pairing::{
@@ -4366,6 +4529,26 @@ mod cli_tests {
 				second_abort.is_finished(),
 			),
 			([[1; 32], [2; 32]].into_iter().collect(), true, false,)
+		);
+	}
+
+	/// The light client drops a PGAS claim, so a submit there would only wait
+	/// out its timeout. It is refused before a key is derived or a chain dialed.
+	#[tokio::test]
+	async fn pgas_check_refuses_to_submit_on_the_light_client() {
+		let network = NetworkConfig {
+			chain_backend: chain::ChainBackend::LightClient,
+			..Network::default().config()
+		};
+
+		let error = run_pgas_check(String::new(), network, Some("00".repeat(32)), 8, true)
+			.await
+			.expect_err("a submit on the light client is refused");
+
+		assert_eq!(
+			error.to_string(),
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
 		);
 	}
 
@@ -4579,7 +4762,7 @@ mod cli_tests {
 			panic!("expected dev command");
 		};
 
-		assert_eq!(args.product_id.as_deref(), Some("playground.paseo"));
+		assert_eq!(args.product_id.as_ref().map(ProductId::as_str), Some("playground.paseo"));
 		assert_eq!(args.app_port, 3000);
 		assert!(args.command.is_empty());
 	}
@@ -4610,9 +4793,9 @@ mod cli_tests {
 			let directory = socket.parent().context("socket has no directory")?;
 			assert!(socket.exists());
 			let product = frame_server::ProductSelection::new(
-				"script-cleanup.testnet".to_string(),
-				ProductExecutionKind::App,
-			)?;
+				ProductId::for_test("script-cleanup.testnet"),
+				ExecutableKind::App,
+			);
 			let result = with_frame_server(
 				Arc::new(UnusedRuntimeFactory),
 				product,

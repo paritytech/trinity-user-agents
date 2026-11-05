@@ -231,7 +231,7 @@ mod tests {
 		inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for MemStorage {
 		async fn read_core_storage(
 			&self,

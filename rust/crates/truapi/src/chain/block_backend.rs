@@ -6,12 +6,16 @@ use super::HashAndNumber;
 use crate::chain_runtime::RuntimeFailure;
 
 /// Whether an included extrinsic dispatched successfully.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DispatchOutcome {
 	/// `System.ExtrinsicSuccess` was emitted for it.
 	Succeeded,
-	/// `System.ExtrinsicFailed` was emitted for it.
-	Failed,
+	/// `System.ExtrinsicFailed` was emitted for it, with this dispatch error
+	/// as named by the metadata of the runtime that produced the block. An
+	/// error that does not decode reads
+	/// `undecodable dispatch error 0x<fields>: <cause>`, where `<fields>` is
+	/// the hex of the event's encoded fields, the dispatch error first.
+	Failed(String),
 }
 
 /// Block data at any block the node still keeps.

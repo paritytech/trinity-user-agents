@@ -18,7 +18,6 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -30,18 +29,18 @@ use truapi::{
 	latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
-		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
+		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
 
 use crate::{
 	bulletin_lookup::{BitswapRpc, BulletinLookup},
-	chain::WsChainProvider,
+	chain::CliChainProvider,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
 };
 
@@ -167,9 +166,10 @@ impl CliStoragePaths {
 
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
-	chain: WsChainProvider,
+	chain: Arc<CliChainProvider>,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
+	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -202,7 +202,7 @@ impl CliPlatform {
 	/// rather than assume it.
 	#[cfg(test)]
 	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
-		self.chain.routed_url(genesis_hash)
+		self.chain.location(*genesis_hash)
 	}
 
 	/// Build a platform whose chain provider connects to the network's People
@@ -252,9 +252,12 @@ impl CliPlatform {
 		let device_storage =
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
+		let chain = Arc::new(CliChainProvider::new(&network));
+		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.bulletin_genesis);
 		Arc::new(Self {
-			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
+			chain,
 			chains: network.host_chain_set(),
+			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
@@ -263,7 +266,7 @@ impl CliPlatform {
 			device_storage_path,
 			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
 			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+			bulletin: Arc::new(BulletinLookup::new(bitswap)),
 			next_notification_id: AtomicU32::new(1),
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),
@@ -489,7 +492,7 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
 	kind.parse(&line).unwrap_or(PermissionDecision::Deny)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for CliPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
@@ -542,7 +545,7 @@ impl ProductStorage for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for CliPlatform {
 	async fn begin_operation(
 		&self,
@@ -565,7 +568,7 @@ impl ProductOperations for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for CliPlatform {
 	async fn read_core_storage(
 		&self,
@@ -608,7 +611,7 @@ impl CoreStorage for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CliPlatform {
 	async fn connect(
 		&self,
@@ -618,7 +621,7 @@ impl ChainProvider for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Navigation for CliPlatform {
 	/// The core has already validated the URL, applied the open-URL
 	/// permission and normalized product destinations to `polkadot://`, so
@@ -654,7 +657,7 @@ fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), StorageError
 		.map_err(|source| StorageError::RecordNavigation { path: path.to_path_buf(), source })
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Notifications for CliPlatform {
 	async fn push_notification(
 		&self,
@@ -734,7 +737,7 @@ fn emit_notification_event(ui: Option<&UiHandle>, event: SystemEvent) {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl PermissionStatusHost for CliPlatform {
 	async fn device_permission_status(
 		&self,
@@ -747,7 +750,7 @@ impl PermissionStatusHost for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Permissions for CliPlatform {
 	async fn device_permission(
 		&self,
@@ -782,7 +785,16 @@ impl Permissions for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
+impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, api::GenericError> {
+		Ok(self.extension_versions.clone())
+	}
+}
+
+#[async_trait::async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(
 		&self,
@@ -853,7 +865,7 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 		.or_else(|| info.full_username.as_deref().filter(|value| !value.is_empty()))
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for CliPlatform {
 	async fn confirm_permission(
 		&self,
@@ -994,7 +1006,27 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+        UserConfirmationReview::NftPurseDrain(review) => (
+            "move NFT purse items",
+            format!(
+                "Product {} requested to move {} item(s) out of purse {}, owned by {}, to {}.",
+                review.calling_product_id,
+                review.item_count,
+                review.from_purse,
+                review.owner,
+                drain_destination(&review.destination),
+            ),
+        ),
     }
+}
+
+fn drain_destination(destination: &NftPurseDrainDestination) -> String {
+	match destination {
+		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
+		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+		NftPurseDrainDestination::Cheque => "a cheque".to_owned(),
+		NftPurseDrainDestination::Refund => "the sender of a deposited cheque".to_owned(),
+	}
 }
 
 impl ThemeHost for CliPlatform {
@@ -1023,7 +1055,7 @@ impl LocaleHost for CliPlatform {
 impl PreimageHost for CliPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		self.bulletin.subscribe(key)
 	}
@@ -1038,7 +1070,7 @@ struct JsonMap {
 #[serde(rename_all = "camelCase")]
 struct ProductStorageDocument {
 	version: u32,
-	product_id: String,
+	product_id: ProductId,
 	values: HashMap<String, String>,
 }
 
@@ -1101,17 +1133,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 		);
 		return None;
 	}
-	let normalized = document
-		.product_id
-		.parse::<ProductId>()
-		.inspect_err(|error| {
-			tracing::warn!(
-				path = %path.display(),
-				%error,
-				"product storage contains an invalid product id"
-			);
-		})
-		.ok()?;
+
 	let values = document
 		.values
 		.into_iter()
@@ -1125,7 +1147,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 			);
 		})
 		.ok()?;
-	Some((normalized, values))
+	Some((document.product_id, values))
 }
 
 fn save_product_storage(
@@ -1139,7 +1161,7 @@ fn save_product_storage(
 	})?;
 	let document = ProductStorageDocument {
 		version: 1,
-		product_id: product_id.to_string(),
+		product_id: product_id.clone(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&document)?;

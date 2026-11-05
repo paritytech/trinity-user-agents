@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
@@ -12,6 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.executableKindLabel
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -27,7 +28,7 @@ class ManifestParserTest {
 
     private fun rejectsExecutable(rawText: String, kind: ExecutableKind) = assertTrue(
         "expected a rejection for $rawText",
-        parser.parseExecutable(rawText, kind, host("${kind.manifestKind}.coinflip.dot")).isFailure,
+        parser.parseExecutable(rawText, kind, host("${executableKindLabel(kind)}.coinflip.dot")).isFailure,
     )
 
     /**
@@ -48,6 +49,7 @@ class ManifestParserTest {
         ).getOrNull()
 
         assertEquals("Coinflip", root?.displayName)
+        assertEquals("A game", root?.description)
         assertEquals(CID, root?.icon?.cid?.toString())
         assertEquals(ProductIcon.Format.PNG, root?.icon?.format)
     }
@@ -63,6 +65,16 @@ class ManifestParserTest {
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d"}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"format":"png"}}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"cid":"not-a-cid","format":"png"}}""")
+    }
+
+    @Test
+    fun `a blank description counts as none, so a chat preview falls back past it`() {
+        val root = parser.parseRoot(
+            """{"${'$'}v":1,"displayName":"Coinflip","description":"  ","icon":{"cid":"$CID","format":"png"}}"""
+        ).getOrNull()
+
+        assertEquals("Coinflip", root?.displayName)
+        assertNull(root?.description)
     }
 
     @Test

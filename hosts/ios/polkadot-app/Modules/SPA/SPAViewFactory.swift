@@ -72,7 +72,7 @@ enum SPAViewFactory {
             chainRegistry: chainRegistry,
             usernameStorage: UsernameStorage(),
             localStorage: ProductsLocalStorage(
-                productId: configuration.page.host.toDotDomain(),
+                productId: configuration.productDomain,
                 settingsManager: SettingsManager.shared
             ),
             notificationService: UserNotificationService.shared,
@@ -87,7 +87,7 @@ enum SPAViewFactory {
         )
 
         let nativeApi = nativeApiFactory.makeApi(
-            productId: configuration.page.host.toDotDomain(),
+            productId: configuration.productDomain,
             routers: routers
         )
 
@@ -100,15 +100,15 @@ enum SPAViewFactory {
         let interactor = SPANativeRuntimeInteractor(
             nativeApi: nativeApi,
             scriptsFactory: scriptsFactory,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
+            presenceRegistry: RootDependencyLocator.getDependency(),
             schemeHandlerProxy: schemeHandlerProxy,
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),
             chatProviderFactory: ChatContactDataProviderFactory(),
             workerManager: workerFacade.manager,
-            workerProductId: configuration.page.host.toDotDomain()
+            workerProductId: configuration.productDomain
         )
 
         let presenter = SPAPresenter(
@@ -204,8 +204,7 @@ extension SPAViewFactory {
         let runtimeFactory = SPARustRuntimeFactory(environment: .init(
             rust: rustEnvironment,
             configuration: configuration,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
             schemeHandlerProxy: schemeHandlerProxy,
             routers: routers
         ))
@@ -213,6 +212,8 @@ extension SPAViewFactory {
         let interactor = SPARustRuntimeInteractor(
             runtimeFactory: runtimeFactory,
             productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
+            presenceRegistry: RootDependencyLocator.getDependency(),
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),

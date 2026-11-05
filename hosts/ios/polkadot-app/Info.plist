@@ -85,6 +85,8 @@
 	<string>Face ID is used to authorize in Polkadot App</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Polkadot uses your local network for peer-to-peer games and linked devices.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Please allow location access to interact with features in the Polkadot app</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Please allow microphone access to interact with features in the Polkadot app</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

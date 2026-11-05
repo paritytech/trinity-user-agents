@@ -1,4 +1,5 @@
 import Foundation
+import struct TrUAPIHost.ProductId
 
 enum ChatsComparator {
     static func lastMessageComparator(
@@ -41,8 +42,9 @@ extension Chat.Peer {
     /// Not gated on the host-placement switch: with it off there is no placed bot to pin anyway,
     /// so reading it would only make sorting depend on a singleton.
     var isPinnedToTop: Bool {
-        if case let .chatExtension(extensionId, _) = self {
-            return HostPlacedProducts.contains(productId: extensionId)
+        if case let .chatExtension(extensionId, _) = self,
+           let productId = try? ProductId(extensionId) {
+            return HostPlacedProducts.contains(productId: productId)
         }
         return false
     }

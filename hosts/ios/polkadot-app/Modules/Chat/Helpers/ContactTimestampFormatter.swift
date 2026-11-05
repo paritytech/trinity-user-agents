@@ -58,7 +58,8 @@ final class ContactTimestampFormatter: TimestampFormatting {
         }
 
         // Yesterday (calendar day comparison)
-        if calendar.isDateInYesterday(date) {
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) {
             return .init(localized: .chatTimestampYesterday)
         }
 

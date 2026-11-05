@@ -621,7 +621,7 @@ impl SsoRequestService {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl HostSession for SsoRequestService {
 	/// Shared session holder for connection-status subscriptions.
 	fn session_state(&self) -> Arc<SessionState> {

@@ -146,6 +146,12 @@ ignores the Google values at runtime.
 
 ## How it works
 
+Product identities use the host SDK
+[`ProductId`](../../android/truapi-host/README.md#public-surface), constructed
+through Rust and held as Kotlin values. Navigation applies the active dotNS
+network and executable-owner rules separately. Room and protocol serializers
+keep the identifier string representation on disk and on the wire.
+
 Polkadot Android is a self-custodial superapp: your keys are created on your phone, stay on your phone, and everything else — identity, chat, payments, apps — is built on top of them using Polkadot's public chains instead of company servers.
 
 ### What it does

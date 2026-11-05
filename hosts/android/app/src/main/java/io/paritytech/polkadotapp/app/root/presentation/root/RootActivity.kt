@@ -232,12 +232,13 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     private fun setupRootNavBar() {
+        val navHost = findViewById<View>(R.id.rootNavHost)
         val composeView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val chainsHealth by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 PolkadotTheme {
-                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth)
+                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth, backdropSource = navHost)
                 }
             }
         }

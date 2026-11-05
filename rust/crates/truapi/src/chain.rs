@@ -1,5 +1,5 @@
 //! Chain capabilities shared by host services: heads, block data, storage
-//! watches, and transaction validation and submission.
+//! watches, transaction validation and submission, and contract calls.
 //!
 //! Each capability is its own trait, and a consumer takes only the ones it
 //! uses as `Arc<dyn …>`. Every method names the chain by its genesis hash, so
@@ -8,6 +8,11 @@
 //! watches and validation go through the legacy JSON-RPC methods, which
 //! reach any block the node still keeps, and submission goes through the
 //! shared chainHead client.
+//!
+//! Contract calls are the exception: a [`RuntimeApiCaller`] is taken as
+//! `&mut impl` and its transport selects the chain and block, and an
+//! [`EvmContractCaller`] prepares and executes writes on the one chain it
+//! was built for.
 //!
 //! `Ok(None)` means the node knows the block, or the extrinsic in it, does
 //! not exist. A read the node cannot serve, such as the body or events of a
@@ -19,26 +24,46 @@
 use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
+mod account_nonces;
 mod block_backend;
+mod extrinsic;
 mod heads;
 mod mortality;
+mod revive;
+mod runtime_api;
 mod storage_watch;
 mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
+pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
+pub use extrinsic::{
+	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
+	ExtrinsicService, ExtrinsicServiceDeps, ExtrinsicVersion, InheritedImplication,
+	SubstrateSigner, TransactionExtension,
+};
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
+pub use revive::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
+pub use runtime_api::RuntimeApiCaller;
 pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageWatchError,
-	WatchedHead, WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
+	StorageWatchError, WatchedHead, WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
+#[cfg(test)]
+pub use revive::{ContractResult, ExecReturnValue, RawDispatchError, StorageDeposit, Weight};
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub use tests::{
+	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, live_asset_hub,
+	live_asset_hub_genesis, method_count, serve, tokio_spawner,
+};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

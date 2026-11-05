@@ -4,7 +4,6 @@
 
 use super::product_consent::ProductConsent;
 use crate::platform::{ProductContext, ProductId};
-use async_trait::async_trait;
 use truapi::{
 	CallContext, CancellationReason,
 	latest::{
@@ -405,7 +404,7 @@ pub enum GrantKeeping {
 }
 
 /// Host account authority used by product runtimes.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;

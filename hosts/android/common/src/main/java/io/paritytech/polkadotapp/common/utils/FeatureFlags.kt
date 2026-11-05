@@ -10,11 +10,12 @@ object FeatureFlags {
             FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
+            // Safetynet reports the same native host telemetry as the other non-release builds.
+            FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
             FeatureOption.ARBITRARY_PRODUCTS,
             FeatureOption.BROWSE_TAB,
-            FeatureOption.FULL_TAB_BAR,
             FeatureOption.ALL_CHAT_EXTENSIONS,
             FeatureOption.LINKED_DEVICES,
             FeatureOption.PRODUCT_SETTINGS,
@@ -33,6 +34,7 @@ enum class FeatureOption {
     SHORT_WORKER_BACKOFF,
     SAMPLE_BOT,
     DEBUG_MENU,
+    HOST_TELEMETRY,
 
     // Opening a product from a development server on the developer's machine. The server's address
     // becomes a `localhost` product, which the core grants a development wildcard, so this is the debug
@@ -44,10 +46,6 @@ enum class FeatureOption {
     // The chain-health indicators repeated in the tab bar, with the expandable details above it. Carried
     // by its own BuildConfig field rather than SAFETY_MODE, which is also set on release builds.
     TAB_BAR_CONNECTIVITY_INDICATOR,
-
-    // The tab bar in its full form: item labels, and the scanner wrapped in the center pill next to the
-    // open-tabs button. Off, the bar is icons only and the scanner is a bare icon.
-    FULL_TAB_BAR,
 
     // The "Debug features" card under the balance card: the holdings breakdown, the faucet top-up and
     // log sharing. Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which

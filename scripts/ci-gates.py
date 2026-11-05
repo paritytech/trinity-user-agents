@@ -13,6 +13,14 @@ file. To route a new path, add it to the list below that describes it:
   hash would catch.
 - `hosts.<host>.ci`: a workflow or action that runs the host's suite but does
   not change the app.
+- `packages.<package>`: every input of a package a host consumes, such as the
+  Swift package under `ios/`. A package list is complete on its own, since a
+  package is often built from less than the whole core.
+
+A host may name a `push_workflow`, a workflow that runs its suite on a push to
+main through `on.push.paths` because it lives outside ci.yml. Those paths must
+be exactly the host's `core`, `tree`, `full` and `ci` entries, each directory
+as `<dir>/**`, and `--check` fails while they differ.
 
 For each host this prints three gates as `name=true|false` lines, the format
 `$GITHUB_OUTPUT` takes:
@@ -24,14 +32,18 @@ For each host this prints three gates as `name=true|false` lines, the format
   different. A workflow triggered by a merge reads this to decide whether
   there is a new build.
 
+and one gate per package, `package_<package>`, true when one of its inputs
+changed.
+
     ci-gates.py --base <rev> [--head <rev>]           gates for base..head
     ci-gates.py --base <rev> [--head <rev>] --force   the same, with every
-                                                      core and tree gate true
+                                                      core, tree and package
+                                                      gate true
     ci-gates.py --all                                 every gate true
     ci-gates.py --check                               validate the registry
 
-`--force` is for a push to main, where every suite runs so each landed commit
-is checked in full, while `<host>_changed` still says whether the push changed
+`--force` is for a push to main, where every suite and package check runs so
+each landed commit is checked in full, while `<host>_changed` still says whether the push changed
 the app. `--all` is for a run with nothing to diff against, such as a dispatch.
 """
 
@@ -80,7 +92,23 @@ def gates(registry: dict, paths: list[str] | None, force: bool = False) -> dict[
         result[f"{host}_core"] = core or force
         result[f"{host}_tree"] = suite or force
         result[f"{host}_changed"] = core or tree
+    for package, entries in registry.get("packages", {}).items():
+        result[f"package_{package}"] = hit(entries) or force
     return result
+
+
+def push_paths(workflow: str) -> list[str]:
+    """The quoted entries of the first `paths:` list in a workflow."""
+    entries, inside = [], False
+    for line in (ROOT / workflow).read_text().splitlines():
+        stripped = line.strip()
+        if stripped == "paths:":
+            inside = True
+        elif inside and stripped.startswith("- "):
+            entries.append(stripped[2:].strip().strip('"').strip("'"))
+        elif inside and stripped and not stripped.startswith("#"):
+            break
+    return entries
 
 
 def is_gitlink(entry: str) -> bool:
@@ -101,6 +129,8 @@ def check(registry: dict) -> list[str]:
             if name not in spec:
                 problems.append(f"hosts.{host} has no {name} list")
             lists[f"hosts.{host}.{name}"] = spec.get(name, [])
+    for package, entries in registry.get("packages", {}).items():
+        lists[f"packages.{package}"] = entries
     for where, entries in lists.items():
         if len(set(entries)) != len(entries):
             problems.append(f"{where} lists an entry more than once")
@@ -114,6 +144,18 @@ def check(registry: dict) -> list[str]:
         for entry in spec.get("tree", []):
             if entry in registry["core"]:
                 problems.append(f"hosts.{host}.tree: {entry} is shared core, not the host's own")
+        workflow = spec.get("push_workflow")
+        if workflow:
+            if not (ROOT / workflow).is_file():
+                problems.append(f"hosts.{host}.push_workflow: {workflow} is not a file")
+                continue
+            entries = set(registry["core"]).union(*(spec.get(n, []) for n in HOST_LISTS))
+            want = {e + "**" if e.endswith("/") else e for e in entries}
+            have = set(push_paths(workflow))
+            for path in sorted(want - have):
+                problems.append(f"{workflow}: on.push.paths is missing {path}")
+            for path in sorted(have - want):
+                problems.append(f"{workflow}: on.push.paths has {path}, which hosts.{host} does not")
     return problems
 
 
@@ -124,7 +166,7 @@ def main() -> int:
     mode.add_argument("--all", action="store_true", help="every gate true")
     mode.add_argument("--check", action="store_true", help="validate the registry")
     parser.add_argument("--head", default="HEAD", help="revision to diff to")
-    parser.add_argument("--force", action="store_true", help="force every core and tree gate")
+    parser.add_argument("--force", action="store_true", help="force every core, tree and package gate")
     args = parser.parse_args()
 
     registry = load()

@@ -41,6 +41,8 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     /// Stops every worker this manager is running. Called when the session
     /// it was built for ends.
     func shutdown() async
+
+    func reload(productId: ProductId) async
 }
 
 /// Builds the pieces one product's worker needs: its archive, its execution and
@@ -48,8 +50,7 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 protocol TrUAPIWorkerBuilding: Sendable {
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
+        context: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime
 }
 
@@ -57,7 +58,6 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private struct Running {
         let boot: Boot
         let runtime: TrUAPIWorkerRuntime
-        let pocket: ProductPocketHostBridge
     }
 
     /// What the manager holds for one product. A boot claims the product
@@ -82,10 +82,19 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// One attempt to bring a product's worker up, as an identity. A stop and a
     /// restart can both land while an attempt is still in flight, and the one
     /// that finishes last must not clear what the others left.
-    private final class Boot {}
+    private final class Boot: Sendable {}
+
+    /// What the transition queue applies: the ledger's transitions, the
+    /// reboot of a worker whose engine died, and the reload of one whose
+    /// archive changed. Reboots and reloads share the queue so that neither
+    /// overtakes a stop the ledger sent before it.
+    private enum Command: Sendable {
+        case transition(WorkerTransition)
+        case reboot(Boot)
+        case reload
+    }
 
     private let builder: any TrUAPIWorkerBuilding
-    private let collection: any PocketCardStore
     /// The core's reference ledger, which is what decides whether a worker runs.
     private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
     /// How long a request waits for the worker it asked for. A boot that fails
@@ -105,18 +114,16 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// Transitions are booked one at a time, in the order the ledger sent them.
     /// Handing each to its own task leaves the order to the scheduler, where a
     /// start and the stop that cancels it can overtake each other.
-    private let transitions = AsyncStream<(ProductId, WorkerTransition)>.makeStream()
+    private let transitions = AsyncStream<(ProductId, Command)>.makeStream()
     private let executionSubject = AsyncCurrentValueSubject<[ProductId: TrUAPIProductExecutionProtocol]>([:])
 
     init(
         builder: any TrUAPIWorkerBuilding,
-        collection: any PocketCardStore,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
-        self.collection = collection
         self.references = references
         self.startupWindow = startupWindow
         self.logger = logger
@@ -155,8 +162,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func drainTransitions() async {
-        for await (productId, transition) in transitions.stream {
-            await apply(transition, to: productId)
+        for await (productId, command) in transitions.stream {
+            switch command {
+            case let .transition(transition): await apply(transition, to: productId)
+            case let .reboot(boot): await reboot(productId, after: boot)
+            case .reload: await restart(productId)
+            }
         }
     }
 
@@ -176,8 +187,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         }
     }
 
+    nonisolated func reload(productId: ProductId) async {
+        transitions.continuation.yield((productId, .reload))
+    }
+
     nonisolated func demandChanged(productId: ProductId, transition: WorkerTransition) {
-        transitions.continuation.yield((productId, transition))
+        transitions.continuation.yield((productId, .transition(transition)))
     }
 
     nonisolated func context(of productId: ProductId) -> ProductWorkerContext {
@@ -220,33 +235,28 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func bringUp(_ productId: ProductId, as boot: Boot) async {
-        let bridge = ProductPocketHostBridge(productId: productId, collection: collection)
-
         do {
+            logger.debug("Starting worker for \(productId)...")
+
             let runtime = try await builder.makeRuntime(
                 productId: productId,
-                context: context(of: productId),
-                pocket: bridge
+                context: context(of: productId)
             )
             guard held[productId]?.belongsTo(boot) == true else {
                 await runtime.dispose()
                 return
             }
-            held[productId] = .running(Running(boot: boot, runtime: runtime, pocket: bridge))
+            held[productId] = .running(Running(boot: boot, runtime: runtime))
 
-            // The worker's card list is served from the bridge's snapshot, and
-            // the script that subscribes to it comes up inside `start()`.
-            await bridge.begin()
-            try await runtime.start()
+            try await runtime.start { [weak self] in
+                self?.transitions.continuation.yield((productId, .reboot(boot)))
+            }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-            // Published before the bridge republishes, because republishing
-            // reads the execution back out of this map.
             executionSubject.send(executionSubject.value.merging([productId: runtime.execution]) { _, new in new })
-            bridge.start { [weak self] cards in
-                self?.publishCards(cards, of: productId)
-            }
+
+            logger.debug("Started worker for \(productId)...")
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -261,20 +271,30 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         }
     }
 
+    private func restart(_ productId: ProductId) async {
+        guard held[productId] != nil else { return }
+
+        await stop(productId)
+        start(productId)
+    }
+
+    private func reboot(_ productId: ProductId, after boot: Boot) async {
+        guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
+
+        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
+        await stop(productId)
+        start(productId)
+    }
+
     private func stop(_ productId: ProductId) async {
         // A boot in flight is cleared here and disposes what it built when it
         // finds its claim gone, so there is nothing else to tear down yet.
         guard case let .running(worker)? = held.removeValue(forKey: productId) else { return }
 
-        worker.pocket.stop()
         var executions = executionSubject.value
         executions[productId] = nil
         executionSubject.send(executions)
 
         await worker.runtime.dispose()
-    }
-
-    private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {
-        executionSubject.value[productId]?.notifyPocketCardsChanged(cards: cards)
     }
 }

@@ -45,7 +45,9 @@ impl RuntimeChainProvider for SingleNodeChainProvider {
 	}
 }
 
-fn live_asset_hub_genesis() -> H256 {
+/// Genesis of the live Asset Hub, or of the one `LIVE_ASSET_HUB_GENESIS`
+/// names.
+pub fn live_asset_hub_genesis() -> H256 {
 	let hex = std::env::var("LIVE_ASSET_HUB_GENESIS").unwrap_or_else(|_| ASSET_HUB_GENESIS.into());
 	let bytes = hex::decode(hex.trim_start_matches("0x")).expect("LIVE_ASSET_HUB_GENESIS is hex");
 	H256::from_slice(&bytes)
@@ -53,14 +55,24 @@ fn live_asset_hub_genesis() -> H256 {
 
 /// The chain runtime over the live node, its tasks on the test's runtime.
 fn live_chain_runtime(genesis: H256) -> Arc<dyn WatchedStorage> {
+	Arc::new(live_asset_hub(genesis))
+}
+
+/// The chain runtime over the live Asset Hub node with `genesis`, or the one
+/// `LIVE_ASSET_HUB_WS` names, its tasks on the test's runtime.
+pub fn live_asset_hub(genesis: H256) -> ChainRuntime {
 	let url = std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.into());
 	let source = ChainSource::rpc_node(url.parse().expect("LIVE_ASSET_HUB_WS is a URL"));
 	let provider = EmbeddedChainProvider::builder().chain(genesis.0, source).build();
+	ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider)), tokio_spawner())
+}
+
+/// Runs tasks on the test's tokio runtime.
+pub fn tokio_spawner() -> Spawner {
 	let handle = tokio::runtime::Handle::current();
-	let spawner: Spawner = Arc::new(move |task| {
+	Arc::new(move |task| {
 		handle.spawn(task);
-	});
-	Arc::new(ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider)), spawner))
+	})
 }
 
 /// The next report of `changes`, failing the test on an error or a stall.
@@ -75,8 +87,8 @@ async fn next_report_within_timeout<K, V>(
 async fn first_three_timestamps_at(head: WatchedHead) -> Vec<(u64, u64)> {
 	let genesis = live_asset_hub_genesis();
 	let address = dynamic::<(), u64>("Timestamp", "Now");
-	let watch = live_chain_runtime(genesis).watch_entry_changes(genesis, head, address, vec![()]);
-	let mut changes = watch.await.expect("the watch starts");
+	let mut changes =
+		live_chain_runtime(genesis).watch_entry_changes(genesis, head, address, vec![()]);
 	let mut timestamps = Vec::new();
 	for _ in 0..3 {
 		let report = next_report_within_timeout(&mut changes).await;
@@ -128,13 +140,12 @@ async fn a_thousand_keys_are_answered_in_one_read() {
 	let genesis = live_asset_hub_genesis();
 	let accounts: Vec<([u8; 32],)> = (0..BATCH_SIZE).map(distinct_unused_account).collect();
 	let address = dynamic::<([u8; 32],), Value>("System", "Account");
-	let watch = live_chain_runtime(genesis).watch_entry_changes(
+	let mut changes = live_chain_runtime(genesis).watch_entry_changes(
 		genesis,
 		WatchedHead::Finalized,
 		address,
 		accounts,
 	);
-	let mut changes = watch.await.expect("the watch starts");
 
 	let started = std::time::Instant::now();
 	let report = next_report_within_timeout(&mut changes).await;

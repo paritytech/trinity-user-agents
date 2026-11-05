@@ -158,7 +158,7 @@ impl DurableTxEngine {
 			Some((block, DispatchOutcome::Succeeded)) => {
 				VerdictStatus::FinalizedSuccess { at: Some(block) }
 			},
-			Some((_, DispatchOutcome::Failed)) => {
+			Some((_, DispatchOutcome::Failed(_))) => {
 				VerdictStatus::Failure(VerdictFailureKind::DispatchFailed)
 			},
 			None => return ControlFlow::Break(()),
@@ -241,6 +241,7 @@ mod tests {
 			engine::DurableRequest,
 			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus},
 		},
+		time::ManualTimer,
 	};
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -248,8 +249,8 @@ mod tests {
 		durable::{
 			oracle::{DurableRegistry, Unobservable},
 			testing::{
-				FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner,
-				engine_with_spawner, extrinsic, without_plan,
+				FakeChain, GENESIS, block, block_hash, counting_spawner, engine_with_spawner,
+				extrinsic, without_plan,
 			},
 		},
 		test_support::wait_until,
@@ -337,7 +338,11 @@ mod tests {
 	#[test]
 	fn a_failed_dispatch_in_a_best_block_proposes_nothing() {
 		let (mut fixture, events) = watched();
-		fixture.chain.include(135, fixture.tx.extrinsic.hash(), DispatchOutcome::Failed);
+		fixture.chain.include(
+			135,
+			fixture.tx.extrinsic.hash(),
+			DispatchOutcome::Failed(String::new()),
+		);
 
 		events.unbounded_send(WatchEvent::InBestBlock(block_hash(135))).unwrap();
 		drop(events);
@@ -366,7 +371,11 @@ mod tests {
 	#[test]
 	fn finality_with_a_failed_dispatch_fails() {
 		let (fixture, events) = watched();
-		fixture.chain.include(125, fixture.tx.extrinsic.hash(), DispatchOutcome::Failed);
+		fixture.chain.include(
+			125,
+			fixture.tx.extrinsic.hash(),
+			DispatchOutcome::Failed(String::new()),
+		);
 
 		events.unbounded_send(WatchEvent::InFinalizedBlock(block_hash(125))).unwrap();
 

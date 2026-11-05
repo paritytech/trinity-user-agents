@@ -1102,7 +1102,7 @@ impl HostGrantPersistence<'_> {
 		&self,
 		product_id: &ProductId,
 	) -> Result<bool, AuthorityError> {
-		let storage_key = CoreStorageKey::AutoSigningKey { product_id: product_id.to_string() };
+		let storage_key = CoreStorageKey::AutoSigningKey { product_id: product_id.clone() };
 		let legacy =
 			self.store.storage.read_core_storage(storage_key.clone()).await.map_err(|err| {
 				AuthorityError::Unknown {

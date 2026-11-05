@@ -119,7 +119,7 @@ Hosts and Products released before this control frame was introduced still silen
 
 #### Subscription
 
-A subscription is not a one-shot call but an ongoing stream: the consumer asks once and then receives updates until it stops listening. Its four messages (`start`, `stop`, `interrupt`, and `receive`) all address the same `(trait, method)` pair (distinguished by the `message_type` byte in the outer envelope) and MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
+A subscription carries a stream of items: the consumer asks once and receives items until either side ends it. Its four messages (`start`, `stop`, `interrupt`, and `receive`) all address the same `(trait, method)` pair (distinguished by the `message_type` byte in the outer envelope) and MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
 
 Each message has a defined role:
 
@@ -141,6 +141,24 @@ struct Subscriber {
 }
 ```
 
+#### Host-initiated calls with one response
+
+A host-initiated Rust `async fn` returning `Result<Response, CallError<Error>>`
+uses subscription framing. Its generated Rust caller awaits the first result;
+the TypeScript handler returns a typed result. Success sends one `Receive` item,
+which the caller consumes before closing the subscription with `Stop`. Failure
+sends an `Interrupt` carrying the error. Success needs no separate completion
+frame, so the host cannot process completion before the item. Ending without an
+answer fails the call. Wire tables and decoders classify these methods as
+subscriptions.
+
+Dropping a pending call sends `Stop`. The product aborts the handler's signal and
+suppresses later output. A stop received before its start prevents the handler
+from running; duplicate live starts do not run it again. This uses subscription
+teardown rather than the terminal response required by
+[request cancellation](../rfcs/request-cancellation.md). Cancellation cannot undo
+side effects, and the caller owns deadlines and retry policy.
+
 ### Handshake
 
 Before either side trusts a single byte of payload, they have to agree on how those bytes are encoded. That negotiation is the handshake, and it runs first.
@@ -150,4 +168,24 @@ Handshake calls are bidirectional: both Host and Product can send a handshake re
 The handshake request carries the protocol (codec) version as a `u8`. On receiving it, the peer switches its encoding/decoding mode to match; for the SCALE codec with the `(trait, method)`-addressed envelope, the version is `2`. (Codec version `1` designates the retired single-byte-discriminant envelope; a peer speaking it fails the handshake.) A successful handshake MUST be the first request TrUAPI processes — any other request sent before a successful handshake response MUST fail.
 
 The concrete handshake request, response, and error types are defined in the `truapi` crate.
+
+### Request versions
+
+Every request payload starts with its version: `V1` is encoded as `0`, `V2` as `1`, and so on. A host can only read the versions it was built with, so a product built against a newer protocol may send a version the host does not know.
+
+When that happens, the host MUST NOT run the call. It answers with a protocol-error frame (see [Requests](#requests)) carrying:
+
+```text
+V1(UnsupportedVersion { trait_id, method_id, newest_version })
+encoded as [0, 1, trait_id, method_id, newest_version]
+```
+
+- `trait_id` and `method_id` name the refused call.
+- `newest_version` is the newest version the host accepts for that method, as a number: `2` means `V2`.
+
+The same applies to a subscription's `Start` frame.
+
+The product treats this like `UnsupportedMessage`: the call fails as unsupported.
+
+Hosts released before this error existed cannot send it. They answer a version they do not know with `CallError::MalformedFrame`.
 
