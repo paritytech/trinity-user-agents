@@ -131,7 +131,7 @@ impl WasmPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for WasmPlatform {
 	async fn connect(
 		&self,
@@ -1500,6 +1500,18 @@ pub fn product_account_address(public_key: Vec<u8>) -> Result<String, JsValue> {
 	let public_key = <[u8; 32]>::try_from(public_key.as_slice())
 		.map_err(|_| JsValue::from_str("product account public key must be 32 bytes"))?;
 	Ok(crate::host_logic::product_account::product_public_key_to_address(public_key))
+}
+
+/// The key the host stores `product_id`'s storage entry `key` under.
+///
+/// Pure, so a test host can seed an entry where the core will read it without
+/// rebuilding the core's namespacing or its product id normalization.
+#[wasm_bindgen(js_name = productStorageKey)]
+pub fn product_storage_key(product_id: String, key: String) -> Result<String, JsValue> {
+	let product_id = product_id
+		.parse::<ProductId>()
+		.map_err(|err| JsValue::from_str(&err.to_string()))?;
+	Ok(crate::platform::ProductStorageKey::new(product_id, key).encode())
 }
 
 /// The ring-VRF member for `entropy`, derived through the module this core

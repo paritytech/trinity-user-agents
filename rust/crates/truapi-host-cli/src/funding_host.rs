@@ -23,9 +23,7 @@ use truapi::{
 	SigningHostRuntime, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
-	platform::{
-		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
-	},
+	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
 };
 
 use crate::transcript::Transcript;
@@ -108,7 +106,7 @@ fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
 	async fn present_funding(
 		&self,

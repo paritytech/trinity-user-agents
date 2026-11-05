@@ -223,7 +223,7 @@ Pocket methods append within the trait.
 /// Pocket cards backed by the calling product.
 #[wire_trait(id = 18)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Pocket: Send + Sync {
     /// The calling product's cards, whole set on subscribe and on every change.
     #[wire(id = 0)]
@@ -286,7 +286,7 @@ applies to a whole trait, so the calls are a trait of their own, `23`, with `set
 /// The card a Widget is shown under.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait ExpandedCard: Send + Sync {
     /// Show or hide the face above the calling Widget. Succeeds when the face is already in that state.
     #[wire(id = 0)]

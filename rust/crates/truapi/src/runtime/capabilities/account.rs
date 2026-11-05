@@ -35,7 +35,7 @@ use crate::runtime::{
 	versioning::version, vrf_call_error,
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Account for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "account.get_account"))]
 	async fn get_account(

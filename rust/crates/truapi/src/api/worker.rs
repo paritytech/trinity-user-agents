@@ -16,7 +16,7 @@ use crate::{
 /// operation, which is how a worker outlives the surface that started it.
 #[wire_trait(id = 19)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Worker: Send + Sync {
 	/// Begin a pending operation.
 	///

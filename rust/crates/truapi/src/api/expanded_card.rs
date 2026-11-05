@@ -15,7 +15,7 @@ use crate::{
 /// Only a Widget execution may call it.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait ExpandedCard: Send + Sync {
 	/// Show or hide the face above the calling Widget.
 	///
