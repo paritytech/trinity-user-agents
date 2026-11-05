@@ -1227,6 +1227,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
+          request.tag !== "Chain" ||
           !onlyServedChains ||
           supportedChains.chains.some(
             (entry) =>

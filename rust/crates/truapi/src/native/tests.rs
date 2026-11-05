@@ -2971,7 +2971,7 @@ fn nested_boxes(depth: usize) -> String {
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize)).is_ok());
 	assert!(matches!(
 		parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
 		Err(NativeRendererError::TooDeep { .. })
