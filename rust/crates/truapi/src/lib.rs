@@ -860,6 +860,9 @@ mod host_rpc_client;
 mod interrupt;
 #[cfg(feature = "runtime")]
 pub mod logging;
+
+#[cfg(feature = "runtime")]
+pub mod markers;
 #[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
