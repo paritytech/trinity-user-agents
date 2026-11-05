@@ -23,7 +23,10 @@ private const val FRAME_MILLIS = FRAME_NANOS / 1_000_000
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CardTurnStateTest {
-    private fun dragged(px: Float) = CardTurnState().apply { drag(px, CARD_WIDTH) }
+    private suspend fun dragged(px: Float) = CardTurnState().apply {
+        beginDrag()
+        drag(px, CARD_WIDTH)
+    }
 
     /** Each frame's angle, and the rotation the face then up is drawn at, until [motion] ends. */
     private fun TestScope.framesOf(state: CardTurnState, motion: suspend CoroutineScope.() -> Unit): List<Pair<Float, Float>> {
@@ -50,20 +53,19 @@ class CardTurnStateTest {
         assertEquals(listOf(PocketCardSide.FRONT, PocketCardSide.BACK), listOf(short.shownSide, long.shownSide))
     }
 
-    // The flick in the video spins the card several times and lands on a face, never mirrored on the way.
+    // A swipe shows the other side of the card; it is not a spinner, however far or hard it goes.
     @Test
-    fun `a flick keeps turning its way, lands on a face no more than four half turns on, and never shows a face mirrored`() =
+    fun `a swipe turns the card over once, however far or hard, and never shows a face mirrored`() =
         runTest(SteppingFrameClock) {
-            for ((start, velocity) in listOf(0f to 20_000f, 0f to -20_000f, 100f to 20_000f)) {
-                val state = dragged(start / 180f * CARD_WIDTH)
-                val faceAtRelease = 180f * Math.round(state.angle / 180f)
+            for ((draggedPx, velocity) in listOf(0f to 20_000f, 0f to -20_000f, 2 * CARD_WIDTH to 20_000f, -2 * CARD_WIDTH to 0f)) {
+                val state = dragged(draggedPx)
+                val released = state.angle
 
                 val frames = framesOf(state) { state.release(velocity, CARD_WIDTH) }
+                val sidesShown = (listOf(0f, released) + frames.map { it.first }).map { CardTurnState(it).shownSide }
 
-                val rest = frames.last().first
-                assertEquals("lands on a face from $start", 0f, rest.mod(180f), 0f)
-                assertTrue("turns at most four half turns from $start", abs(rest - faceAtRelease) <= 4 * 180f)
-                assertTrue("keeps turning its way from $start", (frames[1].first - start) * velocity > 0)
+                assertEquals("lands on the back after $draggedPx at $velocity", 180f, abs(frames.last().first), 0f)
+                assertEquals("turns over once after $draggedPx at $velocity", 1, sidesShown.zipWithNext().count { (before, after) -> before != after })
                 assertTrue("the face up is never mirrored", frames.all { (_, upRotation) -> abs(upRotation) <= 90f })
             }
         }
@@ -86,7 +88,7 @@ class CardTurnStateTest {
     @Test
     fun `closing turns the card home, even mid-settle and with a drag on it`() = runTest(SteppingFrameClock) {
         for (start in listOf(540f, 200f)) {
-            val state = dragged(start / 180f * CARD_WIDTH)
+            val state = CardTurnState(start)
             state.turnHome()
             assertEquals("from $start", 0f, state.angle.mod(360f), 0f)
         }
