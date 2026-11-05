@@ -1,12 +1,12 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("AutoAllowProductPermissionRequester Tests")
 struct AutoAllowProductPermissionRequesterTests {
-    private let allowedLabels = Set(["getcash"])
-
     private func makeSUT(
+        allowedLabels: Set<String> = ["getcash"],
         wrappedDecision: PermissionDecision = .deny
     ) -> (
         requester: AutoAllowProductPermissionRequester,
@@ -26,7 +26,7 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = try await requester.prompt(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             permission: .networkAccess(domain: "example.com")
         )
 
@@ -39,7 +39,7 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = try await requester.promptBatched(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             permissions: [.balanceAccess, .webRtcAccess]
         )
 
@@ -52,40 +52,22 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
 
         let decision = try await requester.prompt(
-            productId: "other.dot",
+            productId: try! ProductId("other.dot"),
             permission: .balanceAccess
         )
 
         #expect(decision == .deny)
         #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "other.dot")
+        #expect(wrapped.promptCalls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("prompt delegates bare productId without root")
-    func promptDelegatesBareProductId() async throws {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
+    @Test func productWithoutADotNsNameStillPromptsWhenEmptyLabelIsAllowed() async throws {
+        let (requester, wrapped) = makeSUT(allowedLabels: [""])
+        let productId = try ProductId("localhost:3000")
 
-        let decision = try await requester.prompt(
-            productId: "getcash",
-            permission: .balanceAccess
-        )
+        let decision = try await requester.prompt(productId: productId, permission: .balanceAccess)
 
         #expect(decision == .deny)
-        #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "getcash")
-    }
-
-    @Test("prompt delegates productId with an empty root label")
-    func promptDelegatesEmptyRootLabel() async throws {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
-
-        let decision = try await requester.prompt(
-            productId: "getcash..dot",
-            permission: .balanceAccess
-        )
-
-        #expect(decision == .deny)
-        #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "getcash..dot")
+        #expect(wrapped.promptCalls.map(\.productId) == [productId])
     }
 }

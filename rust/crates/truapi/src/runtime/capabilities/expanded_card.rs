@@ -12,11 +12,11 @@ use truapi::{
 };
 
 use crate::{
-	platform::{ExpandedCardFaceOutcome, ProductExecutionKind},
+	platform::{ExecutableKind, ExpandedCardFaceOutcome},
 	runtime::{ProductRuntimeHost, versioning::version},
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl ExpandedCard for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
 	async fn set_face_shown(
@@ -28,7 +28,7 @@ impl ExpandedCard for ProductRuntimeHost {
 		version(request)
 			.exec(|request| async move {
 				// Admin connections call the trait without the dispatcher's kind filter.
-				if self.connection.product.execution_kind != ProductExecutionKind::Widget {
+				if self.connection.product.execution_kind != ExecutableKind::Widget {
 					return Err(CallError::Denied);
 				}
 				let Some(card) = &self.connection.expanded_card else {

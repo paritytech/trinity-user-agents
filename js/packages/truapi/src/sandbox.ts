@@ -97,19 +97,25 @@ export function isCorrectEnvironment(): boolean {
 
 /**
  * Origin used as the `targetOrigin` for iframe bootstrap messages.
+ *
+ * `ancestorOrigins` names the embedding document whatever this frame loaded
+ * before, so it comes first. The referrer is the fallback, but once the
+ * product navigates its own frame it names the product's previous page, not
+ * the host, and a referrer from this document's own origin is set aside.
  */
 function resolveHostOrigin(): string | null {
-  if (typeof document !== "undefined" && document.referrer) {
-    try {
-      return new URL(document.referrer).origin;
-    } catch {
-      // Fall through to ancestorOrigins.
-    }
-  }
   // Firefox serializes cross-origin ancestors as "null", which is not a
   // valid postMessage targetOrigin; treat it as an unknown host origin.
   const ancestor = window.location?.ancestorOrigins?.[0];
   if (ancestor && ancestor !== "null") return ancestor;
+  if (typeof document !== "undefined" && document.referrer) {
+    try {
+      const referrer = new URL(document.referrer).origin;
+      if (referrer !== window.location?.origin) return referrer;
+    } catch {
+      // An unparseable referrer names no host.
+    }
+  }
   return null;
 }
 

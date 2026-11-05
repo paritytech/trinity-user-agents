@@ -1,11 +1,12 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("TrustedRemoteProductPermissionRequester Tests")
 struct TrustedRemoteProductPermissionRequesterTests {
-    private let trusted = "peopl.dot"
-    private let untrusted = "myapp.dot"
+    private let trusted = try! ProductId("peopl.dot")
+    private let untrusted = try! ProductId("myapp.dot")
 
     private func makeSUT() -> (
         sut: TrustedRemoteProductPermissionRequester,
@@ -14,7 +15,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
         let wrapped = MockProductPermissionRequester()
         wrapped.decision = .deny
         let sut = TrustedRemoteProductPermissionRequester(
-            isTrustedForRemoteAccess: { $0 == "peopl.dot" },
+            isTrustedForRemoteAccess: { $0.rawValue == "peopl.dot" },
             wrapped: wrapped
         )
         return (sut, wrapped)
@@ -59,7 +60,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
     @Test("A trusted product still prompts for everything that is not remote or device access")
     func trustedProductStillPromptsForTheRest() async throws {
         for permission: ProductPermission in [
-            .accountAccess(targetProductId: "other.dot"),
+            .accountAccess(targetProductId: try! ProductId("other.dot")),
             .balanceAccess,
             .userIdentityAccess
         ] {

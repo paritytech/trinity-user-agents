@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  asProductId,
   encodeWireMessage,
   MESSAGE_TYPE_REQUEST,
   VersionedHostAccountGetRequest,
@@ -87,7 +88,7 @@ function accountGetRequestBytes(requestId = "p:1"): Uint8Array {
     tag: "V1",
     value: {
       productAccountId: {
-        dotNsIdentifier: "alice.dot",
+        dotNsIdentifier: asProductId("alice.dot"),
         derivationIndex: { tag: "Index", value: 0 },
       },
     },

@@ -1,8 +1,9 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public protocol ProductPermissionRequesting: Sendable {
-    func prompt(productId: String, permission: ProductPermission) async throws -> PermissionDecision
-    func promptBatched(productId: String, permissions: [ProductPermission]) async throws -> PermissionDecision
+    func prompt(productId: ProductId, permission: ProductPermission) async throws -> PermissionDecision
+    func promptBatched(productId: ProductId, permissions: [ProductPermission]) async throws -> PermissionDecision
 }
 
 /// Serializes permission prompts so that only one sheet is presented at a
@@ -15,14 +16,14 @@ public actor ProductPermissionRequester: ProductPermissionRequesting {
     }
 
     public func prompt(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> PermissionDecision {
         try await promptBatched(productId: productId, permissions: [permission])
     }
 
     public func promptBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> PermissionDecision {
         try await withCheckedThrowingContinuation { continuation in

@@ -175,10 +175,14 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // dotNS gateway: the register_name authorization shape and the username reads.
 // ---------------------------------------------------------------------------
 
-use truapi::host_logic::dotns_gateway::{
-	DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
-	decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
-	is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
+use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
+use truapi::{
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{
+		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
+		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
+	},
 };
 
 /// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
@@ -206,7 +210,7 @@ fn minted_node() -> [u8; 32] {
 /// `DotnsTransport` over plain RPC, the same two primitives the CLI uses.
 struct PlainRpc(alloc::rpc::RpcClient);
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for PlainRpc {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		self.0
@@ -215,22 +219,23 @@ impl DotnsTransport for PlainRpc {
 			.map_err(|err| DotnsError::Storage(err.to_string()))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(self, dest, &input).await
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeApiCaller for PlainRpc {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		let output = self
 			.0
-			.call(
-				"state_call",
-				serde_json::json!(["ReviveApi_call", format!("0x{}", hex::encode(args))]),
-			)
+			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
 			.await
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
+			.map_err(subxt::Error::other)?;
 		let output = output
 			.as_str()
-			.ok_or_else(|| DotnsViewError::Failed("state_call output is not a string".into()))?;
-		let bytes = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		view_output(&bytes)
+			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
+		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
 	}
 }
 
@@ -254,14 +259,15 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 
 	// ownerOf(namehash) on the ERC721 registrar. Eth-derived owners map back
 	// to an AccountId32 by `0xEE` padding, which `account_to_h160` truncates.
+	let owner_of = DotnsRegistrar::ownerOfCall { tokenId: U256::from_be_bytes(minted_node()) };
 	let owner_output = transport
-		.view(&DOTNS_REGISTRAR, call_bytes32("ownerOf(uint256)", &minted_node()))
+		.view(&DOTNS_REGISTRAR, owner_of.abi_encode())
 		.await
 		.expect("registrar ownerOf");
-	let owner = decode_address(&owner_output).expect("owner address");
+	let owner = DotnsRegistrar::ownerOfCall::abi_decode_returns_validate(&owner_output)
+		.expect("owner address");
 	let mut account = [0xEE; 32];
-	account[..20].copy_from_slice(&owner);
-	assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
+	account[..20].copy_from_slice(owner.as_slice());
 
 	let labels = resolve_labels(&mut transport, &controller, &account)
 		.await

@@ -4,7 +4,8 @@ import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsNavigationType
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
+import uniffi.truapi.ProductId
 
 enum class NavigationResult { INTERCEPTED_BY_POLICY, DELEGATE_TO_WEBVIEW }
 
@@ -102,7 +103,7 @@ sealed interface NavigationPolicy {
 
                 DotNsNavigationType.CROSS_DOTNS_DOMAIN -> {
                     val productId = dotNsTldProvider.currentTldOrNull()
-                        ?.let { ProductId.fromUrl(destination, it).getOrNull() }
+                        ?.let { productIdFromUrl(destination, it).getOrNull() }
                         ?: return NavigationResult.DELEGATE_TO_WEBVIEW
                     onProductSelected(productId)
                     NavigationResult.INTERCEPTED_BY_POLICY

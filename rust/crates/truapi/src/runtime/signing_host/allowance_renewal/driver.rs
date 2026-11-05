@@ -347,7 +347,7 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use truapi::latest::{GenericError, ProductId};
+	use truapi::{ProductId, latest::GenericError};
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -361,7 +361,7 @@ mod tests {
 		}
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for MemStorage {
 		async fn read_core_storage(
 			&self,
@@ -412,7 +412,7 @@ mod tests {
 	#[derive(Default)]
 	struct YieldingStorage(MemStorage);
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for YieldingStorage {
 		async fn read_core_storage(
 			&self,

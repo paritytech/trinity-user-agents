@@ -25,6 +25,7 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod evm_contract_caller;
 mod live_extrinsic_builder;
 mod live_storage_watch;
 
@@ -517,7 +518,8 @@ fn dispatch_outcome_reads_the_events_of_that_extrinsics_index() {
 	let outcomes = [extrinsic(1), extrinsic(2), extrinsic(3)]
 		.map(|extrinsic| block_on(chain.dispatch_outcome(GENESIS, at, extrinsic.hash())).unwrap());
 
-	assert_eq!(outcomes, [Some(DispatchOutcome::Succeeded), Some(DispatchOutcome::Failed), None],);
+	let failed = DispatchOutcome::Failed("Some unknown error occurred.".to_string());
+	assert_eq!(outcomes, [Some(DispatchOutcome::Succeeded), Some(failed), None],);
 }
 
 #[test]

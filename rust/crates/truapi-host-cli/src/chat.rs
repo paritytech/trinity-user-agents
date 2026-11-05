@@ -29,7 +29,7 @@ use truapi::{
 		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
 		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 	},
-	platform::{ChatPlatform, ProductContext, async_trait},
+	platform::{ChatPlatform, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
 };
 
@@ -136,7 +136,7 @@ fn variant_name(content: &ChatMessageContent) -> &'static str {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,

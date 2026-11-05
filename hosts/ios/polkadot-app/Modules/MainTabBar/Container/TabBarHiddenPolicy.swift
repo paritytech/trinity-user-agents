@@ -26,7 +26,7 @@ enum TabBarHiddenPolicy {
     }
 
     static func isTabRoot(in stack: [UIViewController], showing target: UIViewController) -> Bool {
-        target === stack.first
+        target === stack.first || target is TabBarRootStandIn
     }
 
     static func stackAfterCancelledPop(
