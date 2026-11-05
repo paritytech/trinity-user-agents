@@ -36,7 +36,7 @@ use truapi::{
 
 use crate::{
 	nft::{AllocateItemsError, CreatePurseError, PurseId, UnknownPurse},
-	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize, PurseOwner},
+	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize},
 	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
 };
 
@@ -47,7 +47,7 @@ impl ProductConnection {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl NftPurse for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_purse"))]
 	async fn create_purse(
@@ -221,7 +221,6 @@ impl ProductRuntimeHost {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
 		let latest::HostNftPurseListPursesRequest { owner } = request;
-		let owner = PurseOwner::parse(&owner)?;
 		if let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) {
 			let denied = latest::HostNftPurseListPursesError::Denied;
 			self.connection.require_remote_permission(grant, denied).await?;

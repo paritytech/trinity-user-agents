@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AlarmKit
 import EventKit
 import Foundation

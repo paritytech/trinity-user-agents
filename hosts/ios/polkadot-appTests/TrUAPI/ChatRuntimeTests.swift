@@ -58,7 +58,7 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
     }
 }
 
-private let chatProduct: ProductId = "test.dot"
+private let chatProduct: ProductId = try! ProductId("test.dot")
 
 private func makeRustRuntime(
     workers: StubWorkerManager,
@@ -85,7 +85,7 @@ struct ChatRuntimeTests {
     @Test func nativeRuntimeStartBindsMessagingAndStartsBot() async throws {
         let worker = FakeChatWorker()
         let manager = FakeWorkerManager(worker: worker)
-        let runtime = ManagedChatRuntime(productId: "test.dot", manager: manager)
+        let runtime = ManagedChatRuntime(productId: try! ProductId("test.dot"), manager: manager)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
@@ -97,7 +97,7 @@ struct ChatRuntimeTests {
     @Test func nativeRuntimeForwardsUserMessage() async throws {
         let worker = FakeChatWorker()
         let manager = FakeWorkerManager(worker: worker)
-        let runtime = ManagedChatRuntime(productId: "test.dot", manager: manager)
+        let runtime = ManagedChatRuntime(productId: try! ProductId("test.dot"), manager: manager)
 
         try await runtime.onUserMessage(text: "hi", roomId: "r1")
 
@@ -108,7 +108,7 @@ struct ChatRuntimeTests {
     @Test func nativeRuntimeDisposeUnbindsAndReleasesLock() async throws {
         let worker = FakeChatWorker()
         let manager = FakeWorkerManager(worker: worker)
-        let runtime = ManagedChatRuntime(productId: "test.dot", manager: manager)
+        let runtime = ManagedChatRuntime(productId: try! ProductId("test.dot"), manager: manager)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
         #expect(manager.activeCount == 1)
@@ -402,6 +402,26 @@ struct ChatRuntimeTests {
             for try await _ in render {}
         }
         #expect(execution.renderRequests.isEmpty)
+
+        await runtime.dispose()
+    }
+
+    /// A worker release restarts the worker under the open chat; the handler must reach the new
+    /// worker without asking for it again, since the core still counts the request it holds.
+    @Test func rustRuntimeFollowsARestartedWorker() async throws {
+        let previous = MockProductExecution()
+        let workers = workersRunning(previous)
+        let runtime = makeRustRuntime(workers: workers)
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        let restarted = MockProductExecution()
+        workers.publish([chatProduct: restarted])
+        try await runtime.onUserMessage(text: "hi", roomId: "room")
+
+        #expect(restarted.publishedChatActions.count == 1)
+        #expect(previous.publishedChatActions.isEmpty)
+        #expect(workers.references.acquired == [chatProduct])
+        #expect(workers.references.released.isEmpty)
 
         await runtime.dispose()
     }

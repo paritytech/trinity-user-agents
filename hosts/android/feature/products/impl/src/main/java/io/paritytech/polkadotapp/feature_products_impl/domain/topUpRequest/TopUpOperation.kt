@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 

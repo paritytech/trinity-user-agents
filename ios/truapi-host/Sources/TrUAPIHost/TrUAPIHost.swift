@@ -180,21 +180,21 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Demand is runtime-wide, so the core invokes this only on the bridge
     /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
     /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``.
+    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
     /// Can arrive on any thread, including synchronously on the calling
     /// thread during `acquireWorker`/`releaseWorker`, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
-    func requestWorkerTransition(productId: String, transition: WorkerTransition)
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
 
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
-    func beginOperation(productId: String, label: String) async throws -> UInt32
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32
 
     /// End a pending operation. Idempotent: an unknown or already-ended id
     /// succeeds, so a retry after an ambiguous failure is safe.
-    func endOperation(productId: String, id: UInt32) async throws
+    func endOperation(productId: ProductId, id: UInt32) async throws
 
     /// A device finished pairing with this signing host.
     ///
@@ -260,7 +260,7 @@ public protocol HostBridge: AnyObject, Sendable {
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -306,28 +306,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func listRooms() async throws -> [ChatRoom]
 }
 
-/// Native Pocket collection surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
-/// when the host has a Pocket surface; hosts without one pass nothing. Called
-/// from the process-wide dispatch pool shared by every product execution:
-/// implementations must be safe to enter concurrently, and one that blocks
-/// stalls the others.
-///
-/// Throw ``HostRejection`` (or an error conforming to `LocalizedError`) to
-/// decline a call.
-public protocol PocketHostBridge: AnyObject, Sendable {
-    /// Return the product's cards as this host holds them, each carrying
-    /// whether the host pinned it.
-    func listCards() throws -> [PocketCard]
-
-    /// Remove one of the product's cards and report what happened. Decide and
-    /// remove together, under whatever lock this host holds, so a card cannot
-    /// be pinned between the two.
-    func removeCard(cardId: String) throws -> NativePocketRemoval
-}
-
 /// Native game-reminder surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
 /// when the host can hold reminders; hosts without one pass nothing. Both
 /// calls are async, so an implementation may hop to the main actor to answer;
 /// implementations must be safe to enter concurrently.
@@ -373,7 +353,7 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// Present the picker on behalf of `productId` and report what the user
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
-    func pickContact(productId: String) async throws -> HostContactPick
+    func pickContact(productId: ProductId) async throws -> HostContactPick
 }
 
 /// Host-implemented top-up engine: claims a source's funds into the user's
@@ -389,12 +369,12 @@ public protocol TopUpHostBridge: AnyObject, Sendable {
     /// Start `request` for `productId`, returning once the host has accepted
     /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
     /// else reaches the product as `Unknown`.
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws
 
     /// The current status of `productId`'s top-up `id`, or `nil` when the
     /// host holds none. Report every later status with
     /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
-    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
 }
 
 /// Host-implemented payment engine: pays from the user's balance to an
@@ -409,12 +389,12 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
     /// user authorized it and the host took it on. Throw a `HostPaymentError`
     /// to answer with its code; anything else reaches the product as
     /// `Unknown`.
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws
 
     /// The current status of `productId`'s payment `id`, or `nil` when the
     /// host holds none. Report every later status with
     /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
-    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem?
+    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem?
 }
 
 /// Host-implemented balance view: what a payment request can spend right now.
@@ -428,15 +408,15 @@ public protocol BalanceHostBridge: AnyObject, Sendable {
     /// string of CASH units. The balance is the user's, the same for every
     /// product; `productId` only names who is asking. Report every change with
     /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
-    func balance(productId: String, purse: UInt32?) async throws -> U128
+    func balance(productId: ProductId, purse: UInt32?) async throws -> U128
 }
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
     func scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan
 }
@@ -467,7 +447,7 @@ public extension HostBridge {
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {}
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
     func permissionAuthorizationsChanged(productId: String) {}
@@ -494,11 +474,11 @@ public extension HostBridge {
     /// an `OperationId` names one operation: a host overriding only
     /// `endOperation`, and the core's own demand accounting, both end the
     /// wrong ones when every operation shares an id.
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         defaultOperationIds.take()
     }
 
-    func endOperation(productId: String, id: UInt32) async throws {}
+    func endOperation(productId: ProductId, id: UInt32) async throws {}
 }
 
 /// Ids handed out by the default `beginOperation`, distinct for the life of
@@ -566,24 +546,6 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     }
 }
 
-/// Adapter that bridges the public `PocketHostBridge` to the generated UniFFI
-/// `NativePocketCallbacks` protocol.
-private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sendable {
-    private let bridge: PocketHostBridge
-
-    init(bridge: PocketHostBridge) {
-        self.bridge = bridge
-    }
-
-    func listCards() throws -> [PocketCard] {
-        try withHostRejection { try bridge.listCards() }
-    }
-
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        try withHostRejection { try bridge.removeCard(cardId: cardId) }
-    }
-}
-
 /// Adapter that bridges the public `GameHostBridge` to the generated UniFFI
 /// `NativeGameCallbacks` protocol.
 private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendable {
@@ -615,7 +577,7 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
         try withHostRejection { try bridge.contacts(lookup: lookup) }
     }
 
-    func pickContact(productId: String) async throws -> HostContactPick {
+    func pickContact(productId: ProductId) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
     }
 }
@@ -630,8 +592,8 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     }
 
     func scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan {
         try await withHostRejection {
@@ -649,7 +611,7 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         self.bridge = bridge
     }
 
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws {
         do {
             try await bridge.topUp(productId: productId, request: request)
         } catch let error as HostPaymentTopUpError {
@@ -659,7 +621,7 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         }
     }
 
-    func topUpStatus(productId: String, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func topUpStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
         do {
             return try bridge.topUpStatus(productId: productId, id: id)
         } catch let error as HostRejection {
@@ -679,7 +641,7 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws {
         do {
             try await bridge.requestPayment(productId: productId, request: request)
         } catch let error as HostPaymentError {
@@ -689,7 +651,7 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         }
     }
 
-    func paymentStatus(productId: String, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+    func paymentStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
         do {
             return try bridge.paymentStatus(productId: productId, id: id)
         } catch let error as HostRejection {
@@ -709,7 +671,7 @@ private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func balance(productId: String, purse: UInt32?) async throws -> U128 {
+    func balance(productId: ProductId, purse: UInt32?) async throws -> U128 {
         do {
             return try await bridge.balance(productId: productId, purse: purse)
         } catch let error as HostPaymentBalanceSubscribeError {
@@ -734,7 +696,7 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
 
@@ -942,13 +904,13 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
         }
     }
 
-    func endOperation(productId: String, id: UInt32) async throws {
+    func endOperation(productId: ProductId, id: UInt32) async throws {
         try await withHostRejection {
             try await bridge.endOperation(productId: productId, id: id)
         }
@@ -1073,7 +1035,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s top-up `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
+    public func notifyTopUpStatus(productId: ProductId, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
         try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
 
@@ -1089,7 +1051,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s payment `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
+    public func notifyPaymentStatus(productId: ProductId, id: Data, status: HostPaymentStatusSubscribeItem) throws {
         try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
 
@@ -1111,24 +1073,20 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
-    /// modality omit it. Pass `pocket` to install the card collection, and
-    /// omit that where the host has no Pocket surface. Pass `game` to hold
-    /// game reminders, and omit it where the host cannot.
+    /// modality omit it. Pass `game` to hold game reminders, and omit it
+    /// where the host cannot.
     public func openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = nil,
-        pocket: PocketHostBridge? = nil,
         game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge)
         let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
-        let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
         let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
         let execution = try inner.openProductExecution(
             callbacks: adapter,
             chatCallbacks: chatAdapter,
-            pocketCallbacks: pocketAdapter,
             gameCallbacks: gameAdapter,
             executionConfig: configuration
         )
@@ -1136,7 +1094,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             inner: execution,
             callbackRetainer: adapter,
             chatRetainer: chatAdapter,
-            pocketRetainer: pocketAdapter,
             gameRetainer: gameAdapter
         )
     }
@@ -1150,13 +1107,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
     /// where the host starts the worker. Pair every call with one
     /// ``releaseWorker(productId:)``.
-    public func acquireWorker(productId: String) {
+    public func acquireWorker(productId: ProductId) {
         inner.acquireWorker(productId: productId)
     }
 
     /// Release one reference. The last one reports `.stop`, after which the
     /// host may stop the worker. Releasing with none held is a no-op.
-    public func releaseWorker(productId: String) {
+    public func releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId: productId)
     }
 
@@ -1260,6 +1217,32 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// path.
     public func coreDatabaseStatus() async throws -> DbStatus {
         try await inner.coreDatabaseStatus()
+    }
+
+    /// The Pocket collection, pinned cards first, now and after every change.
+    /// A read that fails ends the stream with an error; follow it again to
+    /// retry.
+    public func pocketCards() -> AsyncThrowingStream<[PocketEntry], Error> {
+        observedStream(PocketCardsStreamObserver.init(continuation:)) { observer in
+            inner.observePocketCards(observer: observer)
+        }
+    }
+
+    /// Adds a card the user approved, with the face they approved it by. An id
+    /// or title a product could not use is refused with `PocketAddError`.
+    public func addPocketCard(productId: ProductId, cardId: String, title: String, face: RendererNode) async throws {
+        try await inner.addPocketCard(productId: productId, cardId: cardId, title: title, face: face)
+    }
+
+    /// Removes a card on the user's behalf, unless it is pinned.
+    @discardableResult
+    public func removePocketCard(productId: ProductId, cardId: String) async throws -> PocketCardRemoval {
+        try await inner.removePocketCard(productId: productId, cardId: cardId)
+    }
+
+    /// The newest face kept for a card, if one is.
+    public func pocketCardFace(productId: ProductId, cardId: String) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId)
     }
 
     /// Decides durable transactions from the chain until none is live, then
@@ -1406,7 +1389,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func notifyChainClosed(connectionId: UInt32)
     func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
-    func notifyPocketCardsChanged(cards: [PocketCard])
 }
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
@@ -1414,20 +1396,17 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let inner: NativeProductExecution
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
-    private let pocketRetainer: NativePocketCallbacks?
     private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
         callbackRetainer: HostCallbacks,
         chatRetainer: NativeChatCallbacks?,
-        pocketRetainer: NativePocketCallbacks?,
         gameRetainer: NativeGameCallbacks?
     ) {
         self.inner = inner
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
-        self.pocketRetainer = pocketRetainer
         self.gameRetainer = gameRetainer
     }
 
@@ -1454,17 +1433,13 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func render(
         _ request: ProductRendererRenderRequest
     ) throws -> AsyncThrowingStream<RendererNode, Error> {
-        try rendererStream { observer in
+        try observedStream(RendererStreamObserver.init(continuation:)) { observer in
             try inner.render(request: request, observer: observer)
         }
     }
 
     public func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
         try inner.publishRendererAction(item: item)
-    }
-
-    public func notifyPocketCardsChanged(cards: [PocketCard]) {
-        inner.notifyPocketCardsChanged(cards: cards)
     }
 
     public func permissionAuthorizationStatus(
@@ -1573,14 +1548,13 @@ private func hostRejectionReason(_ error: Error) -> String {
 /// whole failed statement.
 private let hostRejectionReasonMaxCharacters = 256
 
-private func rendererStream(
-    _ subscribe: (RendererStreamObserver) throws -> NativeRendererSubscription
-) throws -> AsyncThrowingStream<RendererNode, Error> {
-    let (stream, continuation) = AsyncThrowingStream.makeStream(
-        of: RendererNode.self
-    )
-    let observer = RendererStreamObserver(continuation: continuation)
-    let subscription = try subscribe(observer)
+/// A core stream that `observer` feeds, cancelled when the stream terminates.
+private func observedStream<Element, Observer>(
+    _ observer: (AsyncThrowingStream<Element, Error>.Continuation) -> Observer,
+    _ subscribe: (Observer) throws -> NativeSubscription
+) rethrows -> AsyncThrowingStream<Element, Error> {
+    let (stream, continuation) = AsyncThrowingStream.makeStream(of: Element.self)
+    let subscription = try subscribe(observer(continuation))
     continuation.onTermination = { @Sendable _ in
         subscription.cancel()
     }
@@ -1606,6 +1580,22 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
     /// partial. Finishing with an error keeps that distinct from a clean end.
     func onError(reason: String) {
         continuation.finish(throwing: RendererStreamError(reason: reason))
+    }
+}
+
+private final class PocketCardsStreamObserver: NativePocketObserver, @unchecked Sendable {
+    private let continuation: AsyncThrowingStream<[PocketEntry], Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<[PocketEntry], Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onCards(cards: [PocketEntry]) {
+        continuation.yield(cards)
+    }
+
+    func onError(reason: String) {
+        continuation.finish(throwing: HostRejection.Rejected(reason: reason))
     }
 }
 

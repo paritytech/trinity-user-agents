@@ -34,6 +34,8 @@ The generated bindings, the container bundle and the xcframework are all **gitig
 A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one,
 which SwiftPM cannot see:
 
+Product identifiers use `ProductId`, an immutable Swift value initialized through the Rust parser. Construct one with `try ProductId("chat.dot")`; use `rawValue` only at string serialization and display boundaries. `Codable` preserves the string wire format.
+
 ```swift
 .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
@@ -117,7 +119,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
+execution with `ExecutableKind.worker`. Hosts without it pass nothing and
 Chat calls answer unsupported.
 
 ```swift
@@ -172,7 +174,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -195,44 +197,29 @@ untrusted: they may name a message in another room, or one that never existed.
 
 ## Pocket
 
-A host with a Pocket surface owns the card collection and implements
-`PocketHostBridge`, passed as `pocket:` to `openProductExecution`. Pocket is
-reachable only from a Worker execution with an active session, so a product
-on a signed-out host is denied before the bridge is consulted. Hosts without
-the bridge pass nothing and Pocket calls answer unsupported.
+The core keeps the Pocket collection in its database: the cards in the Pocket
+and the newest face of each. Products reach it only from a Worker execution
+with an active session. The host lists the cards it pins in
+`HostRuntimeConfig.pinnedPocketCards` and reads and edits the collection on the
+runtime.
 
 ```swift
-final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
-    private let store: PocketStore
-
-    init(store: PocketStore) { self.store = store }
-
-    // `privileged` marks a card this host pinned, which the product sees and
-    // cannot remove.
-    func listCards() throws -> [PocketCard] { store.cards() }
-
-    // Decide and remove together so a card cannot be pinned in between.
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        store.removeIfRemovable(cardId)
-    }
-}
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "game.dot", executionKind: .worker),
-    pocket: MyPocketBridge(store: pocketStore)
+let config = HostRuntimeConfig(
+    // ...
+    pinnedPocketCards: [PinnedPocketCard(productId: try ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")]
 )
 
-// Pocket needs an active session too: without `activateLocalSession` every
-// Pocket call answers denied, whatever this bridge holds.
+// Every card, pinned first, now and after each change.
+for try await cards in runtime.pocketCards() { show(cards) }
 
-// Republish after the host's own collection changes.
-execution.notifyPocketCardsChanged(cards: pocketStore.cards())
+// A card the user approved, with the face they approved it by.
+try await runtime.addPocketCard(productId: "game.dot", cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: "game.dot", cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loyalty")
 ```
 
-A card's face does not cross this bridge. The host keeps each card's newest
-face itself: that is what the card shows while the worker is down, and at cold
-start before the worker answers.
+The core keeps the newest face of a card from every Pocket card render, so a
+card has one to show while its worker is down and at cold start.
 
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
@@ -340,7 +327,7 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
     game: MyGameBridge(reminders: reminderStore)
 )
 ```
@@ -636,7 +623,7 @@ try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
-        productId: "my-product.dot",
+        productId: try ProductId("my-product.dot"),
         executionKind: .app
     )
 )

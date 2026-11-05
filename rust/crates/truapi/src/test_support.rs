@@ -249,10 +249,6 @@ pub struct StubPlatform {
 	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -837,7 +833,7 @@ pub fn raw_payload() -> v01::RawPayload {
 /// Product-scoped proof context fixture for `product_id`.
 pub fn product_proof_context(product_id: &str) -> v01::ProductProofContext {
 	v01::ProductProofContext {
-		product_id: product_id.to_string(),
+		product_id: ProductId::for_test(product_id),
 		suffix: v01::DerivationIndex::Index(7),
 	}
 }
@@ -942,7 +938,7 @@ pub fn signed_statement(topic: [u8; 32]) -> v01::SignedStatement {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductStorage for StubPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		if let Some(reason) = self.local_storage_error {
@@ -1004,7 +1000,7 @@ impl PlatformProductStorage for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductOperations for StubPlatform {
 	async fn begin_operation(
 		&self,
@@ -1057,7 +1053,7 @@ impl PlatformProductOperations for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
@@ -1108,10 +1104,7 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1126,10 +1119,7 @@ impl PlatformCoreStorage for StubPlatform {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1146,7 +1136,7 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::installation::InstallationIdProvider for StubPlatform {
 	async fn current_installation(
 		&self,
@@ -1155,7 +1145,7 @@ impl crate::installation::InstallationIdProvider for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.navigations.lock().expect("navigation list mutex poisoned").push(url);
@@ -1163,7 +1153,7 @@ impl PlatformNavigation for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
@@ -1185,7 +1175,7 @@ impl PlatformNotifications for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformPermissions for StubPlatform {
 	async fn device_permission(
 		&self,
@@ -1239,7 +1229,7 @@ impl PlatformPermissions for StubPlatform {
 
 impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformFeatures for StubPlatform {
 	async fn feature_supported(
 		&self,
@@ -1808,7 +1798,7 @@ impl Drop for DropFlagGuard {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for StubPlatform {
 	async fn connect(
 		&self,
@@ -1861,7 +1851,7 @@ impl AuthPresenter for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for StubPlatform {
 	async fn confirm_permission(
 		&self,
@@ -2018,7 +2008,7 @@ impl LocaleHost for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,

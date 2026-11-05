@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 import android.net.Uri
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /** Turns an image source in a Pocket face or a chat card into something the image loader can fetch. */

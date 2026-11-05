@@ -913,7 +913,6 @@
 
     <string name="pocket_digital_dollar_title">Purse</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
-    <string name="pocket_collectibles_open_button">View collectibles</string>
     <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>

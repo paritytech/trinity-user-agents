@@ -381,7 +381,6 @@ mod tests {
 		atomic::{AtomicUsize, Ordering},
 	};
 
-	use async_trait::async_trait;
 	use futures::{
 		channel::mpsc,
 		stream::{BoxStream, StreamExt},
@@ -434,7 +433,7 @@ mod tests {
 		}
 	}
 
-	#[async_trait]
+	#[async_trait::async_trait]
 	impl RuntimeChainProvider for PeopleChain {
 		async fn connect(
 			&self,
