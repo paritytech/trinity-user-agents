@@ -15,7 +15,6 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.PaymentRequestError
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ProductPaymentRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
@@ -49,6 +48,7 @@ import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -56,9 +56,9 @@ import javax.inject.Singleton
 import uniffi.truapi.PaymentTopUpSource as NativeTopUpSource
 
 internal interface TrUAPIPaymentSink {
-    fun topUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem)
+    fun topUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem)
 
-    fun paymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem)
+    fun paymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem)
 
     fun balance(available: Balance)
 }
@@ -116,10 +116,10 @@ class TrUAPIPaymentPlatforms @Inject constructor(
     fun install(runtime: TrUAPIHostRuntime) {
         attach(
             object : TrUAPIPaymentSink {
-                override fun topUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) =
+                override fun topUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) =
                     runtime.notifyTopUpStatus(productId, id, status)
 
-                override fun paymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem) =
+                override fun paymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem) =
                     runtime.notifyPaymentStatus(productId, id, status)
 
                 override fun balance(available: Balance) =
@@ -135,8 +135,8 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         this.sink = sink
     }
 
-    override suspend fun topUp(productId: String, request: HostPaymentTopUpRequest) {
-        val product = ProductId.fromStoredValue(productId)
+    override suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest) {
+        val product = productId
         val id = startTopUp(product, request).getOrElse { throw it }
 
         topUps.follow(productId, request.id) { topUpService.status(product, id) }
@@ -155,16 +155,16 @@ class TrUAPIPaymentPlatforms @Inject constructor(
             .fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asTopUpException()) })
     }
 
-    override fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? {
+    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? {
         val topUpId = PaymentTopUpId.fromBytes(id.toDataByteArray()).getOrElse { return null }
 
         return topUps.current(productId, id) {
-            topUpService.status(ProductId.fromStoredValue(productId), topUpId)
+            topUpService.status(productId, topUpId)
         }?.toNative()
     }
 
-    override suspend fun requestPayment(productId: String, request: HostPaymentRequest) {
-        val product = ProductId.fromStoredValue(productId)
+    override suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest) {
+        val product = productId
         val id = startPayment(product, request).getOrElse { throw it }
 
         payments.follow(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
@@ -186,15 +186,15 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
     }
 
-    override fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem? {
+    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? {
         val paymentId = ProductPaymentRequestId.fromBytes(id.toDataByteArray()).getOrElse { return null }
 
         return payments.current(productId, id) {
-            requestPaymentUseCase.subscribeStatus(ProductId.fromStoredValue(productId), paymentId)
+            requestPaymentUseCase.subscribeStatus(productId, paymentId)
         }?.toNative()
     }
 
-    override suspend fun balance(productId: String, purse: UInt?): String {
+    override suspend fun balance(productId: ProductId, purse: UInt?): String {
         if (purse != null) throw HostPaymentBalanceSubscribeException.Unknown(NO_PURSES)
 
         // The core registers its follower before asking, so changes from here on reach it.
@@ -261,7 +261,7 @@ internal class StatusForwarder<S : Any>(
     private val isNotFound: (Throwable) -> Boolean,
     private val unknownYet: S,
     private val abandoned: S,
-    private val notify: (productId: String, id: ByteArray, status: S) -> Unit,
+    private val notify: (productId: ProductId, id: ByteArray, status: S) -> Unit,
 ) {
     private sealed interface Latest<out T> {
         data object Pending : Latest<Nothing>
@@ -280,7 +280,7 @@ internal class StatusForwarder<S : Any>(
         var reported = false
     }
 
-    private data class Key(val productId: String, val id: DataByteArray)
+    private data class Key(val productId: ProductId, val id: DataByteArray)
 
     private val runs = ConcurrentHashMap<Key, Run<S>>()
 
@@ -289,7 +289,7 @@ internal class StatusForwarder<S : Any>(
     }
 
     /** `null` when the engine knows no such operation. */
-    fun current(productId: String, id: ByteArray, statuses: () -> Flow<S>): S? {
+    fun current(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>): S? {
         synchronized(settled) { settled[keyOf(productId, id)] }?.let { return it }
 
         val run = runFor(productId, id, statuses)
@@ -310,14 +310,14 @@ internal class StatusForwarder<S : Any>(
         }
     }
 
-    private fun keyOf(productId: String, id: ByteArray) = Key(productId, id.toDataByteArray())
+    private fun keyOf(productId: ProductId, id: ByteArray) = Key(productId, id.toDataByteArray())
 
     /** Forwards the operation's statuses unless a run for it is already going. */
-    fun follow(productId: String, id: ByteArray, statuses: () -> Flow<S>) {
+    fun follow(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>) {
         runFor(productId, id, statuses)
     }
 
-    private fun runFor(productId: String, id: ByteArray, statuses: () -> Flow<S>): Run<S> {
+    private fun runFor(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>): Run<S> {
         val key = keyOf(productId, id)
         val fresh = Run<S>()
         runs.putIfAbsent(key, fresh)?.let { return it }

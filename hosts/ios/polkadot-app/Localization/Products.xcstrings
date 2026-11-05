@@ -23,6 +23,17 @@
         }
       }
     },
+    "action.nftPurseDrain.toCheque.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to hand %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to another user in a cheque."
+          }
+        }
+      }
+    },
     "action.nftPurseDrain.toKey.body": {
       "extractionState": "manual",
       "localizations": {
@@ -41,6 +52,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, into purse %5$(toPurse)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toRefund.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to return %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to the sender of a cheque it deposited."
           }
         }
       }
@@ -1331,6 +1353,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Accepted funds from %1$(product)@"
+          }
+        }
+      }
+    },
+    "update.notice.action": {
+      "comment": "Button on the product update notice that reloads the product into its new build",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        }
+      }
+    },
+    "update.notice.message": {
+      "comment": "Notice at the top of the app when a newer build of an open product has been downloaded",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ has an update"
           }
         }
       }

@@ -17,6 +17,7 @@ npm install @parity/truapi
 
 ```ts
 import {
+  asProductId,
   createClient,
   createMessagePortProvider,
   createTransport,
@@ -29,12 +30,14 @@ const transport = createTransport(provider);
 const truapi: Client = createClient(transport);
 
 const result = await truapi.accountManagement.accountGet({
-  productAccountId: { dotNsIdentifier: "my-product.dot", derivationIndex: { tag: "Index", value: 0 } },
+  productAccountId: { dotNsIdentifier: asProductId("my-product.dot"), derivationIndex: { tag: "Index", value: 0 } },
 });
 
 if (result.isErr()) throw result.error;
 const account: HostAccountGetResponse = result.value;
 ```
+
+`ProductId` is a shared branded string. Host responses already carry this type. Use `asProductId(value)` for explicit input; it preserves the string exactly and does not validate or normalize it. Rust validates identifiers when they enter the host. The client needs no WASM or host initialization.
 
 Request methods take the inner request value directly. The transport adds the wire-level version wrapper and unwraps versioned responses before the generated method returns.
 

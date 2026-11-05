@@ -1,3 +1,5 @@
+use crate::product_id::ProductId;
+
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
@@ -15,7 +17,7 @@ pub struct NftPurseId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseItemKey(pub [u8; 32]);
 
-/// Id of a cheque, and the idempotency key of its deposit and refund.
+/// Id of a cheque, and the idempotency key of its deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseChequeId(pub [u8; 32]);
 
@@ -34,7 +36,7 @@ pub struct NftPurseReceiveKey(pub [u8; 32]);
 pub enum NftPurseOwner {
 	/// The product with this id created the purse.
 	#[display("{_0}")]
-	Product(String),
+	Product(ProductId),
 	/// No product owns the purse: the main purse, and purses recovered
 	/// without metadata.
 	#[display("your account")]
@@ -310,26 +312,51 @@ pub enum NftPurseCreateReceiveKeyError {
 
 /// Request to wait for a cheque sent to a receive key.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostNftPurseListenForPaymentRequest {
+pub struct HostNftPurseListenOneTimePaymentRequest {
 	/// Receive key from `create_receive_key`.
 	pub key: NftPurseReceiveKey,
 }
 
-/// Stream item of `listen_for_payment`.
+/// Stream item of `listen_one_time_payment`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostNftPurseListenForPaymentItem {
+pub enum HostNftPurseListenOneTimePaymentItem {
 	/// The channel the host listens on, emitted first.
 	Channel(NftPursePaymentTransmissionChannel),
-	/// The cheque, once it arrives.
+	/// The cheque, once it arrives. The last item.
 	Cheque(NftPurseCheque),
 }
 
 /// Why the host could not listen for a payment.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum NftPurseListenForPaymentError {
-	/// The receive key is unknown.
+pub enum NftPurseListenOneTimePaymentError {
+	/// The receive key is unknown, or another product made it.
 	ReceiveKeyNotFound,
 	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request to listen to one of the caller's payment inboxes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseListenPaymentInboxRequest {
+	/// Which of the caller's inboxes to listen to. The product picks it and
+	/// publishes it with its payment instructions.
+	pub inbox_domain: [u8; 32],
+}
+
+/// Stream item of `listen_payment_inbox`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostNftPurseListenPaymentInboxItem {
+	/// The channel the host listens on, emitted first.
+	Channel(NftPursePaymentTransmissionChannel),
+	/// The cheques already stored, possibly none, the first time; each later
+	/// batch of new cheques after that.
+	Cheques(Vec<NftPurseCheque>),
+}
+
+/// Why the host could not listen to a payment inbox.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseListenPaymentInboxError {
+	/// Any failure.
 	Other(GenericError),
 }
 
@@ -362,6 +389,10 @@ pub enum NftPurseCreateChequeError {
 	ItemNotFound,
 	/// Some item is in use.
 	ItemUnavailable,
+	/// `items` is empty.
+	NoItems,
+	/// This product already created a cheque with the same id.
+	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -376,10 +407,11 @@ pub struct HostNftPurseRevokeChequeRequest {
 /// Why a cheque was not revoked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseRevokeChequeError {
-	/// Another product created the cheque.
-	Denied,
-	/// The cheque is unknown.
+	/// This product created no cheque with this id.
 	ChequeNotFound,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the cheque on this device.
+	ItemsInUse,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -398,12 +430,38 @@ pub struct HostNftPurseDepositRequest {
 pub enum NftPurseDepositError {
 	/// `to` does not exist.
 	PurseNotFound,
+	/// `to` is not the purse the cheque's receive key was created into.
+	PurseMismatch,
 	/// The cheque is already deposited.
 	OperationExists,
 	/// The cheque holds no items.
 	EmptyCheque,
 	/// The secrets do not decode, or do not match the items.
 	CorruptedCheque,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the same cheque by another product or under another id.
+	ItemsInUse,
+	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request for the key a sender seals a `Static` cheque to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyRequest {}
+
+/// The host's static receive key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyResponse {
+	/// The X25519 key `Static` cheques are sealed to. The same for every
+	/// product.
+	pub key: X25519PublicKey,
+}
+
+/// Why the static receive key could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseStaticReceiveKeyError {
+	/// The user did not consent to disclosing their identity to the product.
+	PermissionDenied,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -411,19 +469,32 @@ pub enum NftPurseDepositError {
 /// Request to return a deposited cheque's items to their original keys.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRefundRequest {
-	/// The deposited cheque. It is the idempotency key.
+	/// The deposited cheque.
 	pub cheque_id: NftPurseChequeId,
+}
+
+/// The refund's moves, by the depositing purse's item keys.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseRefundResponse {
+	/// Items whose move back to their cheque key started.
+	pub started: Vec<NftPurseItemKey>,
+	/// Items the deposit brought in that were spent since, and stay.
+	pub unavailable: Vec<NftPurseItemKey>,
 }
 
 /// Why a cheque could not be refunded.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseRefundError {
-	/// Another product deposited the cheque, or the user did not confirm.
+	/// The user did not confirm draining the purse.
 	Denied,
-	/// The cheque is unknown.
+	/// This product deposited no cheque with this id.
 	ChequeNotFound,
+	/// Some move of the deposit has not finalized or failed yet.
+	DepositInProgress,
 	/// The cheque is already refunded.
 	OperationExists,
+	/// Every item the deposit brought in was spent since.
+	ItemUnavailable,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -457,8 +528,9 @@ pub enum NftPurseTransferItemError {
 /// Request for the status of an operation the calling product registered.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseObserveOperationStatusRequest {
-	/// The key the operation was registered under, or the cheque id of a
-	/// deposit or refund.
+	/// The key the operation was registered under: the cheque id of a
+	/// deposit, or `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+	/// `blake2_256("nft-purse/refund" ‖ chequeId)` for a revoke and a refund.
 	pub idempotency_key: NftPurseIdempotencyKey,
 }
 

@@ -1,18 +1,21 @@
 //! A ledger for tests, over a fixed installation and fixed entropy.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
+	holding::HeldItem,
+	imported_secrets::ImportedSecretStore,
 	keys::{
-		ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy,
-		item_signer_from_entropy,
+		ImportedItemKey, ItemIndex, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner,
+		ItemSlot, item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
 	},
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
-	scarcity::TRANSFER_POLICY,
+	purse::PurseId,
+	scarcity::{TRANSFER_POLICY, TransferParams},
 };
 use crate::{
 	durable::{
@@ -20,9 +23,9 @@ use crate::{
 		PolicyParams, Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable,
 		VerdictFailureKind, engine_on,
 	},
+	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
 	installation::{InstallationId, InstallationIdProvider},
-	platform::async_trait,
 	runtime::AuthorityError,
 	store::Db,
 };
@@ -47,6 +50,8 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 		durable: unbuilt_transfers_engine(db),
+		secrets: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 	}
 }
 
@@ -63,7 +68,7 @@ pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
 /// A transfer policy that leaves every transfer waiting.
 struct NeverBuilds;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl SubmissionPolicy for NeverBuilds {
 	fn id(&self) -> PolicyId {
 		PolicyId::new(TRANSFER_POLICY)
@@ -84,7 +89,7 @@ impl SubmissionPolicy for NeverBuilds {
 /// Always the same installation.
 pub struct FixedInstallation(pub InstallationId);
 
-#[async_trait]
+#[async_trait::async_trait]
 impl InstallationIdProvider for FixedInstallation {
 	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
 		Ok(self.0)
@@ -101,11 +106,29 @@ impl ItemKeyDeriver for FixedEntropy {
 	}
 }
 
+impl ItemSecrets for FixedEntropy {
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
+		item_secrets_from_entropy(&self.0, slots)
+			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
+	}
+}
+
 impl ItemSigner for FixedEntropy {
 	fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
 		item_signer_from_entropy(&self.0, slot)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
+}
+
+/// The entropy a cheque's sender derives the keys of [`imported_test_key`] from.
+const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
+
+/// The key at `index` of the sender's purse 0, as a cheque hands it over.
+pub fn imported_test_key(index: u32) -> ImportedItemKey {
+	let slot =
+		ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(index) };
+	let secret = item_secrets_from_entropy(&SENDER_ENTROPY, &[slot]).unwrap().remove(0);
+	ImportedItemKey::from_secret(secret).expect("a derived secret is valid")
 }
 
 /// Records `key` at `index` of purse 0 under [`TEST_INSTALLATION`], as an
@@ -119,4 +142,55 @@ pub fn insert_item_row(db: &Db, key: ItemKey, index: u32) {
 		Ok(())
 	};
 	block_on(db.write(insert)).expect("item row is written");
+}
+
+/// Allocates `count` keys in `purse` and records each as holding instance
+/// 100, 101, ..., so they are idle there.
+pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Vec<ItemKey> {
+	let count = NonZeroU32::new(count).expect("count is positive");
+	let keys = block_on(ledger.allocate_items(purse, count)).expect("items are allocated");
+	let holdings = keys
+		.iter()
+		.enumerate()
+		.map(|(index, key)| {
+			(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
+		})
+		.collect();
+	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
+	keys
+}
+
+/// The params of every registered transfer, in registration order.
+pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
+	let stored = |conn: &rusqlite::Connection| {
+		let mut statement = conn.prepare("SELECT policy_params FROM durable_tx ORDER BY id")?;
+		let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+		Ok(rows.collect::<Result<Vec<_>, _>>()?)
+	};
+	let rows = block_on(db.read(stored)).expect("params are read");
+	rows.into_iter()
+		.map(|params| TransferParams::try_from(&PolicyParams(params)).expect("params decode"))
+		.collect()
+}
+
+/// Marks the transfer `id` as finalized, as a landing at a finalized block
+/// would.
+pub fn finalize_transfer(db: &Db, id: DurableTxId) {
+	update_transfer(db, id, "UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE id = ?1");
+}
+
+/// Marks the transfer `id` as failed, as a rejection would.
+pub fn fail_transfer(db: &Db, id: DurableTxId) {
+	let statement =
+		"UPDATE durable_tx SET status = 'FAILURE', failure_kind = 'REJECTED' WHERE id = ?1";
+	update_transfer(db, id, statement);
+}
+
+/// Runs `statement` with the transfer `id` as its one parameter.
+fn update_transfer(db: &Db, id: DurableTxId, statement: &'static str) {
+	let written = db.write(move |tx| {
+		tx.execute(statement, [id.0])?;
+		Ok(())
+	});
+	block_on(written).expect("status is written");
 }

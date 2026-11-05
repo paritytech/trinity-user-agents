@@ -10,7 +10,7 @@ import TrUAPIHost
 /// published manifest can never name an address the host then fetches, and
 /// this one is typed in by whoever is holding the phone.
 struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
-    let productId: String
+    let productId: ProductId
     let cardId: String
     let title: String
     let faceUrl: String
@@ -77,11 +77,11 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     /// The page is loaded as typed rather than through the card's launch
     /// address, so it is handed the launch address's query in place of any
     /// typed item of the same name, with the typed encoding kept as it is.
-    func widgetURL(for key: PocketCardKey) -> URL? {
+    func widgetURL(for key: PocketCardKey, pageQuery: String = "") -> URL? {
         guard
             let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
             var components = URLComponents(url: widgetUrl, resolvingAgainstBaseURL: false),
-            let launchUrl = key.launchUrl,
+            let launchUrl = key.launchUrl(pageQuery: pageQuery),
             let launchItems = URLComponents(url: launchUrl, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems
         else { return nil }
 
@@ -101,6 +101,6 @@ struct DebugPocketCards: DebugPocketCardsStoring {
 
 private extension DebugPocketCards {
     func cards(of productId: ProductId) -> [DebugPocketCard] {
-        cards().filter { $0.productId.lowercased() == productId.lowercased() }
+        cards().filter { $0.productId == productId }
     }
 }

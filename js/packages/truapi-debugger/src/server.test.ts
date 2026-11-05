@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  asProductId,
   encodeWireMessage,
   MESSAGE_TYPE_REQUEST,
   VersionedHostSignRawRequest,
@@ -97,7 +98,7 @@ function signFrame(requestId: string): string {
     tag: "V1",
     value: {
       account: {
-        dotNsIdentifier: "alice.dot",
+        dotNsIdentifier: asProductId("alice.dot"),
         derivationIndex: { tag: "Index", value: 0 },
       },
       payload: { tag: "Bytes", value: { bytes: "0xdeadbeef" } },

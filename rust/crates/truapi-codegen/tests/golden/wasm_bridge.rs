@@ -186,7 +186,7 @@ impl crate::platform::AuthPresenter for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ChatPlatform for WasmPlatform {
     async fn create_chat_room(
         &self,
@@ -273,7 +273,7 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for WasmPlatform {
     async fn contacts(
         &self,
@@ -306,7 +306,7 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::CoreStorage for WasmPlatform {
     async fn read_core_storage(
         &self,
@@ -349,7 +349,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ExtrinsicVersionHost for WasmPlatform {
     async fn transaction_extension_versions(
         &self,
@@ -363,7 +363,7 @@ impl crate::platform::ExtrinsicVersionHost for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::Features for WasmPlatform {
     async fn feature_supported(
         &self,
@@ -391,7 +391,7 @@ impl crate::platform::Features for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::GamePlatform for WasmPlatform {
     async fn schedule_game_reminder(
         &self,
@@ -434,7 +434,7 @@ impl crate::platform::LocaleHost for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::Navigation for WasmPlatform {
     async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError> {
         invoke_unit(&self.bridge.navigate_to, vec![JsValue::from_str(&url)]).await?;
@@ -442,7 +442,7 @@ impl crate::platform::Navigation for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::Notifications for WasmPlatform {
     async fn push_notification(
         &self,
@@ -469,7 +469,7 @@ impl crate::platform::Notifications for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PermissionStatusHost for WasmPlatform {
     async fn device_permission_status(
         &self,
@@ -487,7 +487,7 @@ impl crate::platform::PermissionStatusHost for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::Permissions for WasmPlatform {
     async fn device_permission(
         &self,
@@ -528,7 +528,7 @@ impl crate::platform::Permissions for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PocketPlatform for WasmPlatform {
     fn subscribe_pocket_cards(
         &self,
@@ -571,7 +571,7 @@ impl crate::platform::PreimageHost for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ProductOperations for WasmPlatform {
     async fn begin_operation(
         &self,
@@ -609,7 +609,7 @@ impl crate::platform::ProductOperations for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ProductStorage for WasmPlatform {
     async fn read(
         &self,
@@ -656,7 +656,7 @@ impl crate::platform::ProductStorage for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ScannerPlatform for WasmPlatform {
     async fn scan_code(
         &self,
@@ -690,7 +690,7 @@ impl crate::platform::ThemeHost for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::UserConfirmation for WasmPlatform {
     async fn confirm_permission(
         &self,

@@ -5,13 +5,9 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
-    func presentFullScreen(_ viewController: UIViewController)
-    /// Leaves the screen it opens from in the window, for a presentation the
-    /// delegate animates over it.
-    func presentOverFullScreen(
-        _ viewController: UIViewController,
-        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
-    )
+    /// Clears what covers the tabs, selects the Wallet tab and hands over its
+    /// stack, saying whether the Wallet was already the tab on screen.
+    func openWallet(then show: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void)
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
     func openPocket()
@@ -33,23 +29,17 @@ extension ModuleNavigator: ModuleNavigating {
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 
-    func presentFullScreen(_ viewController: UIViewController) {
-        let navigationController = AppNavigationController(rootViewController: viewController)
-        navigationController.modalPresentationStyle = .fullScreen
-        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
-    }
+    func openWallet(then show: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void) {
+        guard
+            let view = UIApplication.shared.mainTabBarController,
+            let wallet = view.view(for: .wallet) as? UINavigationController
+        else { return }
 
-    func presentOverFullScreen(
-        _ viewController: UIViewController,
-        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
-    ) {
-        let navigationController = AppNavigationController(rootViewController: viewController)
-        navigationController.modalPresentationStyle = .overFullScreen
-        navigationController.modalPresentationCapturesStatusBarAppearance = true
-        navigationController.view.accessibilityViewIsModal = true
-        navigationController.transitioningDelegate = transitioningDelegate
-
-        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+        let wasOnScreen = view.container.selectedController === wallet
+        PresentedPageDismissal.dismissingPresented(on: view, unless: Self.isPinnedPresentation) { [weak view] in
+            view?.select(tab: .wallet)
+            show(wallet, wasOnScreen)
+        }
     }
 
     func openChat(_ model: ChatOpenModel) {
@@ -73,14 +63,13 @@ extension ModuleNavigator: ModuleNavigating {
         UIApplication.shared.mainTabBarController?.presentProduct(page: page)
     }
 
+    /// An open card stays open, as the Pocket shows it.
     func openPocket() {
-        guard let view = UIApplication.shared.mainTabBarController else {
-            return
-        }
+        openWallet { wallet, _ in
+            guard !(wallet.topViewController is PocketCardScreenViewController) else { return }
 
-        // A card is a modal over the tabs, so the Pocket would be selected unseen.
-        view.presentedViewController?.dismiss(animated: true)
-        view.select(tab: .wallet)
+            wallet.popToRootViewController(animated: true)
+        }
     }
 
     func openScanPanel() {
