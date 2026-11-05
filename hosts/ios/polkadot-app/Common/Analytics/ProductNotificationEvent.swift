@@ -1,8 +1,8 @@
 import Foundation
 import IssueMonitoring
 
-/// A product notification the host showed or the user tapped. The event names the product and the
-/// deeplink, never the notification's title or text.
+/// A product notification the host showed or the user tapped. The event names only the product: the deeplink is
+/// chosen by the product and can carry ids or keys, so it is never sent, nor is the notification's title or text.
 struct ProductNotificationEvent: Equatable {
     enum Step: String {
         case shown
@@ -10,7 +10,6 @@ struct ProductNotificationEvent: Equatable {
     }
 
     let productId: String
-    let deeplink: String?
     let deliveredAt: Date
 
     /// Nil unless the notification came from a product. Product notifications are scheduled with the
@@ -27,7 +26,6 @@ struct ProductNotificationEvent: Equatable {
         }
 
         productId = String(rest[..<separator])
-        deeplink = userInfo[PushNotificationKeys.deeplink] as? String
         self.deliveredAt = deliveredAt
     }
 
@@ -40,11 +38,10 @@ struct ProductNotificationEvent: Equatable {
             "host.os_version": origin.osVersion,
             "product_notification.product_id": productId
         ]
-        var extras = [
+        let extras = [
             "app.launch_id": HostEventValue.string(origin.launchID.uuidString.lowercased()),
             "product_notification.delivered_at_unix_ms": .integer(Int(deliveredAt.timeIntervalSince1970 * 1_000))
         ]
-        extras["product_notification.deeplink"] = deeplink.map(HostEventValue.string)
 
         return .make(
             name: "host.product_notification.\(step.rawValue)",
