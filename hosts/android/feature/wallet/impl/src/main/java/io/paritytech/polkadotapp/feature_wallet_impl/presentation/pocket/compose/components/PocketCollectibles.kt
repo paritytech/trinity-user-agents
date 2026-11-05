@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -27,15 +26,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -75,6 +80,7 @@ private const val COVER_EDGE_ON_DEGREES = -90f
 private const val COVER_CAMERA_DISTANCE = 32f
 
 private const val PAGE_EXPAND_DURATION_MS = 250
+private const val STEADY_FRAMES_BEFORE_EXPANDING = 3
 private const val SKELETON_SWEEP_LOOP_MS = 1350
 private const val SKELETON_SWEEP_BAND_WIDTH = 0.5f
 private const val SKELETON_SWEEP_ALPHA = 0.12f
@@ -94,6 +100,8 @@ private val SkeletonDotRadius = 2.5.dp
 private val CoverSpine = TransformOrigin(0f, 0.5f)
 private val PageTop = TransformOrigin(0.5f, 0f)
 private val ReadyTimeout = 10.seconds
+private val SteadyFrameInterval = 34.milliseconds
+private val SettleTimeout = 1.seconds
 
 @Composable
 fun PocketCollectibles(
@@ -122,7 +130,12 @@ fun PocketCollectibles(
         withTimeoutOrNull(ReadyTimeout) {
             snapshotFlow { pageRevealed || loadProgress is DotNsLoadProgress.Failed }.first { it }
         }
-        if (pageRevealed) book.handOff() else stage = BookStage.Failed
+        if (pageRevealed) {
+            awaitSteadyFrames()
+            book.handOff()
+        } else {
+            stage = BookStage.Failed
+        }
     }
 
     Column(
@@ -141,12 +154,28 @@ fun PocketCollectibles(
                 .weight(1f)
                 .windowInsetsPadding(LocalAppNavigationBarInsets.current)
         ) {
+            val pageInset = PolkadotTheme.spacings.mediumIncreased
             CollectiblesPage(
                 modifier = Modifier
                     .fillMaxSize()
-                    .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
-                webView = webView,
+                    .collectiblesPageLayer(book, inset = pageInset),
                 stage = stage
+            )
+
+            // A scaled or rounded-clipped WebView re-rasters or draws offscreen, which stalls the UI thread.
+            if (stage != BookStage.Failed) {
+                ProductWebViewHost(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { translationY = book.pageMargin(pageInset.toPx()) },
+                    webView = webView
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pageFrameMask(book, inset = pageInset, color = PolkadotTheme.colors.bg.surface.main)
             )
 
             CollectiblesSketchbook(
@@ -174,7 +203,6 @@ fun PocketCollectibles(
 @Composable
 private fun CollectiblesPage(
     modifier: Modifier,
-    webView: WebView?,
     stage: BookStage,
 ) {
     Box(
@@ -189,8 +217,6 @@ private fun CollectiblesPage(
             )
         } else {
             CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = stage == BookStage.Opened)
-
-            ProductWebViewHost(modifier = Modifier.fillMaxSize(), webView = webView)
         }
     }
 }
@@ -296,19 +322,40 @@ private fun Modifier.skeletonSweep(running: Boolean): Modifier {
 }
 
 private fun Modifier.collectiblesPageLayer(book: CollectiblesBookMotion, inset: Dp): Modifier = graphicsLayer {
-    val expansion = book.expansion.value
-    val insetPx = inset.toPx()
-    val restScale = if (size.width > 0f) (size.width - 2 * insetPx) / size.width else 1f
-    val scale = lerp(restScale, 1f, expansion)
+    val scale = book.pageScale(size.width, inset.toPx())
 
     transformOrigin = PageTop
     scaleX = scale
     scaleY = scale
-    translationY = insetPx * (1f - expansion)
+    translationY = book.pageMargin(inset.toPx())
     alpha = book.pageAlpha.value
-    // The clip is scaled with the page, so the radius is divided back out to read as the design's on screen.
-    shape = RoundedCornerShape(PageCornerRadius.toPx() * (1f - expansion) / scale)
     clip = true
+}
+
+private fun Modifier.pageFrameMask(book: CollectiblesBookMotion, inset: Dp, color: Color): Modifier = drawWithCache {
+    val outsideFrame = Path().apply { fillType = PathFillType.EvenOdd }
+    onDrawBehind {
+        val margin = book.pageMargin(inset.toPx())
+        val frameBottom = margin + size.height * book.pageScale(size.width, inset.toPx())
+        val radius = book.pageMargin(PageCornerRadius.toPx())
+        outsideFrame.rewind()
+        outsideFrame.addRect(size.toRect())
+        outsideFrame.addRoundRect(RoundRect(margin, margin, size.width - margin, frameBottom, CornerRadius(radius)))
+        drawPath(outsideFrame, color, alpha = book.pageAlpha.value)
+    }
+}
+
+// The page's first visible paint holds the UI thread for a few frames, and expanding over them would stutter.
+private suspend fun awaitSteadyFrames() {
+    withTimeoutOrNull(SettleTimeout) {
+        var previous = withFrameNanos { it }
+        var steadyFrames = 0
+        while (steadyFrames < STEADY_FRAMES_BEFORE_EXPANDING) {
+            val now = withFrameNanos { it }
+            steadyFrames = if (now - previous <= SteadyFrameInterval.inWholeNanoseconds) steadyFrames + 1 else 0
+            previous = now
+        }
+    }
 }
 
 private enum class BookStage { Closed, Opened, Failed }
@@ -334,4 +381,11 @@ private class CollectiblesBookMotion {
     suspend fun handOff() {
         expansion.animateTo(1f, tween(PAGE_EXPAND_DURATION_MS, easing = EaseOut))
     }
+
+    fun pageScale(width: Float, insetPx: Float): Float {
+        val restScale = if (width > 0f) (width - 2 * insetPx) / width else 1f
+        return lerp(restScale, 1f, expansion.value)
+    }
+
+    fun pageMargin(restMargin: Float): Float = restMargin * (1f - expansion.value)
 }
