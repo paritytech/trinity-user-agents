@@ -15,10 +15,10 @@ fn config(network: &str) -> serde_json::Value {
 fn test_local_routes_presets() {
 	for network in [Network::Previewnet, Network::PaseoNextV2] {
 		let base = network.config();
-		let resolved = parse(base, &config(base.id).to_string()).unwrap();
+		let resolved = parse(base.clone(), &config(&base.id).to_string()).unwrap();
 		assert_eq!(resolved.id, base.id);
 		assert_eq!(resolved.network_suffix, base.network_suffix);
-		assert_eq!(resolved.identity_backend_base, Some("http://127.0.0.1:8092/api/v1"));
+		assert_eq!(resolved.identity_backend_base.as_deref(), Some("http://127.0.0.1:8092/api/v1"));
 		assert_eq!(resolved.live_chain_endpoints.len(), 3);
 		for role in resolved.host_chain_set().chains {
 			let route = resolved
@@ -26,7 +26,7 @@ fn test_local_routes_presets() {
 				.iter()
 				.find(|route| route.genesis == role.genesis_hash)
 				.unwrap();
-			assert_eq!(Some(route.ws), resolved.url_for_role(role.identifier));
+			assert_eq!(Some(route.ws.as_str()), resolved.url_for_role(role.identifier));
 			assert!(route.required_for_host);
 			assert!(route.ws.starts_with("ws://127.0.0.1:"));
 		}
@@ -36,8 +36,8 @@ fn test_local_routes_presets() {
 #[test]
 fn test_namespace_mismatch_or_missing_chain_error() {
 	let base = Network::PaseoNextV2.config();
-	assert!(parse(base, &config("previewnet").to_string()).is_err());
-	let mut incomplete = config(base.id);
+	assert!(parse(base.clone(), &config("previewnet").to_string()).is_err());
+	let mut incomplete = config(&base.id);
 	incomplete.as_object_mut().unwrap().remove("bulletin");
 	assert!(parse(base, &incomplete.to_string()).is_err());
 }
@@ -46,11 +46,11 @@ fn test_namespace_mismatch_or_missing_chain_error() {
 fn test_genesis_malformed_or_duplicate_error() {
 	let base = Network::PaseoNextV2.config();
 	for value in ["0x01".to_string(), "0xzz".repeat(32), "11".repeat(32)] {
-		let mut document = config(base.id);
+		let mut document = config(&base.id);
 		document["people"]["genesis"] = value.into();
-		assert!(parse(base, &document.to_string()).is_err());
+		assert!(parse(base.clone(), &document.to_string()).is_err());
 	}
-	let mut document = config(base.id);
+	let mut document = config(&base.id);
 	document["bulletin"]["genesis"] = document["people"]["genesis"].clone();
 	assert!(parse(base, &document.to_string()).is_err());
 }

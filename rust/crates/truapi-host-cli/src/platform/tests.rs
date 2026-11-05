@@ -19,7 +19,7 @@ fn test_network() -> crate::network::NetworkConfig {
 /// provider does route, to the People fallback, yet is still not a served role.
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
-	let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let config = crate::network::Network::default().config();
 
 	let supported =
@@ -64,7 +64,7 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 
 #[test]
 fn supported_chains_answers_the_configured_network() {
-	let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let set = futures::executor::block_on(platform.supported_chains())
 		.expect("the CLI host serves the preset's chains");
 
@@ -142,7 +142,7 @@ fn record_navigation_reports_an_unwritable_transcript() {
 async fn navigate_to_records_the_url_it_was_handed() {
 	let dir = tempdir().expect("tempdir");
 	let path = dir.path().join("navigations.log");
-	let mut platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+	let mut platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::Prompt, None);
 	Arc::get_mut(&mut platform).expect("sole owner").navigations_log = Some(path.clone());
 	platform
 		.navigate_to("polkadot://dim2.dot/recover".to_string())
@@ -156,7 +156,7 @@ async fn navigate_to_records_the_url_it_was_handed() {
 
 #[tokio::test]
 async fn navigate_to_without_a_transcript_still_succeeds() {
-	let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::Prompt, None);
 	platform
 		.navigate_to("polkadot://dim2.dot".to_string())
 		.await
@@ -165,7 +165,7 @@ async fn navigate_to_without_a_transcript_still_succeeds() {
 
 #[tokio::test]
 async fn approval_policy_changes_apply_to_future_confirmations() {
-	let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::Prompt, None);
 
 	assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
 	platform.set_approval_policy(ApprovalPolicy::AutoAccept);
@@ -187,7 +187,7 @@ fn a_rejected_user_id_does_not_leave_the_previous_users_storage_mounted() {
 	std::fs::create_dir_all(&network_dir).expect("network dir");
 
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir.clone())),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -236,7 +236,7 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 	std::fs::create_dir_all(&network_dir).expect("network dir");
 
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir)),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -306,7 +306,7 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 		.expect("seed core storage");
 
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::new(state_dir, product_dir)),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -414,7 +414,7 @@ fn pairing_storage_switches_with_the_connected_username() {
 	let temporary = tempdir().expect("create pairing storage root");
 	let network_dir = temporary.path().join("testnet");
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir.clone())),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -453,7 +453,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	let temporary = tempdir().expect("create pairing storage root");
 	let network_dir = temporary.path().join("testnet");
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir.clone())),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -491,7 +491,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 
 	// It also survives a fresh process reading the same directories.
 	let restarted = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir)),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -520,7 +520,7 @@ fn product_storage_written_before_the_username_carries_into_the_resolved_user() 
 	)
 	.expect("write bootstrap pairing product storage");
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(CliStoragePaths::pairing(network_dir.clone())),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -600,7 +600,7 @@ fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 
 #[test]
 fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
-	let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let first =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
 			text: "Hello".to_string(),
@@ -630,7 +630,7 @@ fn product_storage_uses_safe_per_product_files() {
 	let first = ProductStorageKey::new(ProductId::for_test("first.dot"), "theme");
 	let localhost = ProductStorageKey::new(ProductId::for_test("localhost:3000"), "theme");
 	let platform = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(test_storage_paths(temporary.path(), "test")),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -664,7 +664,7 @@ fn product_storage_uses_safe_per_product_files() {
 
 	drop(platform);
 	let restored = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(test_storage_paths(temporary.path(), "test")),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -685,13 +685,13 @@ fn product_storage_is_isolated_by_session_then_product() {
 	let same_product = ProductId::for_test("same.dot");
 	let key = ProductStorageKey::new(same_product.clone(), "value");
 	let first = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(test_storage_paths(temporary.path(), "first")),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
 	let second = CliPlatform::new(
-		test_network(),
+		&test_network(),
 		Some(test_storage_paths(temporary.path(), "second")),
 		ApprovalPolicy::AutoAccept,
 		None,

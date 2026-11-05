@@ -244,11 +244,11 @@ where
 }
 
 /// Inputs for one attestation run.
-pub struct AttestConfig {
+pub struct AttestConfig<'a> {
 	/// The network whose identity backend takes the registration, whose People
 	/// and Asset Hub give the signing contexts, and whose Asset Hub serves the
 	/// reservation timestamp and the dotNS username poll.
-	pub network: NetworkConfig,
+	pub network: &'a NetworkConfig,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Requested lite username base (6+ lowercase letters, no digits).
@@ -260,7 +260,7 @@ pub struct AttestConfig {
 /// Check whether a lite username base is available through the identity
 /// backend. The username must be the base form without the digit suffix.
 pub async fn lite_username_available(
-	network: NetworkConfig,
+	network: &NetworkConfig,
 	auth_entropy: &[u8],
 	username_base: &str,
 ) -> Result<bool> {
@@ -297,11 +297,11 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// Registers (or confirms) the signing host's lite username. Waits until the
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
-pub async fn attest(config: &AttestConfig) -> Result<String> {
+pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 	let backend_base = config.network.identity_backend()?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
-	let mut reader = AssetHubReader::connect(&config.network).await?;
+	let mut reader = AssetHubReader::connect(config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
 	// gateway rejects values ahead of the chain.
 	let signed_at = reader.timestamp_secs().await.context("read Asset Hub Timestamp.Now")?;
@@ -326,7 +326,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let chains = CliChainProvider::new(&config.network);
+	let chains = CliChainProvider::new(config.network);
 	let people_signing_context =
 		signing_context_of(&chains, config.network.people_genesis, PEOPLE_LITE_PALLET).await?;
 	let asset_hub_signing_context =
@@ -385,10 +385,10 @@ async fn signing_context_of(
 /// Resolves the on-chain lite username for an already-attested signer: the
 /// discriminated `name.NN` the dotNS contracts hold for its identity account,
 /// whatever base the account record asked for.
-pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
+pub async fn registered_lite_username(network: &NetworkConfig, entropy: &[u8]) -> Result<String> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(&network).await?;
+	let mut reader = AssetHubReader::for_network(network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
@@ -399,12 +399,12 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 /// Resolve an existing full-person or Lite dotNS identity when one exists.
 /// An unlabeled account is a valid result and can still back a local session.
 pub async fn lookup_registered_username(
-	network: NetworkConfig,
+	network: &NetworkConfig,
 	entropy: &[u8],
 ) -> Result<Option<String>> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(&network).await?;
+	let mut reader = AssetHubReader::for_network(network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
 	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
@@ -432,7 +432,7 @@ struct UsernameSearchItem {
 /// `uid.<suffix>` identity on this network. The bearer token exempts these calls
 /// from the unauthenticated proof-of-compute challenge.
 pub async fn lookup_backend_username(
-	network: NetworkConfig,
+	network: &NetworkConfig,
 	auth_entropy: &[u8],
 	candidate_account_id: &str,
 ) -> Result<Option<String>> {
@@ -468,7 +468,7 @@ pub async fn lookup_backend_username(
 
 async fn search_backend_prefix(
 	client: &reqwest::Client,
-	network: NetworkConfig,
+	network: &NetworkConfig,
 	auth_entropy: &[u8],
 	candidate_account_id: &str,
 	initial: char,
@@ -544,11 +544,11 @@ fn normalize_searched_username(username: &str) -> String {
 /// Probes the dotNS contracts for the bare root and the network's RFC-0022
 /// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
-pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
+pub async fn check_identity(network: &NetworkConfig, entropy: &[u8]) -> Result<()> {
 	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(&network).await?;
+	let mut reader = AssetHubReader::for_network(network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
 
@@ -593,7 +593,7 @@ async fn fetch_verifier(client: &reqwest::Client, backend_base: &str) -> Result<
 /// registration was built for (`config.entropy` on `config.network`).
 async fn submit_registration(
 	client: &reqwest::Client,
-	config: &AttestConfig,
+	config: &AttestConfig<'_>,
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {

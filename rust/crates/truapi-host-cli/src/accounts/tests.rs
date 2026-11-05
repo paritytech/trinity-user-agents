@@ -23,7 +23,7 @@ fn record(name: &str, network: &str, attested: bool) -> AccountRecord {
 async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<()> {
 	let directory = tempdir()?;
 	let network = crate::network::Network::PaseoNextV2.config();
-	let network_id = network.id;
+	let network_id = network.id.as_str();
 	let mut store = AccountStore::load(directory.path())?;
 	let mut pending = record("auto-1", network_id, false);
 	pending.lite_username = "pending".to_string();
@@ -35,7 +35,7 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 		assert_eq!(
 			(
 				fs::read(&reloaded.path)?,
-				resolve_cached_signer(directory.path(), network, None)?
+				resolve_cached_signer(directory.path(), &network, None)?
 					.map(|signer| signer.entropy),
 				serde_json::to_value(reloaded.pending_auto_candidate(network_id))?,
 			),
@@ -60,7 +60,7 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 	assert_pending()?;
 
 	finish_account_readiness(&mut store, registered, async { Ok(()) }).await?;
-	let cached = resolve_cached_signer(directory.path(), network, None)?
+	let cached = resolve_cached_signer(directory.path(), &network, None)?
 		.expect("completed ring readiness makes the original account usable");
 	let reloaded = AccountStore::load(directory.path())?;
 	assert_eq!(
@@ -91,7 +91,7 @@ fn debug_output_redacts_signer_secrets() {
 
 	let config = ResolveSignerConfig {
 		base_path: Path::new("/tmp"),
-		network: crate::network::Network::PaseoNextV2.config(),
+		network: &crate::network::Network::PaseoNextV2.config(),
 		mnemonic: Some(MNEMONIC.to_string()),
 		account: None,
 		lite_username_prefix: None,
@@ -240,7 +240,7 @@ fn cached_signer_resolves_without_network_access() -> Result<()> {
 	store.save()?;
 
 	let signer =
-		resolve_cached_signer(dir.path(), crate::network::Network::PaseoNextV2.config(), None)?
+		resolve_cached_signer(dir.path(), &crate::network::Network::PaseoNextV2.config(), None)?
 			.expect("cached signer");
 
 	assert_eq!(signer.account_name.as_deref(), Some("auto-1"));
@@ -259,7 +259,7 @@ fn cached_signer_ignores_legacy_username_base() -> Result<()> {
 	store.save()?;
 
 	assert!(
-		resolve_cached_signer(dir.path(), crate::network::Network::PaseoNextV2.config(), None)?
+		resolve_cached_signer(dir.path(), &crate::network::Network::PaseoNextV2.config(), None)?
 			.is_none()
 	);
 	Ok(())
@@ -267,7 +267,7 @@ fn cached_signer_ignores_legacy_username_base() -> Result<()> {
 
 #[tokio::test]
 async fn attest_is_refused_on_a_real_identity_preset() {
-	let Err(error) = attest_mnemonic(production_network(), MNEMONIC, "abcdefg").await else {
+	let Err(error) = attest_mnemonic(&production_network(), MNEMONIC, "abcdefg").await else {
 		panic!("attest is for test presets");
 	};
 	assert!(error.to_string().contains("attest"), "{error}");
@@ -281,9 +281,10 @@ fn production_network() -> NetworkConfig {
 #[tokio::test]
 async fn production_network_never_writes_the_account_store() -> Result<()> {
 	let dir = tempdir()?;
+	let production = production_network();
 	let resolve = |mnemonic: Option<String>| ResolveSignerConfig {
 		base_path: dir.path(),
-		network: production_network(),
+		network: &production,
 		mnemonic,
 		account: None,
 		lite_username_prefix: None,
@@ -302,8 +303,7 @@ async fn production_network_never_writes_the_account_store() -> Result<()> {
 		public_key: identity.public_key,
 		address: identity.address,
 	};
-	persist_imported_signer(dir.path(), production_network(), &imported)
-		.expect_err("imports are refused");
+	persist_imported_signer(dir.path(), &production, &imported).expect_err("imports are refused");
 
 	let signer = resolve_signer(resolve(Some(MNEMONIC.to_string()))).await?;
 	assert!(!signer.auto_managed);
@@ -324,12 +324,12 @@ fn production_network_never_signs_from_the_account_store() -> Result<()> {
 		address: identity.address,
 	};
 	let testnet = crate::network::Network::PaseoNextV2.config();
-	persist_imported_signer(dir.path(), testnet, &imported)?;
+	persist_imported_signer(dir.path(), &testnet, &imported)?;
 	let cached = |network| resolve_cached_signer(dir.path(), network, Some(IMPORTED_ACCOUNT_NAME));
-	assert!(cached(testnet)?.is_some());
+	assert!(cached(&testnet)?.is_some());
 
 	// Same network id, so the stored record is there to be found.
-	let error = cached(production_network()).expect_err("stored records are refused");
+	let error = cached(&production_network()).expect_err("stored records are refused");
 	assert!(error.to_string().contains("--mnemonic"), "{error}");
 	Ok(())
 }
@@ -349,7 +349,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 
 	let signer = persist_imported_signer(
 		dir.path(),
-		crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(),
 		&imported,
 	)?;
 
@@ -358,7 +358,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 	assert!(!signer.auto_managed);
 	let cached = resolve_cached_signer(
 		dir.path(),
-		crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
 	.expect("imported signer is cached");
@@ -389,13 +389,13 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 	assert!(session_name.starts_with("imported-"));
 	let signer = persist_imported_signer(
 		dir.path(),
-		crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(),
 		&imported,
 	)?;
 	assert_eq!(signer.lite_username, None);
 	let cached = resolve_cached_signer(
 		dir.path(),
-		crate::network::Network::PaseoNextV2.config(),
+		&crate::network::Network::PaseoNextV2.config(),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
 	.expect("username-less imported signer is cached");

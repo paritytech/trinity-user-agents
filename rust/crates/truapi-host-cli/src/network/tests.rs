@@ -111,9 +111,9 @@ fn test_disposable_network_hosts() {
 		if !config.disposable_identities {
 			continue;
 		}
-		let mut routes: Vec<&str> = config.identity_backend_base.into_iter().collect();
-		routes.extend([config.people_ws, config.bulletin_ws, config.asset_hub_ws]);
-		routes.extend(config.live_chain_endpoints.iter().map(|chain| chain.ws));
+		let mut routes: Vec<&str> = config.identity_backend_base.as_deref().into_iter().collect();
+		routes.extend([&*config.people_ws, &config.bulletin_ws, &config.asset_hub_ws]);
+		routes.extend(config.live_chain_endpoints.iter().map(|chain| chain.ws.as_str()));
 
 		for route in routes {
 			let host = reqwest::Url::parse(route)
@@ -328,7 +328,7 @@ fn test_stack_config_from_descriptor() {
 
 	assert_eq!(config.id, "staging");
 	assert_eq!(config.network_suffix, "testnet");
-	assert_eq!(config.identity_backend_base, Some("https://dub.example/api/v1"));
+	assert_eq!(config.identity_backend_base.as_deref(), Some("https://dub.example/api/v1"));
 	assert_eq!(config.dotns_pop_controller, Some([0xab; 20]));
 	assert!(config.disposable_identities);
 	assert_eq!(config.people_ws, "ws://127.0.0.1:9944");
@@ -486,8 +486,14 @@ async fn verify_stack_endpoints(
 	unanswered: Unanswered,
 	built_in: Option<&BuiltInOrigin>,
 ) -> Result<()> {
-	let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
-	verify_endpoints(config, &endpoints, unanswered, built_in, Some(config.network_suffix)).await
+	verify_endpoints(
+		config,
+		&config.live_chain_endpoints,
+		unanswered,
+		built_in,
+		Some(config.network_suffix),
+	)
+	.await
 }
 
 /// An endpoint that does not answer is not evidence of a wrong stack, so it
@@ -637,14 +643,15 @@ fn test_chain_checks_by_source() {
 	assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
 	assert_eq!(polkadot_checks.expected_suffix, None);
 
-	let light_client = NetworkConfig { chain_backend: ChainBackend::LightClient, ..paseo };
+	let light_client = NetworkConfig { chain_backend: ChainBackend::LightClient, ..paseo.clone() };
 	let light_client = plan_chain_checks(&light_client, &paseo, false, None);
 	assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
 	assert_eq!(light_client.expected_suffix, None);
 
 	let overrides =
 		ChainOverrides::parse([Some("ws://127.0.0.1:9".to_string()), None, None]).unwrap();
-	let local = plan_chain_checks(&apply_chain_overrides(paseo, overrides), &paseo, true, None);
+	let local =
+		plan_chain_checks(&apply_chain_overrides(paseo.clone(), overrides), &paseo, true, None);
 	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
 	assert_eq!(local.expected_suffix, None);
 }
@@ -654,12 +661,11 @@ fn test_chain_checks_by_source() {
 #[test]
 fn test_split_rerouted() {
 	let base = Network::PaseoNextV2.config();
-	let overrides =
-		ChainOverrides::parse([Some(base.bulletin_ws.to_string()), None, None]).unwrap();
-	let config = apply_chain_overrides(base, overrides);
+	let overrides = ChainOverrides::parse([Some(base.bulletin_ws.clone()), None, None]).unwrap();
+	let config = apply_chain_overrides(base.clone(), overrides);
 	let (rerouted, untouched) = split_rerouted(&config, &base);
 	assert_eq!(rerouted.len(), 1);
-	assert_eq!((rerouted[0].genesis, rerouted[0].ws), (base.people_genesis, base.bulletin_ws));
+	assert_eq!((rerouted[0].genesis, &rerouted[0].ws), (base.people_genesis, &base.bulletin_ws));
 	assert_eq!(untouched.len(), 2);
 	assert!(untouched.iter().all(|endpoint| endpoint.genesis != base.people_genesis));
 }
@@ -686,12 +692,12 @@ fn test_backend_override_hint() {
 fn backend_override_replaces_only_the_backend_base() {
 	let paseo = Network::PaseoNextV2.config();
 	let overridden =
-		apply_backend_override(paseo, Some("http://localhost:8080/api/v1/".to_string()));
+		apply_backend_override(paseo.clone(), Some("http://localhost:8080/api/v1/".to_string()));
 
-	assert_eq!(overridden.identity_backend_base, Some("http://localhost:8080/api/v1"));
+	assert_eq!(overridden.identity_backend_base.as_deref(), Some("http://localhost:8080/api/v1"));
 	assert_eq!(overridden.asset_hub_ws, paseo.asset_hub_ws);
 	assert_eq!(
-		apply_backend_override(paseo, Some("  ".to_string())).identity_backend_base,
+		apply_backend_override(paseo.clone(), Some("  ".to_string())).identity_backend_base,
 		paseo.identity_backend_base,
 	);
 }
@@ -775,8 +781,8 @@ fn test_chain_overrides_blank_unset() {
 		ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
 	assert!(overrides.env_names_in_use().is_empty());
 	let paseo = Network::PaseoNextV2.config();
-	let resolved = apply_chain_overrides(paseo, overrides);
-	assert!(std::ptr::eq(resolved.live_chain_endpoints, paseo.live_chain_endpoints));
+	let resolved = apply_chain_overrides(paseo.clone(), overrides);
+	assert_eq!(resolved.live_chain_endpoints, paseo.live_chain_endpoints);
 }
 
 #[test]
@@ -802,13 +808,13 @@ fn test_chain_overrides_field_and_route() {
 		])
 		.unwrap();
 		assert_eq!(overrides.env_names_in_use(), [PEOPLE_WS_ENV]);
-		let overridden = apply_chain_overrides(network, overrides);
+		let overridden = apply_chain_overrides(network.clone(), overrides);
 		let route = |genesis: [u8; 32]| {
 			overridden
 				.live_chain_endpoints
 				.iter()
 				.find(|endpoint| endpoint.genesis == genesis)
-				.map(|endpoint| endpoint.ws)
+				.map(|endpoint| endpoint.ws.as_str())
 		};
 
 		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
@@ -816,8 +822,8 @@ fn test_chain_overrides_field_and_route() {
 		assert_eq!(overridden.bulletin_ws, network.bulletin_ws);
 		assert_eq!(overridden.people_genesis, network.people_genesis);
 		assert_eq!(route(network.people_genesis), Some("ws://127.0.0.1:10010"));
-		assert_eq!(route(network.asset_hub_genesis), Some(network.asset_hub_ws));
-		assert_eq!(route(network.bulletin_genesis), Some(network.bulletin_ws));
+		assert_eq!(route(network.asset_hub_genesis), Some(network.asset_hub_ws.as_str()));
+		assert_eq!(route(network.bulletin_genesis), Some(network.bulletin_ws.as_str()));
 	}
 }
 

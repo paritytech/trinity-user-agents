@@ -68,7 +68,7 @@ async fn start_tcp_server(
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 	let network = crate::network::Network::default().config();
 	let platform = crate::platform::CliPlatform::new(
-		network,
+		&network,
 		None,
 		crate::platform::ApprovalPolicy::AutoAccept,
 		None,
@@ -469,14 +469,14 @@ mod cross_product_storage {
 		// feeds the standalone `AssetHubReader` subcommands. Only Asset Hub
 		// is rerouted here.
 		let mut network = crate::network::Network::default().config();
-		network.live_chain_endpoints = Box::leak(Box::new([crate::network::ChainEndpoint {
+		network.live_chain_endpoints = vec![crate::network::ChainEndpoint {
 			genesis: network.asset_hub_genesis,
-			ws: "ws://127.0.0.1:1",
+			ws: "ws://127.0.0.1:1".to_owned(),
 			required_for_host: true,
-		}]));
+		}];
 		let asset_hub_genesis = network.asset_hub_genesis;
 		let platform = crate::platform::CliPlatform::new(
-			network,
+			&network,
 			None,
 			crate::platform::ApprovalPolicy::AutoAccept,
 			None,

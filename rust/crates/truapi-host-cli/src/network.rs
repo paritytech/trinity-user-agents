@@ -164,10 +164,10 @@ pub struct StackArg {
 /// What the CLI checks against the chains before a command runs.
 struct ChainChecks {
 	/// Endpoints an override reroutes; one that does not answer is an error.
-	rerouted: Vec<&'static ChainEndpoint>,
+	rerouted: Vec<ChainEndpoint>,
 	/// The other endpoints of a stack network; one that does not answer within
 	/// [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
-	from_stack: Vec<&'static ChainEndpoint>,
+	from_stack: Vec<ChainEndpoint>,
 	/// For a built-in stack, the descriptor in use.
 	built_in: Option<BuiltInOrigin>,
 	/// For a stack network, the TLD People's `NetworkSuffix` must equal.
@@ -264,7 +264,7 @@ impl NetworkSource {
 			},
 		};
 		let mut config = apply_chain_overrides(
-			apply_backend_override(base, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
+			apply_backend_override(base.clone(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
 			overrides,
 		);
 		config.chain_backend = self.chain_backend;
@@ -357,12 +357,12 @@ fn ensure_sources_compatible(
 fn split_rerouted(
 	config: &NetworkConfig,
 	base: &NetworkConfig,
-) -> (Vec<&'static ChainEndpoint>, Vec<&'static ChainEndpoint>) {
-	config.live_chain_endpoints.iter().partition(|endpoint| {
+) -> (Vec<ChainEndpoint>, Vec<ChainEndpoint>) {
+	config.live_chain_endpoints.iter().cloned().partition(|endpoint| {
 		!base
 			.live_chain_endpoints
 			.iter()
-			.any(|chain| (chain.genesis, chain.ws) == (endpoint.genesis, endpoint.ws))
+			.any(|chain| chain.genesis == endpoint.genesis && chain.ws == endpoint.ws)
 	})
 }
 
@@ -372,7 +372,7 @@ impl Network {
 		match self {
 			Self::PaseoNextV2 => "paseo-next-v2",
 			Self::Previewnet => "previewnet",
-			Self::Polkadot => POLKADOT.id,
+			Self::Polkadot => POLKADOT_ID,
 		}
 	}
 
@@ -387,10 +387,10 @@ impl Network {
 	/// The values compiled into this build, without fetching anything: a
 	/// built-in stack's bundled copy, or Polkadot's pinned values.
 	pub fn config(self) -> NetworkConfig {
-		let Some(built_in) = self.built_in_stack() else { return POLKADOT };
+		let Some(built_in) = self.built_in_stack() else { return polkadot() };
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
 			.expect("invalid bundled stack");
-		stack_config(&bundled.descriptor, self.id()).expect("invalid bundled stack")
+		stack_config(&bundled.descriptor, self.id().to_owned()).expect("invalid bundled stack")
 	}
 
 	/// For a built-in stack, the published descriptor when it is newer than the
@@ -401,7 +401,7 @@ impl Network {
 		self,
 		fetch_timeout: Duration,
 	) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
-		let Some(built_in) = self.built_in_stack() else { return Ok((POLKADOT, None)) };
+		let Some(built_in) = self.built_in_stack() else { return Ok((polkadot(), None)) };
 		let pointer = built_in.pointer();
 		let url = pointer.url().as_str();
 		let fetched = fetch(url, fetch_timeout).await;
@@ -422,7 +422,7 @@ impl Network {
 			None => {},
 		}
 		let origin = BuiltInOrigin { id: self.id(), url: url.to_owned(), copy: refresh.copy };
-		Ok((stack_config(&refresh.descriptor, self.id())?, Some(origin)))
+		Ok((stack_config(&refresh.descriptor, self.id().to_owned())?, Some(origin)))
 	}
 }
 
@@ -571,7 +571,7 @@ fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
 		"the stack id {:?} is not a lowercase label to use as the product namespace",
 		descriptor.id
 	);
-	stack_config(descriptor, leak_str(id))
+	stack_config(descriptor, id.to_owned())
 }
 
 /// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
@@ -579,7 +579,7 @@ fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
 /// identities, read through its [`StackProjection`]. Fails when a role is
 /// missing, when two roles share a genesis hash, and when the TLD is not one
 /// the core serves.
-fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConfig> {
+fn stack_config(descriptor: &Descriptor, id: String) -> Result<NetworkConfig> {
 	let projection = StackProjection::of(descriptor);
 	let roles = ROLE_NAMES.zip(projection.roles).try_map(|(role, chain)| {
 		let (ws, genesis_hash) =
@@ -587,7 +587,7 @@ fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConf
 		let mut genesis = [0u8; 32];
 		hex::decode_to_slice(genesis_hash.trim_start_matches("0x"), &mut genesis)
 			.expect("invalid genesisHash in a validated descriptor");
-		anyhow::Ok(ChainEndpoint { genesis, ws: leak_str(ws), required_for_host: true })
+		anyhow::Ok(ChainEndpoint { genesis, ws: ws.to_owned(), required_for_host: true })
 	})?;
 	let network_suffix =
 		DOTNS_TLDS.iter().find(|tld| **tld == projection.tld).with_context(|| {
@@ -598,9 +598,8 @@ fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConf
 				DOTNS_TLDS.join(", ")
 			)
 		})?;
-	let identity_backend_base = projection
-		.dub
-		.map(|url| leak_str(&format!("{}/api/v1", url.trim_end_matches('/'))));
+	let identity_backend_base =
+		projection.dub.map(|url| format!("{}/api/v1", url.trim_end_matches('/')));
 	let dotns_pop_controller = projection.pop_controller.map(|address| {
 		let mut bytes = [0u8; 20];
 		hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
@@ -612,13 +611,13 @@ fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConf
 		id,
 		network_suffix,
 		identity_backend_base,
-		people_ws: roles.people.ws,
-		bulletin_ws: roles.bulletin.ws,
-		asset_hub_ws: roles.asset_hub.ws,
+		people_ws: roles.people.ws.clone(),
+		bulletin_ws: roles.bulletin.ws.clone(),
+		asset_hub_ws: roles.asset_hub.ws.clone(),
 		people_genesis: roles.people.genesis,
 		bulletin_genesis: roles.bulletin.genesis,
 		asset_hub_genesis: roles.asset_hub.genesis,
-		live_chain_endpoints: roles.leak_endpoints(),
+		live_chain_endpoints: roles.into_endpoints(),
 		dotns_pop_controller,
 		disposable_identities: true,
 		chain_backend: ChainBackend::Rpc,
@@ -641,15 +640,9 @@ impl Roles<ChainEndpoint> {
 	}
 
 	/// The genesis-keyed routing table of a [`NetworkConfig`].
-	fn leak_endpoints(self) -> &'static [ChainEndpoint] {
-		Box::leak(Box::new([self.people, self.asset_hub, self.bulletin]))
+	fn into_endpoints(self) -> Vec<ChainEndpoint> {
+		vec![self.people, self.asset_hub, self.bulletin]
 	}
-}
-
-/// `NetworkConfig` is `Copy` with process-lifetime fields; the CLI resolves a
-/// network a handful of times per process.
-fn leak_str(value: &str) -> &'static str {
-	Box::leak(value.to_owned().into_boxed_str())
 }
 
 /// The light client knows only the networks `truapi-provider` bundles, by
@@ -660,7 +653,7 @@ fn refuse_light_client(config: &NetworkConfig) -> Result<()> {
 		return Ok(());
 	}
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
-		.add_network(config.id)
+		.add_network(&config.id)
 		.map_err(|error| {
 			anyhow!("--chain-backend light-client has no chain specs for {}: {error}", config.id)
 		})?;
@@ -680,7 +673,7 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 	if let Some(base) = base {
 		let trimmed = base.trim().trim_end_matches('/');
 		if !trimmed.is_empty() {
-			config.identity_backend_base = Some(leak_str(trimmed));
+			config.identity_backend_base = Some(trimmed.to_owned());
 		}
 	}
 	config
@@ -689,31 +682,23 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 /// Points each overridden role at its new URL, in both the role field and the
 /// genesis-keyed routing table, so the two cannot disagree.
 fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
-	let leak = |value: Option<String>| value.map(|url| leak_str(&url));
 	let routes = [
-		(leak(overrides.people_ws), config.people_genesis),
-		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
-		(leak(overrides.bulletin_ws), config.bulletin_genesis),
+		(overrides.people_ws, config.people_genesis),
+		(overrides.asset_hub_ws, config.asset_hub_genesis),
+		(overrides.bulletin_ws, config.bulletin_genesis),
 	];
-	if routes.iter().all(|(url, _)| url.is_none()) {
-		return config;
+	for endpoint in &mut config.live_chain_endpoints {
+		let rerouted = routes
+			.iter()
+			.find_map(|(url, genesis)| url.as_ref().filter(|_| *genesis == endpoint.genesis));
+		if let Some(url) = rerouted {
+			endpoint.ws.clone_from(url);
+		}
 	}
 	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
 	config.people_ws = people.unwrap_or(config.people_ws);
 	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
 	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
-	let endpoints: Vec<ChainEndpoint> = config
-		.live_chain_endpoints
-		.iter()
-		.map(|endpoint| {
-			let ws = routes
-				.iter()
-				.find_map(|(url, genesis)| (*genesis == endpoint.genesis).then_some(*url).flatten())
-				.unwrap_or(endpoint.ws);
-			ChainEndpoint { ws, ..*endpoint }
-		})
-		.collect();
-	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
 
@@ -726,24 +711,23 @@ fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
 		return Ok(());
 	}
 	ensure!(
-		config.id != POLKADOT.id,
-		"a stack cannot run under the {} namespace, whose identities are real; use a stack \
-		 with another id",
-		POLKADOT.id
+		config.id != POLKADOT_ID,
+		"a stack cannot run under the {POLKADOT_ID} namespace, whose identities are real; use a \
+		 stack with another id"
 	);
 	ensure!(
-		config.network_suffix != POLKADOT.network_suffix,
+		config.network_suffix != POLKADOT_TLD,
 		"{} uses Polkadot's TLD .{}, whose identities are real; point it at a test network",
 		config.id,
 		config.network_suffix
 	);
-	for endpoint in config.live_chain_endpoints {
+	for endpoint in &config.live_chain_endpoints {
 		ensure!(
-			!POLKADOT_CHAIN_ENDPOINTS.iter().any(|chain| chain.genesis == endpoint.genesis),
+			!POLKADOT_CHAINS.iter().any(|chain| chain.genesis == endpoint.genesis),
 			"{} would route to {}'s chain at {}, whose identities are real; point it at a test \
 			 network",
 			config.id,
-			POLKADOT.id,
+			POLKADOT_ID,
 			endpoint.ws
 		);
 	}
@@ -772,7 +756,7 @@ struct EndpointReport {
 /// `NetworkSuffix` over the same connection.
 async fn probe_endpoint(
 	config: &NetworkConfig,
-	endpoint: &'static ChainEndpoint,
+	endpoint: &ChainEndpoint,
 	read_suffix: bool,
 ) -> Result<EndpointReport, String> {
 	use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
@@ -794,12 +778,12 @@ async fn probe_endpoint(
 /// suffix is logged.
 async fn verify_endpoints(
 	config: &NetworkConfig,
-	endpoints: &[&'static ChainEndpoint],
+	endpoints: &[ChainEndpoint],
 	unanswered: Unanswered,
 	built_in: Option<&BuiltInOrigin>,
 	expected_suffix: Option<&str>,
 ) -> Result<()> {
-	let checks = endpoints.iter().map(|&endpoint| async move {
+	let checks = endpoints.iter().map(|endpoint| async move {
 		let expected_suffix = expected_suffix.filter(|_| endpoint.genesis == config.people_genesis);
 		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
 		let report = match unanswered {
@@ -859,28 +843,37 @@ async fn verify_endpoints(
 // usernames) resolves through Asset Hub, SSO through People, preimages through
 // Bulletin.
 
-const POLKADOT_ASSET_HUB: ChainEndpoint = ChainEndpoint {
+/// A Polkadot chain pinned in this build.
+struct PinnedChain {
+	genesis: [u8; 32],
+	ws: &'static str,
+}
+
+impl PinnedChain {
+	fn endpoint(&self) -> ChainEndpoint {
+		ChainEndpoint { genesis: self.genesis, ws: self.ws.to_owned(), required_for_host: true }
+	}
+}
+
+const POLKADOT_ASSET_HUB: PinnedChain = PinnedChain {
 	genesis: hex_literal_genesis(
 		"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
 	),
 	ws: "wss://polkadot-asset-hub-rpc.polkadot.io",
-	required_for_host: true,
 };
 
-const POLKADOT_PEOPLE: ChainEndpoint = ChainEndpoint {
+const POLKADOT_PEOPLE: PinnedChain = PinnedChain {
 	genesis: hex_literal_genesis(
 		"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
 	),
 	ws: "wss://polkadot-people-rpc.polkadot.io",
-	required_for_host: true,
 };
 
-const POLKADOT_BULLETIN: ChainEndpoint = ChainEndpoint {
+const POLKADOT_BULLETIN: PinnedChain = PinnedChain {
 	genesis: hex_literal_genesis(
 		"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
 	),
 	ws: "wss://bulletin-rpc.polkadot.io",
-	required_for_host: true,
 };
 
 /// The dotNS deployment on Polkadot Asset Hub, copied verbatim from
@@ -895,31 +888,37 @@ const POLKADOT_DOTNS_DEPLOYMENT: &str = include_str!("../deployments/polkadot-42
 const POLKADOT_DOTNS_POP_CONTROLLER: [u8; 20] =
 	manifest_address(POLKADOT_DOTNS_DEPLOYMENT, "DotnsPopController");
 
-const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
-	&[POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
+const POLKADOT_CHAINS: [PinnedChain; 3] = [POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
 
-const POLKADOT: NetworkConfig = NetworkConfig {
-	id: "polkadot",
-	network_suffix: "dot",
-	identity_backend_base: None,
-	people_ws: POLKADOT_PEOPLE.ws,
-	bulletin_ws: POLKADOT_BULLETIN.ws,
-	asset_hub_ws: POLKADOT_ASSET_HUB.ws,
-	people_genesis: POLKADOT_PEOPLE.genesis,
-	bulletin_genesis: POLKADOT_BULLETIN.genesis,
-	asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
-	live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
-	dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
-	disposable_identities: false,
-	chain_backend: ChainBackend::Rpc,
-};
+const POLKADOT_ID: &str = "polkadot";
+
+const POLKADOT_TLD: &str = "dot";
+
+/// Polkadot's values, pinned in this build.
+fn polkadot() -> NetworkConfig {
+	NetworkConfig {
+		id: POLKADOT_ID.to_owned(),
+		network_suffix: POLKADOT_TLD,
+		identity_backend_base: None,
+		people_ws: POLKADOT_PEOPLE.ws.to_owned(),
+		bulletin_ws: POLKADOT_BULLETIN.ws.to_owned(),
+		asset_hub_ws: POLKADOT_ASSET_HUB.ws.to_owned(),
+		people_genesis: POLKADOT_PEOPLE.genesis,
+		bulletin_genesis: POLKADOT_BULLETIN.genesis,
+		asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
+		live_chain_endpoints: POLKADOT_CHAINS.iter().map(PinnedChain::endpoint).collect(),
+		dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
+		disposable_identities: false,
+		chain_backend: ChainBackend::Rpc,
+	}
+}
 
 /// Resolved RPC/backend/genesis values for one network.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct NetworkConfig {
 	/// The product namespace: what `HostChainSet::network` reports and where
 	/// the CLI stores this network's state.
-	pub id: &'static str,
+	pub id: String,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
 	/// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
@@ -929,11 +928,11 @@ pub struct NetworkConfig {
 	pub network_suffix: &'static str,
 	/// Identity backend base URL including `/api/v1`. `None` on a network with
 	/// no published backend, where [`IDENTITY_BACKEND_BASE_ENV`] must supply it.
-	pub identity_backend_base: Option<&'static str>,
-	pub people_ws: &'static str,
-	pub bulletin_ws: &'static str,
+	pub identity_backend_base: Option<String>,
+	pub people_ws: String,
+	pub bulletin_ws: String,
 	/// Asset Hub RPC, where PGAS allowances are claimed.
-	pub asset_hub_ws: &'static str,
+	pub asset_hub_ws: String,
 	pub people_genesis: [u8; 32],
 	pub bulletin_genesis: [u8; 32],
 	/// Asset Hub genesis hash, both the role's identity in
@@ -943,7 +942,7 @@ pub struct NetworkConfig {
 	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.
 	pub asset_hub_genesis: [u8; 32],
-	pub live_chain_endpoints: &'static [ChainEndpoint],
+	pub live_chain_endpoints: Vec<ChainEndpoint>,
 	/// `DotnsPopController` to use when on-chain discovery finds none, for a
 	/// network whose gateway dispatcher is not set yet. Discovery wins when it
 	/// answers.
@@ -956,10 +955,10 @@ pub struct NetworkConfig {
 	pub chain_backend: ChainBackend,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainEndpoint {
 	pub genesis: [u8; 32],
-	pub ws: &'static str,
+	pub ws: String,
 	/// Whether host internals require this route even when optional product
 	/// Chain calls are disabled.
 	pub required_for_host: bool,
@@ -968,8 +967,8 @@ pub struct ChainEndpoint {
 impl NetworkConfig {
 	/// The identity backend base URL, or an error naming the override when the
 	/// network has none.
-	pub fn identity_backend(&self) -> anyhow::Result<&'static str> {
-		self.identity_backend_base.ok_or_else(|| {
+	pub fn identity_backend(&self) -> anyhow::Result<&str> {
+		self.identity_backend_base.as_deref().ok_or_else(|| {
 			anyhow::anyhow!(
 				"{} has no published identity backend; set {IDENTITY_BACKEND_BASE_ENV} to its \
 				 base URL, including /api/v1",
@@ -1003,7 +1002,7 @@ impl NetworkConfig {
 	/// `chain::tests::every_served_role_routes_to_its_own_chain` holds that.
 	pub fn host_chain_set(&self) -> HostChainSet {
 		HostChainSet {
-			network: self.id.to_string(),
+			network: self.id.clone(),
 			chains: vec![
 				HostChainEntry {
 					identifier: ChainIdentifier::People,
@@ -1044,11 +1043,11 @@ impl NetworkConfig {
 	/// should stop this compiling rather than reach a `None` that only a test
 	/// run notices, and one of those tests is `#[ignore]`d.
 	#[cfg(test)]
-	pub fn url_for_role(&self, role: ChainIdentifier) -> Option<&'static str> {
+	pub fn url_for_role(&self, role: ChainIdentifier) -> Option<&str> {
 		match role {
-			ChainIdentifier::People => Some(self.people_ws),
-			ChainIdentifier::Bulletin => Some(self.bulletin_ws),
-			ChainIdentifier::AssetHub => Some(self.asset_hub_ws),
+			ChainIdentifier::People => Some(&self.people_ws),
+			ChainIdentifier::Bulletin => Some(&self.bulletin_ws),
+			ChainIdentifier::AssetHub => Some(&self.asset_hub_ws),
 			ChainIdentifier::Relay => None,
 		}
 	}

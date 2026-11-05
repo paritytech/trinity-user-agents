@@ -7,7 +7,7 @@ use std::ffi::{OsStr, OsString};
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use super::{ChainEndpoint, NetworkConfig, leak_str};
+use super::{ChainEndpoint, NetworkConfig};
 use crate::stack_descriptor::Roles;
 
 /// Env var with the path of the local-network JSON file; a blank value is unset.
@@ -83,18 +83,18 @@ fn parse(base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 	let roles = chains.try_map(|chain| {
 		ensure_local_url(&chain.ws, &["ws", "wss"])?;
 		let genesis = parse_genesis(&chain.genesis)?;
-		anyhow::Ok(ChainEndpoint { genesis, ws: leak_str(&chain.ws), required_for_host: true })
+		anyhow::Ok(ChainEndpoint { genesis, ws: chain.ws, required_for_host: true })
 	})?;
 	roles.ensure_distinct_genesis()?;
 	Ok(NetworkConfig {
-		identity_backend_base: Some(leak_str(local.identity_backend_base.trim_end_matches('/'))),
-		people_ws: roles.people.ws,
-		bulletin_ws: roles.bulletin.ws,
-		asset_hub_ws: roles.asset_hub.ws,
+		identity_backend_base: Some(local.identity_backend_base.trim_end_matches('/').to_owned()),
+		people_ws: roles.people.ws.clone(),
+		bulletin_ws: roles.bulletin.ws.clone(),
+		asset_hub_ws: roles.asset_hub.ws.clone(),
 		people_genesis: roles.people.genesis,
 		bulletin_genesis: roles.bulletin.genesis,
 		asset_hub_genesis: roles.asset_hub.genesis,
-		live_chain_endpoints: roles.leak_endpoints(),
+		live_chain_endpoints: roles.into_endpoints(),
 		..base
 	})
 }

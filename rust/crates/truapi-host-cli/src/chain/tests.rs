@@ -7,11 +7,11 @@ use crate::network::Network;
 /// A network whose only route is People at `people_ws`.
 fn people_only(people_ws: String) -> NetworkConfig {
 	let mut network = Network::default().config();
-	network.live_chain_endpoints = Box::leak(Box::new([ChainEndpoint {
+	network.live_chain_endpoints = vec![ChainEndpoint {
 		genesis: network.people_genesis,
-		ws: Box::leak(people_ws.into_boxed_str()),
+		ws: people_ws,
 		required_for_host: true,
-	}]));
+	}];
 	network
 }
 
@@ -60,7 +60,7 @@ async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
 async fn an_unrouted_catalog_chain_stays_on_rpc() {
 	let network = people_only(serve_one_frame_per_connection().await);
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
-		.add_network(network.id)
+		.add_network(&network.id)
 		.expect("the default network is bundled");
 	let provider = CliChainProvider::with_live_chain_routing(&network, false);
 
@@ -76,7 +76,7 @@ async fn an_unrouted_catalog_chain_stays_on_rpc() {
 #[tokio::test]
 async fn a_network_without_a_people_route_refuses_the_sentinel() {
 	let mut network = Network::default().config();
-	network.live_chain_endpoints = &[];
+	network.live_chain_endpoints.clear();
 	let provider = CliChainProvider::with_live_chain_routing(&network, false);
 
 	let Err(error) = provider.connect([0; 32]).await else {
@@ -168,7 +168,7 @@ async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 
 	drop(provider.connect(network.people_genesis).await.expect("add People"));
 
-	let light = light_client(network.id).expect("the default network is bundled");
+	let light = light_client(&network.id).expect("the default network is bundled");
 	assert!(light.is_connected(network.people_genesis));
 }
 
@@ -213,10 +213,10 @@ fn the_test_switch_widens_routing_to_endpoints_that_are_not_roles() {
 	let mut network = people_only(PEOPLE.to_owned());
 	let optional = ChainEndpoint {
 		genesis: [0x5a; 32],
-		ws: "wss://optional.invalid",
+		ws: "wss://optional.invalid".to_owned(),
 		required_for_host: false,
 	};
-	network.live_chain_endpoints = Box::leak(Box::new([network.live_chain_endpoints[0], optional]));
+	network.live_chain_endpoints.push(optional.clone());
 
 	let gated = CliChainProvider::with_live_chain_routing(&network, false);
 	let widened = CliChainProvider::with_live_chain_routing(&network, true);
@@ -234,13 +234,13 @@ fn the_test_switch_widens_routing_to_endpoints_that_are_not_roles() {
 #[test]
 fn an_endpoint_provider_reaches_only_its_endpoint() {
 	let network = people_only("wss://people.invalid".to_owned());
-	let optional: &'static ChainEndpoint = Box::leak(Box::new(ChainEndpoint {
+	let optional = ChainEndpoint {
 		genesis: [0x5a; 32],
-		ws: "wss://optional.invalid",
+		ws: "wss://optional.invalid".to_owned(),
 		required_for_host: false,
-	}));
+	};
 
-	let alone = CliChainProvider::for_endpoint(&network, optional);
+	let alone = CliChainProvider::for_endpoint(&network, &optional);
 
 	assert_eq!(alone.location(optional.genesis), optional.ws);
 	assert!(alone.chain_for(network.people_genesis).is_none(), "People is not this endpoint");
@@ -269,7 +269,7 @@ async fn the_light_client_reaches_paseo_next_v2() {
 		.rpc_client(network.asset_hub_genesis)
 		.await
 		.expect("connect to Asset Hub");
-	let light = light_client(network.id).expect("paseo-next-v2 is bundled");
+	let light = light_client(&network.id).expect("paseo-next-v2 is bundled");
 	let state = light
 		.lifecycle(network.asset_hub_genesis)
 		.expect("Asset Hub is running")
