@@ -32,7 +32,7 @@ protocol ChatRequestStoreServicing {
         _ requestId: String,
         remoteIncoming: ChatRequest.ValidatedRemoteModel?,
         acceptorDevice: Chat.PeerDevice?,
-        peerDevice: Chat.PeerDevice?
+        peerAcceptance: ChatRequest.PeerAcceptance?
     ) async throws
 
     func declineIncomingRequest(_ requestId: String) async throws
@@ -181,13 +181,13 @@ extension ChatRequestStoreService: ChatRequestStoreServicing {
         _ requestId: String,
         remoteIncoming: ChatRequest.ValidatedRemoteModel?,
         acceptorDevice: Chat.PeerDevice?,
-        peerDevice: Chat.PeerDevice?
+        peerAcceptance: ChatRequest.PeerAcceptance?
     ) async throws {
         let acceptOutgoing = ChatRequest.AcceptOutgoing(
             requestId: requestId,
             incomingRequest: remoteIncoming,
             acceptorDevice: acceptorDevice,
-            peerDevice: peerDevice
+            peerAcceptance: peerAcceptance
         )
 
         try await storageFacade.createRepository(

@@ -438,21 +438,4 @@ fn is_known_kind(kind: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	const RELAY: &str = r#"[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["ws://127.0.0.1:9944"]}]"#;
-
-	#[test]
-	fn deserialising_directly_applies_the_same_rules() {
-		let broken = format!(
-			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":".dot","services":[],"chains":{RELAY}}}"#
-		);
-		let error = serde_json::from_str::<Descriptor>(&broken).unwrap_err();
-		assert!(error.to_string().starts_with("invalid-tld:"), "{error}");
-		let valid: Descriptor = serde_json::from_str(&broken.replace(".dot", "dot")).unwrap();
-		let round_trip: Descriptor =
-			serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
-		assert_eq!(round_trip, valid);
-	}
-}
+mod tests;

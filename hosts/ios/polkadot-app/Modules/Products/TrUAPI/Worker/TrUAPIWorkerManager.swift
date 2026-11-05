@@ -4,6 +4,7 @@ import AsyncExtensions
 import Products
 import StructuredConcurrency
 import TrUAPIHost
+import UIKitExt
 
 /// Runs product workers for as long as the core's reference ledger wants them.
 ///
@@ -101,6 +102,8 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// publishes no execution, so without this a handler would wait for one
     /// forever.
     private let startupWindow: Duration
+    /// Where a worker's prompts present while no chat has given it a screen.
+    private let presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
@@ -121,11 +124,13 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         builder: any TrUAPIWorkerBuilding,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
+        presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.references = references
         self.startupWindow = startupWindow
+        self.presentationFallback = presentationFallback
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -199,7 +204,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         openContexts.withLock { open in
             if let context = open[productId] { return context }
 
-            let context = ProductWorkerContext()
+            let context = ProductWorkerContext(presentationFallback: presentationFallback)
             open[productId] = context
             return context
         }

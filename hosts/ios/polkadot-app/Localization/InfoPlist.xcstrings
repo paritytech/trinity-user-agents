@@ -25,6 +25,18 @@
         }
       }
     },
+    "NSAlarmKitUsageDescription" : {
+      "comment" : "Privacy - Alarm Kit Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Polkadot uses alarms to notify you when a scheduled event is about to start."
+          }
+        }
+      }
+    },
     "NSCalendarsFullAccessUsageDescription" : {
       "comment" : "Privacy - Calendars Full Access Usage Description",
       "extractionState" : "manual",
