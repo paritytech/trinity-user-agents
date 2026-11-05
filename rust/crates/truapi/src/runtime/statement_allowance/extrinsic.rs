@@ -5,7 +5,7 @@
 use subxt::ext::scale_encode::EncodeAsType;
 
 /// `Resources.set_statement_store_account` arguments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct SetStatementStoreAccountCallArgs {
 	/// Statement-store period.
@@ -17,7 +17,7 @@ pub struct SetStatementStoreAccountCallArgs {
 }
 
 /// `Resources.claim_long_term_storage` arguments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct ClaimLongTermStorageCallArgs {
 	/// Long-term-storage period.
@@ -29,7 +29,7 @@ pub struct ClaimLongTermStorageCallArgs {
 }
 
 /// `Pgas.claim_pgas` arguments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct ClaimPgasCallArgs {
 	/// PGAS slot of the day.

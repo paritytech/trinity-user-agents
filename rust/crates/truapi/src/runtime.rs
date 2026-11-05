@@ -195,13 +195,13 @@ const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
 const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the active session";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum LegacySigner {
 	Product,
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq, derive_more::From)]
+#[derive(derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
 	ProductDerivation(AuthorityError),

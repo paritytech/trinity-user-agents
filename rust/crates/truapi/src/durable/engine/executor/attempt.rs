@@ -21,7 +21,7 @@ use crate::{
 
 /// Whether a write on a waiting row changed the ledger. It does not when
 /// the row was no longer waiting, or when the write failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum LedgerChange {
 	/// The row changed.
 	Changed,

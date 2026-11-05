@@ -1,25 +1,4 @@
-//! The paseo-next-v2 stack this build ships, which the live tests default to, and an offline
-//! copy of it for tests that do not use the chains.
-#![allow(dead_code)]
-
-use trinity_stack::{Descriptor, Document};
-
-/// The bundled paseo-next-v2 descriptor.
-pub fn paseo_next_v2() -> Descriptor {
-	Document::parse(include_bytes!("../../stacks/paseo-next-v2.json"))
-		.expect("invalid bundled paseo-next-v2 stack")
-		.descriptor()
-		.clone()
-}
-
-/// The first RPC endpoint of the bundled paseo-next-v2 chain with `role`.
-pub fn paseo_next_v2_rpc(role: &str) -> String {
-	paseo_next_v2()
-		.chain(role)
-		.expect("bundled paseo-next-v2 stack lacks the role")
-		.rpc[0]
-		.clone()
-}
+use super::bundled::paseo_next_v2;
 
 /// A local descriptor file with the bundled paseo-next-v2 id, so state paths stay those of the
 /// built-in network, whose chains are on loopback ports nothing listens on. Passed as
