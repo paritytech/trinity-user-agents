@@ -13,6 +13,8 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { accountNames, hostPageUrl } from "./host-page-url.js";
 import type { HostPageConfig } from "./host-page-url.js";
+
+export { deepLinkUrl } from "./host-page-url.js";
 import { withNetworks, type NetworkConfig } from "./networks.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
