@@ -6062,6 +6062,7 @@ dependencies = [
  "jsonrpsee-core",
  "libsecp256k1",
  "log",
+ "parking_lot",
  "pin-project",
  "rand 0.8.7",
  "send_wrapper",
