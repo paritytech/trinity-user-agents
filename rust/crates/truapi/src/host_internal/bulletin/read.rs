@@ -6,8 +6,6 @@ use subxt_rpcs::{
 	client::{RpcClient, rpc_params},
 };
 
-use super::{BASE32_ALPHABET, PREIMAGE_CID_PREFIX, preimage_cid};
-
 // `bitswap_v1_get` errors by code, the only part of the error the bitswap JSON-RPC spec
 // (`bitswap_unstable_get`) makes stable.
 /// The data is not held. It can still arrive.
@@ -16,24 +14,6 @@ const FAIL: i32 = -32810;
 const INVALID_PARAMS: i32 = -32602;
 /// The node has no `bitswap_v1_get`.
 const METHOD_NOT_FOUND: i32 = -32601;
-
-/// The preimage key a [`preimage_cid`] names. `None` for any other CID.
-pub fn preimage_key_from_cid(cid: &str) -> Option<[u8; 32]> {
-	let mut bytes = Vec::new();
-	let (mut buffer, mut bits) = (0u32, 0u32);
-	for symbol in cid.strip_prefix('b')?.bytes() {
-		let value = BASE32_ALPHABET.iter().position(|&candidate| candidate == symbol)?;
-		buffer = (buffer << 5) | value as u32;
-		bits += 5;
-		if bits >= 8 {
-			bits -= 8;
-			bytes.push((buffer >> bits) as u8);
-			buffer &= (1 << bits) - 1;
-		}
-	}
-	let key: [u8; 32] = bytes.strip_prefix(&PREIMAGE_CID_PREFIX)?.try_into().ok()?;
-	(preimage_cid(&key) == cid).then_some(key)
-}
 
 /// Why `bitswap_v1_get` returned no blob.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]

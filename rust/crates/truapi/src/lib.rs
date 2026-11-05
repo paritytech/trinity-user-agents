@@ -943,7 +943,7 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{BitswapError, bitswap_get};
+pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
 #[cfg(feature = "runtime")]
 pub use host_internal::{
 	bulletin::{preimage_cid, preimage_key},

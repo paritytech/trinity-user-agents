@@ -10,7 +10,7 @@ use futures::FutureExt;
 use tracing::{debug, instrument, warn};
 
 use crate::{
-	host_internal::bulletin::{BitswapError, bitswap_get, preimage_key, preimage_key_from_cid},
+	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},
 	runtime::services::RuntimeServices,
 	time::{Timer, retry_on},
 };
@@ -37,14 +37,26 @@ pub enum ImageFormat {
 	Webp,
 }
 
+// Products write the CIDs in their renderer trees, so a bad one is input, not a bug. UniFFI hands a
+// failed lift to the host as the call's own error only when the failure is that error.
+#[cfg(not(target_arch = "wasm32"))]
+uniffi::custom_type!(BulletinCid, String, {
+	lower: |cid| cid.to_string(),
+	try_lift: |cid| {
+		Ok(cid.parse::<BulletinCid>().map_err(|rejection| ImageError::Unsupported {
+			reason: rejection.to_string(),
+		})?)
+	},
+});
+
 /// Where an image comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ImageReference {
 	/// A Bulletin blob.
 	Bulletin {
-		/// The blob's CID: CIDv1, the raw codec and a blake2b-256 multihash.
-		cid: String,
+		/// The blob's CID.
+		cid: BulletinCid,
 		/// The format the source declares, such as a manifest icon's. Bytes in another format
 		/// are rejected.
 		declared_format: Option<ImageFormat>,
@@ -60,7 +72,7 @@ pub struct LoadedImage {
 	/// The format read from the bytes.
 	pub format: ImageFormat,
 	/// Names these bytes and nothing else, so a host can key its disk cache on it: the CID.
-	pub content_key: String,
+	pub content_key: BulletinCid,
 }
 
 /// Why an image did not load. A host draws its placeholder in every case.
@@ -105,31 +117,27 @@ impl ImageLoader {
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		let ImageReference::Bulletin { cid, declared_format } = reference;
-		let key = preimage_key_from_cid(&cid).ok_or_else(|| ImageError::Unsupported {
-			reason: format!("{cid} is not a raw blake2b-256 Bulletin CID"),
-		})?;
-		let bytes = self.read_verified(&cid, key, || self.read(&cid)).await?;
+		let bytes = self.read_verified(&cid, || self.read(&cid)).await?;
 		let format = policy::check(&bytes, declared_format)
 			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })?;
 		Ok(LoadedImage { bytes, format, content_key: cid })
 	}
 
-	async fn read(&self, cid: &str) -> Result<Option<Vec<u8>>, BitswapError> {
+	async fn read(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, BitswapError> {
 		let client = self
 			.services
 			.bulletin
 			.client("image_loader.load")
 			.await
 			.map_err(|failure| BitswapError::Connection(failure.reason()))?;
-		bitswap_get(&client, cid).await
+		bitswap_get(&client, &cid.to_string()).await
 	}
 
-	/// Reads `cid` until the bytes hash to `key`, Bulletin refuses for good, or [`LOAD_TIMEOUT`]
+	/// Reads `cid` until the bytes hash to it, Bulletin refuses for good, or [`LOAD_TIMEOUT`]
 	/// passes.
 	async fn read_verified<Read, ReadFuture>(
 		&self,
-		cid: &str,
-		key: [u8; 32],
+		cid: &BulletinCid,
 		read: Read,
 	) -> Result<Vec<u8>, ImageError>
 	where
@@ -140,20 +148,20 @@ impl ImageLoader {
 			let read = &read;
 			async move {
 				match read().await {
-					Ok(Some(bytes)) if preimage_key(&bytes) == key => ControlFlow::Break(Ok(bytes)),
+					Ok(Some(bytes)) if cid.matches(&bytes) => ControlFlow::Break(Ok(bytes)),
 					Ok(Some(_)) => {
-						warn!(cid, "Bulletin returned bytes that do not hash to the CID");
+						warn!(%cid, "Bulletin returned bytes that do not hash to the CID");
 						ControlFlow::Continue(MISS_PAUSE)
 					},
 					Ok(None) => {
-						debug!(cid, "Bulletin does not hold the image yet");
+						debug!(%cid, "Bulletin does not hold the image yet");
 						ControlFlow::Continue(MISS_PAUSE)
 					},
 					Err(
 						BitswapError::Unanswerable(reason) | BitswapError::MethodMissing(reason),
 					) => ControlFlow::Break(Err(ImageError::Unavailable { reason })),
 					Err(error) => {
-						debug!(cid, %error, "Bulletin read failed, asking again");
+						debug!(%cid, %error, "Bulletin read failed, asking again");
 						ControlFlow::Continue(FAILURE_PAUSE)
 					},
 				}

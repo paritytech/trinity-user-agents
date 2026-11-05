@@ -1,5 +1,6 @@
 //! Bulletin store transactions, and reading stored blobs back by CID.
 
+mod cid;
 mod read;
 
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
@@ -10,7 +11,8 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
-pub use read::{BitswapError, bitswap_get, preimage_key_from_cid};
+pub use cid::{BulletinCid, BulletinCidError};
+pub use read::{BitswapError, bitswap_get};
 
 /// Pallet the store transaction targets.
 pub const STORE_PALLET_NAME: &str = "TransactionStorage";
