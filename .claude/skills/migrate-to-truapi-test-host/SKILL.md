@@ -342,7 +342,9 @@ missed:
   the key as bytes, not hex.
 - **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
   `getPreimages()` answers the seeded values only, as bytes. Statement entries
-  carry `topics` and `data` directly, not under `.statement`. A `Remote`
+  carry `topics` and `data` directly, not under `.statement`, along with
+  `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
+  also takes. A `Remote`
   permission's value is `{ domains }`, not an array.
 - **Deep links.** The host page passes its path, its hash and every query
   parameter it does not read itself on to the product, as a real host does.

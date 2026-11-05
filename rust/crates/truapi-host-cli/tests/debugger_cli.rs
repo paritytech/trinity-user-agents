@@ -6,13 +6,16 @@
 //! is only visible from a real invocation, so these run the binary.
 //! They run on a paseo-next-v2 stack whose chains are unreachable.
 
-mod common;
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/offline.rs"]
+mod offline;
 
 use std::process::Stdio;
 
 /// Which headless host role to start. `dev` reaches the report through
 /// `signing-host`, so it is covered by the signing-host case.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Copy)]
 enum Role {
 	PairingHost,
 	SigningHost,
@@ -38,7 +41,7 @@ const OFF: Switch<'static> = Switch { flag: None, variable: None };
 /// not resolve. Both print the report before that.
 fn dial_report(role: Role, switch: Switch<'_>) -> Vec<String> {
 	let temporary = tempfile::tempdir().expect("create temporary state root");
-	let mut command = common::offline_host_command();
+	let mut command = offline::offline_host_command();
 	command
 		.env_remove("TRUAPI_DEBUGGER_URL")
 		.env_remove("TRUAPI_HOST_BASE_PATH")
@@ -119,7 +122,7 @@ fn a_dialling_host_names_the_endpoint_and_the_switch_clap_read_it_from() {
 #[test]
 fn a_debugger_url_that_is_not_loopback_fails_startup() {
 	let temporary = tempfile::tempdir().expect("create temporary state root");
-	let output = common::offline_host_command()
+	let output = offline::offline_host_command()
 		.env_remove("TRUAPI_DEBUGGER_URL")
 		.env_remove("TRUAPI_HOST_BASE_PATH")
 		.env("TRUAPI_HOST_NO_UPDATE", "1")
