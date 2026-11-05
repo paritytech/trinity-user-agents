@@ -14,8 +14,9 @@ object FeatureFlags {
             FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
+            FeatureOption.BROWSE_TAB -> fullFeatured && !BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
+
             FeatureOption.ARBITRARY_PRODUCTS,
-            FeatureOption.BROWSE_TAB,
             FeatureOption.ALL_CHAT_EXTENSIONS,
             FeatureOption.LINKED_DEVICES,
             FeatureOption.PRODUCT_SETTINGS,
@@ -41,10 +42,11 @@ enum class FeatureOption {
     // build type alone: nightly and safetynet are debuggable too, and src/debug's network config, which
     // lets the WebView reach the server in the clear, does not apply to them.
     DEV_SERVER_PRODUCTS,
+
+    // The docklet has four item slots, so Browse and the connectivity indicator cannot both show.
     BROWSE_TAB,
 
-    // The chain-health indicators repeated in the tab bar, with the expandable details above it. Carried
-    // by its own BuildConfig field rather than SAFETY_MODE, which is also set on release builds.
+    // The chain-health indicators repeated in the tab bar, with the expandable details above it.
     TAB_BAR_CONNECTIVITY_INDICATOR,
 
     // The "Debug features" card under the balance card: the holdings breakdown, the faucet top-up and
