@@ -3,8 +3,8 @@ use truapi::platform::DOTNS_TLDS;
 use super::{
 	super::{
 		Network,
-		fixtures::{edit_chain, edit_stack},
 		stack::stack_network_config,
+		testing::{edit_chain, edit_stack},
 	},
 	*,
 };

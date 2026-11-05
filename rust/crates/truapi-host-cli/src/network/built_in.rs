@@ -40,58 +40,61 @@ const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
 	bundle: include_bytes!("../../stacks/previewnet.json"),
 };
 
-fn built_in_stack(network: Network) -> Option<BuiltInStack> {
-	match network {
-		Network::PaseoNextV2 => Some(PASEO_NEXT_V2_STACK),
-		Network::Previewnet => Some(PREVIEWNET_STACK),
-		Network::Polkadot => None,
+impl Network {
+	fn built_in_stack(self) -> Option<BuiltInStack> {
+		match self {
+			Self::PaseoNextV2 => Some(PASEO_NEXT_V2_STACK),
+			Self::Previewnet => Some(PREVIEWNET_STACK),
+			Self::Polkadot => None,
+		}
 	}
-}
 
-/// `network`'s values compiled into this build, reached over `chain_backend`,
-/// without fetching anything: a built-in stack's bundled copy, or Polkadot's
-/// pinned values.
-pub fn bundled_config(network: Network, chain_backend: ChainBackend) -> NetworkConfig {
-	let Some(built_in) = built_in_stack(network) else { return polkadot::config(chain_backend) };
-	let bundled =
-		trinity_stack::open(built_in.bundle, &built_in.pointer()).expect("invalid bundled stack");
-	stack_config(&bundled.descriptor, network.id().to_owned(), chain_backend)
-		.expect("invalid bundled stack")
-}
+	/// The values compiled into this build, reached over `chain_backend`,
+	/// without fetching anything: a built-in stack's bundled copy, or
+	/// Polkadot's pinned values.
+	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
+		let Some(built_in) = self.built_in_stack() else { return polkadot::config(chain_backend) };
+		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
+			.expect("invalid bundled stack");
+		stack_config(&bundled.descriptor, self.id().to_owned(), chain_backend)
+			.expect("invalid bundled stack")
+	}
 
-/// For a built-in stack, the published descriptor when it is newer than the
-/// bundled copy, otherwise the bundled copy, with which of the two is in
-/// use; Polkadot's pinned values otherwise. Logs a notice when the published
-/// descriptor changes a field the CLI reads.
-pub async fn resolve_built_in(
-	network: Network,
-	fetch_timeout: Duration,
-	chain_backend: ChainBackend,
-) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
-	let Some(built_in) = built_in_stack(network) else {
-		return Ok((polkadot::config(chain_backend), None));
-	};
-	let id = network.id();
-	let pointer = built_in.pointer();
-	let url = pointer.url().as_str();
-	let fetched = fetch(url, fetch_timeout).await;
-	match &fetched {
-		Err(cause @ FetchError::Http(_)) => tracing::warn!(
-			"the {id} stack descriptor at {url} returned {cause}; using the bundled copy"
-		),
-		Err(cause) => tracing::debug!("{id} stack descriptor is unreachable: {cause}"),
-		Ok(_) => {},
+	/// For a built-in stack, the published descriptor when it is newer than the
+	/// bundled copy, otherwise the bundled copy, with which of the two is in
+	/// use; Polkadot's pinned values otherwise. Logs a notice when the
+	/// published descriptor changes a field the CLI reads. Fails when the
+	/// descriptor in use is expired or lacks a role.
+	pub async fn resolve_built_in(
+		self,
+		fetch_timeout: Duration,
+		chain_backend: ChainBackend,
+	) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
+		let Some(built_in) = self.built_in_stack() else {
+			return Ok((polkadot::config(chain_backend), None));
+		};
+		let id = self.id();
+		let pointer = built_in.pointer();
+		let url = pointer.url().as_str();
+		let fetched = fetch(url, fetch_timeout).await;
+		match &fetched {
+			Err(cause @ FetchError::Http(_)) => tracing::warn!(
+				"the {id} stack descriptor at {url} returned {cause}; using the bundled copy"
+			),
+			Err(cause) => tracing::debug!("{id} stack descriptor is unreachable: {cause}"),
+			Ok(_) => {},
+		}
+		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
+		let now = unix_now() as i64;
+		let refresh = refresh_stack(id, &pointer, built_in.bundle, fetched, now)?;
+		match &refresh.notice {
+			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
+			Some(notice) => tracing::info!("{notice}"),
+			None => {},
+		}
+		let origin = BuiltInOrigin { id, url: url.to_owned(), copy: refresh.copy };
+		Ok((stack_config(&refresh.descriptor, id.to_owned(), chain_backend)?, Some(origin)))
 	}
-	let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
-	let now = unix_now() as i64;
-	let refresh = refresh_stack(id, &pointer, built_in.bundle, fetched, now)?;
-	match &refresh.notice {
-		Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
-		Some(notice) => tracing::info!("{notice}"),
-		None => {},
-	}
-	let origin = BuiltInOrigin { id, url: url.to_owned(), copy: refresh.copy };
-	Ok((stack_config(&refresh.descriptor, id.to_owned(), chain_backend)?, Some(origin)))
 }
 
 /// Which copy of a built-in stack's descriptor a network runs on.
@@ -110,9 +113,37 @@ pub enum BuiltInCopy {
 
 /// The descriptor a built-in stack runs on.
 pub struct BuiltInOrigin {
-	pub id: &'static str,
-	pub url: String,
+	id: &'static str,
+	url: String,
+	/// Which copy of the descriptor is in use.
 	pub copy: BuiltInCopy,
+}
+
+impl BuiltInOrigin {
+	/// The descriptor of `id` at `url`, with `copy` in use.
+	#[cfg(test)]
+	pub fn new(id: &'static str, url: &str, copy: BuiltInCopy) -> Self {
+		Self { id, url: url.to_owned(), copy }
+	}
+
+	/// What a genesis mismatch on the stack's endpoints adds to its error.
+	pub fn restart_hint(&self) -> String {
+		let Self { id, url, copy } = self;
+		match copy {
+			BuiltInCopy::Published => format!(
+				"the {id} stack restarted from genesis after the published descriptor in use \
+				 ({url}) was published"
+			),
+			BuiltInCopy::Unreachable => format!(
+				"the {id} stack restarted from genesis after the bundled descriptor in use was \
+				 built, and the published copy at {url} could not be fetched"
+			),
+			BuiltInCopy::Rejected => format!(
+				"the {id} stack restarted from genesis after the bundled descriptor in use was \
+				 built, and the published copy at {url} was rejected, as the warning above reports"
+			),
+		}
+	}
 }
 
 /// The descriptor a built-in stack runs on and the notice to print about it.

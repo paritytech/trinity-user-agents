@@ -1,11 +1,8 @@
-//! Polkadot mainnet's values, pinned per build, and the rule that keeps them
-//! off disposable-identity networks.
+//! Polkadot mainnet's values, pinned per build, and the check that rejects
+//! them on a disposable-identity network.
 //!
-//! Each Polkadot chain is declared once and reused by both the network fields
-//! and the endpoint table, so a genesis hash cannot drift from the URL it
-//! routes to. Every route is host-required: session identity (dotNS
-//! usernames) resolves through Asset Hub, SSO through People, preimages
-//! through Bulletin.
+//! Every route is host-required: session identity (dotNS usernames) resolves
+//! through Asset Hub, SSO through People, preimages through Bulletin.
 
 use anyhow::{Result, ensure};
 

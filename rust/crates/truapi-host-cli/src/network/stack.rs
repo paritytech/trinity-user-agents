@@ -7,7 +7,7 @@ use truapi::platform::DOTNS_TLDS;
 use super::{ChainEndpoint, NetworkConfig};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{ROLE_NAMES, Roles, StackProjection},
+	stack_descriptor::{ROLE_NAMES, StackProjection},
 };
 
 /// A `--stack` descriptor's network, reached over `chain_backend`, under the
@@ -61,7 +61,7 @@ pub fn stack_config(
 			.expect("invalid dotns address in a validated descriptor");
 		bytes
 	});
-	ensure_distinct_genesis(&chains)?;
+	chains.ensure_distinct_genesis()?;
 	Ok(NetworkConfig {
 		id,
 		network_suffix,
@@ -71,20 +71,6 @@ pub fn stack_config(
 		disposable_identities: true,
 		chain_backend,
 	})
-}
-
-/// Fails when two roles share a genesis hash, since the host routes each role
-/// by its genesis.
-pub fn ensure_distinct_genesis(chains: &Roles<ChainEndpoint>) -> Result<()> {
-	let Roles { people, asset_hub, bulletin } = chains;
-	ensure!(
-		people.genesis != asset_hub.genesis &&
-			people.genesis != bulletin.genesis &&
-			asset_hub.genesis != bulletin.genesis,
-		"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each role \
-		 by its genesis"
-	);
-	Ok(())
 }
 
 #[cfg(test)]

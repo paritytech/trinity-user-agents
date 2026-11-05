@@ -1,6 +1,6 @@
 use clap::ValueEnum;
 
-use super::{super::fixtures::edit_descriptor, *};
+use super::{super::testing::edit_descriptor, *};
 
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network with nothing to start from when the published copy is
@@ -8,12 +8,39 @@ use super::{super::fixtures::edit_descriptor, *};
 #[test]
 fn test_bundled_stack_pointers() {
 	for network in Network::value_variants() {
-		let Some(built_in) = built_in_stack(*network) else { continue };
+		let Some(built_in) = network.built_in_stack() else { continue };
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
 			.unwrap_or_else(|error| panic!("{}: {error}", network.id()));
 		assert!(bundled.signed);
 		assert_eq!(bundled.descriptor.id, network.id());
 	}
+}
+
+/// The hint tells the user which copy is in use and why, so a restart on
+/// the bundled copy points at the published descriptor that could not be
+/// fetched or was rejected.
+#[test]
+fn test_restart_hint_by_copy() {
+	let url = "https://stack.example/s.json".to_owned();
+	let published = BuiltInOrigin { id: "previewnet", url, copy: BuiltInCopy::Published };
+	assert_eq!(
+		published.restart_hint(),
+		"the previewnet stack restarted from genesis after the published descriptor in use \
+		 (https://stack.example/s.json) was published"
+	);
+	let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
+	assert_eq!(
+		unreachable.restart_hint(),
+		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
+		 built, and the published copy at https://stack.example/s.json could not be fetched"
+	);
+	let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
+	assert_eq!(
+		rejected.restart_hint(),
+		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
+		 built, and the published copy at https://stack.example/s.json was rejected, as the \
+		 warning above reports"
+	);
 }
 
 const TEST_SECRET: [u8; 32] = [7; 32];

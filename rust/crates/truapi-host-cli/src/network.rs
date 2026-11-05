@@ -1,32 +1,21 @@
-use std::time::Duration;
-
-use anyhow::{Result, anyhow};
+use anyhow::{Result, ensure};
 use clap::ValueEnum;
 use truapi::{
 	latest::ChainIdentifier,
 	platform::{ChainExtensionVersion, ExtensionVersionMap, HostChainEntry, HostChainSet},
 };
 
-use self::{
-	checks::{ChainChecks, plan_chain_checks, refuse_light_client},
-	overrides::{
-		ChainOverrides, apply_backend_override, apply_chain_overrides, ensure_sources_compatible,
-	},
-	resolve::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy},
-};
-use crate::{
-	chain::ChainBackend,
-	stack_descriptor::{FETCH_TIMEOUT, Roles, load_descriptor},
-};
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
+mod built_in;
 mod checks;
-#[cfg(test)]
-mod fixtures;
 pub mod local_network;
 mod overrides;
 mod polkadot;
-mod resolve;
+mod source;
 mod stack;
+#[cfg(test)]
+mod testing;
 
 /// Networks the headless hosts know by name.
 ///
@@ -61,23 +50,15 @@ pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 /// Env var supplying `--stack` when the flag is absent; a blank value is unset.
 pub const STACK_ENV: &str = "HOST_CLI_STACK";
 
-/// Env var overriding the People chain's WebSocket URL, for a fork of the
-/// resolved network with the same genesis hash.
-pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
-/// Env var overriding the Asset Hub chain's WebSocket URL, for a fork of the
-/// resolved network with the same genesis hash.
-pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
-/// Env var overriding the Bulletin chain's WebSocket URL, for a fork of the
-/// resolved network with the same genesis hash.
-pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
-
 /// Where a command's network comes from: `--chain-backend`, `--network` and
 /// `--stack`.
 #[derive(Clone)]
 pub struct NetworkSource {
+	/// How the command reaches the chains.
 	pub chain_backend: ChainBackend,
 	/// paseo-next-v2 when neither this nor `stack` is set.
 	pub network: Option<Network>,
+	/// The stack to run against instead of a built-in network.
 	pub stack: Option<StackArg>,
 }
 
@@ -90,92 +71,6 @@ pub struct StackArg {
 	pub source: &'static str,
 }
 
-impl NetworkSource {
-	/// The network a command runs against: the built-in network or the stack,
-	/// then `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` on top.
-	///
-	/// Fails when the routing sources cannot be combined, when a `--stack`
-	/// descriptor is unreachable, when the descriptor in use is expired or
-	/// lacks a role, when a disposable-identity network carries Polkadot's
-	/// genesis hashes, TLD or namespace, when the light client cannot serve the
-	/// network, when an endpoint reports a genesis other than the one it is
-	/// routed as, when an endpoint an override reroutes does not answer, and
-	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
-	/// network whose published descriptor is unreachable runs on its bundled
-	/// copy; when that copy fails a check, the descriptor is fetched once more
-	/// and the checks repeat only when the published copy is then in use.
-	pub async fn cli_config(&self) -> Result<NetworkConfig> {
-		let (config, checks) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
-		let Err(error) = checks.verify(&config).await? else { return Ok(config) };
-		if checks.copy_in_use() != Some(BuiltInCopy::Unreachable) {
-			return Err(error);
-		}
-		tracing::info!("{error}; fetching the published descriptor again");
-		let (config, checks) = self.resolve_routes(FETCH_TIMEOUT).await?;
-		if checks.copy_in_use() != Some(BuiltInCopy::Published) {
-			return Err(error);
-		}
-		checks.verify(&config).await??;
-		Ok(config)
-	}
-
-	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
-	/// fetched. An unreachable descriptor fails only for `--stack`.
-	pub async fn resolve(&self) -> Result<NetworkConfig> {
-		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
-	}
-
-	/// The network and the [`ChainChecks`] to run against its chains. A
-	/// built-in stack's published descriptor gets `fetch_timeout`.
-	async fn resolve_routes(
-		&self,
-		fetch_timeout: Duration,
-	) -> Result<(NetworkConfig, ChainChecks)> {
-		let overrides = ChainOverrides::from_env()?;
-		let override_names = overrides.env_names_in_use();
-		let local_path = local_network::config_path();
-		ensure_sources_compatible(
-			self.stack.as_ref(),
-			self.network,
-			&override_names,
-			local_path.is_some(),
-			self.chain_backend,
-		)?;
-		let (base, built_in) = match (&self.stack, &local_path) {
-			(Some(stack), _) => {
-				let descriptor = load_descriptor(&stack.value).await;
-				let base = descriptor
-					.and_then(|descriptor| {
-						stack::stack_network_config(&descriptor, self.chain_backend)
-					})
-					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
-				(base, None)
-			},
-			// A local copy replaces every route, so the bundled copy is enough.
-			(None, Some(_)) => (self.network.unwrap_or_default().config(self.chain_backend), None),
-			(None, None) => {
-				resolve::resolve_built_in(
-					self.network.unwrap_or_default(),
-					fetch_timeout,
-					self.chain_backend,
-				)
-				.await?
-			},
-		};
-		let mut config = apply_chain_overrides(
-			apply_backend_override(base.clone(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
-			overrides,
-		);
-		if let Some(path) = &local_path {
-			config = local_network::resolve(config, path)?;
-		}
-		refuse_light_client(&config)?;
-		polkadot::ensure_no_real_identity_values(&config)?;
-		let checks = plan_chain_checks(&config, &base, local_path.is_some(), built_in);
-		Ok((config, checks))
-	}
-}
-
 impl Network {
 	/// The product namespace this network runs under.
 	pub fn id(self) -> &'static str {
@@ -184,13 +79,6 @@ impl Network {
 			Self::Previewnet => "previewnet",
 			Self::Polkadot => polkadot::ID,
 		}
-	}
-
-	/// The values compiled into this build, reached over `chain_backend`,
-	/// without fetching anything: a built-in stack's bundled copy, or
-	/// Polkadot's pinned values.
-	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
-		resolve::bundled_config(self, chain_backend)
 	}
 }
 
@@ -233,8 +121,26 @@ pub struct NetworkConfig {
 /// A chain's genesis hash and the WebSocket RPC URL it is reached at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainEndpoint {
+	/// The genesis hash the chain is routed by.
 	pub genesis: [u8; 32],
+	/// The chain's WebSocket RPC URL.
 	pub ws: String,
+}
+
+impl Roles<ChainEndpoint> {
+	/// Fails when two roles share a genesis hash, since the host routes each
+	/// role by its genesis.
+	fn ensure_distinct_genesis(&self) -> Result<()> {
+		let Self { people, asset_hub, bulletin } = self;
+		ensure!(
+			people.genesis != asset_hub.genesis &&
+				people.genesis != bulletin.genesis &&
+				asset_hub.genesis != bulletin.genesis,
+			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each \
+			 role by its genesis"
+		);
+		Ok(())
+	}
 }
 
 impl NetworkConfig {

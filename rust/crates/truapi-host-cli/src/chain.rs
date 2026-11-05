@@ -57,41 +57,44 @@ pub enum ChainBackend {
 /// Bulletin and Asset Hub) is routed to its own chain. The all-zero SSO
 /// sentinel and any other genesis are answered by People.
 pub struct CliChainProvider {
-	/// The product namespace, which selects the light client's chain specs.
-	network_id: String,
 	people_genesis: [u8; 32],
 	/// The endpoints routed to their own chain.
-	routes: Vec<ChainEndpoint>,
+	routed_endpoints: Vec<ChainEndpoint>,
 	backend: Backend,
 }
 
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the network; see [`light_client`].
-	LightClient,
+	/// The process's light client for the network with this product
+	/// namespace; see [`light_client`].
+	LightClient(String),
 }
 
 impl CliChainProvider {
 	/// A provider for `network`'s chains over its chain backend.
 	pub fn new(network: &NetworkConfig) -> Self {
-		Self::with_routes(network, network.chains.iter().cloned().collect(), network.chain_backend)
+		Self::with_endpoints(
+			network,
+			network.chains.iter().cloned().collect(),
+			network.chain_backend,
+		)
 	}
 
 	/// A provider for `endpoint` alone, over RPC, so a check reaches exactly the
 	/// URL it names on the transport the routed chains use.
 	pub fn for_endpoint(network: &NetworkConfig, endpoint: &ChainEndpoint) -> Self {
-		Self::with_routes(network, vec![endpoint.clone()], ChainBackend::Rpc)
+		Self::with_endpoints(network, vec![endpoint.clone()], ChainBackend::Rpc)
 	}
 
-	fn with_routes(
+	fn with_endpoints(
 		network: &NetworkConfig,
-		routes: Vec<ChainEndpoint>,
+		routed_endpoints: Vec<ChainEndpoint>,
 		chain_backend: ChainBackend,
 	) -> Self {
 		let backend = match chain_backend {
 			ChainBackend::Rpc => Backend::Rpc(Box::new(
-				routes
+				routed_endpoints
 					.iter()
 					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
 						let url = endpoint
@@ -102,14 +105,9 @@ impl CliChainProvider {
 					})
 					.build(),
 			)),
-			ChainBackend::LightClient => Backend::LightClient,
+			ChainBackend::LightClient => Backend::LightClient(network.id.clone()),
 		};
-		Self {
-			network_id: network.id.clone(),
-			people_genesis: network.chains.people.genesis,
-			routes,
-			backend,
-		}
+		Self { people_genesis: network.chains.people.genesis, routed_endpoints, backend }
 	}
 
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`
@@ -121,8 +119,10 @@ impl CliChainProvider {
 	/// long sync would run into that deadline.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
-		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
-			wait_until_synced(&*light_client(&self.network_id)?, chain.genesis).await?;
+		if let (Backend::LightClient(network_id), Some(chain)) =
+			(&self.backend, self.chain_for(genesis_hash))
+		{
+			wait_until_synced(&*light_client(network_id)?, chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -131,19 +131,18 @@ impl CliChainProvider {
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
 	/// People's, and none when People is not routed either.
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&ChainEndpoint> {
-		let routed = |genesis| self.routes.iter().find(|endpoint| endpoint.genesis == genesis);
+		let routed =
+			|genesis| self.routed_endpoints.iter().find(|endpoint| endpoint.genesis == genesis);
 		routed(genesis_hash).or_else(|| routed(self.people_genesis))
 	}
 
 	/// Where requests for `genesis_hash` go, for messages: the URL of the RPC
-	/// node it routes to, or the light client. A test asserts a routing override
-	/// through it, since an override written to the wrong field compiles,
-	/// changes nothing, and is invisible in timings.
+	/// node it routes to, or the light client.
 	pub fn location(&self, genesis_hash: [u8; 32]) -> &str {
 		match (&self.backend, self.chain_for(genesis_hash)) {
 			(_, None) => "unrouted",
 			(Backend::Rpc(_), Some(endpoint)) => &endpoint.ws,
-			(Backend::LightClient, Some(_)) => "light client",
+			(Backend::LightClient(_), Some(_)) => "light client",
 		}
 	}
 }
@@ -161,7 +160,7 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient => light_client(&self.network_id)?.connect(chain).await,
+			Backend::LightClient(network_id) => light_client(network_id)?.connect(chain).await,
 		}
 	}
 }

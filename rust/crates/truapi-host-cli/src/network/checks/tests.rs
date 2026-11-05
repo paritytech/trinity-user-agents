@@ -4,12 +4,7 @@ use clap::ValueEnum;
 use trinity_stack::Descriptor;
 
 use super::{
-	super::{
-		Network,
-		fixtures::edit_stack,
-		overrides::{ChainOverrides, apply_chain_overrides},
-		stack::stack_network_config,
-	},
+	super::{Network, overrides::ChainOverrides, stack::stack_network_config, testing::edit_stack},
 	*,
 };
 
@@ -155,42 +150,12 @@ async fn test_stack_endpoint_genesis_mismatch() {
 #[tokio::test]
 async fn test_built_in_genesis_mismatch_hint() {
 	let config = stack_with_people_at(&serve_chain([0x5a; 32], None).await);
-	let origin = BuiltInOrigin {
-		id: "paseo-next-v2",
-		url: "https://stack.example/s.json".to_owned(),
-		copy: BuiltInCopy::Published,
-	};
+	let origin =
+		BuiltInOrigin::new("paseo-next-v2", "https://stack.example/s.json", BuiltInCopy::Published);
 	let error = verify_stack_endpoints(&config, Unanswered::Warn, Some(&origin))
 		.await
 		.expect_err("wrong genesis accepted");
-	assert!(error.to_string().ends_with(&format_restart_hint(&origin)));
-}
-
-/// The hint tells the user which copy is in use and why, so a restart on
-/// the bundled copy points at the published descriptor that could not be
-/// fetched or was rejected.
-#[test]
-fn test_restart_hint_by_copy() {
-	let url = "https://stack.example/s.json".to_owned();
-	let published = BuiltInOrigin { id: "previewnet", url, copy: BuiltInCopy::Published };
-	assert_eq!(
-		format_restart_hint(&published),
-		"the previewnet stack restarted from genesis after the published descriptor in use \
-		 (https://stack.example/s.json) was published"
-	);
-	let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
-	assert_eq!(
-		format_restart_hint(&unreachable),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json could not be fetched"
-	);
-	let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
-	assert_eq!(
-		format_restart_hint(&rejected),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json was rejected, as the \
-		 warning above reports"
-	);
+	assert!(error.to_string().ends_with(&origin.restart_hint()));
 }
 
 /// Every identity derives under the TLD, so a People chain that scopes its
@@ -232,24 +197,23 @@ async fn test_network_suffix_absent_or_unreachable() {
 #[test]
 fn test_chain_checks_by_source() {
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let built_in = plan_chain_checks(&paseo, &paseo, false, None);
+	let built_in = ChainChecks::plan(&paseo, &paseo, false, None);
 	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
 	assert_eq!(built_in.expected_suffix, Some("paseo"));
 
 	let polkadot = Network::Polkadot.config(ChainBackend::Rpc);
-	let polkadot_checks = plan_chain_checks(&polkadot, &polkadot, false, None);
+	let polkadot_checks = ChainChecks::plan(&polkadot, &polkadot, false, None);
 	assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
 	assert_eq!(polkadot_checks.expected_suffix, None);
 
 	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
-	let light_client = plan_chain_checks(&light_client, &paseo, false, None);
+	let light_client = ChainChecks::plan(&light_client, &paseo, false, None);
 	assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
 	assert_eq!(light_client.expected_suffix, None);
 
 	let overrides =
 		ChainOverrides::parse([Some("ws://127.0.0.1:9".to_string()), None, None]).unwrap();
-	let local =
-		plan_chain_checks(&apply_chain_overrides(paseo.clone(), overrides), &paseo, true, None);
+	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo, true, None);
 	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
 	assert_eq!(local.expected_suffix, None);
 }
@@ -261,7 +225,7 @@ fn test_split_rerouted() {
 	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let overrides =
 		ChainOverrides::parse([Some(base.chains.bulletin.ws.clone()), None, None]).unwrap();
-	let config = apply_chain_overrides(base.clone(), overrides);
+	let config = overrides.apply(base.clone());
 	let (rerouted, untouched) = split_rerouted(&config, &base);
 	assert_eq!(rerouted.len(), 1);
 	assert_eq!(

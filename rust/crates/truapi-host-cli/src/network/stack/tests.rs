@@ -1,10 +1,11 @@
 use super::{
 	super::{
 		Network,
-		fixtures::{edit_chain, edit_stack},
+		testing::{edit_chain, edit_stack},
 	},
 	*,
 };
+use crate::stack_descriptor::Roles;
 
 /// A descriptor carries everything a network needs: the routes and genesis of
 /// each role, the identity backend, the TLD the CLI derives identities under,

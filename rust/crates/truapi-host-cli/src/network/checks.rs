@@ -1,12 +1,13 @@
 //! What the CLI checks of a resolved network before a command runs: whether
-//! the light client can serve it, and whether each endpoint reports the
-//! genesis and People the `NetworkSuffix` the network routes it as.
+//! the light client can serve it, whether each endpoint reports the genesis
+//! it is routed as, and whether People reports the network's TLD as its
+//! `NetworkSuffix`.
 
 use anyhow::{Result, anyhow, bail, ensure};
 
 use super::{
 	ChainEndpoint, NetworkConfig,
-	resolve::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
+	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
 };
 use crate::chain::ChainBackend;
 
@@ -24,6 +25,28 @@ pub struct ChainChecks {
 }
 
 impl ChainChecks {
+	/// The checks for `config`, resolved from `base`: endpoints `config` routes
+	/// differently from `base` are rerouted. A stack network reached over RPC
+	/// without a local network also has its other endpoints and People's
+	/// `NetworkSuffix` checked.
+	pub fn plan(
+		config: &NetworkConfig,
+		base: &NetworkConfig,
+		local_network: bool,
+		built_in: Option<BuiltInOrigin>,
+	) -> Self {
+		let (rerouted, untouched) = split_rerouted(config, base);
+		let is_stack_network = base.disposable_identities &&
+			!local_network &&
+			config.chain_backend == ChainBackend::Rpc;
+		Self {
+			rerouted,
+			from_stack: if is_stack_network { untouched } else { Vec::new() },
+			built_in,
+			expected_suffix: is_stack_network.then_some(config.network_suffix),
+		}
+	}
+
 	/// Fails when an endpoint an override reroutes fails its check; otherwise
 	/// the outcome of the stack's own endpoints, which a fetch of the published
 	/// descriptor may resolve.
@@ -42,29 +65,10 @@ impl ChainChecks {
 		Ok(from_stack)
 	}
 
+	/// Which copy of a built-in stack's descriptor the checked network runs
+	/// on; `None` for any other network.
 	pub fn copy_in_use(&self) -> Option<BuiltInCopy> {
 		self.built_in.as_ref().map(|origin| origin.copy)
-	}
-}
-
-/// The checks for `config`, resolved from `base`: endpoints `config` routes
-/// differently from `base` are rerouted. A stack network reached over RPC
-/// without a local network also has its other endpoints and People's
-/// `NetworkSuffix` checked.
-pub fn plan_chain_checks(
-	config: &NetworkConfig,
-	base: &NetworkConfig,
-	local_network: bool,
-	built_in: Option<BuiltInOrigin>,
-) -> ChainChecks {
-	let (rerouted, untouched) = split_rerouted(config, base);
-	let is_stack_network =
-		base.disposable_identities && !local_network && config.chain_backend == ChainBackend::Rpc;
-	ChainChecks {
-		rerouted,
-		from_stack: if is_stack_network { untouched } else { Vec::new() },
-		built_in,
-		expected_suffix: is_stack_network.then_some(config.network_suffix),
 	}
 }
 
@@ -79,25 +83,6 @@ fn split_rerouted(
 		.iter()
 		.cloned()
 		.partition(|endpoint| !base.chains.iter().any(|chain| chain == endpoint))
-}
-
-/// What a genesis mismatch on a built-in stack's endpoints adds to its error.
-fn format_restart_hint(origin: &BuiltInOrigin) -> String {
-	let BuiltInOrigin { id, url, copy } = origin;
-	match copy {
-		BuiltInCopy::Published => format!(
-			"the {id} stack restarted from genesis after the published descriptor in use ({url}) \
-			 was published"
-		),
-		BuiltInCopy::Unreachable => format!(
-			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
-			 and the published copy at {url} could not be fetched"
-		),
-		BuiltInCopy::Rejected => format!(
-			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
-			 and the published copy at {url} was rejected, as the warning above reports"
-		),
-	}
 }
 
 /// The light client knows only the networks `truapi-provider` bundles, by
@@ -205,7 +190,7 @@ async fn verify_endpoints(
 			config.id,
 			hex::encode(endpoint.genesis),
 			built_in
-				.map(|origin| format!("; {}", format_restart_hint(origin)))
+				.map(|origin| format!("; {}", origin.restart_hint()))
 				.unwrap_or_default()
 		);
 		let (Some(expected), Some(suffix)) = (expected_suffix, report.network_suffix) else {

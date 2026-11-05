@@ -1,9 +1,8 @@
 use super::{
-	super::{
-		IDENTITY_BACKEND_BASE_ENV, STACK_ENV, fixtures::edit_stack, stack::stack_network_config,
-	},
+	super::{IDENTITY_BACKEND_BASE_ENV, Network, stack::stack_network_config, testing::edit_stack},
 	*,
 };
+use crate::chain::ChainBackend;
 
 #[test]
 fn test_backend_override_hint() {
@@ -30,86 +29,13 @@ fn backend_override_replaces_only_the_backend_base() {
 	);
 }
 
-fn stack_arg(source: &'static str) -> StackArg {
-	StackArg { value: "https://stack.example/s.json".to_string(), source }
-}
-
-/// `--network` picks a built-in network and a stack any other one, and the
-/// error prints where the stack came from.
-#[test]
-fn test_network_with_stack_error() {
-	for source in ["--stack", STACK_ENV] {
-		let stack = stack_arg(source);
-		let error = ensure_sources_compatible(
-			Some(&stack),
-			Some(Network::Previewnet),
-			&[],
-			false,
-			ChainBackend::Rpc,
-		)
-		.expect_err("--network accepted with a stack");
-		assert!(error.to_string().contains(source));
-	}
-}
-
-/// The light client has chain specs only for the networks truapi-provider
-/// bundles, so a stack, whatever its namespace, fails before the command
-/// starts rather than on every connect.
-#[test]
-fn test_light_client_with_stack_error() {
-	let stack = stack_arg(STACK_ENV);
-	let error =
-		ensure_sources_compatible(Some(&stack), None, &[], false, ChainBackend::LightClient)
-			.expect_err("light client accepted with a stack");
-	assert!(error.to_string().contains(STACK_ENV));
-	assert!(ensure_sources_compatible(Some(&stack), None, &[], false, ChainBackend::Rpc).is_ok());
-}
-
-/// The light client syncs the chains by genesis from its bundled specs, so
-/// it cannot follow a chain rerouted to another URL.
-#[test]
-fn test_light_client_with_overrides_error() {
-	let overrides = [PEOPLE_WS_ENV];
-	let error = ensure_sources_compatible(None, None, &overrides, false, ChainBackend::LightClient)
-		.expect_err("light client accepted with a chain URL override");
-	assert!(error.to_string().contains(PEOPLE_WS_ENV));
-	assert!(ensure_sources_compatible(None, None, &overrides, false, ChainBackend::Rpc).is_ok());
-}
-
-#[test]
-fn test_light_client_with_local_network_error() {
-	let error = ensure_sources_compatible(None, None, &[], true, ChainBackend::LightClient)
-		.expect_err("light client accepted with a local network");
-	let message = error.to_string();
-	assert!(message.contains(local_network::CONFIG_ENV));
-	assert!(message.contains("--chain-backend light-client"));
-}
-
-/// The overrides point a network at a fork with the same genesis, and the
-/// local-network file replaces the genesis: mixing them would route roles
-/// to two networks.
-#[test]
-fn test_chain_overrides_with_local_network_error() {
-	let overrides = [PEOPLE_WS_ENV, BULLETIN_WS_ENV];
-	let error = ensure_sources_compatible(None, None, &overrides, true, ChainBackend::Rpc)
-		.expect_err("chain URL override accepted with a local network");
-	let message = error.to_string();
-	assert!(message.contains(local_network::CONFIG_ENV));
-	assert!(message.contains(PEOPLE_WS_ENV) && message.contains(BULLETIN_WS_ENV));
-
-	let stack = stack_arg("--stack");
-	let error = ensure_sources_compatible(Some(&stack), None, &[], true, ChainBackend::Rpc)
-		.expect_err("stack accepted with a local network");
-	assert!(error.to_string().contains("--stack"));
-}
-
 #[test]
 fn test_chain_overrides_blank_unset() {
 	let overrides =
 		ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
 	assert!(overrides.env_names_in_use().is_empty());
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let resolved = apply_chain_overrides(paseo.clone(), overrides);
+	let resolved = overrides.apply(paseo.clone());
 	assert_eq!(resolved.chains, paseo.chains);
 }
 
@@ -135,7 +61,7 @@ fn test_chain_overrides_field_and_route() {
 		])
 		.unwrap();
 		assert_eq!(overrides.env_names_in_use(), [PEOPLE_WS_ENV]);
-		let overridden = apply_chain_overrides(network.clone(), overrides);
+		let overridden = overrides.apply(network.clone());
 		let people = ChainEndpoint {
 			genesis: network.chains.people.genesis,
 			ws: "ws://127.0.0.1:10010".to_owned(),

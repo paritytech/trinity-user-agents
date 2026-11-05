@@ -7,7 +7,7 @@ use std::ffi::{OsStr, OsString};
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use super::{ChainEndpoint, NetworkConfig, stack::ensure_distinct_genesis};
+use super::{ChainEndpoint, NetworkConfig};
 use crate::stack_descriptor::Roles;
 
 /// Env var with the path of the local-network JSON file; a blank value is unset.
@@ -85,7 +85,7 @@ fn parse(base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 		let genesis = parse_genesis(&chain.genesis)?;
 		anyhow::Ok(ChainEndpoint { genesis, ws: chain.ws })
 	})?;
-	ensure_distinct_genesis(&chains)?;
+	chains.ensure_distinct_genesis()?;
 	Ok(NetworkConfig {
 		identity_backend_base: Some(local.identity_backend_base.trim_end_matches('/').to_owned()),
 		chains,
