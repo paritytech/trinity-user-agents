@@ -3,11 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.BuildConfig
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonObject
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.io.InputStream
 import java.net.URI
@@ -75,17 +74,19 @@ data class BundledProduct(
 @Singleton
 class BundledProducts internal constructor(
     private val files: BundledProductFiles,
+    private val manifestParser: ManifestParser,
     private val enabled: Boolean,
 ) {
     @Inject
-    constructor(files: BundledProductFiles) : this(files, BuildConfig.BUNDLED_PRODUCTS_ENABLED)
+    internal constructor(
+        files: BundledProductFiles,
+        manifestParser: ManifestParser,
+    ) : this(files, manifestParser, BuildConfig.BUNDLED_PRODUCTS_ENABLED)
 
     companion object {
         const val ROOT = "bundled-products"
         private const val WORKER_MANIFEST = "worker-manifest.json"
     }
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     private class Shipped(val products: Map<ProductId, BundledProduct>, val files: Set<String>)
 
@@ -117,8 +118,9 @@ class BundledProducts internal constructor(
 
     fun hasApp(product: BundledProduct): Boolean = exists("${product.appRoot}/${BundledProduct.APP_INDEX}")
 
-    /** Whether the worker [product] ships declares the Chat modality. */
-    fun includesChat(product: BundledProduct): Boolean = workerManifest(product)?.let { includes(it, "chat") } ?: false
+    /** Whether the worker [product] ships declares the Chat modality; a manifest the parser rejects declares none. */
+    fun includesChat(product: BundledProduct): Boolean =
+        workerManifest(product)?.let { worker(product, it) }?.includesChat == true
 
     /**
      * The file under [root] that a request for [requestPath] is served, the way a published archive is:
@@ -153,9 +155,8 @@ class BundledProducts internal constructor(
         return if (children.isEmpty()) listOf(path) else children.flatMap { filesUnder("$path/$it") }
     }
 
-    // Read the way the manifest parser reads `includes.chat`: a flag, so `false` does not include it.
-    private fun includes(manifest: String, modality: String): Boolean = runCatching {
-        val includes = json.parseToJsonElement(manifest).jsonObject["includes"] as? JsonObject
-        (includes?.get(modality) as? JsonPrimitive)?.booleanOrNull == true
-    }.getOrDefault(false)
+    // Read by the same parser a published worker manifest goes through.
+    private fun worker(product: BundledProduct, manifest: String): ProductExecutable.Worker? =
+        manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(product.workerHost))
+            .getOrNull() as? ProductExecutable.Worker
 }

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
+import com.google.gson.Gson
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -10,6 +11,7 @@ import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
@@ -137,10 +139,12 @@ class TrUAPIWorkerSupervisorTest {
         val bundled = BundledProducts(
             InMemoryBundledProductFiles(
                 mapOf(
-                    "bundled-products/worker.paseo/worker-manifest.json" to """{"includes":{"chat":true}}""",
+                    "bundled-products/worker.paseo/worker-manifest.json" to
+                        """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":true}}""",
                     "bundled-products/worker.paseo/worker/index.js" to "export {}",
                 ),
             ),
+            ManifestParser(Gson()),
             enabled = true,
         )
         val supervisor = supervisor(bundled)
@@ -155,7 +159,7 @@ class TrUAPIWorkerSupervisorTest {
     }
 
     private fun TestScope.supervisor(
-        bundledProducts: BundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
+        bundledProducts: BundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), ManifestParser(Gson()), enabled = true),
     ) = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
