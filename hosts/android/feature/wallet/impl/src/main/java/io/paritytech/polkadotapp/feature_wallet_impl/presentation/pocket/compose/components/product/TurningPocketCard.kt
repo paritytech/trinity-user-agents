@@ -89,6 +89,8 @@ private fun CardFace(card: PocketCardUiModel.ProductCard, bindings: ProductFaceB
             .zIndex(if (shown) 1f else 0f)
             .graphicsLayer {
                 rotationY = turn.layerRotation(side)
+                scaleX = turn.scale
+                scaleY = turn.scale
                 cameraDistance = CAMERA_DISTANCE_DP * density
                 alpha = if (shown) 1f else 0f
             }
