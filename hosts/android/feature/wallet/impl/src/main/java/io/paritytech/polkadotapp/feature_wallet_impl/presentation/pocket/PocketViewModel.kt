@@ -15,13 +15,11 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
-import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
-import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -57,7 +55,6 @@ class PocketViewModel @Inject constructor(
     private val interactor: PocketInteractor,
     private val tokenAmountMapper: TokenAmountMapper,
     private val tokenAmountFormatter: TokenAmountFormatter,
-    private val router: PocketRouter,
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
@@ -67,6 +64,7 @@ class PocketViewModel @Inject constructor(
     private var selectedPageQuery = ""
     private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
+    private val collectiblesPage = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
@@ -215,6 +213,9 @@ class PocketViewModel @Inject constructor(
     /** The product page under the expanded card, live only while that card is open. */
     val shownProduct = expandedProduct.shown
 
+    /** The collectibles page loading inside the open book, live only while the book is open. */
+    val collectiblesProduct = collectiblesPage.shown
+
     /** Whether the selected card opens with its face shown; null until its product has answered. */
     val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
 
@@ -245,12 +246,14 @@ class PocketViewModel @Inject constructor(
         }
 
         if (selectedCardId.value != null) dismissCard()
-        collectiblesShown.value = false
+        hideCollectiblesSketchbook()
         removalCandidate.value = null
         selectCard(card, request.pageQuery)
     }
 
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
@@ -296,16 +299,17 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = null
     }
 
-    fun showCollectiblesSketchbook() {
-        collectiblesShown.value = true
-    }
-
     fun hideCollectiblesSketchbook() {
+        collectiblesPage.close()
         collectiblesShown.value = false
     }
 
     fun openCollectibles() {
-        collectiblesUrl.value?.let { router.openSpaBrowser(SpaBrowserPayload.ByUrl(it.toString())) }
+        val page = collectiblesUrl.value ?: return
+        if (selectedCardId.value != null || collectiblesShown.value) return
+
+        collectiblesPage.open(page.toString())
+        collectiblesShown.value = true
     }
 
     /**

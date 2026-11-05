@@ -83,7 +83,7 @@ mod tests {
 
 	struct AlwaysSupported;
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl Features for AlwaysSupported {
 		async fn feature_supported(
 			&self,
@@ -100,7 +100,7 @@ mod tests {
 
 	struct AlwaysUnsupported;
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl Features for AlwaysUnsupported {
 		async fn feature_supported(
 			&self,

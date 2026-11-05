@@ -18,7 +18,6 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -493,7 +492,7 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
 	kind.parse(&line).unwrap_or(PermissionDecision::Deny)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for CliPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
@@ -546,7 +545,7 @@ impl ProductStorage for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for CliPlatform {
 	async fn begin_operation(
 		&self,
@@ -569,7 +568,7 @@ impl ProductOperations for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for CliPlatform {
 	async fn read_core_storage(
 		&self,
@@ -612,7 +611,7 @@ impl CoreStorage for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CliPlatform {
 	async fn connect(
 		&self,
@@ -622,7 +621,7 @@ impl ChainProvider for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Navigation for CliPlatform {
 	/// The core has already validated the URL, applied the open-URL
 	/// permission and normalized product destinations to `polkadot://`, so
@@ -658,7 +657,7 @@ fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), StorageError
 		.map_err(|source| StorageError::RecordNavigation { path: path.to_path_buf(), source })
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Notifications for CliPlatform {
 	async fn push_notification(
 		&self,
@@ -738,7 +737,7 @@ fn emit_notification_event(ui: Option<&UiHandle>, event: SystemEvent) {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl PermissionStatusHost for CliPlatform {
 	async fn device_permission_status(
 		&self,
@@ -751,7 +750,7 @@ impl PermissionStatusHost for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Permissions for CliPlatform {
 	async fn device_permission(
 		&self,
@@ -786,7 +785,7 @@ impl Permissions for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
 	async fn transaction_extension_versions(
 		&self,
@@ -795,7 +794,7 @@ impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(
 		&self,
@@ -871,7 +870,7 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 		.or_else(|| info.full_username.as_deref().filter(|value| !value.is_empty()))
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for CliPlatform {
 	async fn confirm_permission(
 		&self,

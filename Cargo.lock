@@ -5902,7 +5902,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5983,7 +5983,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6007,6 +6007,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "rqrr",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

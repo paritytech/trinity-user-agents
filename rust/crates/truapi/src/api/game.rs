@@ -11,7 +11,7 @@ use crate::{
 
 /// Reminders for a product's next game.
 #[wire_trait(id = 21)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Game: Send + Sync {
 	/// Remind the user when this product's next game starts.
 	///

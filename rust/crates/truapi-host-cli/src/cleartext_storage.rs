@@ -10,7 +10,7 @@ use std::{
 	sync::Mutex,
 };
 
-use truapi::{encrypted_storage::EncryptedStorage, latest::GenericError, platform::async_trait};
+use truapi::{encrypted_storage::EncryptedStorage, latest::GenericError};
 use zeroize::Zeroizing;
 
 use crate::accounts::write_secret_file;
@@ -28,7 +28,7 @@ impl CliCleartextStorage {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EncryptedStorage for CliCleartextStorage {
 	async fn read_encrypted(&self, key: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, GenericError> {
 		let values = read_values(&self.path)?;

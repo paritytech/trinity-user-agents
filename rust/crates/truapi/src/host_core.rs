@@ -776,6 +776,13 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
+	/// Install the feed a native host draws its funding screens from. Install
+	/// it before [`Self::set_funding_platform`], which resumes funding.
+	/// Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
@@ -813,6 +820,66 @@ impl SigningHostRuntime {
 		Ok(self.services.cancel_funding(intent).await?)
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest it ships for it. The core re-reads each one from dotNS in the
+	/// background, and that answer wins once it has one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.set_funding_providers(providers)
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// The providers funding session `intent` can be handed to, with the
+	/// routes that serve its direction, in the host's order. Empty for a
+	/// session the core does not know.
+	pub fn funding_candidates(
+		&self,
+		intent: &str,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| self.services.funding_candidates(session.direction))
+			.unwrap_or_default()
+	}
+
+	/// Live quotes for funding session `intent`: one row per funding
+	/// provider, whatever routes its manifest declares, `Pending` and then
+	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
+	/// The stream ends once every provider has, or once a newer ask for the
+	/// session starts, and never errors; dropping it withdraws the asks still
+	/// open.
+	pub fn get_funding_quote(
+		&self,
+		intent: &str,
+		ask: v01::FundingQuoteAsk,
+	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
+		self.services.get_funding_quote(intent, ask)
+	}
+
+	/// [`Self::get_funding_quote`] for hosts that take each row through
+	/// [`FundingPlatform::funding_quote_changed`] instead of a stream. A newer
+	/// request for the session withdraws this one, so the host only ever
+	/// hears rows for the last ask it made.
+	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
+		let rows = self.services.get_funding_quote(intent, ask);
+		let platform = self.services.funding().platform();
+		let intent = intent.to_string();
+		(self.services.spawner)(Box::pin(async move {
+			let Some(platform) = platform else {
+				return;
+			};
+			futures::pin_mut!(rows);
+			while let Some(row) = futures::StreamExt::next(&mut rows).await {
+				platform.funding_quote_changed(intent.clone(), row);
+			}
+		}));
+	}
+
 	/// Answer the provider's cancel offer on funding session `intent`:
 	/// accept it on `terms`, the fee and refund the host showed, so the
 	/// provider settles the cancel, or decline it with `None`, so the session
@@ -827,15 +894,17 @@ impl SigningHostRuntime {
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
-	/// by product id. Returns whether it was open and not yet assigned.
+	/// by product id, on the quote they chose it by. Returns whether it was
+	/// open and not yet assigned.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
 	pub async fn select_funding_provider(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
+		quote_id: &str,
 	) -> Result<bool, v01::GenericError> {
 		self.services
-			.select_funding_provider(intent, provider_id)
+			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
@@ -1673,7 +1742,7 @@ impl HostAdmin {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl CoreAdmin for HostAdmin {
 	async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
 		HostAdmin::disconnect_session(self).await;
@@ -1914,6 +1983,28 @@ impl FundingProviderLink for WorkerFundingLink {
 		})
 	}
 
+	fn quote(
+		&self,
+		ask: v01::FundingQuoteAsk,
+	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
+		use truapi::versioned::funding_provider::{
+			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
+		};
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			let ProductFundingQuoteResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_quote(
+					&subscriptions,
+					transport,
+					ProductFundingQuoteRequest::V1(v01::ProductFundingQuoteRequest { ask }),
+				)
+				.await
+				.ok()?;
+			Some(answer)
+		})
+	}
+
 	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
 		use truapi::versioned::funding_provider::{
 			ProductFundingCancelRequest, ProductFundingCancelResponse,
@@ -2082,7 +2173,7 @@ impl ProductRuntime {
 				transport: transport.clone(),
 				host_subscriptions: host_subscriptions.clone(),
 			});
-			services.funding().link(product_id.as_str(), link.clone());
+			services.funding().link(&product_id, link.clone());
 			(product_id, link)
 		});
 		Self {
@@ -2252,7 +2343,7 @@ impl ProductRuntime {
 		connection.detach_renderer();
 		connection.release_open_operations();
 		if let Some((product_id, link)) = &self.funding_link {
-			connection.services().funding().unlink(product_id.as_str(), link);
+			connection.services().funding().unlink(product_id, link);
 		}
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
