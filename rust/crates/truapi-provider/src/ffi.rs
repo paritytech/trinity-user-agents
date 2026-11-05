@@ -395,7 +395,9 @@ impl ChainProvider {
 	/// On the light client the network is resolved from the catalog. On a
 	/// remote node, a dropped or silent socket ends the connection with
 	/// [`ChainCloseReason::StreamEnded`] and nothing reconnects: the host
-	/// connects again and replays its subscriptions.
+	/// connects again and replays its subscriptions. A remote node cannot be
+	/// connected from a thread that runs tokio tasks, such as the one the TrUAPI
+	/// core calls `chain_connect` on.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,
@@ -408,6 +410,7 @@ impl ChainProvider {
 		let connection = match self.routes {
 			Routes::LightClient => block_on(self.inner.connect(genesis)).map_err(connect_error)?,
 			Routes::RpcNodes => {
+				refuse_inside_async_runtime()?;
 				if !self.inner.is_registered(genesis) {
 					return Err(connect_error(crate::ProviderError::UnknownGenesis { genesis }));
 				}
@@ -454,6 +457,21 @@ fn refuse_inside_listener(method: &str) -> Result<(), ChainProviderError> {
 			reason: format!(
 				"{method}() cannot be called from a listener callback; call it from another thread"
 			),
+		});
+	}
+	Ok(())
+}
+
+/// Blocking on the RPC runtime from a thread that already runs tokio tasks is a
+/// panic, and an abort on the shipping profile. The TrUAPI core calls a host's
+/// `chain_connect` on such a thread, so a host connecting inline from there
+/// would take the app down. Refuse it as an error instead.
+fn refuse_inside_async_runtime() -> Result<(), ChainProviderError> {
+	if tokio::runtime::Handle::try_current().is_ok() {
+		return Err(ChainProviderError::Connect {
+			reason: "connect() to a remote node cannot be called from a thread that runs async \
+			         tasks; call it from another thread"
+				.to_string(),
 		});
 	}
 	Ok(())
@@ -1296,6 +1314,25 @@ mod tests {
 		.expect("a 31-byte genesis must be rejected");
 
 		assert!(matches!(error, ChainProviderError::BadGenesis), "{error}");
+	}
+
+	/// The core calls a host's `chain_connect` from its tokio threads. Connecting
+	/// a remote node inline from there must come back as an error, not abort
+	/// the process.
+	#[test]
+	fn connecting_a_node_from_an_async_runtime_is_refused_rather_than_aborting() {
+		let provider = rpc_provider("ws://127.0.0.1:1".into());
+		let core = tokio::runtime::Runtime::new().expect("core runtime starts");
+
+		let result = core.block_on(async {
+			let (listener, _messages, _closed) = Collector::new();
+			provider.connect(NODE_CHAIN.to_vec(), listener).map(|_| ())
+		});
+
+		let Err(ChainProviderError::Connect { reason }) = result else {
+			panic!("expected a refused connect, got {result:?}");
+		};
+		assert!(reason.contains("another thread"), "{reason}");
 	}
 
 	/// A host that chose RPC must never find itself syncing a chain on the light
