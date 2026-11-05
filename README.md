@@ -313,6 +313,18 @@ only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtens
 `AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
 runtime's type by name.
 
+### Contract calls
+
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
+
+```rust
+let transaction = contracts.dry_run(&signer, &contract, &input).await?;
+transaction.execute_until_finalized().await?;
+```
+
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
@@ -478,6 +490,7 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Contract response fixtures encode the Revive result structs, re-exported only in test builds.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
 Product ID and link parsing rules are tested in Rust. Native ProductId tests

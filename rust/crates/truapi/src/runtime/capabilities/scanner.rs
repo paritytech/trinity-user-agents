@@ -18,7 +18,7 @@ fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
 	CallError::Domain(latest::HostScannerScanError::Unknown { reason: reason.to_string() })
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Scanner for ProductRuntimeHost {
 	/// Checked in this order so a host without a scanner, or a request the
 	/// product could not make, never opens a viewfinder.

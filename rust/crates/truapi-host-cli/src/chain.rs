@@ -9,7 +9,6 @@ use std::{
 	sync::{Arc, Mutex, PoisonError},
 };
 
-use async_trait::async_trait;
 use clap::ValueEnum;
 use futures::{
 	Stream, StreamExt,
@@ -30,7 +29,7 @@ use crate::network::{ChainEndpoint, NetworkConfig};
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
 
-#[async_trait]
+#[async_trait::async_trait]
 impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 	async fn transaction_extension_versions(
 		&self,
@@ -171,7 +170,7 @@ fn routed_endpoints(
 		.filter(move |endpoint| endpoint.required_for_host || live_chain_routing)
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CliChainProvider {
 	async fn connect(
 		&self,

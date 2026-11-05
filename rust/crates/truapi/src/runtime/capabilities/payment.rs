@@ -57,7 +57,7 @@ use crate::{
 	},
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl CoinPayment for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
 	async fn create_purse(
@@ -190,7 +190,7 @@ impl ProductRuntimeHost {
 		already_exists: E,
 	) -> Result<StartGuard, CallError<E>> {
 		let registry = self.connection.services.funding();
-		let product_id = self.connection.product.product_id.as_str();
+		let product_id = &self.connection.product.product_id;
 		registry
 			.begin_start(host_id)
 			.filter(|_| !registry.holds_start(product_id, &host_id))
@@ -221,7 +221,7 @@ impl ProductRuntimeHost {
 		let Some(guard) = registry.begin_start(host_id) else {
 			return Err(CallError::Domain(already_exists));
 		};
-		let provider_id = self.connection.product.product_id.as_str();
+		let provider_id = &self.connection.product.product_id;
 		// A first call under the id must not take over funds the engine
 		// holds already, which this session never recorded.
 		if !registry.recorded_start(&intent, &host_id) {
@@ -277,7 +277,7 @@ impl ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Payment for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
 	async fn balance_subscribe(
