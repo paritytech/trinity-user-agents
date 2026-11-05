@@ -107,12 +107,12 @@ class PocketFaceJsonTest {
         """{"tag":"Box","value":{"modifiers":[],"props":{},"children":[$inner]}}"""
     }
 
-    // The core streams a live face up to 64 levels deep. A shallower bound here would refuse, as a
-    // preview, a face this host already draws live and iOS draws in both places.
+    // The core streams a live face 64 decoder levels deep: 64 boxes around a leaf. A shallower bound
+    // here would refuse, as a preview, a face this host already draws live and iOS draws in both places.
     @Test
     fun `reads a tree as deep as the core streams, and refuses one deeper so it cannot blow the stack`() {
-        assertTrue(readPocketFace(levels(64)).isSuccess)
-        assertTrue(readPocketFace(levels(65)).exceptionOrNull() is NativeRendererException.TooDeep)
+        assertTrue(readPocketFace(levels(65)).isSuccess)
+        assertTrue(readPocketFace(levels(66)).exceptionOrNull() is NativeRendererException.TooDeep)
     }
 
     // A size is read back as an Int when the face is drawn, where a negative padding throws at
