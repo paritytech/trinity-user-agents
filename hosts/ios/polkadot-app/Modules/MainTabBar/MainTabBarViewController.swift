@@ -25,7 +25,7 @@ final class MainTabBarViewController: UIViewController {
     private let chainStatusAnchorGuide = UILayoutGuide()
 
     private static let chainStatusAnchorInset: CGFloat = 26
-    private static let statusTitleSpacing: CGFloat = 8
+    private static let statusTitleSpacing = DSSpacings.small
 
     private var chainStatusAnchorWidth: Constraint?
     private var statusTitleLeading: Constraint?

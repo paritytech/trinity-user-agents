@@ -39,7 +39,7 @@ final class StatusBarTitleButton: UIButton {
 private extension StatusBarTitleButton {
     enum Constants {
         static let logoSize: CGFloat = 16
-        static let logoSpacing: CGFloat = 10
+        static let logoSpacing = DSSpacings.smallIncreased
     }
 
     func setupLayout() {
