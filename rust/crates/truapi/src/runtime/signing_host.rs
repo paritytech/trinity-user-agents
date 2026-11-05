@@ -446,6 +446,21 @@ impl SigningHost {
 		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
 	}
 
+	fn identity_keypair_for(
+		&self,
+		account: [u8; 32],
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		let keypair = self.identity_keypair()?;
+		if keypair.public.to_bytes() != account {
+			return Err(AuthorityError::Unavailable {
+				reason: "signing host: the requested identity account is not available in this \
+				         CLI wallet"
+					.to_string(),
+			});
+		}
+		Ok(keypair)
+	}
+
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.advance_activation();
@@ -952,15 +967,7 @@ impl ProductAuthority for SigningHost {
 				(self.product_keypair(&request.account)?, request.payload)
 			},
 			SignRawAuthorityRequest::LegacyAccount { account, request } => {
-				let keypair = self.identity_keypair()?;
-				if keypair.public.to_bytes() != account {
-					return Err(AuthorityError::Unavailable {
-						reason: "signing host: the requested legacy account is not available in \
-                                 this CLI wallet"
-							.to_string(),
-					});
-				}
-				(keypair, request.payload)
+				(self.identity_keypair_for(account)?, request.payload)
 			},
 		};
 		self.require_current_session(session)?;
@@ -1020,14 +1027,7 @@ impl ProductAuthority for SigningHost {
 				.map_err(AuthorityError::from)
 			},
 			CreateTransactionAuthorityRequest::IdentityAccount(request) => {
-				let keypair = self.identity_keypair()?;
-				if keypair.public.to_bytes() != request.signer {
-					return Err(AuthorityError::Unavailable {
-						reason: "signing host: the requested identity account is not available in \
-                                 this CLI wallet"
-							.to_string(),
-					});
-				}
+				let keypair = self.identity_keypair_for(request.signer)?;
 				build_local_transaction(
 					&self.services.chain,
 					&keypair,

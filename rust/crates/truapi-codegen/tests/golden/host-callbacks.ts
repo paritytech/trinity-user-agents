@@ -551,8 +551,8 @@ export interface IdentityDisclosureReview {
 }
 
 /**
- * Account a legacy-account request resolved to. Hosts render the signer from
- * this rather than from the request's address.
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
  */
 export type LegacySigningAccount =
   /**
@@ -1310,8 +1310,8 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
   );
 
 /**
- * Account a legacy-account request resolved to. Hosts render the signer from
- * this rather than from the request's address.
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
  */
 export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
   (): S.Codec<LegacySigningAccount> =>

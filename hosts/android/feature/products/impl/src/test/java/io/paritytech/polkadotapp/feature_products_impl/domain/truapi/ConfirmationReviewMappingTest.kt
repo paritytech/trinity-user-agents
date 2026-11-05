@@ -214,20 +214,27 @@ class ConfirmationReviewMappingTest {
     }
 
     /**
-     * The sheet decodes the transaction with its signer's origin, which only a source for an
-     * account the app knows can build, so the account must be the one the core resolved.
+     * The sheet names the signer and decodes a transaction with its origin, which only a source for
+     * an account the app knows can build, so the account must be the one the core resolved.
      */
     @Test
-    fun `create transaction legacy is reviewed as the account the core resolved`() {
-        assertEquals(
-            SigningAccount.IdentityAccount,
-            legacyCreateTransaction(LegacySigningAccount.Identity).signingAccount(),
-        )
-        assertEquals(
-            SigningAccount.Product(demoAccount()),
-            legacyCreateTransaction(LegacySigningAccount.Product(nativeAccount())).signingAccount(),
-        )
+    fun `legacy reviews are shown as the account the core resolved`() {
+        listOf(::legacyCreateTransaction, ::legacySignRaw).forEach { review ->
+            assertEquals(SigningAccount.IdentityAccount, review(LegacySigningAccount.Identity).signingAccount())
+            assertEquals(
+                SigningAccount.Product(demoAccount()),
+                review(LegacySigningAccount.Product(nativeAccount())).signingAccount(),
+            )
+        }
     }
+
+    private fun legacySignRaw(account: LegacySigningAccount) = UserConfirmationReview.SignRaw(
+        SignRawReview.LegacyAccount(
+            account = account,
+            request = HostSignRawWithLegacyAccountRequest(signer = "0x0102", payload = RawPayload.Payload("hello")),
+            watermarked = true,
+        ),
+    )
 
     private fun legacyCreateTransaction(account: LegacySigningAccount) = UserConfirmationReview.CreateTransaction(
         CreateTransactionReview.LegacyAccount(

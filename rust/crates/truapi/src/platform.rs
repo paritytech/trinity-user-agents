@@ -2748,8 +2748,8 @@ pub enum SignPayloadReview {
 	},
 }
 
-/// Account a legacy-account request resolved to. Hosts render the signer from
-/// this rather than from the request's address.
+/// Account a legacy-account request resolved to, so a host knows the signer
+/// without resolving the request's address itself.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum LegacySigningAccount {

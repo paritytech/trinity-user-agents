@@ -1727,6 +1727,56 @@ mod tests {
 	}
 
 	#[test]
+	fn a_legacy_request_for_another_account_is_refused_before_the_user_sees_it() {
+		let platform = Arc::new(StubPlatform {
+			sign_raw_confirmed: true,
+			create_transaction_confirmed: true,
+			..StubPlatform::default()
+		});
+		let (_, signing_host) = signing_fixture(platform.clone());
+		let other_account = [7; 32];
+
+		let raw = answer(
+			&signing_host,
+			"legacy-raw-other",
+			v1::RemoteMessage::SignRawWithLegacyAccountRequest(
+				sso_messages::SignRawWithLegacyAccountRequest {
+					account: other_account,
+					data: api::RawPayload::Bytes { bytes: vec![1] },
+				},
+			),
+		);
+		let transaction = answer(
+			&signing_host,
+			"legacy-tx-other",
+			v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
+				sso_messages::CreateTransactionWithLegacyAccountRequest {
+					payload: sso_messages::CreateTransactionLegacyPayload::V1(
+						api::LegacyAccountTxPayload {
+							signer: other_account,
+							genesis_hash: [0xaa; 32],
+							call_data: vec![0x00, 0x00],
+							extensions: vec![],
+							tx_ext_version: 0,
+						},
+					),
+				},
+			),
+		);
+
+		let v1::RemoteMessage::SignRawWithLegacyAccountResponse(raw) = raw else {
+			panic!("expected legacy raw signing response");
+		};
+		let v1::RemoteMessage::CreateTransactionResponse(transaction) = transaction else {
+			panic!("expected create transaction response");
+		};
+		assert!(raw.payload.is_err());
+		assert!(transaction.payload.is_err());
+		assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+		assert!(platform.create_transaction_reviews.lock().unwrap().is_empty());
+	}
+
+	#[test]
 	fn product_subtree_request_is_consent_free_and_hard_derived() {
 		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
 		let response = answer(
