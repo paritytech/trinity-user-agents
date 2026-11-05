@@ -18,7 +18,6 @@ fn unknown_genesis_is_an_error_naming_the_hash() {
 #[test]
 // Without the `ws` backend the enum has a single variant, making the
 // let-else below irrefutable there.
-#[allow(irrefutable_let_patterns)]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 	use std::collections::HashMap;
 
@@ -98,7 +97,6 @@ impl crate::storage::StorageClient for MemoryStorageClient {
 /// A stored blob reaches the chain source the light backend is handed.
 #[cfg(feature = "smoldot")]
 #[test]
-#[allow(irrefutable_let_patterns)]
 fn a_stored_blob_seeds_a_chain() {
 	const GENESIS: [u8; 32] = [3; 32];
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
@@ -190,7 +188,6 @@ fn persist_without_a_connection_stores_nothing() {
 #[test]
 // Without the `ws` backend the enum has a single variant, making the
 // let-else below irrefutable there.
-#[allow(irrefutable_let_patterns)]
 fn a_rust_client_is_driven_by_both_database_calls() {
 	const GENESIS: [u8; 32] = [10; 32];
 	let client = std::sync::Arc::new(MemoryStorageClient::default());
@@ -345,7 +342,6 @@ fn load_database_without_storage_is_an_error_naming_what_is_missing() {
 #[test]
 // On wasm32 without the smoldot backend the enum has a single variant,
 // making the let-else irrefutable there.
-#[allow(irrefutable_let_patterns)]
 fn later_registration_wins() {
 	let first = url::Url::parse("ws://first.example").expect("static URL parses");
 	let second = url::Url::parse("ws://second.example").expect("static URL parses");

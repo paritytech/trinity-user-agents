@@ -68,7 +68,6 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
 ///
 /// Synchronous on purpose: every non-`Send` JS value is created and wrapped
 /// here so the awaiting caller only holds `Send` state.
-#[allow(clippy::type_complexity)]
 fn open_socket(
 	url: &Url,
 ) -> Result<

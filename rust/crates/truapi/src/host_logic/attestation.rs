@@ -117,13 +117,21 @@ pub enum LiteRegistrationError {
 /// `network_suffix` is the dotNS TLD of the network being registered on
 /// (`paseo`, `testnet`): the candidate account is `uid.<suffix>` and the member
 /// key `peopl.<suffix>`, the same person every other host derives there.
+/// The people and Asset Hub signing contexts a registration is signed under,
+/// each read from that chain's metadata.
+pub struct SigningContexts {
+	/// Context for the people chain, if its metadata defines one.
+	pub people: Option<[u8; 32]>,
+	/// Context for Asset Hub, if its metadata defines one.
+	pub asset_hub: Option<[u8; 32]>,
+}
+
 /// `reserved_username` optionally queues a base name for a later full-person
 /// claim on dotNS. `dotns_signed_at_secs` must be Asset Hub chain time, meaning
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
 /// `people_signing_context` and `asset_hub_signing_context` come from
 /// [`signing_context_from_constant`] on each chain's metadata.
-#[allow(clippy::too_many_arguments)]
 pub fn build_lite_registration(
 	entropy: &[u8],
 	network_suffix: &str,
@@ -131,8 +139,10 @@ pub fn build_lite_registration(
 	username_base: &str,
 	reserved_username: Option<&str>,
 	dotns_signed_at_secs: u64,
-	people_signing_context: Option<[u8; 32]>,
-	asset_hub_signing_context: Option<[u8; 32]>,
+	SigningContexts {
+		people: people_signing_context,
+		asset_hub: asset_hub_signing_context,
+	}: SigningContexts,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	// Registration, local activation, and the SSO responder all use the
 	// RFC-0022 `uid.<suffix>` default product account.

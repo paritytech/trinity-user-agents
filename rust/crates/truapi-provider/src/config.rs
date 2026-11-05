@@ -87,6 +87,5 @@ impl From<LightClientBuilder> for ChainSource {
 
 // Without the `ws` backend `ChainSource` has a single variant, so the let-else
 // destructuring below is irrefutable there (e.g. the iOS build).
-#[allow(irrefutable_let_patterns)]
 #[cfg(all(test, feature = "smoldot"))]
 mod tests;

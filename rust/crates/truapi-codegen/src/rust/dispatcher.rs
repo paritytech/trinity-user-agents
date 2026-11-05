@@ -623,7 +623,6 @@ fn write_header(out: &mut String) {
         // Responses are downgraded to the caller's version uniformly, including
         // the methods whose payload is unit and for which the conversion is a
         // no-op.
-        #![allow(clippy::unit_arg)]
 
         "#
 	)

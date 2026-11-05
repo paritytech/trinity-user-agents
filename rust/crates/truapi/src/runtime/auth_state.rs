@@ -135,10 +135,10 @@ impl AuthStateMachine {
 			if let Some(cancel_tx) = inner.cancel_tx.take() {
 				let _ = cancel_tx.send(());
 			}
-			if matches!(&inner.state, AuthState::Connected(current) if current == info) {
+			if matches!(&inner.state, AuthState::Connected(current) if current.as_ref() == info) {
 				return None;
 			}
-			inner.state = AuthState::Connected(info.clone());
+			inner.state = AuthState::Connected(Box::new(info.clone()));
 			Some(())
 		});
 	}

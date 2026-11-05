@@ -56,7 +56,7 @@ fn announcing_after_a_restored_session_leaves_connected_alone() {
 
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(session)],
+		vec![AuthState::Connected(Box::new(session))],
 		"the opening emission is the activation's outcome, not a placeholder"
 	);
 }
@@ -83,7 +83,7 @@ fn a_transition_before_the_first_activation_does_not_spend_the_announcement() {
 
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(session)],
+		vec![AuthState::Connected(Box::new(session))],
 		"the restored session is the host's first and only opening state"
 	);
 }

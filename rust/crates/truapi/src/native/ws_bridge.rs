@@ -654,8 +654,47 @@ fn try_reserve(counter: &AtomicUsize, limit: usize) -> bool {
 	}
 }
 
+fn reserve_upgrade(
+	registry: &WsBridgeRegistry,
+	matched: &MatchedReservation,
+	logger: &BridgeLogger,
+	peer: SocketAddr,
+	req: &Request,
+) -> Option<ErrorResponse> {
+	let path_and_query = req.uri().path_and_query().map(|p| p.as_str());
+	let Some(entry) = registry.find_matching(path_and_query) else {
+		logger(markers::WS_BRIDGE_REJECT_UNAUTHORIZED.target, &peer.to_string());
+		let mut err: ErrorResponse = HttpResponse::new(Some("invalid token".to_string()));
+		*err.status_mut() = StatusCode::UNAUTHORIZED;
+		return Some(err);
+	};
+
+	// Reject over-cap connections before acknowledging the HTTP upgrade.
+	if !try_reserve(&entry.connection_count, MAX_WS_CONNECTIONS_PER_EXECUTION) {
+		(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_EXECUTION.target, &peer.to_string());
+		let mut err: ErrorResponse =
+			HttpResponse::new(Some("execution connection limit reached".to_string()));
+		*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+		return Some(err);
+	}
+	if !try_reserve(&registry.total_connections, MAX_TOTAL_WS_CONNECTIONS) {
+		entry.connection_count.fetch_sub(1, Ordering::AcqRel);
+		(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_TOTAL.target, &peer.to_string());
+		let mut err: ErrorResponse = HttpResponse::new(Some("listener at capacity".to_string()));
+		*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+		return Some(err);
+	}
+	// Keep the reservation guarded even if the upgrade fails or times out.
+	let guard = ConnectionCountGuard {
+		total: registry.total_connections.clone(),
+		per_entry: entry.connection_count.clone(),
+	};
+
+	*matched.lock().expect("ws bridge handshake mutex poisoned") = Some((entry, guard));
+	None
+}
+
 // The handshake callback's error type is fixed by tokio-tungstenite.
-#[allow(clippy::result_large_err)]
 async fn authenticate_and_upgrade(
 	stream: tokio::net::TcpStream,
 	peer: SocketAddr,
@@ -666,39 +705,16 @@ async fn authenticate_and_upgrade(
 	let auth_registry = registry.clone();
 	let auth_matched = matched.clone();
 	let auth_logger = logger.clone();
-	let callback = move |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
-		let path_and_query = req.uri().path_and_query().map(|p| p.as_str());
-		let Some(entry) = auth_registry.find_matching(path_and_query) else {
-			auth_logger(markers::WS_BRIDGE_REJECT_UNAUTHORIZED.target, &peer.to_string());
-			let mut err: ErrorResponse = HttpResponse::new(Some("invalid token".to_string()));
-			*err.status_mut() = StatusCode::UNAUTHORIZED;
-			return Err(err);
-		};
-
-		// Reject over-cap connections before acknowledging the HTTP upgrade.
-		if !try_reserve(&entry.connection_count, MAX_WS_CONNECTIONS_PER_EXECUTION) {
-			(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_EXECUTION.target, &peer.to_string());
-			let mut err: ErrorResponse =
-				HttpResponse::new(Some("execution connection limit reached".to_string()));
-			*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
-			return Err(err);
-		}
-		if !try_reserve(&auth_registry.total_connections, MAX_TOTAL_WS_CONNECTIONS) {
-			entry.connection_count.fetch_sub(1, Ordering::AcqRel);
-			(entry.logger)(markers::WS_BRIDGE_CONNECTION_LIMIT_TOTAL.target, &peer.to_string());
-			let mut err: ErrorResponse =
-				HttpResponse::new(Some("listener at capacity".to_string()));
-			*err.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
-			return Err(err);
-		}
-		// Keep the reservation guarded even if the upgrade fails or times out.
-		let guard = ConnectionCountGuard {
-			total: auth_registry.total_connections.clone(),
-			per_entry: entry.connection_count.clone(),
-		};
-
-		*auth_matched.lock().expect("ws bridge handshake mutex poisoned") = Some((entry, guard));
-		Ok(resp)
+	#[allow(clippy::result_large_err)]
+	let callback = move |req: &Request, resp: Response| match reserve_upgrade(
+		&auth_registry,
+		&auth_matched,
+		&auth_logger,
+		peer,
+		req,
+	) {
+		Some(rejection) => Err(rejection),
+		None => Ok(resp),
 	};
 
 	// Cap inbound message/frame size so a peer cannot force the runtime to

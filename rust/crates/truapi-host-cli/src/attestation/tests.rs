@@ -55,8 +55,15 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 	let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
 	let entropy = [7u8; 16];
-	let registration =
-		build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123, None, None)?;
+	let registration = build_lite_registration(
+		&entropy,
+		"paseo",
+		[9u8; 32],
+		"testing",
+		None,
+		123,
+		SigningContexts { people: None, asset_hub: None },
+	)?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let mut network = crate::network::Network::default().config();
 	network.identity_backend_base = Some(Box::leak(backend_base.into_boxed_str()));

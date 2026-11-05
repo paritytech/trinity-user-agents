@@ -1,7 +1,3 @@
-#![allow(
-	clippy::double_must_use,
-	reason = "async-trait generates must_use futures for async trait methods"
-)]
 // The pairing-flow future nests the chain, SSO and identity futures deeply
 // enough that proving the tree's auto traits exceeds the default limit.
 #![recursion_limit = "256"]

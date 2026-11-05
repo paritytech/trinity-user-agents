@@ -1682,8 +1682,6 @@ pub struct SessionUiInfo {
 /// Auth/session lifecycle state the core projects for host UI. The core owns
 /// every transition and emits states in order; hosts render the current state
 /// and never derive auth UI from any other signal.
-// A uniffi `Enum` cannot box a variant.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum AuthState {
@@ -1698,7 +1696,7 @@ pub enum AuthState {
 		deeplink: String,
 	},
 	/// A session is active.
-	Connected(SessionUiInfo),
+	Connected(Box<SessionUiInfo>),
 	/// The last login attempt failed; show the reason and offer a retry.
 	LoginFailed {
 		/// What kind of failure this was. Hosts branch on this and treat
@@ -1931,7 +1929,6 @@ pub enum NftPurseDrainDestination {
 }
 
 /// Review shown before a user-confirmed core action continues.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum UserConfirmationReview {

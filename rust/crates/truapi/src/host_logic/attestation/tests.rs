@@ -14,8 +14,7 @@ fn registration_params_have_expected_shapes_and_verify() {
 		"headlesstester",
 		None,
 		1_749_573_123,
-		None,
-		None,
+		SigningContexts { people: None, asset_hub: None },
 	)
 	.unwrap();
 	assert_eq!(
@@ -118,8 +117,7 @@ fn reserved_username_threads_into_both_signed_payloads() {
 		"headlesstester",
 		Some("reservedbase"),
 		77,
-		None,
-		None,
+		SigningContexts { people: None, asset_hub: None },
 	)
 	.unwrap();
 	let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
@@ -191,8 +189,7 @@ fn registration_is_deterministic_per_entropy_and_username() {
 		"aliceheadless",
 		None,
 		1,
-		None,
-		None,
+		SigningContexts { people: None, asset_hub: None },
 	)
 	.unwrap();
 	let again = build_lite_registration(
@@ -202,8 +199,7 @@ fn registration_is_deterministic_per_entropy_and_username() {
 		"aliceheadless",
 		None,
 		1,
-		None,
-		None,
+		SigningContexts { people: None, asset_hub: None },
 	)
 	.unwrap();
 	assert_eq!(first.candidate_public_key, again.candidate_public_key);
@@ -226,8 +222,7 @@ fn signatures_in_context_verify_only_with_the_context() {
 		"headlesstester",
 		None,
 		9,
-		Some(people),
-		Some(asset_hub),
+		SigningContexts { people: Some(people), asset_hub: Some(asset_hub) },
 	)
 	.unwrap();
 	let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();

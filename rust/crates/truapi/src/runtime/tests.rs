@@ -7650,7 +7650,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(connected_session_ui_info(&stored))]
+		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
 	);
 }
 
@@ -7727,7 +7727,8 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	);
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
-	let expected_auth_states = vec![AuthState::Connected(connected_session_ui_info(&stored))];
+	let expected_auth_states =
+		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))];
 	wait_until(
 		|| {
 			*platform.auth_states.lock().expect("auth state list mutex poisoned") ==
@@ -7785,7 +7786,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
 		.expect("valid stored session activates");
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(connected_session_ui_info(&stored))]
+		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
 	);
 }
 
@@ -7818,7 +7819,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	// transition and must not repeat the opening state.
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(connected_session_ui_info(&stored))]
+		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
 	);
 }
 
@@ -8037,7 +8038,10 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(connected_session_ui_info(&stored)), AuthState::Disconnected,]
+		vec![
+			AuthState::Connected(Box::new(connected_session_ui_info(&stored))),
+			AuthState::Disconnected,
+		]
 	);
 }
 

@@ -7,9 +7,12 @@ use crate::{
 		},
 		sso_wire::ResponseOutcome,
 	},
-	host_logic::product_account::{
-		derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
-		derive_root_keypair_from_entropy,
+	host_logic::{
+		attestation::SigningContexts,
+		product_account::{
+			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
+			derive_root_keypair_from_entropy,
+		},
 	},
 	platform::ProductId,
 };
@@ -31,8 +34,7 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 		"headless",
 		None,
 		0,
-		None,
-		None,
+		SigningContexts { people: None, asset_hub: None },
 	)
 	.expect("registration builds");
 

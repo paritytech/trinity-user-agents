@@ -222,7 +222,6 @@ impl EmbeddedChainProvider {
 		// make every later connect re-clone a string smoldot then discards.
 		// Irrefutable only in the native-bindings build, where ChainSource
 		// has no ws variant.
-		#[allow(irrefutable_let_patterns)]
 		if let ChainSource::LightClient { database_content, .. } = &mut source &&
 			database_content.is_none() &&
 			let Some(blob) = lock(&self.seeded_databases).remove(&genesis_hash)

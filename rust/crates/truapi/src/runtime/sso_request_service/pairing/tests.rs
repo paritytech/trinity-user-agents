@@ -350,7 +350,7 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert_eq!(auth_states.len(), 3, "states: {auth_states:?}");
 	assert!(matches!(&auth_states[0], AuthState::Pairing { .. }));
 	assert_eq!(auth_states[1], AuthState::Authenticating);
-	assert_eq!(auth_states[2], AuthState::Connected(connected_session_ui_info(&session)));
+	assert_eq!(auth_states[2], AuthState::Connected(Box::new(connected_session_ui_info(&session))));
 	drop(auth_states);
 
 	let methods = platform

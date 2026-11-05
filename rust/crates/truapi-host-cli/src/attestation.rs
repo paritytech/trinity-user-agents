@@ -22,7 +22,8 @@ use tracing::{debug, warn};
 use truapi::{
 	host_logic::{
 		attestation::{
-			SIGNING_CONTEXT_CONSTANT, build_lite_registration, signing_context_from_constant,
+			SIGNING_CONTEXT_CONSTANT, SigningContexts, build_lite_registration,
+			signing_context_from_constant,
 		},
 		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 		product_account::{
@@ -338,8 +339,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		&config.username_base,
 		config.reserved_username.as_deref(),
 		signed_at,
-		people_signing_context,
-		asset_hub_signing_context,
+		SigningContexts { people: people_signing_context, asset_hub: asset_hub_signing_context },
 	)
 	.map_err(|reason| anyhow::anyhow!("failed to build registration params: {reason}"))?;
 	debug!(

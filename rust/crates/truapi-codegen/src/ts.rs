@@ -1914,16 +1914,18 @@ fn emit_method(
 			let error_codec = leg_error_codec_expr(interrupt, wrappers, &ctx)?;
 			emit_subscribe_method(
 				out,
-				&ts_method_name,
-				&wire_const,
-				&payload,
-				response.inner_type_ts.clone(),
-				item_codec,
-				item_is_wrapper,
-				error,
-				error_codec,
-				version,
-				request_name,
+				SubscribeMethod {
+					ts_method_name: &ts_method_name,
+					wire_const: &wire_const,
+					payload: &payload,
+					item_type_ts: response.inner_type_ts.clone(),
+					item_codec,
+					item_is_wrapper,
+					err: error,
+					error_codec,
+					version,
+					request_name,
+				},
 			)?;
 		},
 		(kind, return_type) => {
@@ -2099,25 +2101,37 @@ fn emit_host_initiated_method(
 	Ok(())
 }
 
-/// Emits a subscribe method body that returns an Observable-compatible
-/// object. `Start`'s payload is the request wrapper's own encoding, or empty
-/// bytes when the method takes no request at all. The `Interrupt` payload is
-/// `Result<(), CallError<Err>>`, so every generated method decodes `Ok(())`
-/// as a clean completion and `Err(reason)` as `error`.
-#[allow(clippy::too_many_arguments)]
-fn emit_subscribe_method(
-	out: &mut String,
-	ts_method_name: &str,
-	wire_const: &str,
-	payload: &PayloadEmission,
+struct SubscribeMethod<'a> {
+	ts_method_name: &'a str,
+	wire_const: &'a str,
+	payload: &'a PayloadEmission,
 	item_type_ts: String,
 	item_codec: String,
 	item_is_wrapper: bool,
 	err: ResponseEmission,
 	error_codec: String,
 	version: u32,
-	request_name: Option<&str>,
-) -> Result<()> {
+	request_name: Option<&'a str>,
+}
+
+/// Emits a subscribe method body that returns an Observable-compatible
+/// object. `Start`'s payload is the request wrapper's own encoding, or empty
+/// bytes when the method takes no request at all. The `Interrupt` payload is
+/// `Result<(), CallError<Err>>`, so every generated method decodes `Ok(())`
+/// as a clean completion and `Err(reason)` as `error`.
+fn emit_subscribe_method(out: &mut String, method: SubscribeMethod<'_>) -> Result<()> {
+	let SubscribeMethod {
+		ts_method_name,
+		wire_const,
+		payload,
+		item_type_ts,
+		item_codec,
+		item_is_wrapper,
+		err,
+		error_codec,
+		version,
+		request_name,
+	} = method;
 	let observable_args = format!("{item_type_ts}, {}", err.inner_type_ts);
 	let signature = if payload.param_list.is_empty() {
 		format!("  {ts_method_name}(): ObservableLike<{observable_args}> {{")

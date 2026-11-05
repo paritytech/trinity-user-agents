@@ -267,8 +267,8 @@ impl LightState {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		// `ChainSource` collapses to a single variant when only the smoldot
 		// backend is enabled (e.g. the iOS build), making this match irrefutable.
-		#[allow(irrefutable_let_patterns)]
-		let ChainSource::LightClient { specification, database_content, statement_protocol } = source
+		let ChainSource::LightClient { specification, database_content, statement_protocol } =
+			source
 		else {
 			return Err(ProviderError::Transport {
 				reason: "light backend invoked with a non-light chain source".to_owned(),
@@ -389,7 +389,6 @@ fn add_relay(
 
 	// `ChainSource` collapses to a single variant when only the smoldot backend
 	// is enabled, making this match irrefutable.
-	#[allow(irrefutable_let_patterns)]
 	let ChainSource::LightClient { specification, database_content, statement_protocol, .. } =
 		relay_source
 	else {

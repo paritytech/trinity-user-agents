@@ -243,11 +243,11 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 	);
 
 	let connect = |lite: Option<&str>, full: Option<&str>| {
-		AuthState::Connected(SessionUiInfo {
+		AuthState::Connected(Box::new(SessionUiInfo {
 			lite_username: lite.map(str::to_string),
 			full_username: full.map(str::to_string),
 			..SessionUiInfo::default()
-		})
+		}))
 	};
 
 	platform.auth_state_changed(connect(Some("alice"), None));
