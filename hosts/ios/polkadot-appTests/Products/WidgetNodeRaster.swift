@@ -30,18 +30,10 @@ enum WidgetNodeRaster {
         return try buckets(of: #require(renderer.uiImage?.cgImage)).mapValues(\.count)
     }
 
-    /// How many times a window is drawn while it is still changing, and the
-    /// wait between those draws. A picture loading and a theme override
-    /// reaching the hosted content both take a render pass or two, and what
-    /// buys those passes is yielding the run loop rather than drawing again,
-    /// so both entry points here wait rather than spin.
-    private static let settleDraws = 20
-    private static let settleStep = Duration.milliseconds(100)
-
     /// Where each colour bucket the node paints lies, drawn in the app's own
     /// window so its image loads run, which `ImageRenderer` skips. Drawn again
-    /// until `ready` holds, within the settle budget, so a picture still
-    /// loading is waited for rather than raced.
+    /// until `ready` holds, for up to two seconds, so a picture still loading
+    /// is waited for rather than raced.
     static func bounds(
         of node: CustomMessageWidgetNode,
         in size: CGSize,
@@ -55,63 +47,26 @@ enum WidgetNodeRaster {
         defer { window.isHidden = true }
 
         var drawn: [String: CGRect] = [:]
-        for _ in 0 ..< settleDraws {
-            try await Task.sleep(for: settleStep)
+        for _ in 0 ..< 20 {
+            try await Task.sleep(for: .milliseconds(100))
             drawn = try buckets(of: snapshot(of: window)).mapValues(\.bounds)
             if ready(drawn) { break }
         }
         return drawn
     }
 
-    /// The view drawn on screen in the app's own window under the picked
-    /// theme, as RGBA bytes row by row. Offscreen rendering leaves text fields
-    /// without the colours a window gives them, so colour checks draw here.
-    ///
-    /// The theme override reaches the hosted content on a render pass, not on
-    /// layout, so a window's first frames can carry the wrong theme. Drawing
-    /// again without yielding reproduces the same wrong frame, so this waits
-    /// between draws and returns the bytes once two of them agree. A window
-    /// that never agrees fails naming the theme, rather than handing back a
-    /// frame that is stably wrong.
-    static func pixels(of view: some View, in size: CGSize, under theme: ThemeSelection) async throws -> [UInt8] {
-        let window = try window(showing: view, in: size, under: theme)
-        defer { window.isHidden = true }
-
-        var drawn = try pixels(of: snapshot(of: window))
-        for _ in 0 ..< settleDraws {
-            try await Task.sleep(for: settleStep)
-            let again = try pixels(of: snapshot(of: window))
-            if again == drawn {
-                return again
-            }
-            drawn = again
-        }
-
-        try #require(Bool(false), "\(theme): the window never settled")
-
-        return drawn
-    }
-
     private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
 
-    private static func window(
-        showing view: some View,
-        in size: CGSize,
-        under theme: ThemeSelection? = nil
-    ) throws -> UIWindow {
+    private static func window(showing view: some View, in size: CGSize) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = RootWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
-        if let theme {
-            window.traitOverrides.appTheme = theme
-        }
 
         let host = UIHostingController(rootView: view)
         host.safeAreaRegions = []
         host.view.backgroundColor = .black
         window.rootViewController = host
         window.isHidden = false
-        window.layoutIfNeeded()
         return window
     }
 
