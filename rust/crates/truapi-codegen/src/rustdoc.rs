@@ -108,7 +108,7 @@ impl TraitDef {
 pub struct MethodDef {
 	/// Method name as it appears in source.
 	pub name: String,
-	/// What shape the method has on the wire (request, stream, ...).
+	/// Call shape declared by the protocol trait.
 	pub kind: MethodKind,
 	/// Parameter list with names preserved (excluding `&self` / `CallContext`).
 	pub params: Vec<ParamDef>,
@@ -120,13 +120,20 @@ pub struct MethodDef {
 	pub docs: Option<String>,
 }
 
+impl MethodDef {
+	/// Host-initiated single responses use the subscription exchange.
+	pub fn wire_kind(&self) -> MethodKind {
+		if self.wire.host_initiated { MethodKind::Subscription } else { self.kind }
+	}
+}
+
 /// Raw wire id extracted from `#[wire(...)]`. One id addresses the method
 /// regardless of shape; which leg of the exchange a frame carries
 /// (request/response, or a subscription's start/stop/interrupt/receive) is
 /// the outer wire's own `message_type` byte, not a separate id.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WireAttrs {
-	/// This subscription is started by the host and served by the product.
+	/// This method is called by the host and served by the product.
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
@@ -134,7 +141,7 @@ pub struct WireAttrs {
 	pub id: Option<u8>,
 }
 
-/// Wire-shape classification of a trait method.
+/// Declared call shape of a trait method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
 	/// One request, one response.
@@ -160,6 +167,16 @@ pub enum ReturnType {
 	Result { ok: TypeRef, err: TypeRef },
 	/// Subscription that yields `item`s and ends with an `interrupt`.
 	Subscription { item: TypeRef, interrupt: TypeRef },
+}
+
+impl ReturnType {
+	/// Success or item payload, followed by the failure payload.
+	pub fn response_types(&self) -> (&TypeRef, &TypeRef) {
+		match self {
+			Self::Result { ok, err } => (ok, err),
+			Self::Subscription { item, interrupt } => (item, interrupt),
+		}
+	}
 }
 
 /// Type reference parsed from rustdoc into a structural form codegen can emit.
@@ -266,7 +283,7 @@ struct ItemCandidate {
 }
 
 /// This crate's newtypes over a private `String`. rustdoc omits the field, so
-/// codegen emits them as `str`.
+/// codegen supplies their string representation while retaining the name.
 const STRING_NEWTYPES: &[&str] = &["ProductId"];
 
 /// Maps rustdoc item ids and full paths to the output type names used in
@@ -275,7 +292,7 @@ const STRING_NEWTYPES: &[&str] = &["ProductId"];
 pub struct NameContext {
 	by_item_id: HashMap<String, String>,
 	by_path: HashMap<String, String>,
-	/// Item ids of the [`STRING_NEWTYPES`], which resolve to `str`.
+	/// Item ids of the [`STRING_NEWTYPES`].
 	string_newtypes: HashSet<String>,
 }
 
@@ -376,9 +393,7 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 		}
 
 		for candidate in candidates {
-			if should_skip_type_candidate(&name, &candidate) ||
-				names.string_newtypes.contains(&candidate.item_id)
-			{
+			if should_skip_type_candidate(&name, &candidate) {
 				continue;
 			}
 			let item = krate
@@ -392,7 +407,15 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 				.take(candidate.path.len().saturating_sub(1))
 				.cloned()
 				.collect();
-			let type_def = if candidate.kind == "struct" {
+			let type_def = if names.string_newtypes.contains(&candidate.item_id) {
+				TypeDef {
+					name: name.clone(),
+					module_path,
+					generic_params: Vec::new(),
+					kind: TypeDefKind::Alias(TypeRef::Primitive("str".to_string())),
+					docs: clean_docs(item.docs.as_deref()),
+				}
+			} else if candidate.kind == "struct" {
 				extract_struct(&candidate.item_id, item, krate, &names, module_path)?
 			} else if candidate.kind == "enum" {
 				extract_enum(&candidate.item_id, item, krate, &names, module_path)?
@@ -755,7 +778,7 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		.get("output")
 		.with_context(|| format!("Method `{name}` missing rustdoc return type"))?;
 	let wire = item.docs.as_deref().map(extract_wire_attrs).unwrap_or_default();
-	let output = if wire.host_initiated { raw_output } else { unwrap_future_output(raw_output) };
+	let output = unwrap_future_output(raw_output);
 
 	let (kind, return_type) = if is_result_subscription_return(output) {
 		bail!(
@@ -838,8 +861,11 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		);
 	}
 
-	if wire.host_initiated && !matches!(kind, MethodKind::Subscription) {
-		bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
+	if wire.host_initiated &&
+		let ReturnType::Result { err, .. } = &return_type &&
+		!matches!(err, TypeRef::Named { name, args } if name == "CallError" && args.len() == 1)
+	{
+		bail!("Host-initiated method `{name}` must declare its failure as CallError<E>");
 	}
 
 	Ok(Some(MethodDef {
@@ -1071,7 +1097,10 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			.with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
 		let resolved_id = resolved.get("id").and_then(|id| value_id(id).ok());
 		if resolved_id.as_ref().is_some_and(|id| names.string_newtypes.contains(id)) {
-			return Ok(TypeRef::Primitive("str".to_string()));
+			return Ok(TypeRef::Named {
+				name: path_suffix(raw_name).to_string(),
+				args: Vec::new(),
+			});
 		}
 		let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
 		let args = resolve_resolved_path_args(resolved, names)?;
@@ -1523,6 +1552,19 @@ mod tests {
 	use super::*;
 
 	#[test]
+	fn product_id_references_retain_nominal_identity() {
+		let names = NameContext {
+			string_newtypes: HashSet::from(["42".to_string()]),
+			..NameContext::default()
+		};
+		let reference = serde_json::json!({"resolved_path": {"path": "truapi::ProductId", "id": 42, "args": null}});
+		assert_eq!(
+			resolve_type(&reference, &names).unwrap(),
+			TypeRef::Named { name: "ProductId".to_string(), args: vec![] }
+		);
+	}
+
+	#[test]
 	fn clean_docs_strips_wire_markers() {
 		let docs = "Trait summary.\n\n@wire_id=7\n@wire_trait_id=3\n\
                     @wire_host_initiated\n@wire_internal\n\
@@ -1625,6 +1667,46 @@ mod tests {
 			format!("{err}").contains("older than the tested minimum"),
 			"unexpected error: {err}"
 		);
+	}
+
+	#[test]
+	fn host_initiated_requests_accept_async_result_and_require_call_error() {
+		let named = |name: &str, args: Vec<serde_json::Value>| {
+			serde_json::json!({
+				"resolved_path": {
+					"path": name,
+					"args": { "angle_bracketed": { "args": args.into_iter().map(|ty| serde_json::json!({"type": ty})).collect::<Vec<_>>(), "constraints": [] } }
+				}
+			})
+		};
+		let request = named("ProductAnswerRequest", vec![]);
+		let response = named("ProductAnswerResponse", vec![]);
+		let domain = named("ProductAnswerError", vec![]);
+		let call_error = named("CallError", vec![domain.clone()]);
+		let method = |error: serde_json::Value| {
+			let result = named("Result", vec![response.clone(), error]);
+			let future = serde_json::json!({ "dyn_trait": { "traits": [{ "trait": {
+				"path": "Future",
+				"args": { "angle_bracketed": { "args": [], "constraints": [{
+					"name": "Output", "binding": { "equality": { "type": result } }
+				}] } }
+			} }], "lifetime": "'async_trait" } });
+			Item {
+				name: Some("answer".into()),
+				docs: Some("@wire_host_initiated\n@wire_id=7".into()),
+				attrs: Vec::new(),
+				inner: serde_json::json!({ "function": { "sig": {
+					"output": named("Pin", vec![named("Box", vec![future])]),
+					"inputs": [["_cx", { "borrowed_ref": { "type": named("CallContext", vec![]), "is_mutable": false } }], ["request", request]]
+				} } }),
+			}
+		};
+		let extracted = extract_method("1", &method(call_error), &NameContext::default())
+			.unwrap()
+			.unwrap();
+		assert_eq!((extracted.kind, extracted.wire.host_initiated), (MethodKind::Request, true));
+		let error = extract_method("1", &method(domain), &NameContext::default()).unwrap_err();
+		assert!(error.to_string().contains("CallError<E>"), "{error}");
 	}
 
 	#[test]

@@ -17,6 +17,17 @@ final class SPAViewLayout: UIView {
         return progressView
     }()
 
+    let loadStatusLabel: Label = {
+        let label = Label()
+        label.typography = .bodyMedium
+        label.usesMonospacedDigits = true
+        label.textColor = .fgSecondary
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.isHidden = true
+        return label
+    }()
+
     // Top pills exist only where products live on as tabs; elsewhere the sheet itself dismisses them.
     let moreButton = SPAViewLayout.makeIconButton(systemName: "ellipsis")
     let minimizeButton = SPAViewLayout.makeIconButton(systemName: "chevron.down")
@@ -144,6 +155,12 @@ private extension SPAViewLayout {
         addSubview(activityIndicatorView)
         activityIndicatorView.snp.makeConstraints { make in
             make.center.equalToSuperview()
+        }
+
+        addSubview(loadStatusLabel)
+        loadStatusLabel.snp.remakeConstraints { make in
+            make.top.equalTo(activityIndicatorView.snp.bottom).offset(16)
+            make.leading.trailing.equalToSuperview().inset(32)
         }
     }
 

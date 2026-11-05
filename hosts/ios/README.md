@@ -20,6 +20,8 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
+The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
@@ -74,7 +76,7 @@ the placeholder plists point at nothing. [docs/PUBLISHING.md](./docs/PUBLISHING.
 lists every Remote Config parameter and build-time variable and the brand
 identity keys in `Configs/brand.xcconfig`; the identity backend is open source
 as [device-uniqueness-backend-community](https://github.com/paritytech/device-uniqueness-backend-community). Optional
-integrations (fiat on-ramp, crash reporting) are enabled by filling in
+integrations (crash reporting) are enabled by filling in
 `polkadot-app/env-vars.sh`.
 
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain); the chain set is

@@ -47,6 +47,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatMessa
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatPushNotificationHandler
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.RealChatMessageNotificationSentRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.RealIncomingChatPushDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatAcceptanceRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
@@ -56,8 +57,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatSearchRe
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CompactionExpansionRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactDevicesRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.IdentitySigningConsentRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.MessageRevisionRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ProcessedChatMessageRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealChatAcceptanceRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealChatMessageProcessingRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealChatMessageRepository
@@ -68,6 +71,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealCompacti
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealContactDevicesRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealContactDirectory
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealContactsRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealIdentitySigningConsentRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealMessageRevisionRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealRemovedChatsRepository
@@ -94,6 +98,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncom
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestVerifier
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealOutgoingChatRequestService
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.acceptance.ChatAcceptanceDeliveryService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.delivery.ChatRequestDeliveryService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.RealChatRequestTransport
@@ -110,8 +115,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealRemov
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.CompoundExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.notifications.ChatPushNotificationsSender
 import io.paritytech.polkadotapp.feature_chats_impl.domain.notifications.RealChatPushNotificationsSender
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.ContactChatSessionRestarter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.RealContactChatSessionManager
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.RealContactChatSessionRefCounter
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.InactiveChatSlotReleaser
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.RealDeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.RealGetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.username.RealFallbackUsernameGenerator
@@ -167,6 +174,14 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     @IntoSet
+    fun bindChatAcceptanceDeliveryService(impl: ChatAcceptanceDeliveryService): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindInactiveChatSlotReleaser(impl: InactiveChatSlotReleaser): AppInitializer
+
+    @Binds
+    @IntoSet
     fun bindChatRequestRenewalScheduler(impl: ChatRequestRenewalScheduler): AppInitializer
 
     @Binds
@@ -180,6 +195,9 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     fun bindChatSessionManager(impl: RealContactChatSessionManager): ContactChatSessionManager
+
+    @Binds
+    fun bindChatSessionRestarter(impl: RealContactChatSessionManager): ContactChatSessionRestarter
 
     @Binds
     fun bindChatMessageTimeFormatter(impl: RealChatMessageTimeFormatter): ChatMessageTimeFormatter
@@ -247,6 +265,12 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     fun bindChatRequestRepository(impl: RealChatRequestRepository): ChatRequestRepository
+
+    @Binds
+    fun bindChatAcceptanceRepository(impl: RealChatAcceptanceRepository): ChatAcceptanceRepository
+
+    @Binds
+    fun bindIdentitySigningConsentRepository(impl: RealIdentitySigningConsentRepository): IdentitySigningConsentRepository
 
     @Binds
     fun bindChatRequestCrypto(impl: RealChatRequestCrypto): ChatRequestCrypto

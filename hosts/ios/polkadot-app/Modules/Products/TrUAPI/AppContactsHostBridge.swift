@@ -62,14 +62,14 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// The list is read here only to answer an empty one without a sheet. The
     /// picker is the chat contact search, which reads the same store, so who is
     /// offered is decided in one place.
-    func pickContact(productId: String) async throws -> HostContactPick {
+    func pickContact(productId: ProductId) async throws -> HostContactPick {
         if try await currentAccounts().isEmpty { return .noContacts }
 
-        let picked = await withCheckedContinuation { continuation in
-            Task { @MainActor [routerFacade] in
+        let picked: AccountId? = await awaitDecision(cancelled: nil) { [routerFacade] pending in
+            await withCheckedContinuation { continuation in
                 let context = ContactPickContext(productId: productId)
                 context.setContinuation(continuation)
-                routerFacade.productsRouter.showContactPick(context: context)
+                pending.screen = routerFacade.productsRouter.showContactPick(context: context)
             }
         }
 

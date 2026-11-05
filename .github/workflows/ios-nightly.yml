@@ -172,7 +172,6 @@ jobs:
       GOOGLE_SERVICE_INFO_SAFETY_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
       NOTIFICATION_BOT_TOKEN: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
       NOTIFICATION_BOT_URL: ${{ secrets.NOTIFICATION_BOT_URL }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -193,7 +192,6 @@ jobs:
       core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
-      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_DSN_IOS: ${{ secrets.SENTRY_DSN_IOS }}
 
@@ -211,7 +209,6 @@ jobs:
       core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
-      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
       SENTRY_DSN_IOS: ${{ secrets.SENTRY_DSN_IOS }}
       E2E_IOS_MNEMONIC: ${{ secrets.E2E_IOS_MNEMONIC }}
     permissions:
@@ -256,7 +253,6 @@ jobs:
       GOOGLE_SERVICE_INFO_SAFETY_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
       NOTIFICATION_BOT_TOKEN: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
       NOTIFICATION_BOT_URL: ${{ secrets.NOTIFICATION_BOT_URL }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -354,20 +350,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/announce-nightly
+          sparse-checkout: |
+            .github/actions/announce-nightly
+            .github/actions/mark-nightly-announced
 
       # An earlier attempt of this run that announced left a record on the run,
-      # which outlives the attempt, so a re-run of any leg finds it.
+      # which outlives the attempt, so a re-run of any leg finds it. The record
+      # holds the simulator tag that announcement linked, if any.
       - name: Check whether this night was announced
         id: announced
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=nightly-announced" --jq .total_count)"
-          if [ "$count" != 0 ]; then
+          id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=nightly-announced" --jq '.artifacts[0].id // empty')"
+          if [ -n "$id" ]; then
             echo "An earlier attempt announced this night; nothing to send."
-            echo "done=true" >> "$GITHUB_OUTPUT"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/announced-record.zip"
+            {
+              echo "done=true"
+              echo "tag=$(unzip -p "$RUNNER_TEMP/announced-record.zip" nightly-announced)"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "done=false" >> "$GITHUB_OUTPUT"
           fi
@@ -398,12 +401,14 @@ jobs:
           relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
           relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
           room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
-          release_tag: ${{ needs.simulator.outputs.tag }}
-          github_token: ${{ github.token }}
 
+      # Recorded as soon as the post lands, so a marking that fails below
+      # cannot make a re-run post the night again.
       - name: Record that this night was announced
         if: steps.announced.outputs.done != 'true'
-        run: echo "${GITHUB_RUN_ATTEMPT}" > "$RUNNER_TEMP/nightly-announced"
+        env:
+          TAG: ${{ needs.simulator.outputs.tag }}
+        run: printf '%s\n' "$TAG" > "$RUNNER_TEMP/nightly-announced"
 
       - name: Keep the record on the run
         if: steps.announced.outputs.done != 'true'
@@ -412,3 +417,16 @@ jobs:
           name: nightly-announced
           path: ${{ runner.temp }}/nightly-announced
           retention-days: 30
+
+      # Only the release the room was shown is marked. A re-run marks it when an
+      # earlier attempt posted and then failed here, and never marks a release
+      # a re-run of the simulator leg published after the post.
+      - name: Mark the simulator release as announced
+        if: >-
+          needs.simulator.outputs.tag != ''
+          && (steps.announced.outputs.done != 'true'
+              || steps.announced.outputs.tag == needs.simulator.outputs.tag)
+        uses: ./.github/actions/mark-nightly-announced
+        with:
+          release_tag: ${{ needs.simulator.outputs.tag }}
+          github_token: ${{ github.token }}

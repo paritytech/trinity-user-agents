@@ -16,7 +16,6 @@ enum SupportedAssets {
 
         static let usdt = ChainAssetId(chainId: KnownChainId.paseoAH, assetId: 1)
         static let usdc = ChainAssetId(chainId: KnownChainId.paseoAH, assetId: 2)
-        static let pusdAH = ChainAssetId(chainId: KnownChainId.paseoAH, assetId: 3)
         static let pas = ChainAssetId(chainId: KnownChainId.paseoAH, assetId: 0)
         static let pgasAH = ChainAssetId(chainId: KnownChainId.paseoAH, assetId: 4)
     #else
@@ -25,7 +24,6 @@ enum SupportedAssets {
 
         static let usdt = ChainAssetId(chainId: KnownChainId.releaseAH, assetId: 1)
         static let usdc = ChainAssetId(chainId: KnownChainId.releaseAH, assetId: 2)
-        static let pusdAH = ChainAssetId(chainId: KnownChainId.releaseAH, assetId: 3)
         static let pas = ChainAssetId(chainId: KnownChainId.releaseAH, assetId: 0)
         static let pgasAH = ChainAssetId(chainId: KnownChainId.releaseAH, assetId: 4)
     #endif

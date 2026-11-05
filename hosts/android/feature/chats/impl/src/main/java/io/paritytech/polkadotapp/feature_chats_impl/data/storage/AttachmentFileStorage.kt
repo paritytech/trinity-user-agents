@@ -6,6 +6,11 @@ import io.paritytech.polkadotapp.common.data.storage.file.ContentResolver
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.InformationSize
+import io.paritytech.polkadotapp.common.utils.readNBytesCompat
+import io.paritytech.polkadotapp.common.utils.skipNBytesCompat
+import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopService
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
@@ -32,6 +37,26 @@ class AttachmentFileStorage @Inject constructor(
     suspend fun readFileBytes(uri: Uri): ByteArray = withContext(coroutineDispatchers.io) {
         contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw FileNotFoundException("Cannot open file: $uri")
+    }
+
+    suspend fun sizeOf(uri: Uri): InformationSize = withContext(coroutineDispatchers.io) {
+        contentResolver.querySize(uri) ?: throw FileNotFoundException("Cannot read size of file: $uri")
+    }
+
+    fun readChunks(uri: Uri, fromChunk: Int): Flow<ByteArray> = flow {
+        val input = withContext(coroutineDispatchers.io) { contentResolver.openInputStream(uri) }
+            ?: throw FileNotFoundException("Cannot open file: $uri")
+
+        input.use {
+            withContext(coroutineDispatchers.io) { input.skipNBytesCompat(fromChunk.toLong() * HopService.CHUNK_SIZE_BYTES) }
+
+            while (true) {
+                val chunk = withContext(coroutineDispatchers.io) { input.readNBytesCompat(HopService.CHUNK_SIZE_BYTES) }
+                if (chunk.isEmpty()) break
+
+                emit(chunk)
+            }
+        }
     }
 
     fun createDownloadFile(mimeType: String): File {

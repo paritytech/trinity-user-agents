@@ -1,7 +1,8 @@
 //! Asset Hub dotNS reads over plain RPC (`state_getStorage` / `state_call`).
 //!
 //! The transport half of username resolution. This module supplies the two RPC
-//! primitives. `truapi::host_logic::dotns_gateway` walks the contract
+//! primitives, over a connection from the CLI's chain provider.
+//! `truapi::host_logic::dotns_gateway` walks the contract
 //! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
 //! resolve identically.
 
@@ -9,15 +10,15 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
+	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
-		DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
-		account_alias_key, classify_labels, discover_pop_controller, encode_revive_call,
-		label_available, lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+		DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, classify_labels,
+		discover_pop_controller, label_available, lite_label_owner_key, resolve_labels,
+		timestamp_now_key,
 	},
-	platform::async_trait,
 };
 
-use crate::network::NetworkConfig;
+use crate::{chain::CliChainProvider, network::NetworkConfig};
 
 /// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
 /// discovery.
@@ -40,18 +41,21 @@ pub struct AssetHubReader {
 }
 
 impl AssetHubReader {
-	/// Connects to the Asset Hub WebSocket endpoint.
-	pub async fn connect(asset_hub_ws: &str) -> Result<Self> {
-		let rpc = RpcClient::from_insecure_url(asset_hub_ws)
+	/// Connects to the network's Asset Hub.
+	pub async fn connect(network: &NetworkConfig) -> Result<Self> {
+		let chains = CliChainProvider::new(network);
+		let location = chains.location(network.asset_hub_genesis);
+		let rpc = chains
+			.rpc_client(network.asset_hub_genesis)
 			.await
-			.with_context(|| format!("connect {asset_hub_ws}"))?;
+			.with_context(|| format!("connect to Asset Hub ({location})"))?;
 		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
 	}
 
-	/// Connects to the preset's Asset Hub, falling back to its known
+	/// Connects to the network's Asset Hub, falling back to its known
 	/// `DotnsPopController` when the chain does not name one.
 	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
-		let mut reader = Self::connect(network.asset_hub_ws).await?;
+		let mut reader = Self::connect(network).await?;
 		reader.pop_controller_fallback = network.dotns_pop_controller;
 		Ok(reader)
 	}
@@ -135,34 +139,6 @@ impl AssetHubReader {
 			})
 	}
 
-	/// Dry-runs a contract view via the `ReviveApi_call` runtime API and returns
-	/// its data.
-	///
-	/// Views originate from the synthetic always-mapped account. They work
-	/// regardless of the queried account's revive mapping.
-	async fn raw_view(&self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
-		let output: Value = self
-			.rpc
-			.request(
-				"state_call",
-				rpc_params!["ReviveApi_call", format!("0x{}", hex::encode(args))],
-			)
-			.await
-			.map_err(|err| {
-				DotnsViewError::Failed(format!("rpc state_call ReviveApi_call: {err}"))
-			})?;
-		let Some(output) = output.as_str() else {
-			return Err(DotnsViewError::Failed(
-				"state_call returned a non-string response".to_string(),
-			));
-		};
-		let bytes = hex::decode(output.strip_prefix("0x").unwrap_or(output)).map_err(|err| {
-			DotnsViewError::Failed(format!("state_call output is not valid hex: {err}"))
-		})?;
-		view_output(&bytes)
-	}
-
 	/// One `state_getStorage` read at the best block.
 	async fn raw_storage(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
 		let value: Value = self
@@ -193,7 +169,7 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 		.transpose()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for AssetHubReader {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		self.raw_storage(&key)
@@ -201,7 +177,7 @@ impl DotnsTransport for AssetHubReader {
 			.map_err(|err| DotnsError::Storage(format!("{err:#}")))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		self.raw_view(dest, input).await
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(&mut self.rpc, dest, &input).await
 	}
 }

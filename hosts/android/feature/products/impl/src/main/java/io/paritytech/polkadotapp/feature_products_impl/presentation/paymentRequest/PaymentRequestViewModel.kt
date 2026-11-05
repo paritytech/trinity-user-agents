@@ -33,7 +33,7 @@ class PaymentRequestViewModel @Inject constructor(
     override val state: StateFlow<LoadingState<PaymentRequestUiState>> = stepIndex
         .map { index ->
             PaymentRequestUiState(
-                productId = context.productId.value,
+                productId = context.productId,
                 amount = tokenAmountMapper.mapFrom(chainAssetProvider.asset().withAmount(context.amount)),
                 step = context.steps[index],
             )

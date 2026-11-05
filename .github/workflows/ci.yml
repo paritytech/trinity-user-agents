@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # ready_for_review reruns CI on the same commit, which is how a draft gets
+  # the iOS app it skipped.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, release/v0.3.2]
   merge_group:
@@ -183,7 +186,7 @@ jobs:
 
   codegen:
     name: Codegen
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,6 +221,13 @@ jobs:
 
       - name: Run codegen
         run: ./scripts/codegen.sh
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Test generated host requests across Rust and TypeScript
+        run: cargo test -p truapi-codegen --bin truapi-codegen host_initiated_request_roundtrip -- --ignored --nocapture
 
       - name: Type-check headless host scripts
         run: node scripts/check-host-script-types.mjs
@@ -347,7 +357,7 @@ jobs:
             fi
           }
 
-          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/areas\.yml$|\.github/labels\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
           # to build without, and the dependency set the musl link has to
@@ -451,6 +461,12 @@ jobs:
   # queue, which has no Mac capacity for it yet. A push to main runs it through
   # ios-main.yml instead, so a Mac run never holds back what waits on this
   # workflow's verdict: the deploys and the release.
+  #
+  # Not for a draft, or for a pull request into another pull request's branch,
+  # which cannot reach main as it is: a stack would otherwise hold a Mac per
+  # layer on every push. It runs once the pull request is ready and targets
+  # main or a release branch, and on-label.yml runs it before then for a pull
+  # request labelled ci:ios-tests.
   ios-app:
     name: iOS app
     needs: changes
@@ -458,6 +474,9 @@ jobs:
       github.event_name == 'pull_request'
       && needs.changes.outputs.trusted == 'true'
       && github.actor != 'dependabot[bot]'
+      && !github.event.pull_request.draft
+      && (github.event.pull_request.base.ref == 'main'
+          || startsWith(github.event.pull_request.base.ref, 'release/'))
       && (needs.changes.outputs.ios_core == 'true' || needs.changes.outputs.ios_tree == 'true'
           || needs.changes.outputs.package_swift == 'true')
     uses: ./.github/workflows/ios-app.yml
@@ -1163,8 +1182,8 @@ jobs:
           set -euo pipefail
 
           pr="$(gh pr view "$PR_NUMBER" --json title,labels)"
-          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "no-changeset")' <<<"$pr" >/dev/null; then
-            echo "Release PR or explicit no-changeset opt-out."
+          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "ci:no-changeset")' <<<"$pr" >/dev/null; then
+            echo "Release PR or an explicit \`ci:no-changeset\` opt-out."
             exit 0
           fi
 
@@ -1173,7 +1192,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`no-changeset\` label if it genuinely ships nothing."
+          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`ci:no-changeset\` label if it genuinely ships nothing."
           exit 1
 
   ci-status:

@@ -1,5 +1,279 @@
 # @parity/truapi
 
+## 0.29.0
+
+### Major Changes
+
+- e8e2c17: New `FundingProvider` trait for a provider's worker. The core calls the worker with host-initiated requests,
+  each handler returning its answer as `ok(answer)`: `onAssign` hands it a session, again with its last update when the
+  worker connects, `onCancel` asks it to stop one (`Stopped`, or `Offer`/`Refused` once money moved) and
+  `onSettleCancel` passes on the user's answer to its offer. The worker calls the core: `report` stores its progress on
+  the session, as `In` or `Out` steps by the session's direction (`{ tag: "In", value: { tag: "Delivered" } }`) or
+  `Failed`, and `presentFrame` shows one of its App's screens, or an external https page with an optional return URL, in
+  a host frame. `payment.topUp` and `payment.request` gain a v0.2 shape with an optional `funding` intent: a provider's
+  worker sets it to start funds for a session it serves, or the call fails with `FundingNotServed`. Products built
+  before this release keep calling the v0.1 shape, which names no session, and a host reads it as `funding: undefined`.
+  The core records them before the host is asked, refuses a repeat under the id with other terms or an id the host
+  already holds with `AlreadyExists`, and `Crediting` and `Collecting` must name funds of that session the host took, at
+  their amount, once, or fail with `NotStarted`. Sessions end as `Delivered` or `Released` from the recorded amounts of
+  the named top-ups once their claims are final, or of the named payment once it completes. An assigned session whose
+  provider has not seen the user's payment expires 7 days after the provider's last update
+  (`FundingAssignment.expiresAt`, `undefined` once funds move), and a second cancel ends it. Hosts assign a session with
+  `select_funding_provider`, and must implement `present_provider_frame` on `FundingPlatform` (natively
+  `NativeFundingCallbacks`). Sessions now live in the core database; funding sessions 0.26.0 kept in core storage are
+  not carried over.
+- e8e2c17: `funding.request` takes `{ direction, amount? }` and answers at once with `{ intent }` while the host shows
+  the overlay; `funding.statusSubscribe` takes `{ intent }`. A session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. `HostFundingError` is `NotConnected`, `InvalidAmount` or `Unknown`.
+- e8e2c17: Funding sessions are stored in the core database, one row per session, so funding needs one: natively the
+  configured `database_directory`, otherwise `set_core_db`. The `FundingSessions`, `FundingSessionPack` and
+  `FundingSessionsUnreadable` core storage keys are gone.
+- b7b5ffe: Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a
+  string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed
+  `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
+
+  Kotlin `ProductId.parse`, `ProductId.fromName`, `productId.executable` and `productId.owner` return
+  `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate
+  the failure.
+
+  Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>`
+  that writes the string value and validates it through Rust when restoring.
+
+  Rust consumers import `ProductId`, `ProductIdError` and `PRODUCT_ID_MAX_BYTES` from the `truapi` crate root; these
+  version-independent items are not exported through `truapi::latest`.
+
+  Callers must pass typed IDs to product configuration, callbacks, proof contexts, registry queries, cross-product
+  storage and NFT purse ownership. Valid IDs retain string wire and storage encodings. Malformed IDs in typed protocol
+  fields fail decoding before dispatch. Persisted permission scopes and manifest labels keep their existing encodings.
+
+  Native product-link and executable-name operations use shared Rust helpers. Product links must match the host-provided
+  network suffix, including `.li` links. Both native hosts stop content loading on product-resolution failures or
+  missing executables.
+
+  The shared host execution enum is named `ExecutableKind` in Rust, Swift, Kotlin and TypeScript. Host consumers must
+  update imports from `ProductExecutionKind`; its variants and wire encoding are unchanged.
+
+### Minor Changes
+
+- 85ee8d8: Every chain connection the `truapi-host` CLI makes goes through `truapi-provider`.
+  `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the chains with the embedded smoldot
+  light client instead of dialing the preset's RPC nodes, so a node that refuses a shared CI address no longer stops the
+  host. RPC stays the default. The light client supports `paseo-next-v2` and `previewnet`. A request from a CLI command
+  fails once its connection has delivered nothing for 30 seconds while it waits. On the light client a command first
+  waits for its chain to sync, and fails if the chain or its relay stalls.
+
+  Over RPC, a connection sends a ping after 20 seconds without an outgoing request, and counts as dead after 50 seconds
+  without any incoming frame, so the core opens a new connection instead of waiting on a dead one. Messages of up to 64
+  MiB pass in either direction, so the full body of a busy Bulletin block can be fetched. Chain connections verify
+  `wss://` certificates with the root certificates built into the binary, not with certificate authorities added to the
+  operating system.
+
+- d730414: Native hosts keep the Pocket collection in the core database. The core stores which cards are in the Pocket
+  and the newest face of each, and serves product Pocket calls from it. `HostRuntimeConfig.pinned_pocket_cards`
+  (`pinnedPocketCards` in Swift and Kotlin) lists the cards the host pins, in the order they are listed. `addPocketCard`
+  screens the card id and title as a product's, and refuses ones a product could not use with `PocketAddError`. The
+  runtime gains `pocketCards()`, a stream of every card, pinned first, and `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`. The core keeps the newest face of a card from each Pocket card render, at most every two seconds and
+  once more when the render stops. `PocketHostBridge`, the `pocket` argument of `openProductExecution` and
+  `notifyPocketCardsChanged` are removed, `encodeRendererNode` and `decodeRendererNode` are removed, and
+  `NativeRendererSubscription` is now `NativeSubscription`.
+
+### Patch Changes
+
+- ab108f7: When `truapi-host` cannot open a session's core database, for example because a newer `truapi-host` migrated
+  it, the signing host stops with the `rm -f` command that deletes it. Running that command starts the session clean and
+  keeps its accounts and pairings.
+- aef8ba1: A chain-head call on a follow that has ended now names why it ended instead of reporting
+  `unknown follow subscription id`: `ended when its connection closed`, `was stopped by the node`, or
+  `ended on an error with its connection still open`. Only the reason text changes, not the error kind. A spent id is
+  also no longer answered by an unrelated follow.
+
+## 0.28.0
+
+### Minor Changes
+
+- f63cda7: Host-initiated methods returning `Result` generate asynchronous Rust callers and TypeScript handlers
+  returning typed `neverthrow` results over one-item subscriptions. Calls support cooperative cancellation, startup
+  buffering, and connection cleanup through the existing subscription transport.
+- 1136d53: Native hosts serve `NftPurse.createReceiveKey` and `NftPurse.createCheque`. `createReceiveKey` makes a
+  one-time X25519 receive key into any purse, with no grant; its secret is kept in the host's encrypted storage, so a
+  host that does not provide it cannot create receive keys. `createCheque` seals the secret of each item to the receive
+  key or a static X25519 key and returns the cheque for the product to deliver; the items are spent from then on.
+  `encryptedSecrets` is the ephemeral X25519 key, the 12-byte nonce, and the ChaCha20-Poly1305 ciphertext (HKDF-SHA256
+  key) of the SCALE-encoded 64-byte sr25519 secrets in `items` order, each in schnorrkel's `SecretKey::to_bytes` form
+  (scalar, then nonce), not the ed25519-expanded form. An ephemeral cheque id is
+  `blake2_256("nft-purse/cheque-id" ++ receiveKey)`. `NftPurseCreateChequeError` gains `NoItems` and `OperationExists`,
+  the latter for a second cheque with the same id from the same product. Handing off items of a purse the product does
+  not own asks the user through `NftPurseDrain`, whose destination gains `Cheque`. The browser core answers both calls
+  `Unsupported`.
+- 860a5f4: Native hosts serve `NftPurse.deposit` and the new `NftPurse.staticReceiveKey`. `deposit` opens a received
+  cheque and registers one move per item into the purse the product names, under the cheque id, which
+  `observeOperationStatus` follows. An `Ephemeral` cheque may be deposited only by the product that made its receive
+  key, and only into that key's purse: another purse answers the new `NftPurseDepositError.PurseMismatch`, and another
+  product's receive key answers `CorruptedCheque`. A `Static` cheque opens with the key `staticReceiveKey` returns, the
+  same for every product, so it is returned only with the identity disclosure consent `getUserId` asks for
+  (`NftPurseStaticReceiveKeyError.PermissionDenied` otherwise). Any product may deposit a `Static` cheque into any
+  purse, but items another deposit already moves answer the new `NftPurseDepositError.ItemsInUse`. Each move waits up to
+  an hour for its cheque key to hold an NFT. The item secrets are kept in the host's encrypted storage, so each move can
+  be signed again after a restart. The browser core answers both calls `Unsupported`.
+- 54f55e6: Native hosts serve `NftPurse.listenOneTimePayment`, which replaces `listenForPayment`, and the new
+  `NftPurse.listenPaymentInbox`. A sender publishes a statement whose data is the cheque sealed to the receiver's key:
+  the ephemeral X25519 key, the nonce, then the ChaCha20-Poly1305 ciphertext of `SCALE(version: u8 = 0, topic, cheque)`.
+  `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel" ‖ receiveKey)` for a receive key the product
+  made, emits that channel, then the first cheque addressed to the key, and ends; another product's key answers
+  `ReceiveKeyNotFound`. `listenPaymentInbox` watches
+  `blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖ blake2_256(productId) ‖ inboxDomain)` for `Static` cheques
+  sealed to the static receive key, emits that channel, then every cheque already stored as one batch, possibly empty,
+  then each batch of new ones. Both emit cheques already deposited again while the store holds them, and end with
+  `Other` when the connection drops. The browser core answers both `Unsupported`.
+- 24f3157: Native hosts serve `NftPurse.rebalancePurse`, `NftPurse.transferItem` and the new
+  `NftPurse.observeOperationStatus`. A chain operation takes an `idempotencyKey` the product chooses and returns once it
+  is registered; a second call under the same key fails with `OperationExists`. `observeOperationStatus` follows any
+  operation the product registered, by its key, until it is `Cleared` or `Incomplete`; deposits and refunds will be
+  followed by their cheque id once they are served. Each transfer is a fee-less Scarcity transfer signed by its item
+  key; an item a live transfer spends is no longer listed by `queryPurse`. Transferring items out of a purse the product
+  does not own asks the user through the new `NftPurseDrain` confirmation review. `deposit` and `refund` take the same
+  shape and still answer unavailable. The browser core answers the new calls `Unsupported`.
+- 4a92efa: Native hosts serve `NftPurse.revokeCheque` and `NftPurse.refund`. `revokeCheque` moves the items at the keys
+  of a cheque the product created back into fresh keys of its purse, and can be repeated to retry the keys whose move
+  failed; another product's cheque answers `ChequeNotFound`, a cheque whose items a deposit on this device already moves
+  answers the new `NftPurseRevokeChequeError.ItemsInUse`, and `NftPurseRevokeChequeError.Denied` is gone. `refund`
+  returns the items a product deposited from a cheque to the cheque's keys once the deposit has settled, and answers
+  which items move and which stay, with the new `NftPurseRefundError.DepositInProgress` and `ItemUnavailable`. Both are
+  followed by `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+  `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of a purse the product does not own asks the user through
+  `NftPurseDrain` with the new `Refund` destination. A transfer now moves whatever its item key holds on its first
+  attempt. The browser core answers both calls `Unsupported`.
+- 2c8a677: A descriptor can state its stack's dotNS contract addresses in `dotns`, by protocol registry key, so readers
+  take them from the descriptor instead of reading them from Asset Hub. `truapi-host stack` and `@parity/trinity-stack`
+  validate the keys and addresses.
+- 2dfc294: Descriptors can name a `web-gateway`, the gateway that serves the sites of the stack's dotNS names, and an
+  `evm-explorer`, an Ethereum block explorer for Asset Hub. `webUrl(descriptor, name)` gives the URL a name opens at on
+  the stack's gateway. A `web-gateway` may use plain `http` on `localhost`, for a stack run on the reader's machine.
+
+### Patch Changes
+
+- bbc7d8d: A chain call that fails because its connection dropped or closed carries the reason the transport gave, as in
+  `remote_chain_spec_genesis_hash: RPC error: client error: json-rpc connection closed`. Each failed chain call is also
+  logged as a warning with its failure kind, and a native host receives warnings and errors through `on_core_log` as
+  `truapi.tracing.warn` and `truapi.tracing.error` lines, whatever the log level, each detail capped at 512 characters.
+- f449b93: A chain connection that reaches the node's follow budget says so, naming its chain, the count and every
+  follow holding a slot by its local id. A node allows four `chainHead_v1_follow` per connection and refuses the next
+  one whoever it belongs to, and that refusal surfaces far from the cause: the call that happens to open the next follow
+  fails, often as a metadata error that mentions no follows at all. Naming the occupants while they are still known puts
+  the cause in the record rather than only the consequence.
+
+  Only follows the node has acknowledged are counted. A follow is recorded on intent and gains a remote id once the node
+  answers, so counting intents would report a connection as full while the node still had room. The count is the core's
+  own bookkeeping rather than the node's.
+
+  These reach a host through its log sink rather than the console. The level filter defaults to `ERROR` so routine core
+  traffic stays off a host's log, which also means an ordinary `warn!` never reaches a device. An event whose target
+  starts with `truapi.` is addressed to the host instead, and a layer forwards those to the sink under its own target
+  filter rather than the reloadable level, so they arrive at the default floor without turning on the rest of the
+  crate's warn traffic. Native hosts install their existing `on_core_log` callback as that sink.
+
+  A host runtime raises a start marker as it comes up, so a host log opens with evidence that the channel carrying the
+  rest is alive.
+
+  A product connection reports how many connections its execution holds as it opens and as it closes, so a host log
+  tells a socket that was released from one that is still held.
+
+  A dotNS lookup's follow id names what it reads rather than whose account it reads, so the ids these lines carry hold
+  no account.
+
+- b1e64dc: A scan answers `NotVisible` for any product, a Worker included, when the user has left the host application.
+- c1a894d: A descriptor or pointer URL that is not ASCII is now refused, since IDNA readers map some hosts differently.
+  A host outside ASCII must be written in its `xn--` form. `truapi-host stack` now also refuses a URL that contains `\`,
+  as `@parity/trinity-stack` already does.
+
+## 0.27.0
+
+### Minor Changes
+
+- 0eb93a9: `truapi-host` gains a `polkadot` network preset for Polkadot mainnet: Polkadot People, Bulletin and Asset
+  Hub, with dotNS under `.dot`. Its identities are real, so on `polkadot` the CLI signs only with `--mnemonic` or
+  `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never approves a confirmation without a prompt, and refuses
+  `--product-config` and `attest`. It ships no identity backend; set `HOST_CLI_IDENTITY_BACKEND_BASE` for commands that
+  need one.
+
+  An endpoint rerouted by `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` must report the genesis it is routed as,
+  and a test preset refuses any route carrying a real-identity preset's genesis. `--help` no longer prints an exported
+  `HOST_CLI_SIGNER_MNEMONIC`.
+
+- ff34f26: The core builds its own extrinsics through one builder: statement-store and long-term-storage allowances,
+  PGAS claims, Bulletin preimages and the CLI's dotNS registrations. Every extrinsic is mortal, born at the finalized
+  head for 64 blocks, and signs the genesis the host configured. Its version follows the new
+  `transactionExtensionVersions` host callback, in the `extrinsicVersion` group: the chains the host builds as V5
+  general transactions and the transaction extension pipeline each uses; every other chain is V4. A web host
+  implementing `RequiredHostCallbacks` has to answer it; an empty list builds every chain as V4, which leaves the core
+  unable to build the allowance, PGAS and dotNS extrinsics, since those exist only as V5. The `truapi-host` CLI answers
+  People and Asset Hub on pipeline 1.
+- d61da55: `system.info()` reports `truapiVersion`, the TrUAPI release whose runtime the host embeds, so a product can
+  tag telemetry with it. The runtime fills it in on every host, including iOS and Android. A product built before this
+  release ignores the field. A product built with it cannot decode the answer of an older host, so it should treat that
+  error as the version being unknown.
+- 8c23b5e: Add the `NftPurse` API. Native hosts create purses owned by the calling product and list an owner's purses,
+  asking for the new `NftPurseRead` permission before showing Root's or another product's. Its other methods answer
+  unavailable.
+- e9b6d73: Native hosts serve `NftPurse.createItems` and `NftPurse.queryPurse`. `createItems` derives 1 to 1000
+  receiving keys in a purse, on the hard path `//nft//<purse>//<installation>//<index>` under the installation the host
+  reports through the new `currentInstallation` host callback. `queryPurse` pages through the keys that hold an NFT on
+  Asset Hub at the best block, at most 100 at a time. Another owner's purse needs the `NftPurseRead` grant for both. The
+  browser core answers both `Unsupported`.
+- 747865c: If a product sends a request in a version the host doesn't know, the host rejects it with an
+  `UnsupportedVersion` error instead of failing to decode it, and the call fails as `Unsupported`. Older hosts still
+  answer `MalformedFrame`.
+
+### Patch Changes
+
+- f67e9cb: The core closes a chain connection on which a request has waited 30 s with no frame arriving. The waiting
+  requests fail with `json-rpc connection closed: no frame for 30s while a request waited`, the host is told to close
+  the socket, and the next call opens a new connection without waiting for the host to miss a pong. The deadline
+  outlasts the largest frame a chain sends on a slow link, the 1.3 MB Asset Hub runtime metadata, so a slow answer is
+  not mistaken for a dead socket.
+- b5e1aa4: The core can watch storage entries on a chain. `watch_entry` on a `WatchedStorage` (implemented by
+  `ChainRuntime`) takes any subxt storage address and its keys and reports the decoded values: every key first, then
+  only the keys whose value changed. A finalized watch reads every key at each finalized head with one
+  `state_queryStorageAt` call and compares it with the previous read; heads that arrive during a read collapse into the
+  newest. A best watch holds one `state_subscribeStorage` and reports its notifications, dropping keys a block wrote
+  with the value they already had. Absent entries come back as an explicit null, and a key the node leaves out of a full
+  answer is an error rather than an absent value. Metadata is fetched again only when `System.LastRuntimeUpgrade`
+  changes, and subscriptions the node ends are opened again.
+- f67e9cb: The SDK warns `[truapi] host link lost: <reason>` with the close reason each time its host connection drops,
+  including each refused redial, and the host container warns `[truapi] host link back after N ms` when the link
+  returns, timed from the first loss. The core warns when a json-rpc reply takes more than 5 s, when a json-rpc
+  connection closes while requests wait, naming each with its age, and when `createTransaction` waits more than 2 s for
+  the current block or cannot get it.
+- f231850: The CLI host signs lite username registrations in the form the network's runtime accepts. An individuality
+  runtime that publishes a `SigningContext` constant on the verifying pallet (`PeopleLite` on People, `DotnsGateway` on
+  Asset Hub) checks the candidate and consumer registration signatures and the dotNS reservation signature over the
+  personhood signing context followed by the message, as paritytech/individuality-community#196 requires. The CLI reads
+  the constant from each chain's metadata when it attests. A runtime without the constant keeps receiving signatures
+  over the message alone, so the same release works before and after the runtime upgrade.
+- dce190f: On native hosts, a preimage lookup that misses keeps calling the app's `lookup_preimage` until it returns the
+  value, so a lookup whose first fetch failed still resolves without the app calling `notifyPreimageChanged`. Retries
+  run every 6 seconds for the first 30 seconds, then every 30 seconds. They stop when the app returns the value or an
+  error, or when the product unsubscribes. On every host, a key that is not 32 bytes gets a miss without the host being
+  asked. Retries log `truapi.native.preimage.retrying` and `truapi.native.preimage.found`.
+- 0c77379: Document the layout rules every host draws a renderer tree by: padding goes around a fixed size, a `Box`
+  places its children at the top start, stacks add no gap, a `Spacer` is flexible, borders sit inside the node, a shaped
+  background clips its content, an image's natural size is one pixel to a point, and images may be PNG, JPEG, WebP or
+  SVG.
+- f67e9cb: Every connection the runtime opens to a chain shares the output of the runtime calls that depend only on the
+  runtime, such as the metadata. Products that start together and the transaction builder of the host download the 1 to
+  1.5 MB metadata of each runtime once between them, keyed by the hash of the runtime code at the block they ask about.
+  A product that asks while the download is on its way waits for it, and is told the operation is inaccessible if that
+  download fails, so it asks again.
+- c18c267: Runtime, CLI, and generated WASM host callbacks use shared error conversions while retaining protocol error
+  variants and JavaScript rejection values. CLI storage and session failures retain nested causes, and allowance
+  exhaustion is recognized through the error chain.
+- f67e9cb: A call made while the SDK has lost its host connection waits for the connection it redials and is sent once
+  that connection completes its handshake. A call or subscription whose frame already reached the host fails with
+  `ConnectionResetError`, since the host may have started it. The waiting call fails with the same error when the SDK
+  stops redialing: the page is hidden, the retries are spent, or the connection was disposed. The 120 s request deadline
+  still bounds the wait.
+
 ## 0.26.0
 
 ### Major Changes

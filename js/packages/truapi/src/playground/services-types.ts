@@ -19,7 +19,7 @@ export interface MethodInfo {
 }
 
 /** Trusted executable kind required to access a generated service. */
-export type ProductExecutionKind = "App" | "Widget" | "Worker";
+export type ExecutableKind = "App" | "Widget" | "Worker";
 
 export interface ServiceInfo {
   name: string;
@@ -35,7 +35,7 @@ export interface ServiceInfo {
 /** Services visible to one trusted executable kind. */
 export function servicesForExecution(
   services: ServiceInfo[],
-  execution: ProductExecutionKind,
+  execution: ExecutableKind,
 ): ServiceInfo[] {
   return services.filter(
     (service) =>
