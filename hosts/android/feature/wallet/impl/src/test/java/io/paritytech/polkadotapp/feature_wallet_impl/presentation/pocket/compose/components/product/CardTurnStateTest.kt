@@ -139,6 +139,46 @@ class CardTurnStateTest {
         assertEquals(listOf(180f, 180f), listOf(turned, state.angle))
     }
 
+    // The page is told its request applied, so the card has to end on the side it asked for last.
+    @Test
+    fun `the page's last request wins, even while the card is still turning`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+
+        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        advanceTimeBy(4 * FRAME_MILLIS)
+        state.requestSide(PocketCardSide.FRONT, hasBack = true)
+        advanceUntilIdle()
+
+        assertEquals(0f, state.angle.mod(360f), 0f)
+    }
+
+    // A finger that lands just as the page asks must not be fought by the page's turn.
+    @Test
+    fun `a page turn gives way to a drag that starts before it runs`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+
+        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.beginDrag()
+        state.drag(CARD_WIDTH / 10, CARD_WIDTH)
+        advanceUntilIdle()
+
+        assertEquals(18f, state.angle, 0f)
+    }
+
+    // A fling's settle can end without the user, when the card goes home; the page must not hear UserMoving ever after.
+    @Test
+    fun `a fling cut short by the card going home leaves the card to the page`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+        state.beginDrag()
+        state.drag(CARD_WIDTH * 0.8f, CARD_WIDTH)
+        launch { state.release(5_000f, CARD_WIDTH) }
+        advanceTimeBy(3 * FRAME_MILLIS)
+
+        state.snapHome()
+
+        assertEquals(APPLIED, state.requestSide(PocketCardSide.BACK, hasBack = true))
+    }
+
     @Test
     fun `a new drag stops the card settling`() = runTest(SteppingFrameClock) {
         val state = dragged(CARD_WIDTH * 0.8f)

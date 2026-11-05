@@ -9,7 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import kotlinx.coroutines.CoroutineScope
@@ -21,13 +22,15 @@ import kotlin.math.roundToInt
 
 /** How far the opened card is turned over. [angle] is in degrees: 0 is the front, 180 the back. */
 @Stable
-internal class CardTurnState {
-    var angle by mutableFloatStateOf(0f)
+internal class CardTurnState(initialAngle: Float = 0f) {
+    var angle by mutableFloatStateOf(initialAngle)
         private set
 
     val shownSide: PocketCardSide
-        get() = if (cos(Math.toRadians(angle.toDouble())) >= 0) PocketCardSide.FRONT else PocketCardSide.BACK
+        get() = sideAt(angle)
 
+    /** Where the card is going: the end of a turn under way, else where it is. */
+    private var heading = initialAngle
     private var dragging = false
     private var homing = false
     private val animations = MutatorMutex()
@@ -46,7 +49,9 @@ internal class CardTurnState {
     }
 
     fun drag(deltaPx: Float, widthPx: Float) {
-        if (!homing) angle += deltaPx * HALF_TURN / widthPx
+        if (homing) return
+        angle += deltaPx * HALF_TURN / widthPx
+        heading = angle
     }
 
     /** Lands on the face the release heads for, at most [MAX_HALF_TURNS] half turns from the face then up. */
@@ -56,13 +61,13 @@ internal class CardTurnState {
         val faceUp = nearest(angle, HALF_TURN)
         val reach = MAX_HALF_TURNS * HALF_TURN
         val rest = nearest(angle + velocity * FLING_PROJECTION_SECONDS, HALF_TURN).coerceIn(faceUp - reach, faceUp + reach)
-        settle(rest, velocity, MutatePriority.Default)
+        settle(rest, velocity, MutatePriority.UserInput)
         // Cleared only once the settle ends: one cut short by a new drag leaves the flag that drag set.
         dragging = false
     }
 
     suspend fun turnTo(side: PocketCardSide) {
-        if (side != shownSide) settle(nearest(angle, HALF_TURN) + HALF_TURN, 0f, MutatePriority.Default)
+        if (side != sideAt(heading)) settle(nearest(heading, HALF_TURN) + HALF_TURN, 0f, MutatePriority.Default)
     }
 
     /**
@@ -80,6 +85,7 @@ internal class CardTurnState {
     /** Turns the card back to its front for closing, which a drag cannot interrupt. */
     suspend fun turnHome() {
         homing = true
+        dragging = false
         try {
             settle(nearest(angle, FULL_TURN), 0f, MutatePriority.PreventUserInput)
         } finally {
@@ -88,22 +94,35 @@ internal class CardTurnState {
     }
 
     /** Shows the front at once, stopping any turn under way. */
-    suspend fun snapHome() = animations.mutate(MutatePriority.PreventUserInput) { angle = nearest(angle, FULL_TURN) }
+    suspend fun snapHome() = animations.mutate(MutatePriority.PreventUserInput) {
+        dragging = false
+        angle = nearest(angle, FULL_TURN)
+        heading = angle
+    }
 
     private suspend fun settle(target: Float, velocity: Float, priority: MutatePriority) = animations.mutate(priority) {
+        // A page's turn queued before a finger landed must not move the card under it.
+        if (dragging && priority == MutatePriority.Default) return@mutate
+        heading = target
         animate(angle, target, velocity, spring(SETTLE_DAMPING, Spring.StiffnessMediumLow)) { value, _ -> angle = value }
     }
 
+    private fun sideAt(degrees: Float) =
+        if (cos(Math.toRadians(degrees.toDouble())) >= 0) PocketCardSide.FRONT else PocketCardSide.BACK
+
     private fun nearest(degrees: Float, step: Float) = (degrees / step).roundToInt() * step
 
-    private companion object {
-        const val HALF_TURN = 180f
-        const val FULL_TURN = 360f
-        const val FLING_PROJECTION_SECONDS = 0.3f
-        const val MAX_HALF_TURNS = 4
-        const val SETTLE_DAMPING = 0.85f
+    companion object {
+        private const val HALF_TURN = 180f
+        private const val FULL_TURN = 360f
+        private const val FLING_PROJECTION_SECONDS = 0.3f
+        private const val MAX_HALF_TURNS = 4
+        private const val SETTLE_DAMPING = 0.85f
+
+        val Saver: Saver<CardTurnState, Float> =
+            Saver(save = { it.nearest(it.heading, HALF_TURN) }, restore = { CardTurnState(it) })
     }
 }
 
 @Composable
-internal fun rememberCardTurnState(): CardTurnState = remember { CardTurnState() }
+internal fun rememberCardTurnState(): CardTurnState = rememberSaveable(saver = CardTurnState.Saver) { CardTurnState() }
