@@ -175,6 +175,8 @@ scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           Run the CLI on both chain backends and compare what each serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
                            ci.yml change gates
@@ -260,7 +262,10 @@ genesis hash, so the host ships no chain specs and never refreshes them. The lig
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
 The limit covers only light-client connections; connections to a remote node are
-not capped. A light-client connection holds its requests until the chain first
+not capped. Only a provider built with `catalog()` resolves a genesis nobody
+registered from the catalog, so one for remote nodes never starts the light client
+for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
+running after its last connection closes. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
@@ -539,7 +544,15 @@ make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 make e2e-funding-cli                # funding requests and statuses against a scripted funding host
+make e2e-cli-backends               # the phases above and the dev diagnosis on rpc and light-client
 ```
+
+`make e2e-cli-backends` (`scripts/cli-backends-e2e.ts`) runs the signing and
+pairing phases and the `dev` playground diagnosis once per chain backend, then
+checks the CLI's routing rules and the live chain tests. It fails when a Chain,
+Statement Store or Preimage example fails on either backend or the two disagree.
+`SESSION=<name>` creates or selects the signing session; reports land in
+`target/cli-backends/`.
 
 The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from

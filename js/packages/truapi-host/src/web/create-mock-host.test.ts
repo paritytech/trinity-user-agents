@@ -1126,6 +1126,29 @@ describe("statement injection through the chain connection", () => {
     });
   });
 
+  it("reports the channel, expiry and decryption key a statement carries", () => {
+    const host = createMockHost();
+    const channel = `0x${"cc".repeat(32)}`;
+    const decryptionKey = `0x${"dd".repeat(32)}`;
+    const injected = host.injectStatement({
+      topics: [`0x${"aa".repeat(32)}`],
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(injected).toMatchObject({
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(host.getStatements()[0]).toMatchObject({ channel, decryptionKey });
+
+    const plain = host.injectStatement({ topics: [] });
+    expect(plain.channel).toBeUndefined();
+    expect(plain.expiry).toBeUndefined();
+    expect(plain.decryptionKey).toBeUndefined();
+  });
+
   it("retains a statement injected before the product subscribes", async () => {
     const { host, conn } = await connected();
     const reader = conn.responses()[Symbol.asyncIterator]();

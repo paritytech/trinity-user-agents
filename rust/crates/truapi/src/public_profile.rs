@@ -54,7 +54,7 @@ pub enum PublicProfileError {
 }
 
 /// The node and contracts that hold a username's public profile.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct ProfileRecordLocation {
 	/// Username namehash under the deployment's TLD.
 	node: [u8; 32],
@@ -120,7 +120,9 @@ impl ProfileRecordLocation {
 	}
 }
 
-/// Resolves public profile records, caching them in the native core database.
+/// Resolves public profile records through the host's shared services.
+///
+/// Native hosts persist records in the core database. Browser reads are uncached.
 pub struct PublicProfiles {
 	services: Arc<RuntimeServices>,
 }
@@ -131,7 +133,10 @@ impl PublicProfiles {
 		Self { services }
 	}
 
-	/// A missing record is empty. `force` skips the persisted record cache.
+	/// Resolves a profile using the native record cache.
+	///
+	/// Records expire after one hour; `force` bypasses the cache. Missing or malformed
+	/// records are empty. Invalid usernames, lookup failures and storage failures return errors.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(
@@ -160,7 +165,10 @@ impl PublicProfiles {
 		Ok(record)
 	}
 
-	/// Reads the chain without caching. A missing record is empty.
+	/// Resolves a profile directly from the chain.
+	///
+	/// Missing or malformed records are empty. Invalid usernames and lookup failures
+	/// return errors. The refresh argument has no effect because browsers do not cache records.
 	#[cfg(target_arch = "wasm32")]
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(

@@ -183,8 +183,10 @@ impl PreparedEvmTransaction<'_> {
 	}
 }
 
-/// Reads one contract for each input, preserving input order and individual failures.
-/// The runtime transport controls concurrency and the block context.
+/// Reads one contract for every ABI-encoded input.
+///
+/// Returns ABI data or a transport, dispatch, revert or decoding error for each input,
+/// in input order. The runtime transport determines concurrency and the block context.
 pub async fn read_batch(
 	runtime: &mut impl RuntimeApiCaller,
 	contract: &[u8; 20],

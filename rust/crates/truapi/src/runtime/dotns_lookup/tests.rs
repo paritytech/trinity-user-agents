@@ -51,7 +51,10 @@ fn a_view_batch_starts_together_on_one_block_and_keeps_early_replies() {
 						storage_deposit: StorageDeposit::Charge(0),
 						max_storage_deposit: StorageDeposit::Charge(0),
 						_gas_consumed: 0,
-						result: Ok(ExecReturnValue { flags: 0, data: vec![index as u8] }),
+						result: Ok(ExecReturnValue {
+							flags: 0,
+							data: vec![u8::try_from(index).unwrap()],
+						}),
 					}
 					.encode();
 					frames.push(event(json!({
