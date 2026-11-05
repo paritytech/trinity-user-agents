@@ -195,34 +195,67 @@ where
 			WsHandshakeError::Redirected { location, .. } => Unopened::Redirected(location),
 			other => Unopened::Failed(other.to_string()),
 		})?;
+	// The dial and handshake bytes belong to no message.
+	last_read.message_returned();
 	Ok(Box::new(WsConnection::start(sender, receiver, last_read)))
 }
 
-/// When bytes last arrived on a connection's socket.
+/// How many bytes must arrive with nothing returned before they count as a
+/// message on its way.
 ///
-/// jsonrpsee yields only whole messages, so the reader times out this silence
-/// instead, which a large message that is still arriving does not trip. The
-/// connection reports it as [`JsonRpcConnection::silent_for`].
+/// Control frames arrive between messages too, each under 200 bytes on the
+/// wire with TLS. A pong is returned and clears the count, but a ping the
+/// transport answers itself is not. The pong to our keepalive clears what such
+/// pings add, so this sits far above what they reach in one
+/// [`KEEPALIVE_INTERVAL`].
+const MESSAGE_ON_ITS_WAY_BYTES: usize = 4096;
+
+/// What a connection's socket has read: when bytes last arrived, and how many
+/// have arrived since the receiver last returned anything.
+///
+/// jsonrpsee yields only whole messages, so the reader times out silence on
+/// the socket instead, which a large message that is still arriving does not
+/// trip. The count tells such a message from control frames, and the
+/// connection reports its silence as
+/// [`JsonRpcConnection::mid_message_silence`].
 #[derive(Clone)]
-struct LastRead(Arc<Mutex<Instant>>);
+struct LastRead(Arc<Mutex<Reads>>);
+
+struct Reads {
+	at: Instant,
+	unreturned_bytes: usize,
+}
 
 impl LastRead {
 	fn now() -> Self {
-		LastRead(Arc::new(Mutex::new(Instant::now())))
+		LastRead(Arc::new(Mutex::new(Reads { at: Instant::now(), unreturned_bytes: 0 })))
 	}
 
-	fn touch(&self) {
-		*self.0.lock().expect("last-read mutex poisoned") = Instant::now();
+	fn lock(&self) -> std::sync::MutexGuard<'_, Reads> {
+		self.0.lock().expect("last-read mutex poisoned")
 	}
 
-	fn elapsed(&self) -> Duration {
-		self.0.lock().expect("last-read mutex poisoned").elapsed()
+	fn touch(&self, bytes: usize) {
+		let mut reads = self.lock();
+		reads.at = Instant::now();
+		reads.unreturned_bytes = reads.unreturned_bytes.saturating_add(bytes);
+	}
+
+	/// The receiver returned a message or a pong, so what was read is spent.
+	fn message_returned(&self) {
+		self.lock().unreturned_bytes = 0;
+	}
+
+	/// How long a message still on its way has gone without a byte.
+	fn mid_message_silence(&self) -> Option<Duration> {
+		let reads = self.lock();
+		(reads.unreturned_bytes >= MESSAGE_ON_ITS_WAY_BYTES).then(|| reads.at.elapsed())
 	}
 
 	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
 	async fn silence(&self) {
 		loop {
-			let deadline = *self.0.lock().expect("last-read mutex poisoned") + READ_TIMEOUT;
+			let deadline = self.lock().at + READ_TIMEOUT;
 			if Instant::now() >= deadline {
 				return;
 			}
@@ -246,8 +279,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for Watched<S> {
 		let this = self.get_mut();
 		let before = buf.filled().len();
 		let polled = Pin::new(&mut this.socket).poll_read(cx, buf);
-		if buf.filled().len() > before {
-			this.last_read.touch();
+		let read = buf.filled().len() - before;
+		if read > 0 {
+			this.last_read.touch(read);
 		}
 		polled
 	}
@@ -353,8 +387,8 @@ impl JsonRpcConnection for WsConnection {
 		}
 	}
 
-	fn silent_for(&self) -> Option<Duration> {
-		Some(self.last_read.elapsed())
+	fn mid_message_silence(&self) -> Option<Duration> {
+		self.last_read.mid_message_silence()
 	}
 
 	fn close(&self) {
@@ -454,6 +488,9 @@ fn response_stream<R: TransportReceiverT + Send>(
 						},
 					}
 				};
+				if received.is_ok() {
+					last_read.message_returned();
+				}
 				match received {
 					Ok(ReceivedMessage::Text(text)) => return Some((text, (receiver, last_read))),
 					Ok(ReceivedMessage::Bytes(bytes)) => match String::from_utf8(bytes) {
@@ -481,7 +518,8 @@ mod tests {
 	use jsonrpsee_core::client::{ReceivedMessage, TransportReceiverT, TransportSenderT};
 
 	use super::{
-		LastRead, READ_TIMEOUT, Watched, WsConnection, connect, handshake, open, open_any,
+		LastRead, MESSAGE_ON_ITS_WAY_BYTES, READ_TIMEOUT, Watched, WsConnection, connect,
+		handshake, open, open_any,
 	};
 
 	/// Local error type so the fakes need no extra dev-deps.
@@ -675,7 +713,7 @@ mod tests {
 		async fn receive(&mut self) -> Result<ReceivedMessage, Self::Error> {
 			for _ in 0..10 {
 				tokio::time::sleep(READ_TIMEOUT * 2 / 3).await;
-				self.last_read.touch();
+				self.last_read.touch(64 * 1024);
 			}
 			Ok(ReceivedMessage::Text("block".to_owned()))
 		}
@@ -694,25 +732,36 @@ mod tests {
 		assert_eq!(connection.responses().next().await.as_deref(), Some("block"));
 	}
 
-	/// The consumer times silence by whole messages, so it reads the socket's
-	/// last byte through the connection to tell a slow message from a dead link.
+	/// The consumer times silence by whole messages and asks this to tell a slow
+	/// message from keepalive traffic. Bytes count as a message on its way only
+	/// past what control frames add up to, and stop counting once the receiver
+	/// returns what they carried.
 	#[tokio::test(start_paused = true)]
-	async fn the_connection_reports_how_long_its_socket_has_been_silent() {
+	async fn only_a_message_on_its_way_reports_its_silence() {
 		let (sent, _sent_rx) = mpsc::unbounded::<String>();
+		let (frames, frames_rx) = mpsc::unbounded();
 		let last_read = LastRead::now();
 		let connection = WsConnection::start(
 			FakeSender { sent, closed: std::sync::Arc::new(Mutex::new(false)) },
-			SilentReceiver,
+			FakeReceiver { frames: frames_rx },
 			last_read.clone(),
 		);
+		let mut responses = connection.responses();
+
+		last_read.touch(MESSAGE_ON_ITS_WAY_BYTES - 1);
+		let control_frames = connection.mid_message_silence();
+		last_read.touch(1);
 		let quiet = READ_TIMEOUT / 2;
 		tokio::time::advance(quiet).await;
-		let before_the_read = connection.silent_for();
-		last_read.touch();
+		let on_its_way = connection.mid_message_silence();
+		frames
+			.unbounded_send(Ok(ReceivedMessage::Text("message".to_owned())))
+			.expect("send frame");
+		responses.next().await;
 
 		assert_eq!(
-			[before_the_read, connection.silent_for()],
-			[Some(quiet), Some(core::time::Duration::ZERO)]
+			[control_frames, on_its_way, connection.mid_message_silence()],
+			[None, Some(quiet), None]
 		);
 	}
 
