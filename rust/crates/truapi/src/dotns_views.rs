@@ -25,14 +25,20 @@ pub async fn read_view<T: DotnsTransport + ?Sized, Call: SolCall>(
 	decode_view::<Call>(transport.view(dest, call.abi_encode()).await)
 }
 
-/// Decodes a completed view, retaining whether execution or decoding failed.
+/// Decodes a completed contract view.
+///
+/// Retains transport and contract failures as [`DotnsCallError::View`], and
+/// invalid ABI return data as [`DotnsCallError::Decode`].
 pub fn decode_view<Call: SolCall>(
 	output: Result<Vec<u8>, EvmContractError>,
 ) -> Result<Call::Return, DotnsCallError> {
 	Ok(Call::abi_decode_returns_validate(&output?)?)
 }
 
-/// The deployment's protocol registry, or `None` when its gateway is absent.
+/// Resolves the deployment's protocol registry.
+///
+/// Returns `None` when no dispatcher is configured. Discovery and contract-view
+/// failures return errors.
 pub async fn protocol_registry<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 ) -> Result<Option<[u8; 20]>, DotnsError> {
@@ -81,7 +87,10 @@ pub async fn network_tld<T: DotnsTransport + ?Sized>(
 	verified_fallback_tld(transport, &dotns_registry).await
 }
 
-/// Resolves a completed TLD view, verifying its fallback against an already-read registry.
+/// Resolves a completed TLD view against a known registry.
+///
+/// A reverted view uses `.dot` only when the registry contains that TLD's record.
+/// Other view failures and a missing fallback record return errors.
 pub async fn network_tld_from_view<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	output: Result<Vec<u8>, EvmContractError>,

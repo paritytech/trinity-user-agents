@@ -19,7 +19,7 @@ pub struct ContactHandle {
 ///
 /// Distinguishing these matters to a product deciding what to do next: a
 /// dismissal is worth retrying, an empty list is not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum ContactPickOutcome {
 	/// The user chose someone.
 	///
@@ -41,11 +41,11 @@ pub enum ContactPickOutcome {
 ///
 /// Carries no arguments: the host owns the overlay, draws it from its own chat
 /// contacts, and nothing the product supplies appears in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsPickRequest {}
 
 /// Outcome of a pick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsPickResponse {
 	/// How the pick ended.
 	pub outcome: ContactPickOutcome,

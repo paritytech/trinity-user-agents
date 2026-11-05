@@ -45,7 +45,7 @@ pub trait TransactionExtension: Send {
 /// The bytes an extension's explicit value may cover: for V5, the extension
 /// version, the call, then the explicit and the implicit values of every
 /// later extension in the pipeline. V4 has no version byte.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct InheritedImplication {
 	encoded: Vec<u8>,
 	version: ExtrinsicVersion,
@@ -98,7 +98,7 @@ impl ExtensionError {
 }
 
 /// The metadata types of one extension's values.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct ExtensionValueTypes {
 	/// The explicit value's type.
 	pub explicit: u32,
