@@ -8,8 +8,8 @@ import TrUAPIHost
 @MainActor
 struct FundingFlowModelQuoteTests {
     @Test
-    func aProviderThatQuotesWithoutAMatchingRouteIsListedAndSelectable() {
-        let runtime = FakeFundingRuntime(candidates: [
+    func aProviderThatQuotesWithoutAMatchingRouteIsListedAndSelectable() async throws {
+        let runtime = MockFundingRuntime(candidates: [
             candidate("routed", routes: [route(.card)]),
             candidate("unrouted", routes: [])
         ])
@@ -17,15 +17,12 @@ struct FundingFlowModelQuoteTests {
 
         model.selectRail(.card)
         model.amountText = "50"
-        model.requestQuote()
-        model.receive(quotes: FundingQuoteList(
-            requestId: runtime.lastRequestId,
-            rows: [
-                FundingQuoteRow(providerId: provider("routed"), state: .quoted(quote: quote("q1", send: "5200"))),
-                FundingQuoteRow(providerId: provider("unrouted"), state: .quoted(quote: quote("q2", send: "5100")))
-            ],
-            best: provider("unrouted"),
-            refreshAtMs: 0
+        model.continueFromAmount()
+        try await waitUntil { runtime.asks.count == 1 }
+        model.receive(quotes: quotes(
+            runtime.lastRequestId,
+            [("routed", quote("q1", send: "5200")), ("unrouted", quote("q2", send: "5100"))],
+            best: "unrouted"
         ))
 
         #expect(model.listedProviderIds == [provider("routed"), provider("unrouted")])
@@ -35,14 +32,14 @@ struct FundingFlowModelQuoteTests {
 
     @Test
     func cardAndBankAreOfferedWithoutRoutesAndCryptoNeedsOne() {
-        let model = makeModel(FakeFundingRuntime(candidates: [candidate("unrouted", routes: [])]))
+        let model = makeModel(MockFundingRuntime(candidates: [candidate("unrouted", routes: [])]))
 
         #expect(model.availableRails == [.card, .bank])
     }
 
     @Test
     func anAmountBelowTheCoresMinimumIsRefused() {
-        let model = makeModel(FakeFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]))
+        let model = makeModel(MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]))
         model.selectRail(.card)
 
         model.amountText = "5"
@@ -55,7 +52,7 @@ struct FundingFlowModelQuoteTests {
     @Test
     func aWithdrawalAboveWhatPaymentsCanSpendIsRefused() {
         let model = makeModel(
-            FakeFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]),
+            MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]),
             direction: .out
         )
         model.selectRail(.card)
@@ -69,28 +66,125 @@ struct FundingFlowModelQuoteTests {
     }
 
     @Test
-    func aListForAnEarlierAskIsDropped() {
-        let runtime = FakeFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+    func aListForAnEarlierAskIsDropped() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let model = makeModel(runtime)
         model.selectRail(.card)
         model.amountText = "50"
-        model.requestQuote()
-        let earlier = runtime.lastRequestId
-        model.requestQuote()
+        model.continueFromAmount()
+        model.back()
+        model.amountText = "60"
+        model.continueFromAmount()
+        try await waitUntil { runtime.asks.count == 2 }
+        try await Task.sleep(for: .milliseconds(100))
 
-        model.receive(quotes: FundingQuoteList(
-            requestId: earlier,
-            rows: [FundingQuoteRow(providerId: provider("routed"), state: .quoted(quote: quote("old", send: "1")))],
-            best: provider("routed"),
-            refreshAtMs: 0
-        ))
+        model.receive(quotes: quotes(1, [("routed", quote("old", send: "1"))], best: "routed"))
 
         #expect(model.selectedQuote == nil)
+    }
+
+    @Test
+    func continuingCancelsTheQuoteWaitingOnThePauseAndAsksNothingTwice() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
+        model.selectRail(.card)
+
+        model.amountText = "50"
+        model.amountChanged()
+        try await waitUntil { runtime.asks.count == 1 }
+        model.continueFromAmount()
+
+        model.back()
+        model.amountText = "60"
+        model.amountChanged()
+        model.continueFromAmount()
+        try await Task.sleep(for: .milliseconds(800))
+
+        #expect(runtime.asks.map(\.amount) == ["50000000", "60000000"])
+    }
+
+    @Test
+    func leavingWhileTheProviderIsSelectedReportsNoStart() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
+        var outcomes: [FundingPresentOutcome] = []
+        model.onOutcome = { outcomes.append($0) }
+        model.selectRail(.card)
+        model.amountText = "50"
+        model.continueFromAmount()
+        try await waitUntil { runtime.asks.count == 1 }
+        model.receive(quotes: quotes(runtime.lastRequestId, [("routed", quote("q1", send: "5200"))], best: "routed"))
+        runtime.holdSelection()
+
+        model.start()
+        try await waitUntil { runtime.selectedProviders.count == 1 }
+        model.close()
+        runtime.releaseSelection()
+        try await waitUntil { !model.isStarting }
+
+        #expect(outcomes == [.dismissed])
+        #expect(!model.hasStarted)
+        #expect(model.path == [.summary])
+    }
+
+    @Test
+    func goingBackFromTheDepositScreenKeepsTheSessionFromStarting() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
+        let model = makeModel(runtime)
+        model.selectRail(.crypto)
+        model.amountText = "50"
+        model.continueFromAmount()
+        model.chooseNetwork("polkadot")
+        model.chooseToken("USDC")
+        model.back()
+        try await waitUntil { runtime.asks.count == 1 }
+
+        model.receive(quotes: quotes(runtime.lastRequestId, [("crypto", quote("q1", send: "5200"))], best: "crypto"))
+
+        #expect(!model.isStarting)
+        #expect(model.path == [.network, .token])
+    }
+
+    @Test
+    func choosingACountryReportsItsCurrency() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("unrouted", routes: [])])
+        let model = makeModel(runtime)
+        model.path.append(.country)
+        model.chooseCountry(country("DE", currency: "EUR"))
+        model.amountText = "50"
+        model.continueFromAmount()
+
+        model.path.append(.country)
+        model.chooseCountry(country("US", currency: "USD"))
+        try await waitUntil { runtime.asks.count == 2 }
+
+        let reported = runtime.selections.filter { $0.country == "US" }
+        #expect(!reported.isEmpty)
+        #expect(reported.allSatisfy { $0.asset == "USD" })
+        #expect(runtime.asks.last?.asset == "USD")
+    }
+
+    @Test
+    func aBrandIsReadOnceWhileItLoads() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let branding = MockFundingBranding()
+        let model = makeModel(runtime, branding: branding)
+
+        model.refreshOptions()
+        model.refreshOptions()
+        try await waitUntil { model.brand(for: provider("routed")).name == "routed.dot" }
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(branding.readProviders == [provider("routed")])
     }
 }
 
 private extension FundingFlowModelQuoteTests {
-    func makeModel(_ runtime: FakeFundingRuntime, direction: FundingDirection = .in) -> FundingFlowModel {
+    func makeModel(
+        _ runtime: MockFundingRuntime,
+        direction: FundingDirection = .in,
+        branding: FundingProviderBranding = MockFundingBranding()
+    ) -> FundingFlowModel {
         FundingFlowModel(
             context: FundingFlowModel.Context(
                 intent: "intent",
@@ -98,9 +192,8 @@ private extension FundingFlowModelQuoteTests {
                 amount: nil,
                 cash: FundingCash(symbol: "CASH", precision: 6)
             ),
-            runtime: runtime,
-            book: runtime.book,
-            branding: NoBranding()
+            service: FundingFlowService(runtime: runtime, book: runtime.book, branding: branding),
+            logger: MockLogger()
         )
     }
 
@@ -116,6 +209,27 @@ private extension FundingFlowModelQuoteTests {
         FundingRoute(rail: rail, directions: [.in, .out], assets: ["EUR"], networks: nil, countries: nil)
     }
 
+    func cryptoRoute() -> FundingRoute {
+        FundingRoute(rail: .crypto, directions: [.in], assets: ["USDC"], networks: ["polkadot"], countries: nil)
+    }
+
+    func country(_ code: String, currency: String) -> PaymentCountry {
+        PaymentCountry(code: code, name: code, currencyCode: currency, currencyName: nil)
+    }
+
+    func quotes(
+        _ requestId: UInt64,
+        _ rows: [(provider: String, quote: FundingQuote)],
+        best: String
+    ) -> FundingQuoteList {
+        FundingQuoteList(
+            requestId: requestId,
+            rows: rows.map { FundingQuoteRow(providerId: provider($0.provider), state: .quoted(quote: $0.quote)) },
+            best: provider(best),
+            refreshAtMs: 0
+        )
+    }
+
     func quote(_ id: String, send: U128) -> FundingQuote {
         FundingQuote(
             quoteId: id,
@@ -128,49 +242,4 @@ private extension FundingFlowModelQuoteTests {
             assetDecimals: 2
         )
     }
-}
-
-private struct NoBranding: FundingProviderBranding {
-    func brand(for providerId: ProductId) async -> FundingProviderBrand {
-        .placeholder(for: providerId)
-    }
-}
-
-/// A runtime holding only what the quote path reads, answering each
-/// selection with the same options, as the core does inline.
-private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
-    let book = FundingSessionBook()
-    private let options: FundingOptions
-    private(set) var lastRequestId: UInt64 = 0
-
-    init(candidates: [FundingCandidate]) {
-        options = FundingOptions(
-            candidates: candidates,
-            countries: [],
-            limits: FundingAmountLimits(min: "10000000", max: nil),
-            networks: []
-        )
-        book.record(intent: "intent", options: options)
-    }
-
-    func selectFundingOptions(intent: String, selection _: FundingSelection) {
-        book.record(intent: intent, options: options)
-    }
-
-    func getFundingQuote(intent _: String, ask _: FundingQuoteAsk) -> UInt64 {
-        lastRequestId += 1
-        return lastRequestId
-    }
-
-    func stopFundingQuotes(intent _: String) {}
-    func selectFundingProvider(
-        intent _: String,
-        providerId _: ProductId,
-        quoteId _: String
-    ) async throws -> Bool { true }
-    func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
-    func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
-    func fundingHistory() -> [FundingSessionSummary] { [] }
-    func acknowledgeFundingSession(intent _: String) async throws -> Bool { true }
-    func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }
 }

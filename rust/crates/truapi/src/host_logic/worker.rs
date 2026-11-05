@@ -39,14 +39,14 @@ pub trait WorkerController: Send + Sync {
 
 /// An exit more than this long after the previous one starts a new run of
 /// crashes, in milliseconds.
-pub const CRASH_RUN_WINDOW_MS: u64 = 60_000;
+const CRASH_RUN_WINDOW_MS: u64 = 60_000;
 /// The wait before restarting a worker after its second crash in a run, in
 /// milliseconds; it doubles with each further crash.
-pub const RESTART_BACKOFF_BASE_MS: u64 = 1_000;
+const RESTART_BACKOFF_BASE_MS: u64 = 1_000;
 /// The longest wait before restarting a crashed worker, in milliseconds.
-pub const RESTART_BACKOFF_MAX_MS: u64 = 5 * 60_000;
+const RESTART_BACKOFF_MAX_MS: u64 = 5 * 60_000;
 /// The crash in a run on which the host is told the worker is not working.
-pub const CRASH_NOTICE_AFTER: u32 = 3;
+const CRASH_NOTICE_AFTER: u32 = 3;
 
 /// What the ledger reports to the host, in the order it happened.
 enum LedgerEvent {
@@ -149,7 +149,7 @@ impl WorkerLedger {
 	/// crash up to [`RESTART_BACKOFF_MAX_MS`]. The run's
 	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
 	/// [`WorkerController::worker_crashing`].
-	pub fn exited(&self, product_id: &ProductId, now_ms: u64) -> Option<u64> {
+	pub(crate) fn exited(&self, product_id: &ProductId, now_ms: u64) -> Option<u64> {
 		let wait_ms = {
 			let mut state = self.state();
 			if !state.references.contains_key(product_id) {
@@ -186,7 +186,7 @@ impl WorkerLedger {
 	/// Restart a crashed worker once its backoff has passed: requests
 	/// [`WorkerTransition::Start`] unless nothing holds the worker any more
 	/// or it was started meanwhile.
-	pub fn restart(&self, product_id: &ProductId) {
+	pub(crate) fn restart(&self, product_id: &ProductId) {
 		{
 			let mut state = self.state();
 			let held = state.references.contains_key(product_id);

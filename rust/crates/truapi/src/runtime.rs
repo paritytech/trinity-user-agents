@@ -377,7 +377,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 

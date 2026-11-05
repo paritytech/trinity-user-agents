@@ -7,7 +7,7 @@ import TrUAPIHost
 /// again when funding resumes, so the screens read them here rather than from
 /// the core.
 final class FundingSessionBook: Sendable {
-    static let shared = FundingSessionBook()
+    static let shared = FundingSessionBook(logger: Logger.shared)
 
     struct Entry: Sendable {
         var session: FundingSession
@@ -29,6 +29,11 @@ final class FundingSessionBook: Sendable {
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
+    private let logger: LoggerProtocol
+
+    init(logger: LoggerProtocol) {
+        self.logger = logger
+    }
 
     func session(intent: String) -> FundingSession? {
         state.withLock { $0.entries[intent]?.session }
@@ -78,7 +83,7 @@ final class FundingSessionBook: Sendable {
             _ = try await runtime.acknowledgeFundingSession(intent: intent)
         } catch {
             _ = setAcknowledged(intent: intent, to: false)
-            Logger.shared.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
+            logger.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
         }
     }
 

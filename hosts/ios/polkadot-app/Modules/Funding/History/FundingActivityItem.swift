@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// One row of the CASH card's funding lists.
@@ -21,7 +22,9 @@ struct FundingActivityItem: Identifiable, Equatable {
     let id: String
     let direction: FundingDirection
     let rail: FundingRail?
-    let amount: U128?
+    /// The CASH it is for, in planks; nil when the core names none or sends
+    /// one that is not a number.
+    let amount: Balance?
     let date: Date
     let status: Status
 }
@@ -31,9 +34,10 @@ extension FundingActivityItem {
         id = session.intent
         direction = session.direction
         rail = session.choice?.rail
-        amount = session.amount ?? session.choice.map { choice in
+        let units = session.amount ?? session.choice.map { choice in
             session.direction == .in ? choice.quote.receiveAmount : choice.quote.sendAmount
         }
+        amount = units.flatMap { Balance($0) }
         date = Date(milliseconds: session.openedAtMs)
         status = .inProgress(progress?
             .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
@@ -43,7 +47,7 @@ extension FundingActivityItem {
         id = record.intent
         direction = record.direction
         rail = record.rail
-        amount = record.settledAmount ?? record.requestedAmount
+        amount = (record.settledAmount ?? record.requestedAmount).flatMap { Balance($0) }
         date = record.settledAt
 
         switch record.outcome {
