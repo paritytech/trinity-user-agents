@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import kotlinx.collections.immutable.ImmutableList
 import uniffi.truapi.FundingDetail
@@ -288,7 +288,7 @@ sealed interface FundingCancelUiState {
     /** The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". */
 
     /** The provider's terms; past [expiresAtMs] the offer has lapsed and can't be accepted. */
-    data class Offered(val fee: String, val refund: String, val expiresAtMs: Long? = null) : FundingCancelUiState {
+    data class Offered(val fee: String, val refund: String, val expiresAtMs: Long?) : FundingCancelUiState {
         /** Whole seconds the offer stays open, or `null` when the provider set no deadline. */
         fun secondsLeft(nowMs: Long): Long? = expiresAtMs?.let { ((it - nowMs) / MILLIS_PER_SECOND).coerceAtLeast(0) }
 
