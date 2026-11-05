@@ -19,14 +19,10 @@ use futures::{
 	future::{self, FutureExt},
 	stream::{self, BoxStream, StreamExt},
 };
-use serde_json::Value;
-use subxt_rpcs::{
-	UserError,
-	client::{RpcClient, rpc_params},
-};
+use subxt_rpcs::client::RpcClient;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
-use truapi::{latest as api, preimage_cid, preimage_key};
+use truapi::{BitswapError, BulletinCid, bitswap_get, latest as api};
 
 use crate::chain::CliChainProvider;
 
@@ -34,15 +30,6 @@ use crate::chain::CliChainProvider;
 const POLL_INTERVAL: Duration = Duration::from_secs(6);
 /// Bound on one round trip to the node.
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
-
-// `bitswap_v1_get` errors by code, the only part of the error the bitswap JSON-RPC spec
-// (`bitswap_unstable_get`) makes stable.
-/// The data is not held. It can still arrive, so a lookup keeps asking.
-const FAIL: i32 = -32810;
-/// The CID is invalid or unsupported, and must not be sent again.
-const INVALID_PARAMS: i32 = -32602;
-/// The node has no `bitswap_v1_get`.
-const METHOD_NOT_FOUND: i32 = -32601;
 
 /// Why a source could not answer.
 pub enum SourceError {
@@ -56,7 +43,7 @@ pub enum SourceError {
 #[async_trait::async_trait]
 pub trait BlobSource: Send + Sync {
 	/// The blob stored under `cid`, or `None` when the source does not hold it.
-	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError>;
+	async fn get(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError>;
 }
 
 /// `bitswap_v1_get` on the Bulletin chain's JSON-RPC. The connection is opened on first use and
@@ -100,45 +87,26 @@ impl BitswapRpc {
 
 #[async_trait::async_trait]
 impl BlobSource for BitswapRpc {
-	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+	async fn get(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		let client = self.client().await?;
-		let request = client.request::<Value>("bitswap_v1_get", rpc_params![cid]);
-		let value = match tokio::time::timeout(RPC_TIMEOUT, request).await {
-			Ok(Ok(value)) => value,
-			Ok(Err(subxt_rpcs::Error::User(error))) => {
+		match tokio::time::timeout(RPC_TIMEOUT, bitswap_get(&client, cid)).await {
+			Ok(Ok(blob)) => Ok(blob),
+			Ok(Err(BitswapError::Unanswerable(reason))) => Err(SourceError::Permanent(reason)),
+			Ok(Err(BitswapError::MethodMissing(reason))) => {
 				// A load-balanced endpoint may put the next connection on a node that has it.
-				if error.code == METHOD_NOT_FOUND {
-					self.disconnect().await;
-				}
-				return call_error(&error);
-			},
-			Ok(Err(error)) => {
 				self.disconnect().await;
-				return Err(SourceError::Transient(format!("bitswap_v1_get: {error}")));
+				Err(SourceError::Permanent(reason))
 			},
+			Ok(Err(BitswapError::Connection(reason))) => {
+				self.disconnect().await;
+				Err(SourceError::Transient(reason))
+			},
+			Ok(Err(BitswapError::Failed(reason))) => Err(SourceError::Transient(reason)),
 			Err(_) => {
 				self.disconnect().await;
-				return Err(SourceError::Transient("bitswap_v1_get timed out".to_string()));
+				Err(SourceError::Transient("bitswap_v1_get timed out".to_string()))
 			},
-		};
-		let hex = value.as_str().and_then(|value| value.strip_prefix("0x"));
-		match hex.map(hex::decode) {
-			Some(Ok(bytes)) => Ok(Some(bytes)),
-			_ => Err(SourceError::Transient(format!(
-				"bitswap_v1_get: expected 0x-prefixed hex, got {value}"
-			))),
 		}
-	}
-}
-
-/// A `bitswap_v1_get` call error, by code. A CID the node does not hold is answered with an
-/// error, not with null.
-fn call_error(error: &UserError) -> Result<Option<Vec<u8>>, SourceError> {
-	let reason = format!("bitswap_v1_get: {} ({})", error.message, error.code);
-	match error.code {
-		FAIL => Ok(None),
-		INVALID_PARAMS | METHOD_NOT_FOUND => Err(SourceError::Permanent(reason)),
-		_ => Err(SourceError::Transient(reason)),
 	}
 }
 
@@ -167,22 +135,18 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		let lookup = Arc::clone(self);
 		async move {
-			let cid = preimage_cid(&key);
-			match lookup.read(&cid, &key).await {
+			let cid = BulletinCid::from(key);
+			match lookup.read(&cid).await {
 				Ok(Some(value)) => return stream::once(future::ready(Ok(Some(value)))).boxed(),
 				Ok(None) => {},
 				Err(SourceError::Transient(reason)) => {
-					warn!(
-						key = %hex::encode(key),
-						%reason,
-						"preimage lookup failed, still trying"
-					)
+					warn!(%cid, %reason, "preimage lookup failed, still trying")
 				},
 				Err(SourceError::Permanent(reason)) => {
 					return stream::iter([Ok(None), Err(api::GenericError { reason })]).boxed();
 				},
 			}
-			let held = lookup.until_held(cid, key).map(|held| held.map(Some));
+			let held = lookup.until_held(cid).map(|held| held.map(Some));
 			stream::once(future::ready(Ok(None))).chain(stream::once(held)).boxed()
 		}
 		.flatten_stream()
@@ -191,41 +155,30 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 
 	/// Asks again every poll interval until the source holds the blob, or fails once it never
 	/// can.
-	async fn until_held(
-		self: Arc<Self>,
-		cid: String,
-		key: [u8; 32],
-	) -> Result<Vec<u8>, api::GenericError> {
+	async fn until_held(self: Arc<Self>, cid: BulletinCid) -> Result<Vec<u8>, api::GenericError> {
 		loop {
 			tokio::time::sleep(self.poll_interval).await;
-			match self.read(&cid, &key).await {
+			match self.read(&cid).await {
 				Ok(Some(value)) => return Ok(value),
 				Ok(None) => {},
 				Err(SourceError::Transient(reason)) => {
-					debug!(
-						key = %hex::encode(key),
-						%reason,
-						"preimage lookup failed, still trying"
-					)
+					debug!(%cid, %reason, "preimage lookup failed, still trying")
 				},
 				Err(SourceError::Permanent(reason)) => return Err(api::GenericError { reason }),
 			}
 		}
 	}
 
-	/// One read: the blob if the source holds it and it hashes to `key`.
-	async fn read(&self, cid: &str, key: &[u8; 32]) -> Result<Option<Vec<u8>>, SourceError> {
+	/// One read: the blob if the source holds it and it hashes to `cid`.
+	async fn read(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		let Some(value) = self.source.get(cid).await? else {
 			return Ok(None);
 		};
-		if preimage_key(&value) != *key {
-			warn!(
-				key = %hex::encode(key),
-				"preimage source returned bytes that do not hash to the key"
-			);
+		if !cid.matches(&value) {
+			warn!(%cid, "preimage source returned bytes that do not hash to the CID");
 			return Ok(None);
 		}
-		info!(key = %hex::encode(key), size = value.len(), "preimage read from Bulletin");
+		info!(%cid, size = value.len(), "preimage read from Bulletin");
 		Ok(Some(value))
 	}
 }
@@ -233,6 +186,8 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 #[cfg(test)]
 mod tests {
 	use std::{collections::VecDeque, sync::Mutex};
+
+	use truapi::preimage_key;
 
 	use super::*;
 
@@ -244,7 +199,7 @@ mod tests {
 
 	#[async_trait::async_trait]
 	impl BlobSource for Scripted {
-		async fn get(&self, _cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+		async fn get(&self, _cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 			*self.calls.lock().unwrap() += 1;
 			self.answers
 				.lock()
@@ -332,24 +287,5 @@ mod tests {
 			vec![Ok(None), Err("invalid CID".to_string())]
 		);
 		assert_eq!(calls(&lookup), 2);
-	}
-
-	/// The bitswap spec makes only the code stable, and `Fail` covers data that is not held yet,
-	/// so every `Fail` is a miss to poll on, whatever its message or data.
-	#[test]
-	fn call_errors_are_classified_by_code() {
-		let kind = |code| {
-			let error = UserError { code, message: "from the node".to_string(), data: None };
-			match call_error(&error) {
-				Ok(None) => "miss",
-				Ok(Some(_)) => "value",
-				Err(SourceError::Transient(_)) => "retry",
-				Err(SourceError::Permanent(_)) => "stop",
-			}
-		};
-		assert_eq!(
-			[FAIL, INVALID_PARAMS, METHOD_NOT_FOUND, -32811, -32812].map(kind),
-			["miss", "stop", "stop", "retry", "retry"]
-		);
 	}
 }

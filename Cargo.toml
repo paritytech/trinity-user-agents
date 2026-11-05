@@ -42,6 +42,7 @@ hash-db = { version = "0.16", default-features = false }
 hex = "0.4"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
+imagesize = { version = "0.15", default-features = false }
 indoc = "2"
 itertools = "0.14"
 js-sys = "0.3"
