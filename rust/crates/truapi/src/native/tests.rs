@@ -2971,9 +2971,97 @@ fn nested_boxes(depth: usize) -> String {
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize)).is_ok());
 	assert!(matches!(
 		parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `children` wrapped in a `Materials` node with one layer, in the shape the
+/// generated client writes: the ID as hex, numbers as their bit patterns.
+fn materials_around(material_hex: &str, children: &str) -> String {
+	format!(
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}},{{"tag":"SamplerVec4","value":{{"tag":"Source","value":{{"tag":"Archive","value":"mask.png"}}}}}}]}}]}},"children":[{children}]}}}}"#
+	)
+}
+
+#[test]
+fn reads_a_materials_node_as_the_client_writes_it() {
+	let json = materials_around(&"07".repeat(32), r#"{"tag":"Nil"}"#);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("a materials face reads"),
+		latest::RendererNode::Materials {
+			props: latest::MaterialsProps {
+				layers: vec![latest::MaterialInstance {
+					material: [7; 32],
+					args: vec![
+						latest::Parameter::Float(1.5f32.to_bits()),
+						latest::Parameter::Vec2([1, 2]),
+						latest::Parameter::SamplerFloat(latest::ImageRef::Noise),
+						latest::Parameter::SamplerVec4(latest::ImageRef::Source(
+							latest::ImageSource::Archive("mask.png".to_string()),
+						)),
+					],
+				}],
+			},
+			children: vec![latest::RendererNode::Nil],
+		}
+	);
+}
+
+#[test]
+fn refuses_a_material_id_that_is_not_32_bytes() {
+	let json = materials_around(&"07".repeat(31), r#"{"tag":"Nil"}"#);
+
+	assert!(matches!(parse_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })));
+}
+
+/// A `Materials` node holds children like any container, so it cannot hide a
+/// tree deeper than the core carries.
+#[test]
+fn counts_depth_through_a_materials_node() {
+	let one_too_deep = nested_boxes(MAX_FACE_DEPTH as usize);
+
+	assert!(matches!(
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &one_too_deep)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `boxes` boxes around a `Materials` node with one layer.
+fn materials_under_boxes(boxes: usize) -> String {
+	let open = r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#.repeat(boxes);
+	format!("{open}{}{}", materials_around(&"07".repeat(32), ""), "]}}".repeat(boxes))
+}
+
+/// Whatever face the reader accepts reads back after it is kept, layers
+/// included, so a host never draws a face it cannot keep.
+#[test]
+fn the_deepest_face_with_materials_reads_back_once_kept() {
+	let layer_levels = 2;
+	let deepest =
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
+			.expect("the deepest materials face reads");
+
+	let (_dir, db) = crate::store::open_temporary_core_db();
+	let cards = futures::executor::block_on(crate::pocket_cards::PocketCards::open(db, Vec::new()))
+		.unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	futures::executor::block_on(cards.add(
+		product.clone(),
+		"stamps".into(),
+		"Stamps".into(),
+		deepest.clone(),
+	))
+	.unwrap();
+	assert_eq!(
+		futures::executor::block_on(cards.face(product, "stamps".into())).unwrap(),
+		Some(deepest)
+	);
+	assert!(matches!(
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels + 1)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }

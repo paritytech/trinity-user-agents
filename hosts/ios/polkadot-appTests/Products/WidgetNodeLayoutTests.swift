@@ -63,20 +63,6 @@ struct WidgetNodeLayoutTests {
         #expect([drawn[red]?.minX, drawn[green]?.minX] == [15, 65])
     }
 
-    /// As large as its children, with the tint over them rather than hiding them.
-    @Test
-    func anEffectTintsItsChildrenAndTakesTheirSize() async throws {
-        let row = node(.row(.init(), children: [
-            node(.effect(.init(effect: .rainbow), children: [block(.red, width: 40, height: 40)])),
-            block(.green, width: 20, height: 20),
-        ]))
-
-        let drawn = try await WidgetNodeRaster.bounds(of: row, in: CGSize(width: 100, height: 100))
-
-        #expect(drawn[green]?.minX == 40)
-        #expect(drawn[red] != nil)
-    }
-
     @Test
     func aBorderIsDrawnInsideTheNode() async throws {
         let bordered = node(

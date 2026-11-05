@@ -53,6 +53,7 @@ pub use runtime::{
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
+use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
@@ -211,12 +212,13 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
-/// Largest nesting a face may carry, matching what the core accepts on the
+/// Largest nesting a face may carry, counted as the core's decoder counts it:
+/// each list of children, layers or arguments is one level. It matches the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
 pub(crate) const MAX_FACE_DEPTH: u32 = 64;
 
-/// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
+/// Bracket nesting a face of [`MAX_FACE_DEPTH`] levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
 /// this is generous on purpose: it bounds how far the reader recurses, while
 /// `MAX_FACE_DEPTH` is what actually decides whether a face is drawable.
@@ -263,16 +265,16 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 	}
 
 	// With the text bounded above, the reader's own limit would only impose a
-	// second, stricter bound in JSON levels rather than in renderer levels.
+	// second, stricter bound in JSON levels rather than in decoder levels.
 	let mut reader = serde_json::Deserializer::from_str(json);
 	reader.disable_recursion_limit();
 	let node = latest::RendererNode::deserialize(&mut reader)
 		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
-	match node_depth(&node, MAX_FACE_DEPTH) {
-		Some(_) => Ok(node),
-		None => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
-	}
+	// Read back the way a kept face is, so the reader accepts exactly what the
+	// store and the renderer subscription accept.
+	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut node.encode().as_slice())
+		.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the
@@ -305,31 +307,6 @@ fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
 	}
 
 	false
-}
-
-/// Depth of `node`, or `None` once it passes `remaining`. Bounded rather than
-/// measured, so a tree built to exhaust the stack is refused before it does.
-fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
-	if remaining == 0 {
-		return None;
-	}
-
-	let children: &[latest::RendererNode] = match node {
-		latest::RendererNode::Box { children, .. } |
-		latest::RendererNode::Column { children, .. } |
-		latest::RendererNode::Row { children, .. } |
-		latest::RendererNode::Text { children, .. } |
-		latest::RendererNode::Button { children, .. } |
-		latest::RendererNode::Effect { children, .. } => children,
-		_ => &[],
-	};
-
-	let deepest = children
-		.iter()
-		.map(|child| node_depth(child, remaining - 1))
-		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
-
-	Some(deepest + 1)
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call

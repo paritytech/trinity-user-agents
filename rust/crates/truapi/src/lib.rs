@@ -79,6 +79,27 @@ uniffi::custom_type!(Bytes64, Vec<u8>, {
 	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+// UniFFI has no arrays, so a material argument's vector crosses FFI surfaces as
+// a list. The alias exists because `uniffi::custom_type!` takes an ident.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+macro_rules! u32_array_as_list {
+	($alias:ident, $len:literal) => {
+		type $alias = [u32; $len];
+		uniffi::custom_type!($alias, Vec<u32>, {
+			remote,
+			lower: |values| values.to_vec(),
+			try_lift: |values| Ok(values.as_slice().try_into()?),
+		});
+	};
+}
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+u32_array_as_list!(U32x2, 2);
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+u32_array_as_list!(U32x3, 3);
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+u32_array_as_list!(U32x4, 4);
+
 // Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
 // decimal strings.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
@@ -100,7 +121,7 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
 		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
 		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
 		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
@@ -109,14 +130,15 @@ pub mod latest {
 		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
+		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
+		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
 		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
@@ -230,6 +252,9 @@ pub mod latest {
 	/// Action triggered inside a product-rendered body, delivered to the worker.
 	pub type HostRendererActionSubscribeItem =
 		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+	/// A `Materials` node that fell back, delivered to the worker.
+	pub type HostRendererFailureSubscribeItem =
+		LatestOf<versioned::renderer::HostRendererFailureSubscribeItem>;
 	/// Host-to-product render request for one body.
 	pub type ProductRendererRenderRequest =
 		LatestOf<versioned::renderer::ProductRendererRenderRequest>;

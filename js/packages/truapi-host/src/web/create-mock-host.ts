@@ -394,7 +394,7 @@ export interface MockHostConfig {
   devicePermissions?: PermissionPolicy;
   /** Answer for `remotePermission`. Default `"allow-all"`. */
   remotePermissions?: PermissionPolicy;
-  /** Whether `featureSupported` reports support. Default `true`. */
+  /** Whether `featureSupported` reports chain support. The core answers materials questions itself. Default `true`. */
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `supportedChains`, as a real host
@@ -1227,6 +1227,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
+          request.tag !== "Chain" ||
           !onlyServedChains ||
           supportedChains.chains.some(
             (entry) =>

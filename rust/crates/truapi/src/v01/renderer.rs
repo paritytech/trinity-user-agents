@@ -23,6 +23,25 @@ mod option_bool_json {
 	}
 }
 
+/// JSON spells a fixed byte array as a `0x` hex string, which is what the
+/// generated client describes; serde alone reads only a number array.
+#[cfg(feature = "runtime")]
+mod hex_json {
+	use serde::{Deserialize, Deserializer, de::Error};
+
+	/// Reads a `0x` hex string of exactly `N` bytes.
+	pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let text = String::deserialize(deserializer)?;
+		let digits = text.strip_prefix("0x").ok_or_else(|| D::Error::custom("expected 0x hex"))?;
+		let mut bytes = [0; N];
+		hex::decode_to_slice(digits, &mut bytes).map_err(D::Error::custom)?;
+		Ok(bytes)
+	}
+}
+
 /// A size in logical pixels, SCALE-encoded as `Compact<u64>`.
 pub type Size = Compact<u64>;
 
@@ -419,23 +438,61 @@ pub struct ImageProps {
 	pub fit: Option<ImageFit>,
 }
 
-/// A visual effect. Each variant names one effect and carries its parameters.
+/// Properties of a `Materials` node.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum Effect {
-	/// Animated rainbow tint over the children.
-	Rainbow,
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct MaterialsProps {
+	/// Layers in drawing order.
+	pub layers: Vec<MaterialInstance>,
 }
 
-/// Properties of an `Effect`.
+/// One material applied with its arguments.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct EffectProps {
-	/// The effect applied to the children.
-	pub effect: Effect,
+pub struct MaterialInstance {
+	/// Material ID: the BLAKE2b-256 hash of its canonical text.
+	#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_json::deserialize"))]
+	pub material: [u8; 32],
+	/// One argument per declared parameter, in declaration order.
+	pub args: Vec<Parameter>,
+}
+
+/// One argument. Numbers are IEEE 754 single-precision bit patterns.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum Parameter {
+	/// A `float` parameter.
+	Float(u32),
+	/// A `vec2` parameter.
+	Vec2([u32; 2]),
+	/// A `vec3` parameter.
+	Vec3([u32; 3]),
+	/// A `vec4` parameter.
+	Vec4([u32; 4]),
+	/// A `samplerFloat` parameter, reading the image's first channel.
+	SamplerFloat(ImageRef),
+	/// A `samplerVec2` parameter, reading the image's first two channels.
+	SamplerVec2(ImageRef),
+	/// A `samplerVec3` parameter, reading the image's first three channels.
+	SamplerVec3(ImageRef),
+	/// A `samplerVec4` parameter, reading all four channels.
+	SamplerVec4(ImageRef),
+}
+
+/// Where an image argument comes from.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ImageRef {
+	/// A PNG, JPEG or WebP image, loaded like an `Image` node's source.
+	Source(ImageSource),
+	/// The host's noise image for this body, the same as `r_noise`.
+	Noise,
 }
 
 /// Properties of a `TextField`.
@@ -544,12 +601,14 @@ pub enum RendererNode {
 		/// Image properties.
 		props: ImageProps,
 	},
-	/// Applies its effect to its children. As large as its children, which it
-	/// places at the top start like a `Box`.
-	Effect {
-		/// Effect properties.
-		props: EffectProps,
-		/// Child nodes.
+	/// Draws its children, then runs its layers over them, as the materials
+	/// RFC defines. As large as its children, which it places at the top start
+	/// like a `Box`.
+	#[codec(index = 11)]
+	Materials {
+		/// The layers to run.
+		props: MaterialsProps,
+		/// The content the layers draw over.
 		children: Vec<RendererNode>,
 	},
 }
@@ -604,6 +663,44 @@ pub struct HostRendererActionSubscribeItem {
 	pub payload: Vec<u8>,
 }
 
+/// A `Materials` node that fell back.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct HostRendererFailureSubscribeItem {
+	/// Where the body lives.
+	pub context: RenderContext,
+	/// The node's position among the tree's `Materials` nodes, depth first,
+	/// starting at 0.
+	pub node: u32,
+	/// The material that failed, when the failure belongs to one.
+	pub material: Option<[u8; 32]>,
+	/// Why the node fell back.
+	pub reason: MaterialFailure,
+}
+
+/// Why a `Materials` node fell back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum MaterialFailure {
+	/// A material or image argument cannot be fetched, or has expired.
+	NotFound,
+	/// Fetched bytes do not match their ID.
+	Integrity,
+	/// The material breaks the format, with any format code but
+	/// `unsupported-version` and `unsupported-feature`.
+	InvalidMaterial,
+	/// The arguments do not match the declared parameters, an image is not
+	/// PNG, JPEG or WebP, or the noise image fills a parameter other than
+	/// `samplerFloat`.
+	InvalidStack,
+	/// The node breaks a limit.
+	LimitExceeded,
+	/// The host does not read the version or a required feature, cannot
+	/// compile the material, does not draw materials on this surface, or has
+	/// materials switched off.
+	Unsupported,
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -654,8 +751,22 @@ mod tests {
 						fit: Some(ImageFit::Cover),
 					},
 				},
-				RendererNode::Effect {
-					props: EffectProps { effect: Effect::Rainbow },
+				RendererNode::Materials {
+					props: MaterialsProps {
+						layers: vec![MaterialInstance {
+							material: [7; 32],
+							args: vec![
+								Parameter::Float(1.5f32.to_bits()),
+								Parameter::Vec2([1, 2]),
+								Parameter::Vec3([1, 2, 3]),
+								Parameter::Vec4([1, 2, 3, 4]),
+								Parameter::SamplerFloat(ImageRef::Noise),
+								Parameter::SamplerVec4(ImageRef::Source(ImageSource::Archive(
+									"mask.png".to_string(),
+								))),
+							],
+						}],
+					},
 					children: vec![RendererNode::Nil],
 				},
 			],
@@ -678,11 +789,17 @@ mod tests {
 		let spacer = RendererNode::Spacer { modifiers: Vec::new() };
 		assert_eq!(spacer.encode(), vec![5, 0]);
 
-		let effect = RendererNode::Effect {
-			props: EffectProps { effect: Effect::Rainbow },
+		let materials = RendererNode::Materials {
+			props: MaterialsProps { layers: Vec::new() },
 			children: Vec::new(),
 		};
-		assert_eq!(effect.encode(), vec![10, 0, 0]);
+		assert_eq!(materials.encode(), vec![11, 0, 0]);
+	}
+
+	/// Index 10 stays unused, so an older tree is refused rather than misread.
+	#[test]
+	fn index_10_is_never_read() {
+		assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
 	}
 
 	#[test]
