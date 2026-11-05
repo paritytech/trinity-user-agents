@@ -30,6 +30,8 @@ The consuming app must declare `android.permission.INTERNET` — the light clien
 
 Chain specs are compiled into the cdylib, so the app ships no spec files of its own and never refreshes them. Picking up a spec refresh means taking a newer version of this artifact.
 
+`wss://` nodes are verified against root certificates compiled into the cdylib (Mozilla's list, from `webpki-roots`), not the device's trust store, so the check is the same on every platform. User-installed and private certificate authorities are not trusted, and the list changes only with a newer version of this artifact. The provider opens its own sockets, so the app's network security config does not apply to them: `cleartextTrafficPermitted="false"` does not stop a `ws://` node. Check a URL with `NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)` before registering it.
+
 ### Compatibility
 
 - **minSdk**: 29 (Android 10). Matches the `truapi-host` floor so a host can depend on both.

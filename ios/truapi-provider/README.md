@@ -44,6 +44,8 @@ Release tags follow the repo-wide `@parity/ios-provider@<version>` naming, which
 
 No Rust toolchain is needed: the xcframework carries the compiled crate, and the chain specs are compiled into it, so the app ships no spec files of its own and never refreshes them. Picking up a spec refresh means taking a newer release.
 
+`wss://` nodes are verified against root certificates compiled into the xcframework (Mozilla's list, from `webpki-roots`), not the system trust store, so the check is the same on every platform. Profile-installed and private certificate authorities are not trusted, and the list changes only with a newer release. The provider opens its own sockets, so App Transport Security does not apply to them and does not stop a `ws://` node. Check a URL before registering it.
+
 ## Public surface
 
 Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ffi.rs):
