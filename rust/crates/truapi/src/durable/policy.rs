@@ -50,7 +50,7 @@ pub enum Preparation {
 }
 
 /// Why a policy could not answer for a batch this time.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("submission policy could not prepare its batch: {reason}")]
 pub struct PolicyError {
 	/// What went wrong.

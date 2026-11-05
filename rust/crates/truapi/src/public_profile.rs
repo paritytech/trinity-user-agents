@@ -52,7 +52,9 @@ pub enum PublicProfileError {
 }
 
 /// The node and contracts that hold a username's public profile.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Resolve from the deployment before reading, checking ownership or preparing a write.
+#[derive(Debug, PartialEq)]
 pub struct ProfileRecordLocation {
 	/// Username namehash under the deployment's TLD.
 	node: [u8; 32],
@@ -63,7 +65,9 @@ pub struct ProfileRecordLocation {
 }
 
 impl ProfileRecordLocation {
-	/// Calldata that publishes a record within the reader's size limit.
+	/// Encodes the call to publish this node's profile record.
+	///
+	/// Returns `None` when the SCALE record exceeds 16 KiB before base64 encoding.
 	pub fn set_record_call(&self, record: &ProfileRecord) -> Option<Vec<u8>> {
 		let call = ContentResolver::setTextCall {
 			node: self.node.into(),
@@ -74,6 +78,9 @@ impl ProfileRecordLocation {
 	}
 
 	/// Finds the profile's content resolver without changing the node's resolver.
+	///
+	/// Returns `None` when the deployment lacks the required contracts. Invalid usernames
+	/// and failed chain reads return errors.
 	pub async fn resolve<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
@@ -110,6 +117,8 @@ impl ProfileRecordLocation {
 	}
 
 	/// Reads the raw text so a writer can reject malformed records without losing them.
+	///
+	/// Empty text returns `None`; chain and decoding failures return errors.
 	pub async fn read<T: DotnsTransport + ?Sized>(
 		&self,
 		transport: &mut T,
@@ -127,8 +136,10 @@ impl ProfileRecordLocation {
 		Ok((!text.is_empty()).then_some(text))
 	}
 
-	/// The contract address that owns the profile's name, which only it can
-	/// publish under.
+	/// Returns the registered owner of the profile's name.
+	///
+	/// Writers compare this address with their signer before spending its allowance.
+	/// Chain and decoding failures return an owner lookup error.
 	pub async fn owner<T: DotnsTransport + ?Sized>(
 		&self,
 		transport: &mut T,
@@ -144,7 +155,9 @@ impl ProfileRecordLocation {
 	}
 }
 
-/// Resolves public profile records, caching them in the native core database.
+/// Resolves public profile records through the host's shared services.
+///
+/// Native hosts persist records in the core database. Browser reads are uncached.
 pub struct PublicProfiles {
 	services: Arc<RuntimeServices>,
 }
@@ -155,7 +168,10 @@ impl PublicProfiles {
 		Self { services }
 	}
 
-	/// A missing record is empty. `force` skips the persisted record cache.
+	/// Resolves a profile using the native record cache.
+	///
+	/// Records expire after one hour; `force` bypasses the cache. Missing or malformed
+	/// records are empty. Invalid usernames, lookup failures and storage failures return errors.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(
@@ -184,7 +200,10 @@ impl PublicProfiles {
 		Ok(record)
 	}
 
-	/// Reads the chain without caching. A missing record is empty.
+	/// Resolves a profile directly from the chain.
+	///
+	/// Missing or malformed records are empty. Invalid usernames and lookup failures
+	/// return errors. The refresh argument has no effect because browsers do not cache records.
 	#[cfg(target_arch = "wasm32")]
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(

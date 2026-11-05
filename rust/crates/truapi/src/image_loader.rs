@@ -47,6 +47,9 @@ pub enum ImageFormat {
 
 impl ImageFormat {
 	/// Validates the format, file size and dimensions against the core's image policy.
+	///
+	/// Checks headers without decoding pixels. Rejects unsupported or mismatched formats,
+	/// files over 2 MiB, unreadable dimensions and sides exceeding 4096 pixels.
 	pub fn validate(bytes: &[u8], declared_format: Option<Self>) -> Result<Self, ImageError> {
 		policy::check(bytes, declared_format)
 			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })
@@ -137,8 +140,10 @@ impl ImageLoader {
 		Self { services, timer }
 	}
 
-	/// The image `reference` names. Dropping the future stops the load. A username without an
-	/// avatar is immediately unavailable; a later call can refresh its record with `force`.
+	/// Loads the image named by `reference`.
+	///
+	/// Dropping the future stops the load. A username without an avatar is immediately
+	/// unavailable; a later call can refresh its record with `force`.
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		let (cid, declared_format) = match reference {

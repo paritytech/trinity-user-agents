@@ -25,10 +25,10 @@ use crate::{chain::CliChainProvider, network::NetworkConfig};
 ///
 /// Discovery reads `DotnsGateway.DispatcherAddress`, which holds either a
 /// dispatcher or the controller itself, and resolves whichever it is; the
-/// override is for networks where that fails. The
-/// controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2
-/// and previewnet; the polkadot preset carries its own from its deployment
-/// manifest. `DEPLOYMENTS.md` in paritytech/dotns is the authority per network.
+/// override is for networks where that fails. A stack's descriptor carries its
+/// controller as `dotns.popController`, and the polkadot network carries its own
+/// from its deployment manifest. `DEPLOYMENTS.md` in paritytech/dotns is the
+/// authority per network.
 pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.
@@ -36,7 +36,7 @@ pub struct AssetHubReader {
 	rpc: RpcClient,
 	/// `DotnsPopController` once resolved; it does not change within a run.
 	pop_controller: Option<[u8; 20]>,
-	/// The preset's controller, used only when discovery finds none.
+	/// The network's controller, used only when discovery finds none.
 	pop_controller_fallback: Option<[u8; 20]>,
 }
 
@@ -58,8 +58,9 @@ impl AssetHubReader {
 		Ok(Self::from_rpc(Self::connect(network).await?.rpc, network))
 	}
 
-	/// Reads over `rpc`, falling back to the network's known
-	/// `DotnsPopController` when the chain does not name one.
+	/// Reads dotNS over an existing RPC connection.
+	///
+	/// Uses the network's known `DotnsPopController` when the chain does not name one.
 	pub fn from_rpc(rpc: RpcClient, network: &NetworkConfig) -> Self {
 		Self { rpc, pop_controller: None, pop_controller_fallback: network.dotns_pop_controller }
 	}
@@ -108,7 +109,7 @@ impl AssetHubReader {
 
 	/// `DotnsPopController` address, resolved once per reader. The env override
 	/// wins, then on-chain discovery from `DotnsGateway.DispatcherAddress`, then
-	/// the preset's own controller.
+	/// the network's own controller.
 	async fn pop_controller(&mut self) -> Result<[u8; 20]> {
 		if let Some(controller) = self.pop_controller {
 			return Ok(controller);

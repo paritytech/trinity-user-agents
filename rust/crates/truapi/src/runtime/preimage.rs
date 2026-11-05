@@ -20,6 +20,8 @@ use super::{
 use crate::host_internal::bulletin::{allowance_signer, preimage_key};
 
 /// A submission charged to the accounts of the authenticated caller.
+///
+/// Uses the caller's active session to acquire and renew Bulletin allowance.
 pub struct PreimageSubmission<'a> {
 	services: &'a RuntimeServices,
 	accounts: &'a ProductAccounts,
@@ -36,7 +38,10 @@ impl<'a> PreimageSubmission<'a> {
 		Self { services, accounts, session }
 	}
 
-	/// Return the content key only after successful storage, priming local lookups.
+	/// Returns the content key after successful storage, priming local lookups.
+	///
+	/// Acquires sufficient allowance and retries once if Bulletin rejects it. Authorization,
+	/// timeout and submission failures return their reason without caching the bytes.
 	pub async fn submit(&self, cx: &CallContext, value: Vec<u8>) -> Result<[u8; 32], String> {
 		let deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
 		let authority_cx = remote_authority_context_until(
@@ -58,7 +63,8 @@ impl<'a> PreimageSubmission<'a> {
 			return Ok(key);
 		}
 
-		let allowance = self.allowance_for(cx, deadline, allowance, value.len() as u64).await?;
+		let size = u64::try_from(value.len()).map_err(|_| "preimage length exceeds u64")?;
+		let allowance = self.allowance_for(cx, deadline, allowance, size).await?;
 		let key =
 			match self.services.bulletin.submit_preimage(cx, deadline, &allowance, &value).await {
 				Ok(key) => key,

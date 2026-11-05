@@ -10,15 +10,19 @@ use crate::{BulletinCid, ImageFormat};
 const MAX_RECORD_BYTES: usize = 16 * 1024;
 
 /// A person's public profile as published under their dotNS name.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+///
+/// Entries retain their encoded bytes so unknown kinds and extended payloads survive a rewrite.
+#[derive(Debug, Clone, Default, PartialEq, Encode, Decode)]
 pub struct ProfileRecord {
 	/// In the owner's order.
 	pub entries: Vec<WrapperKeepOpaque<ProfileEntry>>,
 }
 
 impl ProfileRecord {
-	/// Decodes the base64 text a resolver holds. `None` when the text is not
-	/// base64, exceeds the record size limit, or does not decode exactly.
+	/// Decodes the resolver's base64 profile record.
+	///
+	/// Returns `None` for invalid base64, payloads larger than 16 KiB, invalid SCALE or trailing
+	/// bytes.
 	pub fn from_text(text: &str) -> Option<Self> {
 		let bytes = STANDARD.decode(text.trim()).ok()?;
 		if bytes.len() > MAX_RECORD_BYTES {
@@ -27,13 +31,17 @@ impl ProfileRecord {
 		Self::decode_all(&mut bytes.as_slice()).ok()
 	}
 
-	/// Encodes a publishable record. `None` if it exceeds the reader's size limit.
+	/// Encodes a publishable record as base64.
+	///
+	/// Returns `None` when its SCALE payload exceeds the reader's 16 KiB limit.
 	pub fn to_text(&self) -> Option<String> {
 		let bytes = self.encode();
 		(bytes.len() <= MAX_RECORD_BYTES).then(|| STANDARD.encode(bytes))
 	}
 
-	/// Makes this avatar first while preserving every other entry and their relative order.
+	/// Makes this avatar the first entry.
+	///
+	/// Replaces the first decodable avatar, preserving every other entry and its relative order.
 	pub fn set_avatar(&mut self, cid: BulletinCid, format: ImageFormat) {
 		if let Some(index) = self
 			.entries
@@ -48,7 +56,9 @@ impl ProfileRecord {
 		);
 	}
 
-	/// The first `Avatar` entry.
+	/// Returns the first decodable avatar.
+	///
+	/// Unknown or malformed entries are skipped. Returns `None` when no avatar decodes.
 	pub fn avatar(&self) -> Option<ProfileAvatar> {
 		self.entries
 			.iter()
@@ -56,9 +66,10 @@ impl ProfileRecord {
 	}
 }
 
-/// The kinds of entry a record may hold. More kinds will be added; a reader
-/// keeps the ones it does not know as opaque bytes. Indices are never reused.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+/// A recognized kind of public profile entry.
+///
+/// Indices are never reused. Readers keep unknown kinds as opaque bytes in [`ProfileRecord`].
+#[derive(Encode, Decode)]
 pub enum ProfileEntry {
 	/// The person's avatar.
 	#[codec(index = 0)]
@@ -66,7 +77,9 @@ pub enum ProfileEntry {
 }
 
 /// Payload of an `Avatar` entry.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+///
+/// The declaration does not validate the image bytes; the image loader checks them before use.
+#[derive(Debug, PartialEq, Encode, Decode)]
 pub struct ProfileAvatar {
 	/// Bulletin CID of the image bytes, raw codec, blake2b-256.
 	pub cid: BulletinCid,

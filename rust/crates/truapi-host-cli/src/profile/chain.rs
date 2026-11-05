@@ -16,6 +16,9 @@ use crate::{
 };
 
 /// Publishes the active identity's profile through its network's contracts.
+///
+/// Verifies ownership and prepares the write before uploading bytes. Rejects malformed
+/// records and concurrent edits; success requires the finalized record to match.
 pub async fn publish(
 	runtime: &SigningHostRuntime,
 	network: NetworkConfig,
