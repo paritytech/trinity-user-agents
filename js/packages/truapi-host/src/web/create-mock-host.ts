@@ -56,24 +56,25 @@ import type { ProductRuntimeConfig } from "../runtime.js";
 export type PermissionPolicy = "allow-all" | "deny-all";
 
 /**
- * The denying policy under the name `@parity/host-api-test-sdk` gives it.
+ * The policies under the names `@parity/host-api-test-sdk` gives them.
  *
  * Recognised rather than merely unequal to `"allow-all"`: a policy name the
  * mock does not know is refused, so a typo says so instead of denying every
  * permission with nothing to explain the refusals.
  */
-export type PermissionPolicyAlias = "reject-all";
+export type PermissionPolicyAlias = "approve-all" | "reject-all";
 
 /** Resolve a policy name, rejecting one that means nothing here. */
 function normalizePermissionPolicy(
   behavior: PermissionPolicy | PermissionPolicyAlias,
 ): PermissionPolicy {
   if (behavior === "allow-all" || behavior === "deny-all") return behavior;
+  if (behavior === "approve-all") return "allow-all";
   if (behavior === "reject-all") return "deny-all";
   throw new Error(
     `testHost \`setPermissionBehavior\` does not know the policy ` +
-      `"${String(behavior)}". Use "allow-all", or "deny-all" (which ` +
-      `\`@parity/host-api-test-sdk\` spells "reject-all").`,
+      `"${String(behavior)}". Use "allow-all" or "deny-all" (which ` +
+      `\`@parity/host-api-test-sdk\` spells "approve-all" and "reject-all").`,
   );
 }
 

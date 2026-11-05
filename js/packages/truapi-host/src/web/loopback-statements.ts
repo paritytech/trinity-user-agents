@@ -116,10 +116,13 @@ export interface StatementInput {
   expiry?: bigint | number;
   /** `0x`-hex 32-byte decryption key. */
   decryptionKey?: string;
+  /** The proof to carry, with `0x`-hex fields. Unverified, like the rest. */
+  proof?: StatementProof;
 }
 
 /**
- * A zero Sr25519 proof, carried because the codec requires one.
+ * A zero Sr25519 proof, carried when a suite gives none, because the codec
+ * requires one.
  *
  * Nothing in the page verifies it, which is of a piece with the rest of this
  * store: a statement accepted here is registered nowhere, and a real store
@@ -133,6 +136,49 @@ const UNVERIFIED_PROOF = {
     signer: `0x${"00".repeat(32)}` as `0x${string}`,
   },
 };
+
+/** The proof kinds the codec knows. */
+const PROOF_TAGS = ["Sr25519", "Ed25519", "Ecdsa", "OnChain"];
+
+/**
+ * Refuse a proof the codec would reshape.
+ *
+ * A signature of the wrong length is not refused by the codec: a short one
+ * runs into the signer and a long one is cut. Decoding what was encoded and
+ * comparing catches every such field at once.
+ */
+function checkProof(proof: StatementProof): void {
+  if (!PROOF_TAGS.includes(proof.tag)) {
+    throw new Error(
+      `testHost injectStatement: \`proof\` is one of ` +
+        `${PROOF_TAGS.join(", ")}, not "${String(proof.tag)}".`,
+    );
+  }
+  // Keys sorted, so a proof written with its fields in another order matches.
+  const canonical = (value: unknown) =>
+    JSON.stringify(value, (_, field: unknown) =>
+      typeof field === "bigint" || typeof field === "number"
+        ? String(field)
+        : typeof field === "string"
+          ? field.toLowerCase()
+          : field && typeof field === "object" && !Array.isArray(field)
+            ? Object.fromEntries(
+                Object.entries(field).sort(([left], [right]) =>
+                  left.localeCompare(right),
+                ),
+              )
+            : field,
+    );
+  if (
+    canonical(StatementProof.dec(StatementProof.enc(proof))) !==
+    canonical(proof)
+  ) {
+    throw new Error(
+      `testHost injectStatement: \`proof\` has a field of the wrong length ` +
+        `for ${proof.tag}: ${canonical(proof.value)}.`,
+    );
+  }
+}
 
 /** Encode `input` the way a product's submission arrives. */
 export function encodeStatement(input: StatementInput): string {
@@ -166,9 +212,10 @@ export function encodeStatement(input: StatementInput): string {
       `testHost injectStatement: \`expiry\` is a u64, not ${input.expiry}.`,
     );
   }
+  if (input.proof !== undefined) checkProof(input.proof);
   return hex(
     StatementFields.enc([
-      { tag: "Proof", value: UNVERIFIED_PROOF },
+      { tag: "Proof", value: input.proof ?? UNVERIFIED_PROOF },
       ...(input.decryptionKey === undefined
         ? []
         : [{ tag: "DecryptionKey" as const, value: input.decryptionKey }]),

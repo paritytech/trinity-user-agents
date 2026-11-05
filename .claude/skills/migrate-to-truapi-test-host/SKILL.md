@@ -70,9 +70,27 @@ the fixture plus `approveLogin(name)` or `declineLogin()` in the test.
 
 The statement-store controls and `injectChatAction` are served, so they are not
 in this grep. `injectStatement` takes `{topics, data, channel, expiry,
-decryptionKey}` the way the old package spells them, or the SCALE wire bytes, and answers the `StatementEntry` it
+decryptionKey, proof}` the way the old package spells them, or the SCALE wire bytes, and answers the `StatementEntry` it
 retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
 suite reading `0x` hex off them reads `entry.data` instead.
+
+Byte fields are `0x` hex, not `Uint8Array`, on the way in and out:
+`page.evaluate` flattens a `Uint8Array` inside an object. The old package's
+`entry.statement.data` becomes `entry.data`, and the same for `topics`,
+`channel`, `decryptionKey` and `proof`; `expiry` stays a `bigint`. A
+`proof: { tag: "Sr25519", value: { signature, signer } }` keeps its shape with
+hex fields.
+
+A suite that relays statements between several hosts, one page per peer, needs
+no patched host bundle: inject each page's `getSubmittedStatements()` into the
+others. An entry's `proof` drops the tag `injectStatement` takes, so leave it
+out; nothing here verifies a proof.
+
+```ts
+for (const { proof, ...statement } of await alice.getSubmittedStatements()) {
+  await bob.injectStatement(statement);
+}
+```
 `injectChatAction` takes the core's `HostChatActionSubscribeItem` rather than
 `{roomId, peer, payload}`, so that call site changes shape even though it keeps
 working.
@@ -274,6 +292,11 @@ Addresses also differ from polkadot-js `//Alice` and friends: a session
 activates from 32 bytes of entropy, not a derivation path. Never hard-code a
 well-known address; read it back.
 
+The account name is the username the host reports. A suite that expects a
+particular one, as the old package's `{ name: "alice.01", uri: "//Alice" }`
+gave, keeps a dev account's entropy under that name:
+`accounts: [{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }]`.
+
 **A permission revoked mid-run.** The core persists a decided authorization per
 (product, permission) and answers from its own storage, so a product asking
 twice is answered from that record and the host is not called again. Setting the
@@ -317,8 +340,8 @@ missed:
   are not exported:
   declare the chain inline, type it as `NetworkConfig`, and use `DevAccount`.
 - **Permission names.** `setPermissionBehavior` takes `"allow-all"` or
-  `"deny-all"` (`"reject-all"` is accepted as the latter); the old default
-  `"approve-all"` throws. A permission tag is the core's, so
+  `"deny-all"`, and accepts the old package's `"approve-all"` and
+  `"reject-all"` as those. A permission tag is the core's, so
   `"TransactionSubmit"` is `"ChainSubmit"`, and `grantPermission` with the old
   tag records a decision no request ever matches.
 - **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.

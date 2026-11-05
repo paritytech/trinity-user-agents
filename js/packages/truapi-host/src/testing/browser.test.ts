@@ -110,8 +110,9 @@ suite("the test host in a browser", () => {
   /** Open the host page with the product in it, once both are connected. */
   async function open(
     config: Omit<HostPageConfig, "productUrl"> = {},
+    page?: Page,
   ): Promise<Page> {
-    const page = await browser.newPage();
+    page ??= await browser.newPage();
     await page.goto(
       hostPageUrl(host.url, { productUrl: product.url, ...config }),
     );
@@ -193,6 +194,47 @@ suite("the test host in a browser", () => {
       // A reset signs the host out again, so the next case starts held.
       await control("reset");
       expect(await control("getActiveAccount")).toBeUndefined();
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("serves a second tab on the same host URL as the same account", async () => {
+    // Everything the host needs is in the URL, so a suite opening the product
+    // twice, say for two peers, gets two hosts signing with one product account.
+    const [first, second] = await Promise.all([open(), open()]);
+    const address = (page: Page) =>
+      page.evaluate(() =>
+        window.__TRUAPI_TEST_HOST__!.getProductAccountAddress(),
+      );
+    try {
+      expect([
+        await requestLogin(await productFrame(first)),
+        await requestLogin(await productFrame(second)),
+        await address(second),
+      ]).toEqual([
+        "AlreadyConnected",
+        "AlreadyConnected",
+        await address(first),
+      ]);
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
+  it("runs on a page without IndexedDB", async () => {
+    // A suite stubbing it for its product with `addInitScript` stubs it for
+    // the host page too.
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "indexedDB", { value: undefined });
+    });
+    try {
+      await open({}, page);
+      expect([
+        await page.evaluate(() => typeof window.indexedDB),
+        await requestLogin(await productFrame(page)),
+      ]).toEqual(["undefined", "AlreadyConnected"]);
     } finally {
       await page.close();
     }
