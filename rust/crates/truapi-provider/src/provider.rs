@@ -35,6 +35,10 @@ pub struct EmbeddedChainProviderBuilder {
 	/// The peer connections the browser light client opens.
 	#[cfg(feature = "smoldot")]
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Whether `connect` refuses a genesis hash nobody registered rather than
+	/// resolving it from the bundled catalog.
+	#[cfg(feature = "networks")]
+	registered_only: bool,
 }
 
 impl core::fmt::Debug for EmbeddedChainProviderBuilder {
@@ -47,6 +51,8 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("seeded_databases", &self.seeded_databases)
 			.field("storage", &self.storage.is_some())
 			.field("connection_types", &self.connection_types);
+		#[cfg(feature = "networks")]
+		builder.field("registered_only", &self.registered_only);
 		builder.finish()
 	}
 }
@@ -111,6 +117,15 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Refuse a genesis hash that was not registered here instead of resolving
+	/// it from the bundled catalog, which starts the light client. A provider of
+	/// remote nodes uses it so that asking for any other chain never does.
+	#[cfg(feature = "networks")]
+	pub fn registered_only(mut self) -> Self {
+		self.registered_only = true;
+		self
+	}
+
 	/// Build the provider. Light-client resources start lazily on the first
 	/// light-client connect.
 	pub fn build(self) -> EmbeddedChainProvider {
@@ -126,6 +141,8 @@ impl EmbeddedChainProviderBuilder {
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
 			light: crate::light::LightState::new(self.connection_types),
+			#[cfg(feature = "networks")]
+			registered_only: self.registered_only,
 		}
 	}
 }
@@ -163,19 +180,15 @@ pub struct EmbeddedChainProvider {
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
+	/// Set by [`EmbeddedChainProviderBuilder::registered_only`].
+	#[cfg(feature = "networks")]
+	registered_only: bool,
 }
 
 impl EmbeddedChainProvider {
 	/// Start building a provider.
 	pub fn builder() -> EmbeddedChainProviderBuilder {
 		EmbeddedChainProviderBuilder::new()
-	}
-
-	/// Whether `genesis_hash` was registered on the builder. A chain that was
-	/// not is resolved from the bundled catalog on connect, which starts the
-	/// light client.
-	pub fn is_registered(&self, genesis_hash: [u8; 32]) -> bool {
-		self.chains.contains_key(&genesis_hash)
 	}
 
 	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
@@ -562,7 +575,9 @@ impl ChainProvider for EmbeddedChainProvider {
 			return connected;
 		}
 		#[cfg(feature = "networks")]
-		if let Some((catalog, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
+		if !self.registered_only &&
+			let Some((catalog, relay)) = crate::networks::catalog_network_chains(genesis_hash)
+		{
 			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
 				tracing::info!(network, service, "connecting via light client");
 			}
@@ -587,6 +602,23 @@ mod tests {
 
 	use super::EmbeddedChainProvider;
 	use crate::config::ChainSource;
+
+	/// A host that registered only remote nodes must never find itself syncing
+	/// a chain on the light client because it asked for one it did not register.
+	#[cfg(feature = "networks")]
+	#[test]
+	fn a_registered_only_provider_refuses_an_unregistered_catalog_chain() {
+		let (_, previewnet) =
+			EmbeddedChainProvider::builder().add_network("previewnet").expect("bundled");
+		let provider = EmbeddedChainProvider::builder().registered_only().build();
+
+		let error = futures::executor::block_on(provider.connect(previewnet.relay))
+			.err()
+			.expect("an unregistered chain must be refused");
+
+		assert_eq!(error, crate::ProviderError::UnknownGenesis { genesis: previewnet.relay });
+		assert!(!provider.is_connected(previewnet.relay));
+	}
 
 	#[test]
 	fn unknown_genesis_is_an_error_naming_the_hash() {

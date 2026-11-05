@@ -337,7 +337,7 @@ impl ChainProvider {
 						.chain(genesis_from(node.genesis_hash)?, crate::ChainSource::rpc_node(url)),
 				)
 			})?;
-		Ok(Arc::new(Self { inner: builder.build(), routes: Routes::RpcNodes }))
+		Ok(Arc::new(Self { inner: builder.registered_only().build(), routes: Routes::RpcNodes }))
 	}
 
 	/// Read the stored blob for `genesis_hash` into this provider, so the next
@@ -411,9 +411,6 @@ impl ChainProvider {
 			Routes::LightClient => block_on(self.inner.connect(genesis)).map_err(connect_error)?,
 			Routes::RpcNodes => {
 				refuse_inside_async_runtime()?;
-				if !self.inner.is_registered(genesis) {
-					return Err(connect_error(crate::ProviderError::UnknownGenesis { genesis }));
-				}
 				let runtime = rpc_runtime()?;
 				let connection =
 					runtime.block_on(self.inner.connect(genesis)).map_err(connect_error)?;
