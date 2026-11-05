@@ -54,15 +54,10 @@ struct TrUAPIWorkerBuilderTests {
             environment: { throw NoEnvironment() },
             contentLoader: loader,
             dotNsResolver: resolver,
-            productFileProvider: NoScripts(),
+            productFileProvider: NoChatProductFiles(),
             bundledProducts: bundled
         )
     }
 }
 
 private struct NoEnvironment: Error {}
-
-private struct NoScripts: ChatProductFileProviding {
-    func load(for _: ProductId, relativePath _: String) -> Data? { nil }
-    func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
-}
