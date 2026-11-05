@@ -750,12 +750,16 @@ scrollable transcript
 
 command completion list, when open
 › command input or idle placeholder
-TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> · 📦 <product> · log <value>
+TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> (<chain-backend>) · 📦 <product> · log <value>
 ```
 
+`<chain-backend>` is the `--chain-backend` value in use, `rpc` or `light-client`.
+
 The role label is omitted at narrow widths so user, network, and product remain
-visible. Values are ellipsized to fit, with the product consuming the remaining
-space after the user, network, and fixed log value. The session name is not shown
+visible. The user, network, and product are ellipsized to fit, with the product
+consuming the remaining space after the user, the network, and the chain backend
+and log value, which are not shortened. Below the width those need, only the log
+value is shown. The session name is not shown
 separately from the resolved user. Idle command guidance appears as a dim
 placeholder inside the empty prompt instead of consuming status-bar space.
 Operational hints temporarily use the right side of the status line while a
@@ -1887,9 +1891,9 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 Every chain connection the CLI makes goes through `CliChainProvider`
 (`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
-(§4.3). Routing (§14.1) is the same on both. Only a routed genesis reaches the
-provider, which would otherwise look the hash up in its bundled catalog and
-start the light client. The genesis check of a `--stack` or overridden endpoint (§14.1) uses a
+(§4.3). Routing (§14.1) is the same on both. Neither backend resolves a genesis
+from the bundled catalog, so the light client runs only the chains of the
+selected network. The genesis check of a `--stack` or overridden endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
 commands, or the setup of a subscription, fails once its connection has
 delivered nothing for 30 seconds while it waits.
@@ -1897,8 +1901,12 @@ delivered nothing for 30 seconds while it waits.
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
 the limits and timeouts. The connection sends a ping after the keepalive
-interval without an outgoing request, and is treated as dead if nothing arrives
-within the read timeout. The response stream ends when the socket closes or
+interval without an outgoing request, and is treated as dead if no byte arrives
+within the read timeout. The 30-second limit above also counts a byte of a
+message that is still arriving, so a large message, such as a Bulletin block
+body on a slow link, keeps both the connection and the request waiting on it
+alive. Keepalive pings and pongs do not count toward that limit. The response
+stream ends when the socket closes or
 dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
@@ -1907,16 +1915,26 @@ With `light-client`, the embedded smoldot light client syncs the chains from the
 specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
 cannot be combined with `--stack` or an override, nor with a built-in stack that restarted after
 those specs were bundled (§14.1). One light client per network serves the process
-and keeps one idle connection per chain, since smoldot stops a chain when its
-last connection closes.
+and keeps each chain running after its last connection closes, so a chain syncs
+once per process.
 
 CLI commands wait for the chain to sync before their first request, since
 smoldot sends nothing until then and the 30-second limit above would fail it.
 The wait fails if the chain or its relay stalls.
 
-The light client drops PGAS claims on Asset Hub, whose nodes return an
-incomplete proof for the check smoldot runs before broadcasting.
-`pgas-check --submit` refuses to run on it.
+The light client drops PGAS claims on Asset Hub. Before broadcasting, smoldot
+validates the claim, which checks that the PGAS asset exists. Asset Hub's nodes
+prove that with the asset's trie entry, which holds only the hash of its value,
+but smoldot reads the whole value for the check and refuses the proof.
+`pgas-check --submit` refuses to run on the light client.
+
+A statement submitted through the light client is accepted once a gossip peer
+receives it. smoldot checks only that it decodes, has not expired, fits the size
+limit and carries a proof. The allowance, the account's statement quota and the
+proof itself need the statement store and chain state, which a light client does
+not have, and the gossip protocol carries no answer from the peer. So a
+statement a full node would refuse, such as one rejected as `accountFull`, can
+still report success.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the

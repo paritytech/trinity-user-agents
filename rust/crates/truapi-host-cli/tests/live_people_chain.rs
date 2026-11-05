@@ -12,7 +12,10 @@
 //!
 //! These read chain state only; nothing here submits an extrinsic.
 
-mod common;
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/live.rs"]
+mod live;
 
 use std::{
 	sync::Arc,
@@ -28,7 +31,7 @@ use truapi::statement_allowance::{
 const STALE_CONFIGURED_GENESIS: [u8; 32] = [0xff; 32];
 
 fn people_ws() -> String {
-	std::env::var("TRUAPI_LIVE_PEOPLE_WS").unwrap_or_else(|_| common::paseo_next_v2_rpc("People"))
+	std::env::var("TRUAPI_LIVE_PEOPLE_WS").unwrap_or_else(|_| live::paseo_next_v2_rpc("People"))
 }
 
 async fn connect() -> alloc::rpc::RpcClient {
@@ -64,7 +67,7 @@ async fn network_suffix_matches_the_preset() {
 		.expect("read the live network suffix");
 	assert_eq!(
 		String::from_utf8(live).expect("network suffix is not UTF-8"),
-		common::paseo_next_v2().tld
+		bundled::paseo_next_v2().tld
 	);
 }
 
