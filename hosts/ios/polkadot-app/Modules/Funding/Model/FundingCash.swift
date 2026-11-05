@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// The payment balance as the funding screens show it: amounts cross the FFI
@@ -8,14 +9,17 @@ struct FundingCash: Equatable {
     let symbol: String
     let precision: Int16
 
-    func decimal(_ units: U128) -> Decimal {
-        guard let value = Decimal(string: units) else { return 0 }
-
-        return value / Self.scale(precision)
+    /// Nil when `units` is not a number.
+    func decimal(_ units: U128) -> Decimal? {
+        Decimal(string: units).map { $0 / Self.scale(precision) }
     }
 
     func decimal(_ units: U128?) -> Decimal? {
-        units.map { decimal($0) }
+        units.flatMap { decimal($0) }
+    }
+
+    func decimal(fromPlanks balance: Balance) -> Decimal? {
+        Decimal.fromSubstrateAmount(balance, precision: precision)
     }
 
     /// Rounds down, so the host never asks for more than the user typed.
@@ -34,6 +38,11 @@ struct FundingCash: Equatable {
     /// "$50.20 CASH".
     func label(_ value: Decimal) -> String {
         "\(figure(value)) \(symbol)"
+    }
+
+    /// "$50.20 CASH" for `units`; nil when they are not a number.
+    func label(units: U128) -> String? {
+        decimal(units).map { label($0) }
     }
 
     /// "+$50 CASH" for value moving in, "-$50 CASH" for value moving out.

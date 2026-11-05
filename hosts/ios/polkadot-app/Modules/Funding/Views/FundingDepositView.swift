@@ -64,10 +64,9 @@ private extension FundingDepositView {
                 )
             case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _):
                 VStack(spacing: DSSpacings.small) {
-                    copyRow(
-                        String(localized: .Funding.depositExactAmount),
-                        FundingAssetUnit(code: currency, decimals: decimals).format(amount)
-                    )
+                    FundingAssetUnit(code: currency, decimals: decimals).format(amount).map {
+                        copyRow(String(localized: .Funding.depositExactAmount), $0)
+                    }
                     beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
                     account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
                     bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
@@ -102,7 +101,7 @@ private extension FundingDepositView {
             .padding(.top, DSSpacings.large)
     }
 
-    func cryptoDeposit(address: String, network: String, amount: String, exact: Bool, uri: String?) -> some View {
+    func cryptoDeposit(address: String, network: String, amount: String?, exact: Bool, uri: String?) -> some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingQRCode(payload: uri ?? address)
                 .frame(width: 220, height: 220)
@@ -110,10 +109,8 @@ private extension FundingDepositView {
                 .background(.white, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
             VStack(spacing: DSSpacings.small) {
-                if exact {
-                    copyRow(String(localized: .Funding.depositExactAmount), amount)
-                } else {
-                    copyRow(String(localized: .Funding.depositAtLeast), amount)
+                if let amount {
+                    copyRow(String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast), amount)
                 }
                 copyRow(
                     String(localized: .Funding.depositAddressOn(network: FundingNetwork(id: network).name)),

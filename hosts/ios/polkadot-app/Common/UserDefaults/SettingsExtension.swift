@@ -25,6 +25,7 @@ enum SettingsKey: String {
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
     case debugPocketCards
+    case fundingInProgress = "funding.inProgress"
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif

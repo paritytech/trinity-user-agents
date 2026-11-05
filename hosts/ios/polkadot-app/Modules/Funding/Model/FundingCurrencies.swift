@@ -18,15 +18,15 @@ struct FundingAssetUnit: Equatable {
         isFiat = Self.isoCurrencyCodes.contains(upper)
     }
 
-    func decimal(_ units: U128) -> Decimal {
-        guard let value = Decimal(string: units) else { return 0 }
-
-        return value / FundingCash.scale(decimals)
+    /// Nil when `units` is not a number.
+    func decimal(_ units: U128) -> Decimal? {
+        Decimal(string: units).map { $0 / FundingCash.scale(decimals) }
     }
 
-    /// "€50.05" for fiat, "51.80 USDT" for crypto.
-    func format(_ units: U128) -> String {
-        format(decimal: decimal(units))
+    /// "€50.05" for fiat, "51.80 USDT" for crypto; nil when `units` is not a
+    /// number.
+    func format(_ units: U128) -> String? {
+        decimal(units).map { format(decimal: $0) }
     }
 
     func format(decimal value: Decimal) -> String {
@@ -38,9 +38,12 @@ struct FundingAssetUnit: Equatable {
         return "\(Self.plain(value, maximumDigits: Int(min(decimals, 6)))) \(code)"
     }
 
-    /// "25.10 EUR", the way the provider list sets a quote.
-    func formatWithCode(_ units: U128) -> String {
-        "\(Self.plain(decimal(units), maximumDigits: isFiat ? Int(decimals) : 6, minimumDigits: 2)) \(code)"
+    /// "25.10 EUR", the way the provider list sets a quote; nil when `units`
+    /// is not a number.
+    func formatWithCode(_ units: U128) -> String? {
+        decimal(units).map { value in
+            "\(Self.plain(value, maximumDigits: isFiat ? Int(decimals) : 6, minimumDigits: 2)) \(code)"
+        }
     }
 }
 

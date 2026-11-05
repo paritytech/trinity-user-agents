@@ -10,7 +10,7 @@ struct FundingCashTests {
     @Test
     func readsUnitsAsDollars() {
         #expect(cash.decimal("50200000") == Decimal(string: "50.2"))
-        #expect(cash.decimal("not a number") == 0)
+        #expect(cash.decimal("not a number") == nil)
         #expect(cash.decimal(nil as String?) == nil)
     }
 

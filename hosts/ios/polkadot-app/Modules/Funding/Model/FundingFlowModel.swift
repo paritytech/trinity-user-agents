@@ -9,9 +9,12 @@ import TrUAPIHost
 /// chosen and selected here before the overlay answers `Started`. From there
 /// the overlay shows the session's progress until the user leaves; crypto
 /// value in shows its deposit screen first, over the progress screen.
+///
+/// Only the state the screens draw lives on the main actor: every call to
+/// the core and the providers goes through ``FundingFlowServiceProtocol``.
 @MainActor
 @Observable
-final class FundingFlowModel {
+final class FundingFlowModel: FundingFlowModelProtocol {
     let intent: String
     let direction: FundingDirection
     let cash: FundingCash
@@ -20,37 +23,31 @@ final class FundingFlowModel {
     /// Keeps ``spendable`` current while the overlay is up.
     var balanceTask: Task<Void, Never>?
 
-    var rail: FundingRail
+    private(set) var rail: FundingRail
     var amountText: String
     var path: [Screen] = []
-    /// Where the user pays from: the device's region until the user picks
-    /// one.
-    var country: PaymentCountry?
-    var network: String?
-    var asset: String?
-    var chosenProviderId: ProductId?
+    /// Where the user pays from: the device's region until the user picks one.
+    private(set) var country: PaymentCountry?
+    private(set) var network: String?
+    private(set) var asset: String?
+    private(set) var chosenProviderId: ProductId?
     var toast: String?
 
     private(set) var candidates: [FundingCandidate]
     private(set) var rows: [ProductId: FundingQuoteState] = [:]
     /// The providers of the core's latest quote list, in its order.
     private(set) var quoteOrder: [ProductId] = []
-    /// The amounts the core says the reported selection takes across every
-    /// provider.
+    /// The amounts the core says the reported selection takes across every provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
     /// The same for each network a crypto route declares, by network id.
     private(set) var networkLimits: [String: FundingAmountLimits] = [:]
     /// The provider the core marked as quoting best for the user.
     private(set) var bestProviderId: ProductId?
-    /// What the core knows about each country on the reported rail and
-    /// asset, by code.
+    /// What the core knows about each country on the reported rail and asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]
     /// The country the device is set to, which the country list leads with.
     private(set) var detectedCountry: PaymentCountry?
     private(set) var ask: FundingQuoteAsk?
-    /// The core's id for the latest quote request: lists answering an
-    /// earlier one are dropped.
-    private var quoteRequestId: UInt64?
     private(set) var brands: [ProductId: FundingProviderBrand] = [:]
     private(set) var isStarting = false
     private(set) var hasStarted = false
@@ -60,6 +57,8 @@ final class FundingFlowModel {
     private(set) var isAnsweringOffer = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
+    /// When the core asks every provider again, and the prices on screen change.
+    private(set) var quotesRefreshAt: Date?
 
     /// Answers the core's `present_funding`; called once.
     var onOutcome: ((FundingPresentOutcome) -> Void)?
@@ -70,38 +69,48 @@ final class FundingFlowModel {
     /// Leaves the overlay for the history of every session.
     var onHistory: (() -> Void)?
 
-    let runtime: FundingRuntime
-    let book: FundingSessionBook
-    let branding: FundingProviderBranding
-    /// When the core asks every provider again, and the prices on screen
-    /// change.
-    private(set) var quotesRefreshAt: Date?
-    private var startsWhenQuoted = false
-    private var quoteTask: Task<Void, Never>?
+    private let service: FundingFlowServiceProtocol
+    private let coreCalls: FundingCoreCallQueue
+    private let logger: LoggerProtocol
+    /// The lowest request id a quote list must carry to be shown. Each ask
+    /// raises it past every earlier list before the core returns the ask's id.
+    @ObservationIgnored private var quoteRequestId: UInt64?
+    /// Providers whose brand is being read.
+    @ObservationIgnored private var brandsLoading: Set<ProductId> = []
+    /// The deposit screen starts the session once every provider answered
+    /// the ask it was opened on.
+    @ObservationIgnored private var startsWhenQuoted = false
+    /// Set when the user left before `Started`, which the core discards the
+    /// session on.
+    @ObservationIgnored private var hasLeft = false
+    @ObservationIgnored private var quoteTask: Task<Void, Never>?
     /// The selection the core was last told of.
-    @ObservationIgnored var reportedSelection: FundingSelection?
+    @ObservationIgnored private var reportedSelection: FundingSelection?
 
-    init(
-        context: Context,
-        runtime: FundingRuntime,
-        book: FundingSessionBook = .shared,
-        branding: FundingProviderBranding
-    ) {
+    var branding: FundingProviderBranding {
+        service.branding
+    }
+
+    init(context: Context, service: FundingFlowServiceProtocol, logger: LoggerProtocol) {
         intent = context.intent
         direction = context.direction
         cash = context.cash
-        self.runtime = runtime
-        self.book = book
-        self.branding = branding
-        amountText = context.amount.map { Self.text(for: context.cash.decimal($0)) } ?? ""
+        self.service = service
+        coreCalls = FundingCoreCallQueue(service: service)
+        self.logger = logger
+        amountText = context.amount.flatMap { context.cash.decimal($0) }.map(Self.text(for:)) ?? ""
 
-        let candidates = book.options(intent: context.intent)?.candidates ?? []
+        let options = service.options(intent: context.intent)
+        let candidates = options?.candidates ?? []
         self.candidates = candidates
-        rail = Self.defaultRail(candidates: candidates, direction: context.direction)
+        rail = .default(candidates: candidates, direction: context.direction)
         detectedCountry = FundingCountries.localeRegion().flatMap { FundingCountries.country(code: $0) }
         country = detectedCountry
-        loadBrands(candidates.map(\.providerId))
-        reportSelection()
+        if let options {
+            apply(options)
+        } else {
+            reportSelection()
+        }
     }
 }
 
@@ -125,12 +134,13 @@ extension FundingFlowModel {
     func continueFromAmount() {
         guard canContinue else { return }
 
+        quoteTask?.cancel()
         switch rail {
         case .crypto:
             path.append(.network)
         case .card,
              .bank:
-            if ask != currentAsk() { requestQuote() }
+            requestQuote()
             path.append(.summary)
         }
     }
@@ -150,6 +160,7 @@ extension FundingFlowModel {
         if direction == .in {
             startsWhenQuoted = true
             path.append(.deposit)
+            startIfQuoted()
         } else {
             path.append(.summary)
         }
@@ -175,6 +186,7 @@ extension FundingFlowModel {
         }
 
         path.removeLast()
+        startsWhenQuoted = false
     }
 
     /// The user left the overlay. Before `Started` that is the answer the core
@@ -189,15 +201,6 @@ extension FundingFlowModel {
     func showHistory() {
         leave()
         onHistory?()
-    }
-
-    private func leave() {
-        quoteTask?.cancel()
-        balanceTask?.cancel()
-        if !hasStarted {
-            runtime.stopFundingQuotes(intent: intent)
-            onOutcome?(.dismissed)
-        }
     }
 
     /// An ended session leaves for a new one in the same direction, from the
@@ -218,13 +221,13 @@ extension FundingFlowModel {
         guard !isCancelling else { return }
 
         isCancelling = true
-        Task {
+        Task { [service, intent] in
             defer { isCancelling = false }
             do {
-                var outcome = try await runtime.cancelFunding(intent: intent)
+                var outcome = try await service.cancel(intent: intent)
                 if outcome == .requested, isUnpaidTopUp {
                     // Nothing was paid, so the second cancel ends the session.
-                    outcome = try await runtime.cancelFunding(intent: intent)
+                    outcome = try await service.cancel(intent: intent)
                 }
                 switch FundingCancelPresentation.after(outcome) {
                 case .close:
@@ -234,35 +237,10 @@ extension FundingFlowModel {
                     refreshSession()
                 }
             } catch {
-                Logger.shared.error("[funding] \(intent): cancel failed: \(error)")
+                logger.error("[funding] \(intent): cancel failed: \(error)")
                 leaveCancelConfirm(toast: String(localized: .Funding.errorCancelFailed))
             }
         }
-    }
-
-    /// A bank or crypto top-up whose payment the provider has not seen:
-    /// cancelling ends it outright, and money sent anyway still arrives.
-    var isUnpaidTopUp: Bool {
-        direction == .in && rail != .card && !hasReached(.received)
-    }
-
-    /// The provider's terms for cancelling, while it waits for the user.
-    var cancelOffer: (fee: U128, refund: U128)? {
-        guard case let .cancelOffered(fee, refund) = progress?.status else { return nil }
-        return (fee, refund)
-    }
-
-    /// Whether the user can cancel: the session is in flight, and either no
-    /// cancel is with the provider or no money moved yet, when a second cancel
-    /// ends the session. The core says when it is too late.
-    var canRequestCancel: Bool {
-        guard hasStarted, let progress, progress.status.isInFlight else { return false }
-        return FundingCancelPresentation.canCancel(progress.status, moneyMoved: progress.moneyMoved)
-    }
-
-    /// The cancel action's title for the session's status.
-    var cancelTitle: String {
-        progress.map { FundingCancelPresentation.cancelTitle($0.status) } ?? String(localized: .Funding.depositCancel)
     }
 
     /// Answers the provider's cancel offer: `terms` are the ones the user
@@ -272,13 +250,13 @@ extension FundingFlowModel {
         guard !isAnsweringOffer else { return }
 
         isAnsweringOffer = true
-        Task {
+        Task { [service, intent] in
             defer { isAnsweringOffer = false }
             do {
-                let answer = try await runtime.confirmFundingCancel(intent: intent, terms: terms)
+                let answer = try await service.confirmCancel(intent: intent, terms: terms)
                 toast = FundingCancelPresentation.after(answer)
             } catch {
-                Logger.shared.error("[funding] \(intent): answering the cancel offer failed: \(error)")
+                logger.error("[funding] \(intent): answering the cancel offer failed: \(error)")
                 toast = String(localized: .Funding.errorCancelFailed)
             }
             refreshSession()
@@ -323,6 +301,10 @@ extension FundingFlowModel {
 extension FundingFlowModel {
     /// Hands the session to the provider whose quote the user is looking at,
     /// then answers `Started`. A provider is only chosen on its quote.
+    ///
+    /// The user can leave while the provider is being selected. The overlay
+    /// has answered `.dismissed` by then, which the core discards the session
+    /// on, so the selection is neither reported started nor shown.
     func start() {
         guard !isStarting, !hasStarted, let providerId = selectedProviderId,
               let quoteId = rows[providerId]?.quote?.quoteId
@@ -331,21 +313,19 @@ extension FundingFlowModel {
         isStarting = true
         startError = nil
 
-        Task {
+        Task { [service, intent] in
             defer { isStarting = false }
             do {
-                guard try await runtime.selectFundingProvider(
-                    intent: intent,
-                    providerId: providerId,
-                    quoteId: quoteId
-                ) else {
+                let selected = try await service.selectProvider(providerId, quoteId: quoteId, intent: intent)
+                guard !hasLeft else { return }
+                guard selected else {
                     refreshSession()
                     startError = failure?.failedText ?? String(localized: .Funding.errorStartFailed)
                     return
                 }
             } catch {
-                Logger.shared.error("[funding] \(intent): selecting \(providerId) failed: \(error)")
-                startError = String(localized: .Funding.errorStartFailed)
+                logger.error("[funding] \(intent): selecting \(providerId) failed: \(error)")
+                if !hasLeft { startError = String(localized: .Funding.errorStartFailed) }
                 return
             }
 
@@ -353,56 +333,21 @@ extension FundingFlowModel {
         }
     }
 
-    /// Why the session ended, once it has failed.
-    var failure: FundingFailure? {
-        guard case let .failed(reason, _) = session?.stage else { return nil }
-        return reason
-    }
-
-    /// The session once it has ended, as its ended screen draws it.
-    var ended: FundingEndedSession? {
-        session.flatMap { FundingEndedSession(session: $0, progress: progress) }
-    }
-
-    /// The quote the session was started on, or the one on screen before it.
-    var chosenQuote: FundingQuote? {
-        session?.choice?.quote ?? selectedQuote
-    }
-
-    /// Whether the session got to `step`.
-    func hasReached(_ step: FundingStep) -> Bool {
-        progress?.steps.contains { $0.step == step && $0.reachedAtMs != nil } ?? false
-    }
-
-    /// Crypto value in is paid from its deposit screen, which the session
-    /// starts on.
-    var showsDepositFirst: Bool {
-        direction == .in && rail == .crypto
-    }
-
     /// The core pushed the session again: draw what it holds now.
     func refreshSession() {
-        session = book.session(intent: intent)
-        progress = book.progress(intent: intent)
+        session = service.session(intent: intent)
+        progress = service.progress(intent: intent)
     }
 
     /// The core pushed what the overlay offers again: its providers, and the
     /// countries and amounts for the reported selection.
     func refreshOptions() {
-        guard let options = book.options(intent: intent) else { return }
-
-        candidates = options.candidates
-        countrySupport = Dictionary(
-            options.countries.map { ($0.country.uppercased(), $0.support) }
-        ) { _, latest in latest }
-        limits = options.limits
-        networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
-        loadBrands(candidates.map(\.providerId))
-        reportSelection()
+        apply(service.options(intent: intent))
     }
 
     /// Takes the core's quote list unless it answers an earlier ask. Request
-    /// ids only grow, and a list can arrive before `getFundingQuote` returns.
+    /// ids only grow, and a list can arrive before the core's id for its
+    /// request does.
     func receive(quotes: FundingQuoteList) {
         guard let latest = quoteRequestId, quotes.requestId >= latest else { return }
 
@@ -411,52 +356,7 @@ extension FundingFlowModel {
         quoteOrder = quotes.rows.map(\.providerId)
         bestProviderId = quotes.best
         quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
-
-        guard startsWhenQuoted, !isStarting, !hasStarted, !rows.values.contains(where: \.isPending) else { return }
-
-        startsWhenQuoted = false
-        start()
-    }
-}
-
-// MARK: - Private
-
-private extension FundingFlowModel {
-    static func defaultRail(candidates: [FundingCandidate], direction: FundingDirection) -> FundingRail {
-        let routed = FundingRail.displayOrder.filter { rail in
-            candidates.contains { $0.serves(rail: rail, direction: direction) }
-        }
-        return routed.first ?? .card
-    }
-
-    static func text(for value: Decimal) -> String {
-        NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
-    }
-
-    func leaveCancelConfirm(toast message: String) {
-        if path.last == .cancelConfirm { path.removeLast() }
-        toast = message
-    }
-
-    func didStart() {
-        hasStarted = true
-        onOutcome?(.started)
-        refreshSession()
-
-        if showsDepositFirst {
-            if path.last != .deposit { path.append(.deposit) }
-        } else {
-            path = [.progress]
-        }
-    }
-
-    func loadBrands(_ providerIds: [ProductId]) {
-        for providerId in providerIds where brands[providerId] == nil {
-            Task { [branding] in
-                let brand = await branding.brand(for: providerId)
-                brands[providerId] = brand
-            }
-        }
+        startIfQuoted()
     }
 }
 
@@ -476,17 +376,122 @@ extension FundingFlowModel {
             requestQuote()
         }
     }
+}
 
+// MARK: - Private
+
+private extension FundingFlowModel {
+    static func text(for value: Decimal) -> String {
+        NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
+    }
+
+    /// Crypto value in is paid from its deposit screen, which the session
+    /// starts on.
+    var showsDepositFirst: Bool {
+        direction == .in && rail == .crypto
+    }
+
+    func leave() {
+        quoteTask?.cancel()
+        balanceTask?.cancel()
+        guard !hasStarted, !hasLeft else { return }
+
+        hasLeft = true
+        coreCalls.run { [intent] service in await service.stopQuotes(intent: intent) }
+        onOutcome?(.dismissed)
+    }
+
+    func leaveCancelConfirm(toast message: String) {
+        if path.last == .cancelConfirm { path.removeLast() }
+        toast = message
+    }
+
+    func didStart() {
+        hasStarted = true
+        onOutcome?(.started)
+        refreshSession()
+
+        if showsDepositFirst {
+            if path.last != .deposit { path.append(.deposit) }
+        } else {
+            path = [.progress]
+        }
+    }
+
+    /// Starts the session the deposit screen is waiting on, once every
+    /// provider answered.
+    func startIfQuoted() {
+        guard startsWhenQuoted, path.last == .deposit, !isStarting, !hasStarted,
+              !rows.isEmpty, !rows.values.contains(where: \.isPending)
+        else { return }
+
+        startsWhenQuoted = false
+        start()
+    }
+
+    func loadBrands(_ providerIds: [ProductId]) {
+        for providerId in providerIds where brands[providerId] == nil {
+            guard brandsLoading.insert(providerId).inserted else { continue }
+
+            Task { [service] in
+                brands[providerId] = await service.brand(for: providerId)
+                brandsLoading.remove(providerId)
+            }
+        }
+    }
+
+    /// Takes what the core offers for the reported selection, and reports
+    /// the selection again when that changes it.
+    func apply(_ options: FundingOptions?) {
+        guard let options else { return }
+
+        candidates = options.candidates
+        countrySupport = Dictionary(
+            options.countries.map { ($0.country.uppercased(), $0.support) }
+        ) { _, latest in latest }
+        limits = options.limits
+        networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
+        loadBrands(candidates.map(\.providerId))
+        reportSelection()
+    }
+
+    /// Tells the core the rail, asset, network and country on screen when
+    /// they changed, and takes what it offers for them.
+    func reportSelection() {
+        let selection = FundingSelection(
+            rail: rail,
+            asset: askedAsset,
+            network: rail == .crypto ? network : nil,
+            country: country?.code
+        )
+        guard !hasStarted, selection != reportedSelection else { return }
+
+        reportedSelection = selection
+        coreCalls.run { [intent] service in
+            await service.select(selection, intent: intent)
+        } then: { [weak self] options in
+            self?.apply(options)
+        }
+    }
+
+    /// Asks every provider to quote what is on screen, unless they were
+    /// asked exactly that last.
     func requestQuote() {
-        guard let newAsk = currentAsk() else { return }
+        guard let newAsk = currentAsk(), newAsk != ask else { return }
 
         ask = newAsk
+        startsWhenQuoted = false
         quotesRefreshAt = nil
         bestProviderId = nil
         rows = Dictionary(uniqueKeysWithValues: candidates.map { ($0.providerId, .pending) })
         quoteOrder = []
+        quoteRequestId = quoteRequestId.map { $0 + 1 } ?? 0
         reportSelection()
-        let requestId = runtime.getFundingQuote(intent: intent, ask: newAsk)
-        quoteRequestId = max(quoteRequestId ?? requestId, requestId)
+        coreCalls.run { [intent] service in
+            await service.requestQuote(newAsk, intent: intent)
+        } then: { [weak self] requestId in
+            guard let self else { return }
+            quoteRequestId = max(quoteRequestId ?? requestId, requestId)
+        }
     }
 }

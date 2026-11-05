@@ -41,35 +41,37 @@ extension FundingFeesView {
 private extension FundingFeesView {
     /// Fees are counted in what the user pays: the ask's asset for value in,
     /// the balance for value out.
-    func feeText(_ units: U128, of quote: FundingQuote) -> String {
+    func feeText(_ units: U128, of quote: FundingQuote) -> String? {
         if model.direction == .in {
             return model.quoteUnit(quote).format(units)
         }
-        return model.cash.label(model.cash.decimal(units))
+        return model.cash.label(units: units)
     }
 
     func breakdown(_ quote: FundingQuote) -> some View {
         let total = Self.totalFee(quote)
 
         return VStack(spacing: DSSpacings.small) {
-            line(String(localized: .Funding.feesAmount), feeText(Self.units(Self.net(quote)), of: quote))
-            line(String(localized: .Funding.feesProvider), feeText(quote.providerFee, of: quote))
-            line(String(localized: .Funding.feesNetwork), feeText(quote.networkFee, of: quote))
+            feeText(Self.units(Self.net(quote)), of: quote).map { line(String(localized: .Funding.feesAmount), $0) }
+            feeText(quote.providerFee, of: quote).map { line(String(localized: .Funding.feesProvider), $0) }
+            feeText(quote.networkFee, of: quote).map { line(String(localized: .Funding.feesNetwork), $0) }
             line(String(localized: .Funding.feesSwapping), String(localized: .Funding.feesVariable))
             Divider().overlay(Color.strokePrimary)
-            line(String(localized: .Funding.feesTotal), feeText(Self.units(total), of: quote))
+            feeText(Self.units(total), of: quote).map { line(String(localized: .Funding.feesTotal), $0) }
             Divider().overlay(Color.strokePrimary)
 
-            HStack(alignment: .firstTextBaseline) {
-                Text(payTitle)
-                    .typography(.bodyLarge)
-                    .foregroundStyle(.fgSecondary)
-                Spacer()
-                Text(verbatim: feeText(quote.sendAmount, of: quote))
-                    .typography(.headlineSmall)
-                    .foregroundStyle(.fgPrimary)
+            if let pay = feeText(quote.sendAmount, of: quote) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(payTitle)
+                        .typography(.bodyLarge)
+                        .foregroundStyle(.fgSecondary)
+                    Spacer()
+                    Text(verbatim: pay)
+                        .typography(.headlineSmall)
+                        .foregroundStyle(.fgPrimary)
+                }
+                .padding(.top, DSSpacings.small)
             }
-            .padding(.top, DSSpacings.small)
 
             if let rate = rate(quote) {
                 line(String(localized: .Funding.feesRate), rate, emphasized: false)
@@ -90,9 +92,10 @@ private extension FundingFeesView {
     func rate(_ quote: FundingQuote) -> String? {
         let net = Self.units(Self.net(quote))
         let providerUnits = model.direction == .in ? net : quote.receiveAmount
-        let providerSide = model.quoteUnit(quote).decimal(providerUnits)
-        let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : net)
-        guard cashSide > 0 else { return nil }
+        guard let providerSide = model.quoteUnit(quote).decimal(providerUnits),
+              let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : net),
+              cashSide > 0
+        else { return nil }
 
         let perCash = model.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
         return String(localized: .Funding.feesRateValue(cash: model.cash.label(1), value: perCash))

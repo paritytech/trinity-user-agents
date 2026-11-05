@@ -365,9 +365,8 @@ private extension FundingOverlayCoordinator {
                 amount: amount,
                 cash: environment.cash
             ),
-            runtime: runtime,
-            book: book,
-            branding: environment.branding
+            service: FundingFlowService(runtime: runtime, book: book, branding: environment.branding),
+            logger: Logger.shared
         )
         if direction == .out {
             model.balanceTask = Task { [environment, weak model] in

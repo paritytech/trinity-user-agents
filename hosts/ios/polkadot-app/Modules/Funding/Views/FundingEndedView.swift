@@ -44,8 +44,7 @@ private extension FundingEndedView {
     var headline: some View {
         VStack(spacing: DSSpacings.small) {
             statusIcon
-            if let units = ended.cashAmount {
-                let value = cash.decimal(units)
+            if let value = cash.decimal(ended.cashAmount) {
                 let figure = ended.succeeded ? signedFigure(value) : cash.figure(value)
                 DSAmount(
                     amount: figure,
@@ -114,13 +113,12 @@ private extension FundingEndedView {
                 }
             }
 
-            if let settled = ended.record.settledAmount {
+            if let settled = ended.record.settledAmount.flatMap({ cash.label(units: $0) }) {
                 FundingValueRow(title: settledCaption) {
                     VStack(alignment: .trailing, spacing: DSSpacings.extraSmall) {
-                        value(cash.label(cash.decimal(settled)))
-                        if let requested = ended.differingRequestedAmount {
-                            let amount = cash.label(cash.decimal(requested))
-                            Text(verbatim: String(localized: .Funding.endedRequested(amount: amount)))
+                        value(settled)
+                        if let requested = ended.differingRequestedAmount.flatMap({ cash.label(units: $0) }) {
+                            Text(verbatim: String(localized: .Funding.endedRequested(amount: requested)))
                                 .typography(.bodySmall)
                                 .foregroundStyle(.fgSecondary)
                                 .multilineTextAlignment(.trailing)
@@ -249,8 +247,8 @@ private extension FundingEndedView {
         case .succeeded:
             return ""
         case let .payoutFailed(reason):
-            if let refunded = ended.record.refundedAmount {
-                return String(localized: .Funding.endedWithdrawRefunded(amount: cash.label(cash.decimal(refunded))))
+            if let refunded = ended.record.refundedAmount.flatMap({ cash.label(units: $0) }) {
+                return String(localized: .Funding.endedWithdrawRefunded(amount: refunded))
             }
             switch ended.record.rail {
             case .crypto: return String(localized: .Funding.progressPayoutFailed(reason: reason))
@@ -259,8 +257,8 @@ private extension FundingEndedView {
                  nil: return String(localized: .Funding.endedPayoutFailed)
             }
         case .failed(.cancelled):
-            if let refunded = ended.record.refundedAmount {
-                return String(localized: .Funding.activityRefundedAmount(amount: cash.label(cash.decimal(refunded))))
+            if let refunded = ended.record.refundedAmount.flatMap({ cash.label(units: $0) }) {
+                return String(localized: .Funding.activityRefundedAmount(amount: refunded))
             }
             return ended.direction == .in ? topUpNote(.cancelled) : withdrawNote(.cancelled)
         case let .failed(failure):
@@ -306,7 +304,7 @@ private extension FundingEndedView {
     }
 
     func withdrawNote(_ failure: FundingFailure) -> String {
-        let amount = ended.cashAmount.map { cash.label(cash.decimal($0)) } ?? "$\(cash.symbol)"
+        let amount = ended.cashAmount.flatMap { cash.label(units: $0) } ?? "$\(cash.symbol)"
         switch failure {
         case .refunded:
             return String(localized: .Funding.endedWithdrawRefunded(amount: amount))
