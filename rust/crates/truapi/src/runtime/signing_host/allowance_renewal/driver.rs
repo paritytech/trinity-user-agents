@@ -361,7 +361,7 @@ mod tests {
 		}
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for MemStorage {
 		async fn read_core_storage(
 			&self,
@@ -412,7 +412,7 @@ mod tests {
 	#[derive(Default)]
 	struct YieldingStorage(MemStorage);
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl CoreStorage for YieldingStorage {
 		async fn read_core_storage(
 			&self,
