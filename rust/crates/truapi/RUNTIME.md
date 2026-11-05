@@ -247,6 +247,14 @@ it. The core keeps the newest face of a card from every
 `RenderContext::PocketCard` render, at most every two seconds and once more
 when the render stops, so a card has a face offline and at cold start.
 
+It also keeps materials (`materials` module), the text behind each material
+ID a renderer tree names. The core reads a material it lacks from Bulletin
+itself, with `bitswap_v1_get` over the Bulletin connection it holds for
+preimage submission, not through the host's preimage lookup. Only text that
+hashes to the ID is kept. A material a saved Pocket face draws is never
+evicted, and the others share 4 MiB, oldest out first. At start-up the core
+fetches what the saved faces draw and the database lacks.
+
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
