@@ -50,7 +50,7 @@ class RenderConnectRetryTest {
     fun `a stream reopened as many times as allowed then throws its last failure`() = runTest {
         val result = runCatching {
             renderThatConnectsAfter(failures = 10) { IllegalStateException("renderer gone") }
-                .reopenAfterFailure("face", reopens = 2)
+                .reopenAfterFailure("face") { failures -> failures < 2 }
                 .toList()
         }
 

@@ -155,7 +155,7 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
-    fun `a stream that keeps failing after drawing is reopened twice and then left with its face`() = runTest {
+    fun `a stream that keeps failing is reopened for as long as the cell is collected`() = runTest {
         val execution: TrUAPIProductExecution = mock()
         var opened = 0
         whenever(execution.render(any())).thenReturn(
@@ -173,20 +173,21 @@ class TrUAPIChatWorkerTest {
         }
         advanceTimeBy(5.minutes)
 
-        assertEquals(3, opened)
-        assertEquals("one tree per stream, and no error after the last", List(3) { Result.success(JsWidget.Spacer()) }, results)
+        // Gaps of 1, 2, 4, 8, 16 and then 30 seconds: five minutes hold 14 openings, past any bounded attempt count.
+        assertEquals(14, opened)
+        assertTrue("a node that drew must not be replaced by an error", results.all { it.isSuccess })
         collector.cancel()
     }
 
     @Test
-    fun `a cell that drew on an earlier stream keeps its face when the later streams fail without drawing`() = runTest {
+    fun `a cell that drew on an earlier stream keeps its face and its stream while later streams fail without drawing`() = runTest {
         val execution: TrUAPIProductExecution = mock()
         val drawsThenFails = flow<RendererNode> {
             emit(RendererNode.Nil)
             throw IllegalStateException("boom")
         }
         val failsOutright = flow<RendererNode> { throw IllegalStateException("boom") }
-        whenever(execution.render(any())).thenReturn(drawsThenFails, failsOutright, failsOutright)
+        whenever(execution.render(any())).thenReturn(drawsThenFails, failsOutright)
         val worker = worker(workers = runningWorkers(execution), scope = CoroutineScope(StandardTestDispatcher(testScheduler)))
 
         val results = mutableListOf<Result<JsWidget>>()
@@ -195,7 +196,7 @@ class TrUAPIChatWorkerTest {
         }
         advanceTimeBy(5.minutes)
 
-        verify(execution, times(3)).render(any())
+        verify(execution, times(14)).render(any())
         assertEquals(listOf(Result.success(JsWidget.Spacer())), results)
         collector.cancel()
     }

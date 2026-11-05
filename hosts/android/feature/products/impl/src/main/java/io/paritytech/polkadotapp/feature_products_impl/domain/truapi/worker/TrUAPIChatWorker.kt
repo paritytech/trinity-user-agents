@@ -161,9 +161,12 @@ class TrUAPIChatWorker(
         }
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
-            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}", reopens = RENDER_STREAMS - 1)
-            // Past the last stream a cell that drew keeps its face; one that never did reads the failure.
-            .catch { cause -> if (!drewAny) emit(Result.failure(cause)) }
+            // A cell that drew keeps reopening so its face stays live; one that never did reads the failure
+            // after RENDER_STREAMS streams, as on iOS.
+            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}") { failures ->
+                drewAny || failures < RENDER_STREAMS - 1
+            }
+            .catch { cause -> emit(Result.failure(cause)) }
         emitAll(streams)
     }
 
@@ -179,7 +182,7 @@ class TrUAPIChatWorker(
     private companion object {
         const val NATIVE_PEER = "native"
 
-        // Streams opened for one cell on one execution before its failure is reported, as on iOS.
+        // Streams opened for a cell that has drawn nothing before its failure is reported, as on iOS.
         const val RENDER_STREAMS = 3L
     }
 }

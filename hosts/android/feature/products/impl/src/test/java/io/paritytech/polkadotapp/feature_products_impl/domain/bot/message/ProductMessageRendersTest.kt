@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWo
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -157,6 +158,38 @@ class ProductMessageRendersTest {
         runCurrent()
 
         advanceTimeBy(window + 1.milliseconds)
+
+        assertEquals(LoadingState.Loaded(JsWidget.Spacer()), state.value)
+        cell.cancel()
+    }
+
+    @Test
+    fun `a failure after a draw keeps the tree`() = runTest {
+        val state = renders(streamingWorker).render(room, "m1", content)
+        val cell = shown(state)
+        runCurrent()
+        drawTree()
+        runCurrent()
+
+        trees.emit(Result.failure(IllegalStateException("boom")))
+        runCurrent()
+
+        assertEquals(LoadingState.Loaded(JsWidget.Spacer()), state.value)
+        cell.cancel()
+    }
+
+    @Test
+    fun `a stream that throws after a draw keeps the tree`() = runTest {
+        val worker: ProductWorker = mockk {
+            every { renderMessage(any(), any(), any(), any()) } returns flow {
+                emit(Result.success(JsWidget.Spacer()))
+                throw IllegalStateException("boom")
+            }
+        }
+
+        val state = renders(worker).render(room, "m1", content)
+        val cell = shown(state)
+        runCurrent()
 
         assertEquals(LoadingState.Loaded(JsWidget.Spacer()), state.value)
         cell.cancel()

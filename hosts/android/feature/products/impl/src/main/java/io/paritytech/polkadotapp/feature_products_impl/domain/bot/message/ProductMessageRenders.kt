@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -37,7 +38,7 @@ import kotlin.time.Duration.Companion.seconds
  * render stream is open only while a cell observes its state, and for [streamKeepAlive] after,
  * so a long chat does not hold one live render per message it ever showed. A message that has no
  * tree after [firstTreeWindow] reads as failed, and a failed message is asked for again the next
- * time it is shown.
+ * time it is shown. A message whose stream fails after drawing keeps its tree.
  */
 class ProductMessageRenders(
     private val product: Product,
@@ -131,15 +132,19 @@ class ProductMessageRenders(
                         state.value = LoadingState.Loaded(widget)
                         renderObservers.forEach { it.onMessageRendered(product.id) }
                     }
-                    .onFailure { error -> state.value = LoadingState.Error(error) }
+                    .onFailure { error -> state.fail(error) }
             }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             Timber.e(error, "Render of message %s in %s threw", messageId, product.id.value)
             deadline.cancel()
-            state.value = LoadingState.Error(error)
+            state.fail(error)
         }
+    }
+
+    private fun MutableStateFlow<LoadingState<JsWidget>>.fail(error: Throwable) {
+        update { current -> if (current is LoadingState.Loaded) current else LoadingState.Error(error) }
     }
 
     private companion object {

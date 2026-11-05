@@ -24,20 +24,21 @@ fun <T> Flow<T>.retryWhileConnecting(
 }
 
 /**
- * A stream that fails is opened again, for as long as it is collected and at most [reopens] times.
- * Ending instead would leave what is on screen static for the worker's whole life: a new render is
- * only opened when a different execution is published, and a stop publishes none. The backoff
- * counts every failure of one collection and does not shrink after a successful draw. Once the
- * reopens are spent the last failure is thrown.
+ * A stream that fails is opened again, for as long as it is collected and [reopens] allows it for
+ * the number of failures so far. Ending instead would leave what is on screen static for the
+ * worker's whole life: a new render is only opened when a different execution is published, and a
+ * stop publishes none. The backoff counts every failure of one collection and does not shrink
+ * after a successful draw. A failure [reopens] declines is thrown.
  */
-fun <T> Flow<T>.reopenAfterFailure(what: String, reopens: Long = Long.MAX_VALUE): Flow<T> = retryWhen { failure, attempt ->
-    val reopening = attempt < reopens
-    if (reopening) {
-        Timber.w(failure, "%s ended, reopening", what)
-        delay(reopenBackoff(attempt))
+fun <T> Flow<T>.reopenAfterFailure(what: String, reopens: (failures: Long) -> Boolean = { true }): Flow<T> =
+    retryWhen { failure, attempt ->
+        val reopening = reopens(attempt)
+        if (reopening) {
+            Timber.w(failure, "%s ended, reopening", what)
+            delay(reopenBackoff(attempt))
+        }
+        reopening
     }
-    reopening
-}
 
 /** Doubling from [BACKOFF_BASE] to [MAX_BACKOFF]: a slow surface is picked up at once, a broken one is not asked on a loop. */
 fun reopenBackoff(attempt: Long): Duration =
