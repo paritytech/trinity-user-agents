@@ -916,7 +916,6 @@ pub mod durable;
 pub mod encrypted_storage;
 
 #[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
 mod image_loader;
 
 #[cfg(feature = "runtime")]
@@ -944,7 +943,6 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
 pub use host_internal::bulletin::{BitswapError, bitswap_get};
 #[cfg(feature = "runtime")]
 pub use host_internal::{
@@ -960,7 +958,6 @@ pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
 pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]

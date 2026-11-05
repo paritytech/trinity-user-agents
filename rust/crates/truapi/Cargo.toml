@@ -135,6 +135,7 @@ tracing = { workspace = true, optional = true }
 # `registry` + `std` only: pulls the Registry + per-layer filter/reload, but
 # not `env-filter` (which drags in `regex`, heavy on wasm).
 tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
+imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
@@ -155,7 +156,6 @@ itertools = { workspace = true, optional = true }
 # The clearing root of an NFT operation.
 binary-merkle-tree = { workspace = true, optional = true }
 hash-db = { workspace = true, optional = true }
-imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }

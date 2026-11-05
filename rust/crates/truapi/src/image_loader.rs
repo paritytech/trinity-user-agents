@@ -24,7 +24,8 @@ const MISS_PAUSE: Duration = Duration::from_secs(6);
 const FAILURE_PAUSE: Duration = Duration::from_secs(1);
 
 /// An image format the core passes on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ImageFormat {
 	/// PNG.
 	Png,
@@ -37,7 +38,8 @@ pub enum ImageFormat {
 }
 
 /// Where an image comes from.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ImageReference {
 	/// A Bulletin blob.
 	Bulletin {
@@ -50,7 +52,8 @@ pub enum ImageReference {
 }
 
 /// An image that passed every check.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct LoadedImage {
 	/// The image file.
 	pub bytes: Vec<u8>,
@@ -61,7 +64,8 @@ pub struct LoadedImage {
 }
 
 /// Why an image did not load. A host draws its placeholder in every case.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum ImageError {
 	/// The reference names nothing the core loads, such as a CID that is not a raw
 	/// blake2b-256 one.

@@ -1,6 +1,5 @@
 //! Bulletin store transactions, and reading stored blobs back by CID.
 
-#[cfg(not(target_arch = "wasm32"))]
 mod read;
 
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
@@ -11,7 +10,6 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use read::{BitswapError, bitswap_get, preimage_key_from_cid};
 
 /// Pallet the store transaction targets.

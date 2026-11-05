@@ -623,7 +623,6 @@ pub struct SigningHostRuntime {
 	services: Arc<RuntimeServices>,
 	signing_host: Arc<SigningHostRole>,
 	sso_responder: Arc<SsoResponderService>,
-	#[cfg(not(target_arch = "wasm32"))]
 	image_loader: crate::image_loader::ImageLoader,
 }
 
@@ -746,7 +745,6 @@ impl SigningHostRuntime {
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
 		Self {
-			#[cfg(not(target_arch = "wasm32"))]
 			image_loader: crate::image_loader::ImageLoader::new(
 				services.clone(),
 				Arc::new(crate::time::RealTimer),
@@ -1138,7 +1136,6 @@ impl SigningHostRuntime {
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn load_image(
 		&self,
 		reference: crate::ImageReference,
