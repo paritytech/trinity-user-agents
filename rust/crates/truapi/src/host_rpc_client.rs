@@ -42,13 +42,17 @@ use crate::subscription::Spawner;
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
 
-/// How long a request may wait on a connection that delivers no frame at all.
+/// How long a request may wait on a connection that delivers nothing at all.
 ///
 /// The host notices a dead socket only when a ping goes unanswered, which can
 /// take most of a minute, and every request sent on it meanwhile hangs. One
 /// frame holds back every answer behind it, so the bound outlasts the largest
 /// frame on a slow link: the 1.3 MB runtime metadata of Asset Hub takes about
-/// 14 s at 780 kbps, and two such frames sharing that link take 27 s.
+/// 14 s at 780 kbps, and two such frames sharing that link take 27 s. On a
+/// connection that reports a frame still arriving
+/// ([`JsonRpcConnection::mid_message_silence`]), its bytes count too, so there a
+/// larger one, such as a Bulletin block body, gets as long as its bytes keep
+/// coming.
 const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
 const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 
@@ -240,7 +244,7 @@ impl HostRpcClient {
 	/// Wrap `connection` and start the response pump on `spawner`.
 	///
 	/// The pump also closes the connection once a request has waited out a
-	/// silence deadline with no frame arriving, so the requests on a dead socket
+	/// silence deadline with nothing arriving, so the requests on a dead socket
 	/// fail and the next caller can open a new one.
 	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
 		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
@@ -518,8 +522,9 @@ impl HostRpcClientInner {
 		}
 	}
 
-	/// Whether a request has waited out the silence deadline with no frame
-	/// arriving since it was sent.
+	/// Whether a request has waited out the silence deadline with nothing
+	/// arriving since it was sent: no frame, and no byte of a frame still
+	/// arriving where the connection reports one.
 	fn silent_past_deadline(&self, now: Instant) -> bool {
 		let oldest_sent_at =
 			self.pending.lock().unwrap().values().map(|request| request.sent_at).min();
@@ -527,7 +532,9 @@ impl HostRpcClientInner {
 			return false;
 		};
 		let silent_since = oldest_sent_at.max(*self.last_frame_at.lock().unwrap());
-		now.saturating_duration_since(silent_since) >= self.silence_deadline
+		let no_frame_for = now.saturating_duration_since(silent_since);
+		let no_byte_for = self.connection.mid_message_silence().unwrap_or(no_frame_for);
+		no_frame_for.min(no_byte_for) >= self.silence_deadline
 	}
 
 	fn close_with_error(&self, error: RpcError) {
@@ -1266,6 +1273,149 @@ mod tests {
 			.map(|wait| client.inner.silent_past_deadline(sent_at + wait));
 
 		assert_eq!(tripped, [false, true]);
+	}
+
+	/// A connection with a frame on its way whose last byte came `no_byte_for`
+	/// ago.
+	struct DownloadingConnection {
+		no_byte_for: Duration,
+	}
+
+	impl JsonRpcConnection for DownloadingConnection {
+		fn send(&self, _request: String) {}
+
+		fn responses(&self) -> BoxStream<'static, String> {
+			futures::stream::pending().boxed()
+		}
+
+		fn mid_message_silence(&self) -> Option<Duration> {
+			Some(self.no_byte_for)
+		}
+
+		fn close(&self) {}
+	}
+
+	/// A frame larger than the deadline, such as a Bulletin block body on a slow
+	/// link, keeps the request waiting while its bytes arrive. A connection
+	/// whose bytes stopped is still closed at the deadline.
+	#[test]
+	fn bytes_still_arriving_keep_a_request_waiting() {
+		let sent_at = Instant::now();
+		let tripped = [Duration::from_secs(1), REQUEST_SILENCE_DEADLINE].map(|no_byte_for| {
+			let client = HostRpcClient::new(
+				Arc::new(DownloadingConnection { no_byte_for }),
+				Arc::new(|_| {}),
+			);
+			*client.inner.last_frame_at.lock().unwrap() = sent_at;
+			waiting_request(&client, sent_at);
+			client.inner.silent_past_deadline(sent_at + REQUEST_SILENCE_DEADLINE * 2)
+		});
+
+		assert_eq!(tripped, [false, true]);
+	}
+
+	/// The node side of a loopback WebSocket, past the client's first request,
+	/// and that request's id. A test answers by writing raw frames to the socket,
+	/// so a frame can arrive slowly, or control frames on their own.
+	async fn loopback_node(
+		listener: tokio::net::TcpListener,
+	) -> (tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, Value) {
+		use tokio_tungstenite::tungstenite::Message;
+
+		let (socket, _) = listener.accept().await.expect("the client connects");
+		let mut node = tokio_tungstenite::accept_async(socket).await.expect("handshake");
+		let Some(Ok(Message::Text(request))) = node.next().await else {
+			panic!("the client sent no request");
+		};
+		let request: Value = serde_json::from_str(&request).expect("the request is JSON");
+		(node, request["id"].clone())
+	}
+
+	/// A client over the WebSocket transport the CLI uses, to the node at
+	/// `address`.
+	async fn loopback_client(
+		address: std::net::SocketAddr,
+		silence_deadline: Duration,
+	) -> HostRpcClient {
+		use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
+
+		let url = format!("ws://{address}").parse().expect("loopback URL");
+		let connection = EmbeddedChainProvider::builder()
+			.chain([7; 32], ChainSource::rpc_node(url))
+			.build()
+			.connect([7; 32])
+			.await
+			.expect("the loopback node accepts");
+		let spawner: Spawner = Arc::new(|future| {
+			tokio::spawn(future);
+		});
+		HostRpcClient::with_silence_deadline(Arc::from(connection), spawner, silence_deadline)
+	}
+
+	/// A server's header for an unmasked text frame of `length` bytes, in the
+	/// two-byte length form.
+	fn text_frame_header(length: usize) -> Vec<u8> {
+		let length = u16::try_from(length).expect("the test frame fits a two-byte length");
+		assert!(length > 125, "a shorter frame takes the one-byte length form");
+		[[0x81, 126].as_slice(), &length.to_be_bytes()].concat()
+	}
+
+	/// A frame that takes longer than the deadline to arrive, as a Bulletin block
+	/// body does on a slow link, still answers its request while its bytes keep
+	/// coming.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn a_frame_slower_than_the_deadline_still_answers() {
+		use tokio::io::AsyncWriteExt;
+
+		const RESULT_BYTES: usize = 48 * 1024;
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("loopback bind");
+		let address = listener.local_addr().expect("listener address");
+		tokio::spawn(async move {
+			let (mut node, id) = loopback_node(listener).await;
+			let result = "b".repeat(RESULT_BYTES);
+			let response = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+			let frame = [text_frame_header(response.len()), response.into_bytes()].concat();
+			for chunk in frame.chunks(8 * 1024) {
+				node.get_mut().write_all(chunk).await.expect("the client is still reading");
+				tokio::time::sleep(Duration::from_millis(250)).await;
+			}
+		});
+		let rpc = RpcClient::new(loopback_client(address, Duration::from_millis(600)).await);
+
+		let answered = rpc
+			.request::<String>("chain_getBlock", rpc_params![])
+			.await
+			.map(|result| result.len())
+			.map_err(|error| error.to_string());
+		assert_eq!(answered, Ok(RESULT_BYTES));
+	}
+
+	/// Keepalive frames are no frame on its way: a request the node never answers
+	/// still fails at the deadline while pings and pongs keep arriving.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn keepalive_frames_do_not_keep_an_unanswered_request_waiting() {
+		use tokio::io::AsyncWriteExt;
+
+		const PONG_THEN_PING: [u8; 4] = [0x8a, 0, 0x89, 0];
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("loopback bind");
+		let address = listener.local_addr().expect("listener address");
+		tokio::spawn(async move {
+			let (mut node, _id) = loopback_node(listener).await;
+			while node.get_mut().write_all(&PONG_THEN_PING).await.is_ok() {
+				tokio::time::sleep(Duration::from_millis(100)).await;
+			}
+		});
+		let rpc = RpcClient::new(loopback_client(address, Duration::from_millis(600)).await);
+		let request = rpc.request::<Value>("chain_getBlock", rpc_params![]);
+
+		let failure = tokio::time::timeout(Duration::from_secs(10), request)
+			.await
+			.expect("pings and pongs kept a request the node never answers waiting")
+			.expect_err("the node never answers");
+		assert!(
+			failure.to_string().contains("no frame for 600ms while a request waited"),
+			"unexpected failure: {failure}"
+		);
 	}
 
 	/// A quiet connection with nothing outstanding is idle rather than dead,

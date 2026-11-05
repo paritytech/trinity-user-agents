@@ -63,9 +63,15 @@ pub fn set_log_level(level: &str) {
 }
 
 /// Collects genesis-hash to chain-source registrations from JS.
+///
+/// The built provider resolves an unregistered genesis from the bundled catalog,
+/// unless a remote node was registered with `addRpcChain`.
 #[wasm_bindgen]
 pub struct ChainProviderBuilder {
 	inner: Option<EmbeddedChainProviderBuilder>,
+	/// Cleared by the first `addRpcChain`.
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 #[wasm_bindgen]
@@ -73,12 +79,17 @@ impl ChainProviderBuilder {
 	/// Create an empty builder.
 	#[wasm_bindgen(constructor)]
 	pub fn new() -> Self {
-		ChainProviderBuilder { inner: Some(EmbeddedChainProviderBuilder::new()) }
+		ChainProviderBuilder {
+			inner: Some(EmbeddedChainProviderBuilder::new()),
+			#[cfg(feature = "networks")]
+			catalog: true,
+		}
 	}
 
 	/// Register a remote JSON-RPC node for the chain identified by the
 	/// `0x`-prefixed genesis hash. A later registration for the same hash
-	/// replaces the earlier one.
+	/// replaces the earlier one, and the built provider no longer resolves
+	/// other genesis hashes from the catalog.
 	#[wasm_bindgen(js_name = addRpcChain)]
 	pub fn add_rpc_chain(&mut self, genesis_hash: &str, url: &str) -> Result<(), JsError> {
 		let genesis = parse_genesis(genesis_hash)?;
@@ -89,6 +100,10 @@ impl ChainProviderBuilder {
 			.take()
 			.ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
 		self.inner = Some(builder.chain(genesis, ChainSource::rpc_node(url)));
+		#[cfg(feature = "networks")]
+		{
+			self.catalog = false;
+		}
 		Ok(())
 	}
 
@@ -214,6 +229,8 @@ impl ChainProviderBuilder {
 			.inner
 			.take()
 			.ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
+		#[cfg(feature = "networks")]
+		let builder = if self.catalog { builder.catalog() } else { builder };
 		Ok(ChainProviderHandle {
 			inner: Arc::new(builder.build()),
 			#[cfg(feature = "smoldot")]
@@ -335,6 +352,10 @@ impl ChainProviderHandle {
 			)
 			.await
 			{
+				futures::future::Either::Left((
+					Err(error @ crate::ProviderError::UnknownGenesis { .. }),
+					_,
+				)) => return Err(error.into()),
 				futures::future::Either::Left((Err(error), _)) => {
 					tracing::warn!(
 						reason = %error,
@@ -369,7 +390,8 @@ impl ChainProviderHandle {
 	/// chain resumes from it. Resolves with whether a blob is now in hand.
 	///
 	/// Call this before connecting. The store is read at most once per chain,
-	/// because only the first add of a chain consumes a blob.
+	/// because only the first add of a chain consumes a blob. Rejects for a
+	/// chain this provider cannot connect to, as `connect` does.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = loadDatabase)]
 	pub async fn load_database(&self, genesis_hash: &str) -> Result<bool, JsError> {
@@ -814,9 +836,10 @@ mod tests {
 	/// so rather than quietly never warming up.
 	#[wasm_bindgen_test]
 	async fn without_storage_the_database_calls_fail() {
-		let mut builder = ChainProviderBuilder::new();
-		let provider = builder.build().expect("an empty builder builds");
 		let genesis = format!("0x{}", "11".repeat(32));
+		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
+		let provider = builder.build().expect("builds");
 
 		assert!(
 			provider.load_database(&genesis).await.is_err(),
@@ -836,6 +859,7 @@ mod tests {
 		let genesis = format!("0x{}", "22".repeat(32));
 
 		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 		builder
 			.set_storage(recording_client(std::rc::Rc::clone(&calls)))
 			.expect("the client has load and save");
@@ -848,6 +872,47 @@ mod tests {
 		assert_eq!(calls.borrow().as_slice(), [format!("load {genesis}")]);
 	}
 
+	/// The first `addRpcChain` turns the catalog off. A host that mixes remote
+	/// nodes with bundled networks relies on that: a bundled chain it did not
+	/// register is refused rather than started on the light client, and one
+	/// that `addNetwork` registered first is still served.
+	///
+	/// `loadDatabase` refuses a chain `connect` would refuse, without starting
+	/// anything, so it stands in for `connect` here.
+	#[cfg(feature = "networks")]
+	#[wasm_bindgen_test]
+	async fn the_first_add_rpc_chain_turns_the_catalog_off() {
+		let paseo = ChainProviderBuilder::new().add_network("paseo-next-v2").expect("bundled");
+		let previewnet = ChainProviderBuilder::new().add_network("previewnet").expect("bundled");
+		let remote_people = |builder: &mut ChainProviderBuilder| {
+			builder
+				.add_rpc_chain(&paseo.people(), "ws://people.invalid")
+				.expect("registers")
+		};
+
+		let catalog_only = ChainProviderBuilder::new();
+		let mut remote_only = ChainProviderBuilder::new();
+		remote_people(&mut remote_only);
+		let mut network_then_remote = ChainProviderBuilder::new();
+		network_then_remote.add_network("paseo-next-v2").expect("bundled");
+		remote_people(&mut network_then_remote);
+
+		let mut served = Vec::new();
+		for mut builder in [catalog_only, remote_only, network_then_remote] {
+			builder
+				.set_storage(recording_client(std::rc::Rc::default()))
+				.expect("the client has load and save");
+			let provider = builder.build().expect("builds");
+			let mut relays = Vec::new();
+			for relay in [paseo.relay(), previewnet.relay()] {
+				relays.push(provider.load_database(&relay).await.is_ok());
+			}
+			served.push(relays);
+		}
+
+		assert_eq!(served, [[true, true], [false, false], [true, false]]);
+	}
+
 	/// A seeded blob is used without consulting the client at all.
 	#[wasm_bindgen_test]
 	async fn a_seeded_blob_beats_the_client() {
@@ -855,6 +920,7 @@ mod tests {
 		let genesis = format!("0x{}", "33".repeat(32));
 
 		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 		builder
 			.set_storage(recording_client(std::rc::Rc::clone(&calls)))
 			.expect("the client has load and save");
