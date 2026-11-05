@@ -279,6 +279,7 @@
     <string name="product_bot_management_card_id_hint">Pocket card id (optional)</string>
     <string name="product_bot_management_card_title_hint">Pocket card title</string>
     <string name="product_bot_management_preview_url_hint">Pocket card face URL</string>
+    <string name="product_bot_management_back_url_hint">Pocket card back face URL (optional)</string>
     <string name="product_bot_management_app_url_hint">App URL</string>
     <string name="product_bot_management_face_away_label">Open with the face away</string>
     <string name="product_bot_management_name_hint">product%1$s</string>

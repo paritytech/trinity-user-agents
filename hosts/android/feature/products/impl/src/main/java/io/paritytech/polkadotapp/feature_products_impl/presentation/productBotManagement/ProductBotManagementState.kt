@@ -29,6 +29,7 @@ sealed interface ProductDialogState {
         val cardId: String = "",
         val cardTitle: String = "",
         val previewUrl: String = "",
+        val backUrl: String = "",
         // A loopback page the product shows instead of its published app.
         val appUrl: String = "",
         val openWithFaceAway: Boolean = false,

@@ -217,9 +217,36 @@ class ManifestParserTest {
         publishesNoCards(worker("""{}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":""}]}"""))
+        // Gson's string adapter would read a number as "5", so a number has to be refused, not read.
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":5}]}"""))
         // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
         publishesNoCards(
             worker("""{"cards":[{"id":"a","title":"A","preview":"a.json"},{"id":"b","title":"B","preview":"b.json","faceShown":"no"}]}""")
+        )
+    }
+
+    private fun cardOf(cardJson: String): PocketCardDefinition? {
+        val worker = parser.parseExecutable(
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
+               "pocket":{"cards":[$cardJson]}}""",
+            ExecutableKind.WORKER,
+            host("worker.coinflip.dot"),
+        ).getOrNull() as? ProductExecutable.Worker
+
+        return worker?.pocketCards?.singleOrNull()
+    }
+
+    // A back is what lets a card turn, so only a card that names one gets it, and only from its archive.
+    @Test
+    fun `a card has a back only when it names one in its archive`() {
+        assertEquals(
+            listOf(null, null, PocketCardPreview.Archive("back.json")),
+            listOf(
+                cardOf("""{"id":"a","title":"A","preview":"a.json"}""")?.back,
+                cardOf("""{"id":"a","title":"A","preview":"a.json","back":null}""")?.back,
+                cardOf("""{"id":"a","title":"A","preview":"a.json","back":"back.json"}""")?.back,
+            ),
         )
     }
 
