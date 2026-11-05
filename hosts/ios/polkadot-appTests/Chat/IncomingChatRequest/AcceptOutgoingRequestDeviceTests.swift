@@ -1,6 +1,7 @@
 import CoreData
 import Foundation
 import MessageExchangeKit
+import Operation_iOS
 import Testing
 @testable import polkadot_app
 
@@ -16,21 +17,84 @@ struct AcceptOutgoingRequestDeviceTests {
     @Test func acceptanceStoresDeviceAndMarksDeliveredInOneSave() async throws {
         try await insertPendingOutgoingRequest()
 
-        try await makeService().acceptOutgoingRequest(
-            requestId,
-            remoteIncoming: nil,
-            acceptorDevice: nil,
-            peerDevice: acceptorDevice
-        )
+        try await accept()
 
         let state = try await readState()
         #expect(state.devices == [acceptorDevice])
         #expect(state.hasPendingRequest == false)
         #expect(state.messageStatus == Chat.LocalMessage.Status.outgoing(.delivered).rawValue)
     }
+
+    @Test("The acceptance is kept as the peer's message")
+    func acceptanceIsStoredAsPeerMessage() async throws {
+        try await insertPendingOutgoingRequest()
+
+        try await accept()
+
+        let acceptances = try await storedAcceptances()
+        #expect(acceptances.count == 1)
+        #expect(acceptances.first?.status == .incoming(.new))
+        #expect(acceptances.first?.content == .multiChatAccepted(.init(requestId: requestId, device: acceptorDevice)))
+    }
+
+    @Test("An acceptance the notification extension already saved from its push isn't stored twice")
+    func acceptanceSavedFromPushIsNotDuplicated() async throws {
+        try await insertPendingOutgoingRequest()
+        try await saveFromPush(acceptance)
+
+        try await accept()
+
+        #expect(try await storedAcceptances().count == 1)
+    }
+
+    @Test("Without a chat to hold the acceptance, the acceptor's device is still stored")
+    func missingChatDoesNotLoseDevice() async throws {
+        try await insertPendingOutgoingRequest(withChat: false)
+
+        try await accept()
+
+        #expect(try await readState().devices == [acceptorDevice])
+        #expect(try await storedAcceptances().isEmpty)
+    }
 }
 
 private extension AcceptOutgoingRequestDeviceTests {
+    var acceptance: Chat.RemoteMessage {
+        Chat.RemoteMessage(
+            messageId: "acceptance",
+            timestamp: 1_000,
+            versioned: .v1(.init(content: .multiChatAccepted(.init(requestId: requestId, device: acceptorDevice))))
+        )
+    }
+
+    func accept() async throws {
+        try await makeService().acceptOutgoingRequest(
+            requestId,
+            remoteIncoming: nil,
+            acceptorDevice: nil,
+            peerAcceptance: ChatRequest.PeerAcceptance(device: acceptorDevice, message: acceptance)
+        )
+    }
+
+    /// As `NewMessageHandler.save` stores a full push payload.
+    func saveFromPush(_ message: Chat.RemoteMessage) async throws {
+        let localMessage = try #require(
+            Chat.LocalMessage(remote: message, creationSource: .localDevice, status: .incoming(.new), contactId: peer)
+        )
+
+        try await ChatMessageRepositoryFactory(storageFacade: facade)
+            .createRepository(forFilter: nil)
+            .saveOperation({ [localMessage] }, { [] })
+            .asyncExecute()
+    }
+
+    func storedAcceptances() async throws -> [Chat.LocalMessage] {
+        try await ChatMessageRepositoryFactory(storageFacade: facade)
+            .createRepository(forFilter: .messageByContentType(.multiChatAccepted))
+            .fetchAllOperation(with: .init())
+            .asyncExecute()
+    }
+
     struct State {
         let devices: [Chat.PeerDevice]
         let hasPendingRequest: Bool
@@ -50,13 +114,20 @@ private extension AcceptOutgoingRequestDeviceTests {
         )
     }
 
-    func insertPendingOutgoingRequest() async throws {
+    func insertPendingOutgoingRequest(withChat: Bool = true) async throws {
         try await facade.databaseService.performWrite { [peer, requestId] context in
             let contact = CDChatContact(context: context)
             contact.identifier = peer.toHex()
             contact.username = "peer"
             contact.publicKey = Data(repeating: 1, count: 32)
             contact.ownSignKeyId = "//wallet//main"
+
+            if withChat {
+                let chat = CDChat(context: context)
+                chat.identifier = Chat.Id.person(peer).rawRepresentation
+                chat.chatType = Int16(Chat.Id.ChatType.person.rawValue)
+                chat.contact = contact
+            }
 
             let message = CDChatMessage(context: context)
             message.messageId = requestId
