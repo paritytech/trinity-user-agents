@@ -62,6 +62,9 @@ import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.RecoveryException
+import uniffi.truapi.ImageException
+import uniffi.truapi.ImageReference
+import uniffi.truapi.LoadedImage
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
@@ -1171,6 +1174,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * The image [reference] names, read from Bulletin by the core and checked against its CID and
+     * the image policy. Key a disk cache on [LoadedImage.contentKey]. Cancelling the coroutine
+     * stops the load.
+     */
+    @Throws(ImageException::class)
+    suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
 
     /**
      * The Pocket collection, pinned cards first, now and after every change. A

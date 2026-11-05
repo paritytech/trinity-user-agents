@@ -25,3 +25,28 @@ struct ScanActionTip: TabBarTip {
     var title: Text { Text(.Tips.scanTitle) }
     var message: Text? { Text(.Tips.scanMessage) }
 }
+
+/// Shown beside the Edge glow the first time the user tucks the Docklet. Not a `TabBarTip`: its rules need the bar
+/// shown, and this tip exists to be seen while the bar is tucked.
+struct DockletTuckedTip: Tip {
+    var title: Text { Text(.Tips.tuckedTitle) }
+    var message: Text? { Text(.Tips.tuckedMessage) }
+
+    var rules: [Rule] {
+        [#Rule(TabBarTips.$isUserTuckLanded) { $0 == true }]
+    }
+
+    var options: [any Option] { [MaxDisplayCount(1)] }
+}
+
+/// Shown beside the Edge glow the first time the Docklet tucks itself.
+struct DockletAutoHiddenTip: Tip {
+    var title: Text { Text(.Tips.autoHiddenTitle) }
+    var message: Text? { Text(.Tips.autoHiddenMessage) }
+
+    var rules: [Rule] {
+        [#Rule(TabBarTips.$isAutoHideLanded) { $0 == true }]
+    }
+
+    var options: [any Option] { [MaxDisplayCount(1)] }
+}
