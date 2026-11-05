@@ -10,6 +10,7 @@ use subxt_rpcs::client::RpcClient as NativeRpcClient;
 use subxt_rpcs::{
 	RpcClient as HostRpcClient,
 	client::{RpcParams, rpc_params},
+	methods::legacy::TransactionStatus,
 };
 use thiserror::Error;
 
@@ -202,7 +203,7 @@ impl RpcClient {
 		let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
 		let mut subscription = self
 			.inner
-			.subscribe::<Value>(
+			.subscribe::<TransactionStatus<String>>(
 				"author_submitAndWatchExtrinsic",
 				rpc_params![extrinsic_hex],
 				"author_unwatchExtrinsic",
@@ -228,10 +229,10 @@ impl RpcClient {
 				() = timeout => return Err(RpcError::SubmitTimeout.into()),
 			};
 			tracing::debug!(?status, "allowance extrinsic status");
-			match extrinsic_status(&status) {
+			match extrinsic_status(status) {
 				ExtrinsicStatus::Included(hash) => return Ok(hash),
 				ExtrinsicStatus::Rejected(reason) => {
-					return Err(RpcError::ExtrinsicRejected { status: reason }.into());
+					return Err(RpcError::ExtrinsicRejected { status: reason.to_owned() }.into());
 				},
 				ExtrinsicStatus::Pending => {},
 			}
@@ -242,22 +243,24 @@ impl RpcClient {
 #[derive(Debug, PartialEq)]
 enum ExtrinsicStatus {
 	Included(String),
-	Rejected(String),
+	Rejected(&'static str),
 	Pending,
 }
 
-fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
-	for key in ["finalized", "inBlock"] {
-		if let Some(hash) = status.get(key).and_then(Value::as_str) {
-			return ExtrinsicStatus::Included(hash.to_string());
-		}
+fn extrinsic_status(status: TransactionStatus<String>) -> ExtrinsicStatus {
+	match status {
+		TransactionStatus::InBlock(hash) | TransactionStatus::Finalized(hash) => {
+			ExtrinsicStatus::Included(hash)
+		},
+		TransactionStatus::Future | TransactionStatus::Ready | TransactionStatus::Broadcast(_) => {
+			ExtrinsicStatus::Pending
+		},
+		TransactionStatus::Invalid => ExtrinsicStatus::Rejected("invalid"),
+		TransactionStatus::Dropped => ExtrinsicStatus::Rejected("dropped"),
+		TransactionStatus::Usurped(_) => ExtrinsicStatus::Rejected("usurped"),
+		TransactionStatus::Retracted(_) => ExtrinsicStatus::Rejected("retracted"),
+		TransactionStatus::FinalityTimeout(_) => ExtrinsicStatus::Rejected("finalityTimeout"),
 	}
-	for key in ["invalid", "dropped", "usurped", "retracted", "finalityTimeout"] {
-		if status.get(key).is_some() {
-			return ExtrinsicStatus::Rejected(key.to_string());
-		}
-	}
-	ExtrinsicStatus::Pending
 }
 
 fn value_to_params(value: Value) -> Result<RpcParams, StatementAllowanceError> {

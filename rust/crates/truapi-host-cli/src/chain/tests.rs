@@ -72,8 +72,7 @@ async fn an_unrouted_catalog_chain_stays_on_rpc() {
 	assert_eq!(first.as_deref(), Some("open"));
 }
 
-/// Without a People route there is nothing to fall back to. Passing People's
-/// unregistered genesis on would start the light client from the catalog.
+/// Without a People route there is nothing to fall back to.
 #[tokio::test]
 async fn a_network_without_a_people_route_refuses_the_sentinel() {
 	let mut network = Network::default().config();
@@ -169,8 +168,8 @@ async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 
 	drop(provider.connect(network.people_genesis).await.expect("add People"));
 
-	let light = LightClient::shared(network.id).expect("the default network is bundled");
-	assert!(light.provider.is_connected(network.people_genesis));
+	let light = light_client(network.id).expect("the default network is bundled");
+	assert!(light.is_connected(network.people_genesis));
 }
 
 /// Every role the host says it serves has to route to that role's own chain
@@ -270,9 +269,8 @@ async fn the_light_client_reaches_paseo_next_v2() {
 		.rpc_client(network.asset_hub_genesis)
 		.await
 		.expect("connect to Asset Hub");
-	let light = LightClient::shared(network.id).expect("paseo-next-v2 is bundled");
+	let light = light_client(network.id).expect("paseo-next-v2 is bundled");
 	let state = light
-		.provider
 		.lifecycle(network.asset_hub_genesis)
 		.expect("Asset Hub is running")
 		.next()

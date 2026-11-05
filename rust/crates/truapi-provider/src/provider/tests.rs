@@ -12,12 +12,92 @@ fn unknown_genesis_is_an_error_naming_the_hash() {
 	assert!(error.to_string().contains(&"ab".repeat(32)));
 }
 
+/// The genesis hashes of the bundled Paseo Next v2 network.
+#[cfg(feature = "networks")]
+fn paseo_next_v2() -> crate::NetworkChains {
+	let (_, chains) = EmbeddedChainProvider::builder()
+		.add_network("paseo-next-v2")
+		.expect("the network is bundled");
+	chains
+}
+
+/// An unregistered chain must not start the light client from the catalog,
+/// including on a provider with nothing registered.
+#[cfg(all(feature = "ws", feature = "networks"))]
+#[test]
+fn a_provider_without_the_catalog_does_not_resolve_from_it() {
+	let catalog = paseo_next_v2();
+	let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
+	let empty = EmbeddedChainProvider::builder().build();
+	let remote = EmbeddedChainProvider::builder()
+		.chain(catalog.people, ChainSource::rpc_node(url))
+		.build();
+
+	for provider in [empty, remote] {
+		let Err(error) = futures::executor::block_on(provider.connect(catalog.relay)) else {
+			panic!("an unregistered genesis must not connect");
+		};
+		assert!(
+			matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.relay),
+			"{error}"
+		);
+		assert!(!provider.is_connected(catalog.relay), "the light client never started");
+	}
+}
+
+/// A chain `connect` would refuse is refused here too, so no stored blob is
+/// read for it.
+#[cfg(feature = "networks")]
+#[test]
+fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
+	let catalog = paseo_next_v2();
+	let store = std::sync::Arc::new(MemoryStorageClient::default());
+	for genesis in [catalog.bulletin, catalog.relay] {
+		store
+			.stored
+			.lock()
+			.expect("test store")
+			.insert(genesis, "stored-blob".to_owned());
+	}
+	let provider = EmbeddedChainProvider::builder().storage(store.clone()).build();
+
+	let Err(error) = futures::executor::block_on(provider.load_database(catalog.bulletin)) else {
+		panic!("a chain the provider cannot connect to has nothing to load");
+	};
+	assert!(
+		matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.bulletin),
+		"{error}"
+	);
+	assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+/// The native bindings register nothing and reach every chain through the
+/// catalog, so a catalog chain they never registered still loads.
+#[cfg(feature = "networks")]
+#[test]
+fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
+	let catalog = paseo_next_v2();
+	let store = std::sync::Arc::new(MemoryStorageClient::default());
+	store
+		.stored
+		.lock()
+		.expect("test store")
+		.insert(catalog.relay, "stored-blob".to_owned());
+	let provider = EmbeddedChainProvider::builder().catalog().storage(store.clone()).build();
+
+	assert!(
+		futures::executor::block_on(provider.load_database(catalog.relay))
+			.expect("the store answers")
+	);
+}
+
 /// A blob registered for a relay reaches it even when the relay is never
 /// connected directly, only brought up behind one of its parachains.
 #[cfg(feature = "smoldot")]
 #[test]
 // Without the `ws` backend the enum has a single variant, making the
 // let-else below irrefutable there.
+#[allow(irrefutable_let_patterns)]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 	use std::collections::HashMap;
 
@@ -31,10 +111,8 @@ fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 	let (genesis, source) =
 		provider.resolve_relay(&chains, RELAY).expect("the relay is registered");
 	assert_eq!(genesis, RELAY);
-	let database_content = match source {
-		ChainSource::LightClient { database_content, .. } => database_content,
-		#[cfg(feature = "ws")]
-		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
+	let ChainSource::LightClient { database_content, .. } = source else {
+		panic!("expected a LightClient source");
 	};
 	assert_eq!(database_content.as_deref(), Some("relay-blob"));
 }
@@ -99,6 +177,7 @@ impl crate::storage::StorageClient for MemoryStorageClient {
 /// A stored blob reaches the chain source the light backend is handed.
 #[cfg(feature = "smoldot")]
 #[test]
+#[allow(irrefutable_let_patterns)]
 fn a_stored_blob_seeds_a_chain() {
 	const GENESIS: [u8; 32] = [3; 32];
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
@@ -126,10 +205,8 @@ fn a_stored_blob_seeds_a_chain() {
 	);
 
 	let seeded = provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-	let database_content = match seeded {
-		ChainSource::LightClient { database_content, .. } => database_content,
-		#[cfg(feature = "ws")]
-		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
+	let ChainSource::LightClient { database_content, .. } = seeded else {
+		panic!("expected a LightClient source");
 	};
 	assert_eq!(database_content.as_deref(), Some("stored-blob"));
 	assert!(
@@ -192,6 +269,7 @@ fn persist_without_a_connection_stores_nothing() {
 #[test]
 // Without the `ws` backend the enum has a single variant, making the
 // let-else below irrefutable there.
+#[allow(irrefutable_let_patterns)]
 fn a_rust_client_is_driven_by_both_database_calls() {
 	const GENESIS: [u8; 32] = [10; 32];
 	let client = std::sync::Arc::new(MemoryStorageClient::default());
@@ -212,10 +290,8 @@ fn a_rust_client_is_driven_by_both_database_calls() {
 	assert_eq!(client.loads.load(std::sync::atomic::Ordering::Relaxed), 1);
 
 	let seeded = provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-	let database_content = match seeded {
-		ChainSource::LightClient { database_content, .. } => database_content,
-		#[cfg(feature = "ws")]
-		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
+	let ChainSource::LightClient { database_content, .. } = seeded else {
+		panic!("expected a LightClient source");
 	};
 	assert_eq!(
 		database_content.as_deref(),
@@ -348,6 +424,7 @@ fn load_database_without_storage_is_an_error_naming_what_is_missing() {
 #[test]
 // On wasm32 without the smoldot backend the enum has a single variant,
 // making the let-else irrefutable there.
+#[allow(irrefutable_let_patterns)]
 fn later_registration_wins() {
 	let first = url::Url::parse("ws://first.example").expect("static URL parses");
 	let second = url::Url::parse("ws://second.example").expect("static URL parses");

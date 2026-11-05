@@ -42,13 +42,17 @@ use crate::subscription::Spawner;
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
 
-/// How long a request may wait on a connection that delivers no frame at all.
+/// How long a request may wait on a connection that delivers nothing at all.
 ///
 /// The host notices a dead socket only when a ping goes unanswered, which can
 /// take most of a minute, and every request sent on it meanwhile hangs. One
 /// frame holds back every answer behind it, so the bound outlasts the largest
 /// frame on a slow link: the 1.3 MB runtime metadata of Asset Hub takes about
-/// 14 s at 780 kbps, and two such frames sharing that link take 27 s.
+/// 14 s at 780 kbps, and two such frames sharing that link take 27 s. On a
+/// connection that reports a frame still arriving
+/// ([`JsonRpcConnection::mid_message_silence`]), its bytes count too, so there a
+/// larger one, such as a Bulletin block body, gets as long as its bytes keep
+/// coming.
 const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
 const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 
@@ -240,7 +244,7 @@ impl HostRpcClient {
 	/// Wrap `connection` and start the response pump on `spawner`.
 	///
 	/// The pump also closes the connection once a request has waited out a
-	/// silence deadline with no frame arriving, so the requests on a dead socket
+	/// silence deadline with nothing arriving, so the requests on a dead socket
 	/// fail and the next caller can open a new one.
 	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
 		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
@@ -518,8 +522,9 @@ impl HostRpcClientInner {
 		}
 	}
 
-	/// Whether a request has waited out the silence deadline with no frame
-	/// arriving since it was sent.
+	/// Whether a request has waited out the silence deadline with nothing
+	/// arriving since it was sent: no frame, and no byte of a frame still
+	/// arriving where the connection reports one.
 	fn silent_past_deadline(&self, now: Instant) -> bool {
 		let oldest_sent_at =
 			self.pending.lock().unwrap().values().map(|request| request.sent_at).min();
@@ -527,7 +532,9 @@ impl HostRpcClientInner {
 			return false;
 		};
 		let silent_since = oldest_sent_at.max(*self.last_frame_at.lock().unwrap());
-		now.saturating_duration_since(silent_since) >= self.silence_deadline
+		let no_frame_for = now.saturating_duration_since(silent_since);
+		let no_byte_for = self.connection.mid_message_silence().unwrap_or(no_frame_for);
+		no_frame_for.min(no_byte_for) >= self.silence_deadline
 	}
 
 	fn close_with_error(&self, error: RpcError) {

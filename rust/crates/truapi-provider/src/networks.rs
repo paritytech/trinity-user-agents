@@ -113,7 +113,7 @@ type NetworkSources = (NetworkChains, Vec<([u8; 32], ChainSource)>);
 
 /// A resolved catalog network: chains keyed by genesis hash, plus the relay the
 /// queried chain syncs through (`None` when it is itself the relay).
-type ResolvedNetwork = (HashMap<[u8; 32], ChainSource>, Option<[u8; 32]>);
+pub type ResolvedNetwork = (HashMap<[u8; 32], ChainSource>, Option<[u8; 32]>);
 
 /// Genesis hashes and standalone per-chain [`ChainSource`]s of one network; the
 /// caller pairs each parachain with the network's relay genesis.

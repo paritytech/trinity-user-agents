@@ -5,7 +5,7 @@
 //! connection's response stream ends, the core's chain runtime connects again.
 
 use std::{
-	collections::{BTreeMap, HashMap, hash_map::Entry},
+	collections::BTreeMap,
 	sync::{Arc, Mutex, PoisonError},
 };
 
@@ -38,13 +38,15 @@ impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 	}
 }
 
-/// How the CLI reaches the chains.
-#[derive(Clone, ValueEnum, PartialEq, Debug, Copy)]
+/// How the CLI reaches the chains. Displayed as its `--chain-backend` value.
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum, derive_more::Display)]
 pub enum ChainBackend {
 	/// WebSocket JSON-RPC to the network's nodes.
+	#[display("rpc")]
 	Rpc,
 	/// The embedded smoldot light client, which needs no RPC node. A chain's
 	/// first request waits for it to sync.
+	#[display("light-client")]
 	LightClient,
 }
 
@@ -64,7 +66,7 @@ pub struct CliChainProvider {
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the network; see [`LightClient`].
+	/// The process's light client for the network; see [`light_client`].
 	LightClient,
 }
 
@@ -114,7 +116,7 @@ impl CliChainProvider {
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
 		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
-			LightClient::shared(self.network.id)?.wait_until_synced(chain.genesis).await?;
+			wait_until_synced(&*light_client(self.network.id)?, chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -122,10 +124,6 @@ impl CliChainProvider {
 
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
 	/// People's, and none when People is not routed either.
-	///
-	/// Only routed hashes reach the provider. Asked for any other, it would look
-	/// the hash up in its bundled catalog and start the light client, whichever
-	/// backend was selected.
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
 		let routed = |genesis| {
 			routed_endpoints(&self.network, self.live_chain_routing)
@@ -185,59 +183,37 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient => LightClient::shared(self.network.id)?.connect(chain).await,
+			Backend::LightClient => light_client(self.network.id)?.connect(chain).await,
 		}
 	}
 }
 
-/// The process's light client for one network. Each `EmbeddedChainProvider`
-/// runs its own smoldot client, so every consumer shares this one to reuse one
-/// sync and one set of peers.
-struct LightClient {
-	provider: EmbeddedChainProvider,
-	/// One idle connection per chain for the life of the process. smoldot stops
-	/// a chain once its last connection closes, and consumers connect once per
-	/// use, so without it a chain would start again with no peers.
-	kept_open: tokio::sync::Mutex<HashMap<[u8; 32], Box<dyn JsonRpcConnection>>>,
+/// The process's light client for `network`, its chains kept running between
+/// uses. Shared, because each `EmbeddedChainProvider` runs its own smoldot.
+fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
+	static CLIENTS: Mutex<BTreeMap<&str, Arc<EmbeddedChainProvider>>> = Mutex::new(BTreeMap::new());
+
+	let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
+	if let Some(client) = clients.get(network) {
+		return Ok(Arc::clone(client));
+	}
+	let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
+	let client = Arc::new(builder.keep_chains_running().build());
+	clients.insert(network, Arc::clone(&client));
+	Ok(client)
 }
 
-impl LightClient {
-	/// The light client for `network`, with every chain of that network from
-	/// `truapi-provider`'s bundled catalog registered. Smoldot starts on the
-	/// first connect.
-	fn shared(network: &'static str) -> Result<Arc<Self>, ProviderError> {
-		static CLIENTS: Mutex<BTreeMap<&str, Arc<LightClient>>> = Mutex::new(BTreeMap::new());
-
-		let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
-		if let Some(client) = clients.get(network) {
-			return Ok(Arc::clone(client));
-		}
-		let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
-		let client = Arc::new(Self { provider: builder.build(), kept_open: Default::default() });
-		clients.insert(network, Arc::clone(&client));
-		Ok(client)
-	}
-
-	async fn connect(
-		&self,
-		genesis_hash: [u8; 32],
-	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		if let Entry::Vacant(slot) = self.kept_open.lock().await.entry(genesis_hash) {
-			slot.insert(self.provider.connect(genesis_hash).await?);
-		}
-		self.provider.connect(genesis_hash).await
-	}
-
-	/// Waits until the light client has synced `genesis_hash`; see
-	/// [`synced_or_stalled`]. Connect to the chain first, since only a running
-	/// chain has a lifecycle.
-	async fn wait_until_synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
-		let relay = match self.provider.relay_of(genesis_hash) {
-			Some(relay) => self.provider.lifecycle(relay)?,
-			None => stream::empty().boxed(),
-		};
-		synced_or_stalled(genesis_hash, self.provider.lifecycle(genesis_hash)?, relay.fuse()).await
-	}
+/// Waits until `light` has synced `genesis_hash`; see [`synced_or_stalled`].
+/// Connect to the chain first, since only a running chain has a lifecycle.
+async fn wait_until_synced(
+	light: &EmbeddedChainProvider,
+	genesis_hash: [u8; 32],
+) -> Result<(), ProviderError> {
+	let relay = match light.relay_of(genesis_hash) {
+		Some(relay) => light.lifecycle(relay)?,
+		None => stream::empty().boxed(),
+	};
+	synced_or_stalled(genesis_hash, light.lifecycle(genesis_hash)?, relay.fuse()).await
 }
 
 /// Waits until the chain is synced, which smoldot reports as `Ready`. A stall of

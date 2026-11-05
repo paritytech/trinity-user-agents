@@ -78,6 +78,33 @@ fn a_chain_is_added_until_its_last_connection_closes() {
 	assert!(!provider.is_connected(RELAY_GENESIS), "close is idempotent");
 }
 
+/// A chain connected once per use would otherwise restart with no peers each
+/// time, and its relay with it.
+#[test]
+fn a_kept_chain_outlives_its_connections() {
+	let provider = EmbeddedChainProvider::builder()
+		.chain(RELAY_GENESIS, ChainSource::light_client(RELAY_SPEC).build())
+		.parachain(
+			PARACHAIN_GENESIS,
+			ChainSource::light_client(PARACHAIN_SPEC).build(),
+			RELAY_GENESIS,
+		)
+		.keep_chains_running()
+		.build();
+
+	for _ in 0..2 {
+		block_on(provider.connect(PARACHAIN_GENESIS))
+			.expect("parachain connects")
+			.close();
+	}
+
+	for genesis in [PARACHAIN_GENESIS, RELAY_GENESIS] {
+		assert!(provider.is_connected(genesis));
+		let mut lifecycle = provider.lifecycle(genesis).expect("the kept chain is running");
+		block_on(lifecycle.next()).expect("the kept chain reports its state");
+	}
+}
+
 /// The ceiling is there for a consumer that never closes what it opens, so
 /// what matters is both halves: that the connect over it is refused, and
 /// that closing one hands the slot back instead of spending it for the

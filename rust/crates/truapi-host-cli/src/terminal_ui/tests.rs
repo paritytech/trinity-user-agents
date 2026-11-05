@@ -22,6 +22,7 @@ fn lock_active_ui() -> std::sync::MutexGuard<'static, ()> {
 fn test_app() -> App {
 	App::new(
 		"testnet".to_string(),
+		ChainBackend::Rpc,
 		ProductId::for_test("playground.dot"),
 		"default".to_string(),
 		vec!["default".to_string()],
@@ -128,16 +129,16 @@ fn invalid_text_paste_explains_clipboard_and_file_recovery() {
 	let error = anyhow::anyhow!("clipboard does not contain an image");
 
 	assert_eq!(
-        (
-            pairing_image_failure(&error, true),
-            pairing_image_failure(&error, false),
-        ),
-        (
-            "clipboard does not contain an image; pasted text is not a readable image file path. Copy an image or drag an image file here."
-                .to_string(),
-            "clipboard does not contain an image".to_string(),
-        )
-    );
+            (
+                pairing_image_failure(&error, true),
+                pairing_image_failure(&error, false),
+            ),
+            (
+                "clipboard does not contain an image; pasted text is not a readable image file path. Copy an image or drag an image file here."
+                    .to_string(),
+                "clipboard does not contain an image".to_string(),
+            )
+        );
 }
 
 #[test]
@@ -463,6 +464,7 @@ fn session_prefix_enter_submits_the_typed_name() {
 fn pairing_host_status_shows_the_selected_log_level() -> Result<()> {
 	let mut app = App::new_pairing(
 		"paseo-next-v2".to_string(),
+		ChainBackend::Rpc,
 		ProductId::for_test("playground.dot"),
 		"info".to_string(),
 	);
@@ -473,7 +475,7 @@ fn pairing_host_status_shows_the_selected_log_level() -> Result<()> {
 
 	assert_eq!(
 		status,
-		" TrUAPI pairing host · 👤 disconnected · 🌐 paseo-next-v2 · 📦 playground.dot · log info"
+		" TrUAPI pairing host · 👤 disconnected · 🌐 paseo-next-v2 (rpc) · 📦 playground.dot · log info"
 	);
 	assert!(screen.contains("log info"));
 	assert!(screen.contains("/script"));
@@ -492,7 +494,7 @@ fn signing_host_status_shows_user_network_product_and_log_level() -> Result<()> 
 
 	assert_eq!(
 		status,
-		" TrUAPI signing host · 👤 alice.dot · 🌐 testnet · 📦 playground.dot · log info"
+		" TrUAPI signing host · 👤 alice.dot · 🌐 testnet (rpc) · 📦 playground.dot · log info"
 	);
 	assert!(!screen.contains("session default"));
 	Ok(())
@@ -511,6 +513,7 @@ fn changed_log_level_is_visible_in_the_status_bar() {
 fn rust_log_filter_value_is_visible_in_the_status_bar() {
 	let app = App::new(
 		"testnet".to_string(),
+		ChainBackend::Rpc,
 		ProductId::for_test("playground.dot"),
 		"default".to_string(),
 		vec!["default".to_string()],
@@ -524,6 +527,7 @@ fn rust_log_filter_value_is_visible_in_the_status_bar() {
 fn narrow_status_prioritizes_the_log_level() {
 	let app = App::new(
 		"testnet".to_string(),
+		ChainBackend::Rpc,
 		ProductId::for_test("playground.dot"),
 		"default".to_string(),
 		vec!["default".to_string()],
@@ -531,6 +535,24 @@ fn narrow_status_prioritizes_the_log_level() {
 	);
 
 	assert_eq!(line_text(header_line(&app, 10)), " log debug");
+}
+
+/// Nothing else in the UI says which backend serves the chains, so a narrow
+/// bar shortens the network name and keeps the backend whole.
+#[test]
+fn a_narrow_status_bar_keeps_the_chain_backend() {
+	let mut app = test_app();
+	app.network = "paseo-next-v2".to_string();
+	app.chain_backend = ChainBackend::LightClient;
+	app.connection = "alice.dot".to_string();
+
+	assert_eq!(
+		[80, 60].map(|width| line_text(header_line(&app, width))),
+		[
+			" 👤 alice.dot · 🌐 paseo-next-v2 (light-client) · 📦 playground.dot · log info",
+			" 👤 alice… · 🌐 paseo… (light-client) · 📦 playg… · log info",
+		]
+	);
 }
 
 #[test]

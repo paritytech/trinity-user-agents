@@ -57,7 +57,7 @@ fn every_catalog_genesis_hash_matches_its_bundled_spec() {
 				format!("0x{}", hex::encode(derived)),
 				chain.genesis_hex,
 				"the {} {} spec describes a different chain than its catalog entry claims; \
-                 set its genesis_hex to the left-hand hash",
+                     set its genesis_hex to the left-hand hash",
 				network.name,
 				service,
 			);
@@ -110,10 +110,10 @@ fn connect_resolves_network_from_genesis_alone() {
 	use crate::platform::ChainProvider;
 	use futures::{executor::block_on, stream::StreamExt};
 
-	// An empty provider — no explicit registration — still connects to a
-	// catalog chain from its genesis hash alone.
+	// A provider built with the catalog and nothing registered connects to
+	// a catalog chain from its genesis hash alone.
 	let relay = genesis(&CATALOG[0].relay).expect("catalog genesis parses");
-	let provider = crate::EmbeddedChainProvider::builder().build();
+	let provider = crate::EmbeddedChainProvider::builder().catalog().build();
 	let connection = block_on(provider.connect(relay))
 		.expect("catalog resolves the relay genesis without registration");
 	let mut responses = connection.responses();
