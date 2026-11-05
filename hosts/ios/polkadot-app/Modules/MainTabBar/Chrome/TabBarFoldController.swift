@@ -32,10 +32,10 @@ final class TabBarFoldController {
     private var autoHideTask: Task<Void, Never>?
     /// The kind of tuck whose settle is running. It is announced when the settle lands tucked.
     private var pendingTuckKind: DockletTuckKind?
-    /// The nudge that plays once per session after the first tuck lands.
-    private var nudge = DockletNudge()
-    /// The wake-up that starts the nudge after its delay.
-    private var nudgeTask: Task<Void, Never>?
+    /// The peek that plays once per session after the first tuck lands.
+    private var peek = DockletPeek()
+    /// The wake-up that starts the peek after its delay.
+    private var peekTask: Task<Void, Never>?
     /// A finger is on the bar, from the start of a drag to its release.
     private var isDragging = false
     private var displayLink: CADisplayLink?
@@ -63,7 +63,7 @@ final class TabBarFoldController {
             foldAnimator?.cancelInPlace()
             displayLink?.invalidate()
             autoHideTask?.cancel()
-            nudgeTask?.cancel()
+            peekTask?.cancel()
         }
     }
 
@@ -105,7 +105,7 @@ final class TabBarFoldController {
         isTucked = state == .tucked
         stopSettling()
         cancelFoldAnimator()
-        cancelNudge()
+        cancelPeek()
         motion.snap(to: state == .tucked ? .tucked : .shown)
         syncContentFade()
         writeTransform(pose(for: state))
@@ -183,8 +183,11 @@ final class TabBarFoldController {
         writeTransform(dockletTransform())
     }
 
-    /// Feeds a touch to the auto-hide. A touch on the Docklet cancels a pending outside-touch tuck.
+    /// Feeds a touch to the auto-hide. A touch on the Docklet cancels a pending outside-touch tuck and the peek.
     func recordTouch(isOnDocklet: Bool) {
+        if isOnDocklet {
+            cancelPeek()
+        }
         autoHide.touch(isOnDocklet: isOnDocklet, at: CACurrentMediaTime())
         rescheduleAutoHide()
     }
@@ -240,7 +243,7 @@ private extension TabBarFoldController {
         state = newState
         isTucked = newState == .tucked
         if newState != .tucked {
-            cancelNudge()
+            cancelPeek()
         }
         outputs.state(newState)
         if newState != .shown {
@@ -303,7 +306,7 @@ private extension TabBarFoldController {
         selectionFeedback.prepare()
         cancelFoldAnimator()
         stopSettling()
-        cancelNudge()
+        cancelPeek()
         pendingTuckKind = nil
         isDragging = true
         rescheduleAutoHide()
@@ -340,13 +343,13 @@ private extension TabBarFoldController {
         if let haptic {
             playHaptic(haptic)
         }
-        if nudge.isOver(at: CACurrentMediaTime()) {
-            nudge.stop()
+        if peek.isOver(at: CACurrentMediaTime()) {
+            peek.stop()
         }
         if wasSettling, !motion.isSettling {
             settleLanded()
         }
-        if !motion.isSettling, !nudge.isPlaying {
+        if !motion.isSettling, !peek.isPlaying {
             stopSettling()
         }
     }
@@ -394,7 +397,7 @@ private extension TabBarFoldController {
         return motion.transform(
             geometry: geometry,
             anchor: CGPoint(x: bounds.midX, y: bounds.midY),
-            nudgeInset: nudge.inset(at: CACurrentMediaTime())
+            progressDip: peek.progressDip(at: CACurrentMediaTime())
         )
     }
 
@@ -418,36 +421,36 @@ private extension TabBarFoldController {
         rescheduleAutoHide()
     }
 
-    /// A settle has landed. A tuck that lands tucked is announced, and the session's first one arms the nudge.
+    /// A settle has landed. A tuck that lands tucked is announced, and the session's first one arms the peek.
     func settleLanded() {
         if let kind = pendingTuckKind, state == .tucked {
             outputs.tuckLanded(kind)
-            armNudge()
+            armPeek()
         }
         pendingTuckKind = nil
         rescheduleAutoHide()
     }
 
-    func armNudge() {
-        guard !isReduceMotionEnabled, nudge.arm() else {
+    func armPeek() {
+        guard !isReduceMotionEnabled, peek.arm() else {
             return
         }
-        nudgeTask = Task.delayed(by: DockletNudge.delaySeconds) { [weak self] in
-            self?.startNudge()
+        peekTask = Task.delayed(by: DockletPeek.delaySeconds) { [weak self] in
+            self?.startPeek()
         }
     }
 
-    func startNudge() {
-        nudgeTask = nil
-        nudge.start(at: CACurrentMediaTime())
+    func startPeek() {
+        peekTask = nil
+        peek.start(at: CACurrentMediaTime())
         startSettling()
     }
 
-    /// Ends the nudge, including one still waiting for its delay. An armed nudge never plays again.
-    func cancelNudge() {
-        nudgeTask?.cancel()
-        nudgeTask = nil
-        nudge.stop()
+    /// Ends the peek, including one still waiting for its delay. An armed peek never plays again.
+    func cancelPeek() {
+        peekTask?.cancel()
+        peekTask = nil
+        peek.stop()
     }
 
     /// Cancels the pending wake-up and, unless a blocker holds, sleeps one wake-up until the auto-hide deadline.
