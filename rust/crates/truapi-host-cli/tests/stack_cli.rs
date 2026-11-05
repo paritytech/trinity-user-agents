@@ -236,6 +236,127 @@ fn bundle_refuses_an_unsigned_stack() {
 	assert!(stderr(&output).contains("signed stack"), "{}", stderr(&output));
 }
 
+/// With `--skip-same-projection`, a bundled copy changes only when a field truapi-host reads,
+/// the generation or the validity window does, so a republish that raises only `sequence`
+/// leaves it in place. Without it, other hosts' build steps get every accepted copy, since
+/// they read fields truapi-host does not.
+#[test]
+fn test_bundle_skip_same_projection() {
+	let dir = tempfile::tempdir().unwrap();
+	let key_file = dir.path().join("key");
+	let key = stdout(&stack(&["keygen", "--out", key_file.to_str().unwrap()]))
+		.trim()
+		.to_owned();
+	let key_file = key_file.to_str().unwrap();
+	let state = dir.path().join("state.json");
+	let state = state.to_str().unwrap();
+	let out = dir.path().join("bundled.json");
+	let out = out.to_str().unwrap();
+	let bundle = |document: Vec<u8>, flags: &[&str]| {
+		let url = serve_once(document);
+		let mut args = vec!["bundle", url.as_str(), "--key", &key, "--out", out];
+		args.extend_from_slice(flags);
+		stack(&args)
+	};
+	let skip = ["--skip-same-projection"];
+
+	let first = publish(dir.path(), &write_model(dir.path(), "First", None), key_file, state);
+	assert!(bundle(first.clone(), &skip).status.success());
+
+	let rename = publish(dir.path(), &write_model(dir.path(), "Rename", None), key_file, state);
+	let rename_output = bundle(rename, &skip);
+	assert!(rename_output.status.success());
+	assert!(stdout(&rename_output).contains("is current"));
+	assert_eq!(fs::read(out).unwrap(), first);
+
+	let far_future = Some(4_000_000_000);
+	let expiry_model = write_model(dir.path(), "Expiry", far_future);
+	let expiry = publish(dir.path(), &expiry_model, key_file, state);
+	assert!(bundle(expiry.clone(), &skip).status.success());
+	assert_eq!(fs::read(out).unwrap(), expiry);
+
+	let generic_model = write_model(dir.path(), "Generic", far_future);
+	let generic = publish(dir.path(), &generic_model, key_file, state);
+	assert!(bundle(generic.clone(), &[]).status.success());
+	assert_eq!(fs::read(out).unwrap(), generic);
+
+	let site = dir.path().join("restart");
+	let restart_output = stack(&[
+		"publish",
+		&write_model(dir.path(), "Restart", None),
+		"--generation",
+		"g2",
+		"--out",
+		site.to_str().unwrap(),
+		"--signing-key-file",
+		key_file,
+		"--state",
+		state,
+	]);
+	assert!(restart_output.status.success());
+	let new_generation = fs::read(site.join(".well-known/trinity-stack.json")).unwrap();
+	assert!(bundle(new_generation.clone(), &skip).status.success());
+	assert_eq!(fs::read(out).unwrap(), new_generation);
+}
+
+/// Every account derives under the TLD, so `bundle` rejects a copy that changes it, also when
+/// the existing copy was signed with another key or cannot be read at all.
+#[test]
+fn test_bundle_tld_pin() {
+	let dir = tempfile::tempdir().unwrap();
+	let keygen = |file: &str| {
+		let path = dir.path().join(file);
+		let key = stdout(&stack(&["keygen", "--out", path.to_str().unwrap()])).trim().to_owned();
+		(key, path.to_str().unwrap().to_owned())
+	};
+	let (key, key_file) = keygen("key");
+	let (_, other_key_file) = keygen("other-key");
+	let state = dir.path().join("state.json");
+	let state = state.to_str().unwrap();
+	let out = dir.path().join("bundled.json");
+	let out = out.to_str().unwrap();
+	let bundle =
+		|document: Vec<u8>| stack(&["bundle", &serve_once(document), "--key", &key, "--out", out]);
+	let other_tld_model = |name: &str| {
+		let path = write_model(dir.path(), name, None);
+		let mut model: serde_json::Value =
+			serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+		model["tld"] = "other".into();
+		fs::write(&path, model.to_string()).unwrap();
+		path
+	};
+
+	let first = publish(dir.path(), &write_model(dir.path(), "First", None), &key_file, state);
+	assert!(bundle(first.clone()).status.success());
+	let tld_change = publish(dir.path(), &other_tld_model("Move"), &key_file, state);
+	let tld_change_output = bundle(tld_change.clone());
+	assert!(!tld_change_output.status.success());
+	assert!(stderr(&tld_change_output).contains("changes every account"));
+	assert!(stderr(&tld_change_output).contains(out));
+	assert_eq!(fs::read(out).unwrap(), first);
+
+	let other_state = dir.path().join("other-state.json");
+	let rotation = publish(
+		dir.path(),
+		&other_tld_model("Rotation"),
+		&other_key_file,
+		other_state.to_str().unwrap(),
+	);
+	fs::write(out, &rotation).unwrap();
+	let next = publish(dir.path(), &write_model(dir.path(), "Next", None), &key_file, state);
+	let rotation_output = bundle(next);
+	assert!(!rotation_output.status.success());
+	assert!(stderr(&rotation_output).contains("changes every account"));
+	assert_eq!(fs::read(out).unwrap(), rotation);
+
+	fs::write(out, b"not json").unwrap();
+	let unreadable_output = bundle(tld_change);
+	assert!(!unreadable_output.status.success());
+	assert!(stderr(&unreadable_output).contains("cannot read the tld"));
+	assert!(stderr(&unreadable_output).contains("on purpose"));
+	assert_eq!(fs::read(out).unwrap(), b"not json");
+}
+
 /// Runs `truapi-host --stack <stack> network-check [args]` with no routing variable inherited.
 fn network_check(stack: &str, args: &[&str]) -> Output {
 	let mut command = vec!["--stack", stack, "network-check"];
@@ -463,4 +584,51 @@ fn test_local_network_check() {
 	assert!(
 		message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("HOST_CLI_PEOPLE_WS")
 	);
+}
+
+/// An HTTPS proxy on a loopback port that counts the connections it receives and closes each
+/// one, so a descriptor fetch through it fails after the count.
+fn spawn_counting_proxy() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+	let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+	let url = format!("http://{}", listener.local_addr().unwrap());
+	let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+	let thread_count = count.clone();
+	thread::spawn(move || {
+		for socket in listener.incoming() {
+			thread_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+			drop(socket);
+		}
+	});
+	(url, count)
+}
+
+/// A local network replaces every route, so the built-in network comes from the bundled copy
+/// and its published descriptor is not fetched.
+#[test]
+fn test_local_network_without_descriptor_fetch() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("local-network.json");
+	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
+	let local = serde_json::json!({
+		"network": "previewnet",
+		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
+		"people": chain(1, "11"),
+		"asset_hub": chain(2, "22"),
+		"bulletin": chain(3, "33"),
+	});
+	fs::write(&path, local.to_string()).unwrap();
+	let (proxy, requests) = spawn_counting_proxy();
+	let run_through_proxy = |extra: &[(&str, &str)]| {
+		let mut env = vec![("HTTPS_PROXY", proxy.as_str()), ("NO_PROXY", "")];
+		env.extend_from_slice(extra);
+		host_with_env(&["--network", "previewnet", "network-check"], &env)
+	};
+
+	assert!(run_through_proxy(&[]).status.success());
+	assert!(requests.load(std::sync::atomic::Ordering::SeqCst) > 0);
+
+	requests.store(0, std::sync::atomic::Ordering::SeqCst);
+	let local = run_through_proxy(&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path.to_str().unwrap())]);
+	assert!(local.status.success());
+	assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

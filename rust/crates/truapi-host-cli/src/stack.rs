@@ -14,17 +14,17 @@ use crossterm::style::Stylize;
 use reqwest::Url;
 use trinity_stack::{
 	DEFAULT_LINK_BASE, Descriptor, Document, Fetched, Pointer, PublishState, Rendered, Status,
-	accept, render,
+	accept, open, render,
 };
 use zeroize::Zeroizing;
 
-use crate::{platform, terminal_ui::qr_rows};
+use crate::{network::StackProjection, platform, terminal_ui::qr_rows};
 
 /// Where `publish` writes the descriptor under its output directory.
 const WELL_KNOWN: &str = ".well-known/trinity-stack.json";
 /// A local file has no URL of its own; the pointer only carries the key to check.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
-const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
 const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
 
@@ -72,7 +72,7 @@ pub enum StackCommand {
 	/// Fetch and verify a signed stack, and write the copy a host build ships.
 	///
 	/// The previous copy at `--out` counts as stored, so a rebundle never lowers
-	/// `sequence`. Refuses an expired copy.
+	/// `sequence`, and pins the `tld`. Refuses an expired copy.
 	Bundle {
 		/// A link or a URL.
 		stack: String,
@@ -82,6 +82,10 @@ pub enum StackCommand {
 		/// File to write the bundled copy to.
 		#[arg(long)]
 		out: PathBuf,
+		/// Leave `--out` untouched when the fetched copy differs from it only in
+		/// fields truapi-host does not read.
+		#[arg(long)]
+		skip_same_projection: bool,
 	},
 	/// Print the link that carries a pointer, and its QR code.
 	Link {
@@ -103,7 +107,9 @@ pub async fn run(command: StackCommand) -> Result<()> {
 			publish(&model, &generation, &out, secret, state.as_deref(), url.as_deref())
 		},
 		StackCommand::Verify { stack, key } => verify(&stack, key.as_deref()).await,
-		StackCommand::Bundle { stack, key, out } => bundle(&stack, key.as_deref(), &out).await,
+		StackCommand::Bundle { stack, key, out, skip_same_projection } => {
+			bundle(&stack, key.as_deref(), &out, skip_same_projection).await
+		},
 		StackCommand::Link { url, key } => {
 			let link =
 				Pointer::new(&url, key.as_deref()).map_err(refused)?.to_link(DEFAULT_LINK_BASE);
@@ -261,7 +267,12 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
-async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
+async fn bundle(
+	stack: &str,
+	key: Option<&str>,
+	out: &Path,
+	skip_same_projection: bool,
+) -> Result<()> {
 	let Some(pointer) = pointer_of(stack, key)?.filter(|pointer| pointer.key().is_some()) else {
 		bail!("bundle needs a signed stack: a link or URL with a key");
 	};
@@ -289,8 +300,43 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 	if accepted.stale {
 		eprintln!("warning: {} is past validUntil; its operator should republish", pointer.url());
 	}
-	write_atomically(out, &accepted.document)?;
 	let descriptor = &accepted.stack.descriptor;
+	if let Some(bytes) = previous.as_deref() {
+		let stored_document = Document::parse(bytes).map_err(|error| {
+			anyhow!(
+				"not bundled: cannot read the tld of {}: {}; remove it to bundle {} on purpose",
+				out.display(),
+				refused(error),
+				pointer.url()
+			)
+		})?;
+		let stored_descriptor = stored_document.descriptor();
+		if stored_descriptor.tld != descriptor.tld {
+			bail!(
+				"not bundled: {} changes the tld from {} to {}, which changes every account derived \
+				 under it; remove {} to bundle the new tld on purpose",
+				pointer.url(),
+				stored_descriptor.tld,
+				descriptor.tld,
+				out.display()
+			);
+		}
+		let is_current = skip_same_projection &&
+			open(bytes, &pointer).is_ok() &&
+			StackProjection::of(stored_descriptor) == StackProjection::of(descriptor) &&
+			stored_descriptor.expires_at == descriptor.expires_at &&
+			stored_descriptor.valid_until == descriptor.valid_until;
+		if is_current {
+			println!(
+				"{} is current: {} sequence {} changes no field truapi-host reads",
+				out.display(),
+				descriptor.id,
+				descriptor.sequence
+			);
+			return Ok(());
+		}
+	}
+	write_atomically(out, &accepted.document)?;
 	println!("wrote {}, {} sequence {}", out.display(), descriptor.id, descriptor.sequence);
 	Ok(())
 }
@@ -311,28 +357,42 @@ pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
 	Ok(accepted.stack.descriptor)
 }
 
+/// Why a descriptor URL served no descriptor.
+#[derive(Debug, derive_more::Display)]
+pub enum FetchError {
+	/// The server returned a status other than 2xx.
+	#[display("{_0}")]
+	Http(String),
+	/// No answer, or a body that cannot be a descriptor.
+	#[display("{_0}")]
+	Transport(String),
+}
+
 /// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
 /// rules hold for the URL the pointer names, and a redirect could lead to plain http.
-pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
+	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
 	let client = reqwest::Client::builder()
 		.timeout(timeout)
 		.redirect(reqwest::redirect::Policy::none())
 		.build()
-		.map_err(|error| error.to_string())?;
+		.map_err(transport)?;
 	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
-		true => format!("no answer within {}s", timeout.as_secs()),
-		false => error.to_string(),
+		true => FetchError::Transport(format!("no answer within {}s", timeout.as_secs())),
+		false => transport(error),
 	})?;
 	let status = response.status();
 	if status.is_redirection() {
 		let location = response.headers().get(reqwest::header::LOCATION);
 		let location = location.and_then(|value| value.to_str().ok()).unwrap_or("nowhere");
-		return Err(format!("HTTP {status} to {location}; redirects are not followed"));
+		return Err(FetchError::Http(format!(
+			"HTTP {status} to {location}; redirects are not followed"
+		)));
 	}
 	if !status.is_success() {
-		return Err(format!("HTTP {status}"));
+		return Err(FetchError::Http(format!("HTTP {status}")));
 	}
-	let too_large = || format!("larger than {MAX_DESCRIPTOR_BYTES} bytes");
+	let too_large = || FetchError::Transport(format!("larger than {MAX_DESCRIPTOR_BYTES} bytes"));
 	if response
 		.content_length()
 		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
@@ -341,7 +401,7 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
 	}
 	let mut response = response;
 	let mut body = Vec::new();
-	while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+	while let Some(chunk) = response.chunk().await.map_err(transport)? {
 		body.extend_from_slice(&chunk);
 		if body.len() > MAX_DESCRIPTOR_BYTES {
 			return Err(too_large());
@@ -392,5 +452,30 @@ mod tests {
 			pointer_of(app_link, None).unwrap().unwrap().url().as_str(),
 			"https://stack.example/s.json"
 		);
+	}
+
+	/// A server that answers with an error status is told apart from one that
+	/// does not answer, so a moved descriptor can be reported louder.
+	#[tokio::test]
+	async fn test_fetch_http_status_error() {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let url = format!("http://{}/stack.json", listener.local_addr().unwrap());
+		tokio::spawn(async move {
+			let (mut socket, _) = listener.accept().await.unwrap();
+			let mut request = [0; 1024];
+			let _ = socket.read(&mut request).await;
+			let response =
+				"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+			socket.write_all(response.as_bytes()).await.unwrap();
+		});
+		let error = fetch(&url, FETCH_TIMEOUT).await.expect_err("404 accepted");
+		assert!(matches!(&error, FetchError::Http(status) if status.contains("404")));
+
+		let closed_port_error = fetch("http://127.0.0.1:9/stack.json", FETCH_TIMEOUT)
+			.await
+			.expect_err("closed port accepted");
+		assert!(matches!(closed_port_error, FetchError::Transport(_)));
 	}
 }

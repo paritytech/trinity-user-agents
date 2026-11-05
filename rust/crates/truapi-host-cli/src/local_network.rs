@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::network::{ChainEndpoint, NetworkConfig, leak_str, route_roles};
 
-/// Env var naming the local-network JSON file; a blank value is unset.
+/// Env var with the path of the local-network JSON file; a blank value is unset.
 pub const CONFIG_ENV: &str = "HOST_CLI_LOCAL_NETWORK_CONFIG";
 
 #[derive(Deserialize)]

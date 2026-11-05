@@ -965,8 +965,13 @@ truapi-host stack verify 'polkadotapp://stack?key=0x…&url=…'   # exits non-z
 truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.json
 ```
 
-`bundle` refuses a lower `sequence` than the copy already at `--out`, and an
-expired stack. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
+`bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
+stack, and one whose `tld` differs from the copy at `--out`, also when that copy
+was signed with another key (every derived account would change; remove the copy to
+bundle a new TLD on purpose). With `--skip-same-projection`, which
+`scripts/update-stacks.sh` passes, a fetched copy that differs from the one at
+`--out` only in fields truapi-host does not read leaves it in place and reports it
+as current. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
 
 ## Statement-store allowance
 
@@ -1050,11 +1055,13 @@ A command reaches its chains in one of three ways:
   resolves one fetches the descriptor its operator publishes, verifies it against
   the stack's key, and uses it when it is newer than the signed copy this release
   ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
-  silently. When the published descriptor is newer, the CLI prints one line saying
-  that it is in use and that a later release ships it; when the stack restarted
-  from genesis the line reports that too. A published descriptor that changes the
-  stack's `tld` is not used, since every account derives under it. A stack past
-  its `expiresAt` is an error. `polkadot` stays pinned in the binary.
+  silently, and a non-2xx answer is logged as a warning. When the published
+  descriptor changes a field the CLI reads, the CLI prints one line saying that it is
+  in use and that a later release ships it; when the stack restarted from genesis the
+  line reports that too. A newer copy that changes nothing the CLI reads is used
+  without a line. A published descriptor that changes the stack's `tld` is not used,
+  since every account derives under it. A stack past its `expiresAt` is an error.
+  `polkadot` stays pinned in the binary.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork or a staging instance. It replaces
   `--network`, and the two cannot be combined; details below.
@@ -1063,7 +1070,8 @@ A command reaches its chains in one of three ways:
   genesis hash and the identity backend; see
   [`docs/local-network.md`](../../../docs/local-network.md)). It runs under the
   product namespace of `--network`, which must be a disposable-identity network,
-  and cannot be combined with `--stack`.
+  reads that network's bundled copy without fetching its descriptor, and cannot be
+  combined with `--stack`.
 
 On top of a built-in network or a stack, `HOST_CLI_PEOPLE_WS`,
 `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one chain's URL for a fork
@@ -1072,10 +1080,15 @@ value is unset. They cannot be combined with `HOST_CLI_LOCAL_NETWORK_CONFIG` or 
 light client. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
 pointing at a backend that serves the fork.
 
-Before anything runs, every endpoint a `--stack` or an override supplies is asked
-for its genesis, and one that reports a genesis other than the one it is routed as
-is an error. An endpoint an override or the local file reroutes must answer; one of
-a `--stack` that does not answer is logged and left to fail on first use.
+Before anything runs, every endpoint of a built-in stack or a `--stack` reached over
+RPC, and every endpoint an override reroutes, is asked for its genesis, and People of
+a built-in stack or a `--stack`, once its genesis matches, for its `NetworkSuffix`. An
+endpoint that reports a genesis other than the one it is routed as is an error; for a
+built-in it reports that the stack restarted from genesis and which descriptor is in
+use, after fetching the published descriptor once more when it could not be fetched
+before. A `NetworkSuffix` other than the `tld` is an error. An endpoint an override or the
+local file reroutes must answer; any other that does not answer within 3 seconds is
+logged and left to fail on first use.
 Identities on a stack or a local copy are disposable, so one whose chains carry
 Polkadot's genesis hashes, whose `tld` is `dot` or whose namespace is `polkadot` is
 refused.

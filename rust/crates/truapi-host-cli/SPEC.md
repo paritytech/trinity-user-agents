@@ -581,7 +581,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file>` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. With `--skip-same-projection`, a fetched copy whose projection (§14.1), `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1698,6 +1698,9 @@ A network other than `polkadot` comes from a Trinity stack descriptor
 | Reserved-identity suffix | `tld` |
 | `DotnsPopController` fallback | `dotns.popController`, when present |
 
+These fields and `generation` are the stack's projection. A published copy whose
+projection equals the shipped copy's makes no notice print (below).
+
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), or has a `tld` the core
 does not serve (`dot`, `paseo`, `testnet`) is an error. A stack's identities are
@@ -1710,28 +1713,45 @@ network, and `polkadot`'s namespace contains its real-identity sessions.
 copy of each in `stacks/<name>.json`, with the link that carries its pointer in
 `stacks/<name>.link`. A command that resolves a built-in fetches the published
 descriptor (3-second timeout) and runs the RFC's `accept` with the shipped copy
-as the stored one, then uses what it returns. A newer published descriptor is
-used and reported in one line on stderr with both sequences, saying it is in use
-and that a later release ships it; the line says the stack restarted from
-genesis when its `generation` changed. A published copy that changes the `tld`
-is not used, with a warning, since every account derives under it. A refused,
-rolled-back or conflicting published copy leaves the shipped copy in use with a
-warning; an unreachable one does so without a message. A result past
+as the stored one, then uses what it returns. A published descriptor that answers
+with a non-2xx HTTP status is logged as a warning with the status and URL; a
+timeout or a failed connection is not. A published descriptor whose projection
+differs from the shipped copy's is used and reported in one line on stderr with
+both sequences, saying it is in use and that a later release ships it; the line
+says the stack restarted from genesis when its `generation` changed. A newer copy
+with the same projection is used without a line. A published copy that changes
+the `tld` is not used, with a warning, since every account derives under it. A
+refused, rolled-back or conflicting published copy leaves the shipped copy in use
+with a warning; an unreachable one does so without a message. A result past
 `expiresAt` is an error, and one past `validUntil` is used with a warning.
 `--chain-backend light-client` on a built-in whose descriptor in use has genesis
 hashes other than this build's light-client chain specs fails at start, since the
 stack restarted after the specs were bundled. `scripts/update-stacks.sh` refreshes
-the shipped copies, and the weekly chain-spec workflow carries the refresh.
+the shipped copies, and the weekly chain-spec workflow carries the refresh in one
+PR with its changeset.
+
+Before a command runs, every endpoint of a stack-derived network (a built-in or a
+`--stack`) reached over RPC is asked for its genesis in parallel, and People, on
+the same connection once its genesis matches, for its `NetworkSuffix`. An
+endpoint that reports another genesis is an error; for a built-in it reports that
+the stack restarted from genesis and which descriptor is in use: the published
+one and its URL, or the bundled one because the published copy at its URL could
+not be fetched or was rejected (refused, a rollback, a conflict or a TLD change).
+When the bundled copy is in use because the published one could not be fetched,
+a failed check first fetches the published descriptor again (10-second timeout);
+the checks repeat only when that fetch puts the published copy in use, and
+otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
+that prints both. An endpoint that does not answer within 3 seconds, or a People
+chain without the storage item, is logged and left to fail on first use.
+Polkadot's pinned network and `--chain-backend light-client` are not checked.
 
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
 key; any other value is read as a local descriptor file, signed or not, with no
 key checked. A fetched stack is read with no stored copy. An unreachable stack, a
 descriptor that breaks a rule and one past `expiresAt` are errors that name the
-stack; one past `validUntil` is used with a warning. Before a command runs, each
-of the stack's three endpoints is asked for its genesis: one that reports another
-genesis is an error, and one that does not answer is logged and left to fail on
-first use. `--chain-backend light-client` is
+stack; one past `validUntil` is used with a warning. Its endpoints and People's
+`NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
 `truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
@@ -1752,7 +1772,9 @@ network's product namespace (`docs/local-network.md`). Its `network` must match
 `--network`, which must be a disposable-identity network, every field is required,
 and an invalid file is an error; blank is unset. It cannot be combined with
 `--stack` or with a `HOST_CLI_*_WS` override: the command fails with an error
-naming both.
+naming both. In this mode the built-in network comes from its bundled copy
+only, with no descriptor fetch, and only the file's endpoints are checked
+(below); People's `NetworkSuffix` is not.
 
 Neither override can be combined with `--chain-backend light-client`. Before a
 command runs, every endpoint an override reroutes is asked for its genesis and
@@ -2346,7 +2368,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies to a built-in network or a `--stack`; `HOST_CLI_LOCAL_NETWORK_CONFIG` takes precedence. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
 | `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

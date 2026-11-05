@@ -14,12 +14,18 @@ command -v "$HOST" >/dev/null || {
     exit 1
 }
 
+# A released truapi-host older than the flag rewrites every accepted copy.
+skip_flag=()
+if "$HOST" stack bundle --help | grep -q -- --skip-same-projection; then
+    skip_flag=(--skip-same-projection)
+fi
+
 failed=()
 for link_file in "$STACKS_DIR"/*.link; do
     name="$(basename "$link_file" .link)"
     echo "=== $name ==="
     if ! "$HOST" stack bundle "$(tr -d '[:space:]' <"$link_file")" \
-        --out "$STACKS_DIR/$name.json"; then
+        --out "$STACKS_DIR/$name.json" ${skip_flag[@]+"${skip_flag[@]}"}; then
         failed+=("$name")
     fi
 done

@@ -153,13 +153,41 @@ pub struct StackArg {
 	pub source: &'static str,
 }
 
-/// The endpoints checked for their genesis before a command runs.
-struct EndpointChecks {
+/// What the CLI checks against the chains before a command runs.
+struct ChainChecks {
 	/// Endpoints an override reroutes; one that does not answer is an error.
 	rerouted: Vec<&'static ChainEndpoint>,
-	/// The rest of a `--stack`'s endpoints; one that does not answer is left
-	/// to fail on first use.
+	/// The other endpoints of a stack network; one that does not answer within
+	/// [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
 	from_stack: Vec<&'static ChainEndpoint>,
+	/// For a built-in stack, the descriptor in use.
+	built_in: Option<BuiltInOrigin>,
+	/// For a stack network, the TLD People's `NetworkSuffix` must equal.
+	expected_suffix: Option<&'static str>,
+}
+
+impl ChainChecks {
+	/// Fails when an endpoint an override reroutes fails its check; otherwise
+	/// the outcome of the stack's own endpoints, which a fetch of the published
+	/// descriptor may resolve.
+	async fn verify(&self, config: &NetworkConfig) -> Result<Result<()>> {
+		let (rerouted, from_stack) = futures::join!(
+			verify_endpoints(config, &self.rerouted, Unanswered::Fail, None, self.expected_suffix),
+			verify_endpoints(
+				config,
+				&self.from_stack,
+				Unanswered::Warn,
+				self.built_in.as_ref(),
+				self.expected_suffix
+			),
+		);
+		rerouted?;
+		Ok(from_stack)
+	}
+
+	fn copy_in_use(&self) -> Option<BuiltInCopy> {
+		self.built_in.as_ref().map(|origin| origin.copy)
+	}
 }
 
 impl NetworkSource {
@@ -171,25 +199,38 @@ impl NetworkSource {
 	/// lacks a role, when a disposable-identity network carries Polkadot's
 	/// genesis hashes, TLD or namespace, when the light client cannot serve the
 	/// network, when an endpoint reports a genesis other than the one it is
-	/// routed as, and when an endpoint an override reroutes does not answer. A
-	/// built-in network whose published descriptor is unreachable runs on its
-	/// bundled copy.
+	/// routed as, when an endpoint an override reroutes does not answer, and
+	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
+	/// network whose published descriptor is unreachable runs on its bundled
+	/// copy; when that copy fails a check, the descriptor is fetched once more
+	/// and the checks repeat only when the published copy is then in use.
 	pub async fn cli_config(&self) -> Result<NetworkConfig> {
-		let (config, checks) = self.resolve_routes().await?;
-		verify_endpoint_genesis(&config, &checks.rerouted, Unanswered::Fail).await?;
-		verify_endpoint_genesis(&config, &checks.from_stack, Unanswered::Warn).await?;
+		let (config, checks) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
+		let Err(error) = checks.verify(&config).await? else { return Ok(config) };
+		if checks.copy_in_use() != Some(BuiltInCopy::Unreachable) {
+			return Err(error);
+		}
+		tracing::info!("{error}; fetching the published descriptor again");
+		let (config, checks) = self.resolve_routes(crate::stack::FETCH_TIMEOUT).await?;
+		if checks.copy_in_use() != Some(BuiltInCopy::Published) {
+			return Err(error);
+		}
+		checks.verify(&config).await??;
 		Ok(config)
 	}
 
 	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
 	/// fetched. An unreachable descriptor fails only for `--stack`.
 	pub async fn resolve(&self) -> Result<NetworkConfig> {
-		Ok(self.resolve_routes().await?.0)
+		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
 	}
 
-	/// The network and the endpoints no signed source vouches for: every
-	/// endpoint of a `--stack`, and those an override reroutes.
-	async fn resolve_routes(&self) -> Result<(NetworkConfig, EndpointChecks)> {
+	/// The network and the [`ChainChecks`] to run against its chains. A
+	/// built-in stack's published descriptor gets `fetch_timeout`.
+	async fn resolve_routes(
+		&self,
+		fetch_timeout: Duration,
+	) -> Result<(NetworkConfig, ChainChecks)> {
 		let overrides = ChainOverrides::from_env()?;
 		let override_names = overrides.env_names_in_use();
 		let local_path = crate::local_network::config_path();
@@ -200,14 +241,19 @@ impl NetworkSource {
 			local_path.is_some(),
 			self.chain_backend,
 		)?;
-		let base = match &self.stack {
-			Some(stack) => {
+		let (base, built_in) = match (&self.stack, &local_path) {
+			(Some(stack), _) => {
 				let descriptor = crate::stack::load_descriptor(&stack.value).await;
-				descriptor
+				let base = descriptor
 					.and_then(|descriptor| stack_network_config(&descriptor))
-					.map_err(|error| anyhow!("{}: {error}", stack.source))?
+					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
+				(base, None)
 			},
-			None => self.network.unwrap_or_default().resolve_built_in().await?,
+			// A local copy replaces every route, so the bundled copy is enough.
+			(None, Some(_)) => (self.network.unwrap_or_default().config(), None),
+			(None, None) => {
+				self.network.unwrap_or_default().resolve_built_in(fetch_timeout).await?
+			},
 		};
 		let mut config = apply_chain_overrides(
 			apply_backend_override(base, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
@@ -219,16 +265,36 @@ impl NetworkSource {
 		}
 		refuse_light_client(&config)?;
 		ensure_no_real_identity_values(&config)?;
-		let (rerouted, untouched) = split_rerouted(&config, &base);
-		let from_stack = if self.stack.is_some() { untouched } else { Vec::new() };
-		Ok((config, EndpointChecks { rerouted, from_stack }))
+		let checks = plan_chain_checks(&config, &base, local_path.is_some(), built_in);
+		Ok((config, checks))
+	}
+}
+
+/// The checks for `config`, resolved from `base`: endpoints `config` routes
+/// differently from `base` are rerouted. A stack network reached over RPC
+/// without a local network also has its other endpoints and People's
+/// `NetworkSuffix` checked.
+fn plan_chain_checks(
+	config: &NetworkConfig,
+	base: &NetworkConfig,
+	local_network: bool,
+	built_in: Option<BuiltInOrigin>,
+) -> ChainChecks {
+	let (rerouted, untouched) = split_rerouted(config, base);
+	let is_stack_network =
+		base.disposable_identities && !local_network && config.chain_backend == ChainBackend::Rpc;
+	ChainChecks {
+		rerouted,
+		from_stack: if is_stack_network { untouched } else { Vec::new() },
+		built_in,
+		expected_suffix: is_stack_network.then_some(config.network_suffix),
 	}
 }
 
 /// Fails when two routing sources cannot be combined: `--network` with a
 /// stack, a stack or a `HOST_CLI_*_WS` override with the local-network file,
 /// and the light client with a stack, an override or the local-network file.
-/// Each message names both sources.
+/// Each message prints both sources.
 fn ensure_sources_compatible(
 	stack: Option<&StackArg>,
 	network: Option<Network>,
@@ -312,7 +378,6 @@ impl Network {
 
 	/// The values compiled into this build, without fetching anything: a
 	/// built-in stack's bundled copy, or Polkadot's pinned values.
-	#[cfg(test)]
 	pub fn config(self) -> NetworkConfig {
 		let Some(built_in) = self.built_in_stack() else { return POLKADOT };
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
@@ -321,14 +386,24 @@ impl Network {
 	}
 
 	/// For a built-in stack, the published descriptor when it is newer than the
-	/// bundled copy, otherwise the bundled copy; Polkadot's pinned values
-	/// otherwise. Logs a notice when the published descriptor is newer.
-	async fn resolve_built_in(self) -> Result<NetworkConfig> {
-		let Some(built_in) = self.built_in_stack() else { return Ok(POLKADOT) };
+	/// bundled copy, otherwise the bundled copy, with which of the two is in
+	/// use; Polkadot's pinned values otherwise. Logs a notice when the published
+	/// descriptor changes a field the CLI reads.
+	async fn resolve_built_in(
+		self,
+		fetch_timeout: Duration,
+	) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
+		let Some(built_in) = self.built_in_stack() else { return Ok((POLKADOT, None)) };
 		let pointer = built_in.pointer();
-		let fetched = crate::stack::fetch(pointer.url().as_str(), BUILT_IN_REFRESH_TIMEOUT).await;
-		if let Err(cause) = &fetched {
-			tracing::debug!("{} stack descriptor is unreachable: {cause}", self.id());
+		let url = pointer.url().as_str();
+		let fetched = crate::stack::fetch(url, fetch_timeout).await;
+		match &fetched {
+			Err(cause @ crate::stack::FetchError::Http(_)) => tracing::warn!(
+				"the {} stack descriptor at {url} returned {cause}; using the bundled copy",
+				self.id()
+			),
+			Err(cause) => tracing::debug!("{} stack descriptor is unreachable: {cause}", self.id()),
+			Ok(_) => {},
 		}
 		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
 		let now = crate::stack::unix_now() as i64;
@@ -338,17 +413,99 @@ impl Network {
 			Some(notice) => tracing::info!("{notice}"),
 			None => {},
 		}
-		stack_config(&refresh.descriptor, self.id())
+		let origin = BuiltInOrigin { id: self.id(), url: url.to_owned(), copy: refresh.copy };
+		Ok((stack_config(&refresh.descriptor, self.id())?, Some(origin)))
 	}
 }
 
-/// The descriptor a built-in stack runs on, and the notice to print about it.
+/// Which copy of a built-in stack's descriptor a network runs on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuiltInCopy {
+	/// The published descriptor, also when it equals the bundled copy.
+	Published,
+	/// The bundled copy, because the published descriptor could not be
+	/// fetched; a later fetch may still return it.
+	Unreachable,
+	/// The bundled copy, because the published descriptor was refused, a
+	/// rollback, a conflict, or changed the TLD; fetching it again returns the
+	/// same.
+	Rejected,
+}
+
+/// The descriptor a built-in stack runs on.
+struct BuiltInOrigin {
+	id: &'static str,
+	url: String,
+	copy: BuiltInCopy,
+}
+
+/// What a genesis mismatch on a built-in stack's endpoints adds to its error.
+fn format_restart_hint(origin: &BuiltInOrigin) -> String {
+	let BuiltInOrigin { id, url, copy } = origin;
+	match copy {
+		BuiltInCopy::Published => format!(
+			"the {id} stack restarted from genesis after the published descriptor in use ({url}) \
+			 was published"
+		),
+		BuiltInCopy::Unreachable => format!(
+			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
+			 and the published copy at {url} could not be fetched"
+		),
+		BuiltInCopy::Rejected => format!(
+			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
+			 and the published copy at {url} was rejected, as the warning above reports"
+		),
+	}
+}
+
+/// Roles a stack-derived network routes, in the order [`StackProjection`] and
+/// [`stack_config`] read them.
+const ROLES: [&str; 3] = ["People", "AssetHub", "Bulletin"];
+
+/// The descriptor fields a stack-derived network is built from, and
+/// `generation`. Only a change to these makes the runtime notice print.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct StackProjection<'a> {
+	generation: &'a str,
+	tld: &'a str,
+	/// `rpc[0]` and `genesisHash` of each of [`ROLES`], when present.
+	roles: [Option<(&'a str, &'a str)>; 3],
+	dub: Option<&'a str>,
+	pop_controller: Option<&'a str>,
+}
+
+impl<'a> StackProjection<'a> {
+	pub(crate) fn of(descriptor: &'a Descriptor) -> Self {
+		Self {
+			generation: &descriptor.generation,
+			tld: &descriptor.tld,
+			roles: ROLES.map(|role| {
+				let chain = descriptor.chain(role)?;
+				Some((chain.rpc[0].as_str(), chain.genesis_hash.as_str()))
+			}),
+			dub: descriptor
+				.services
+				.iter()
+				.find(|service| service.kind == "dub")
+				.and_then(|service| service.urls.first())
+				.map(String::as_str),
+			pop_controller: descriptor
+				.dotns
+				.as_ref()
+				.and_then(|dotns| dotns.get("popController"))
+				.map(String::as_str),
+		}
+	}
+}
+
+/// The descriptor a built-in stack runs on and the notice to print about it.
 struct StackRefresh {
 	descriptor: Descriptor,
 	notice: Option<StackNotice>,
+	copy: BuiltInCopy,
 }
 
-/// A published descriptor newer than the copy this build ships.
+/// A published descriptor that changes a field the CLI reads.
 struct StackNotice {
 	id: String,
 	bundle_sequence: u32,
@@ -371,9 +528,9 @@ impl std::fmt::Display for StackNotice {
 		} else {
 			write!(
 				formatter,
-				"the published {id} stack descriptor (sequence {remote_sequence}) is newer than \
-				 the copy this truapi-host ships (sequence {bundle_sequence}) and is in use; a \
-				 later truapi-host release ships it"
+				"the published {id} stack descriptor (sequence {remote_sequence}) changes the \
+				 copy this truapi-host ships (sequence {bundle_sequence}) and is in use; a later \
+				 truapi-host release ships it"
 			)
 		}
 	}
@@ -381,8 +538,8 @@ impl std::fmt::Display for StackNotice {
 
 /// The descriptor a built-in stack runs on: `fetched` when [`accept`] takes it
 /// over `bundled` and it has the bundled copy's `tld`, otherwise `bundled`,
-/// with a notice when `fetched` is in use. Fails when that descriptor is past
-/// `expiresAt`.
+/// with a notice when the descriptor in use changes a field the CLI reads.
+/// Fails when that descriptor is past `expiresAt`.
 fn refresh_stack(
 	id: &str,
 	pointer: &Pointer,
@@ -405,30 +562,36 @@ fn refresh_stack(
 			status.code()
 		),
 	}
-	let bundle_sequence = bundled_copy.stack.descriptor.sequence;
-	let accepted = if accepted.stack.descriptor.tld == bundled_copy.stack.descriptor.tld {
-		accepted
-	} else {
+	let bundled_descriptor = &bundled_copy.stack.descriptor;
+	let is_same_tld = accepted.stack.descriptor.tld == bundled_descriptor.tld;
+	if !is_same_tld {
 		tracing::warn!(
 			"the published {id} stack descriptor changes the TLD from {} to {}, which would \
 			 change every account derived under it; using the bundled copy",
-			bundled_copy.stack.descriptor.tld,
+			bundled_descriptor.tld,
 			accepted.stack.descriptor.tld
 		);
-		bundled_copy
+	}
+	let is_projection_change = is_same_tld &&
+		StackProjection::of(&accepted.stack.descriptor) !=
+			StackProjection::of(bundled_descriptor);
+	let notice = is_projection_change.then(|| StackNotice {
+		id: id.to_owned(),
+		bundle_sequence: bundled_descriptor.sequence,
+		remote_sequence: accepted.stack.descriptor.sequence,
+		new_generation: accepted.new_generation,
+	});
+	let (accepted, copy) = match (is_same_tld, &accepted.status) {
+		(true, Status::Updated | Status::Unchanged) => (accepted, BuiltInCopy::Published),
+		(true, Status::Unreachable) => (accepted, BuiltInCopy::Unreachable),
+		(true, _) => (accepted, BuiltInCopy::Rejected),
+		(false, _) => (bundled_copy, BuiltInCopy::Rejected),
 	};
 	ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
 	if accepted.stale {
 		tracing::warn!("the {id} stack descriptor in use is past validUntil");
 	}
-	let descriptor = accepted.stack.descriptor;
-	let notice = (descriptor.sequence != bundle_sequence).then(|| StackNotice {
-		id: id.to_owned(),
-		bundle_sequence,
-		remote_sequence: descriptor.sequence,
-		new_generation: accepted.new_generation,
-	});
-	Ok(StackRefresh { descriptor, notice })
+	Ok(StackRefresh { descriptor: accepted.stack.descriptor, notice, copy })
 }
 
 /// A `--stack` descriptor's network, under the product namespace of the
@@ -445,44 +608,39 @@ fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
 
 /// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
 /// dotNS `popController` under the product namespace `id`, with disposable
-/// identities. Fails when a role is missing, when two roles share a genesis
-/// hash, and when the TLD is not one the core serves.
+/// identities, read through its [`StackProjection`]. Fails when a role is
+/// missing, when two roles share a genesis hash, and when the TLD is not one
+/// the core serves.
 fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConfig> {
-	let endpoint = |role: &str| -> Result<ChainEndpoint> {
-		let chain = descriptor
-			.chain(role)
-			.with_context(|| format!("the {} stack has no {role} chain", descriptor.id))?;
+	let projection = StackProjection::of(descriptor);
+	let endpoint = |index: usize| -> Result<ChainEndpoint> {
+		let (ws, genesis_hash) = projection.roles[index].with_context(|| {
+			format!("the {} stack has no {} chain", descriptor.id, ROLES[index])
+		})?;
 		let mut genesis = [0u8; 32];
-		hex::decode_to_slice(chain.genesis_hash.trim_start_matches("0x"), &mut genesis)
+		hex::decode_to_slice(genesis_hash.trim_start_matches("0x"), &mut genesis)
 			.expect("invalid genesisHash in a validated descriptor");
-		Ok(ChainEndpoint { genesis, ws: leak_str(&chain.rpc[0]), required_for_host: true })
+		Ok(ChainEndpoint { genesis, ws: leak_str(ws), required_for_host: true })
 	};
-	let roles = [endpoint("People")?, endpoint("AssetHub")?, endpoint("Bulletin")?];
+	let roles = [endpoint(0)?, endpoint(1)?, endpoint(2)?];
 	let network_suffix =
-		DOTNS_TLDS.iter().find(|tld| **tld == descriptor.tld).with_context(|| {
+		DOTNS_TLDS.iter().find(|tld| **tld == projection.tld).with_context(|| {
 			format!(
 				"the {} stack's tld {} is not one the core serves ({})",
 				descriptor.id,
-				descriptor.tld,
+				projection.tld,
 				DOTNS_TLDS.join(", ")
 			)
 		})?;
-	let identity_backend_base = descriptor
-		.services
-		.iter()
-		.find(|service| service.kind == "dub")
-		.and_then(|service| service.urls.first())
+	let identity_backend_base = projection
+		.dub
 		.map(|url| leak_str(&format!("{}/api/v1", url.trim_end_matches('/'))));
-	let dotns_pop_controller = descriptor
-		.dotns
-		.as_ref()
-		.and_then(|dotns| dotns.get("popController"))
-		.map(|address| {
-			let mut bytes = [0u8; 20];
-			hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
-				.expect("invalid dotns address in a validated descriptor");
-			bytes
-		});
+	let dotns_pop_controller = projection.pop_controller.map(|address| {
+		let mut bytes = [0u8; 20];
+		hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
+			.expect("invalid dotns address in a validated descriptor");
+		bytes
+	});
 	let unrouted = NetworkConfig {
 		id,
 		network_suffix,
@@ -634,31 +792,63 @@ fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
 enum Unanswered {
 	/// Fail the command.
 	Fail,
-	/// Log it and leave it to fail on first use.
+	/// Log it after at most [`BUILT_IN_REFRESH_TIMEOUT`] and leave it to fail
+	/// on first use.
 	Warn,
 }
 
+/// What an endpoint reports about its chain.
+struct EndpointReport {
+	genesis: [u8; 32],
+	/// People's `NetworkSuffix`, read only when requested and the genesis
+	/// matches the one the endpoint is routed as.
+	network_suffix: Option<Result<Vec<u8>, String>>,
+}
+
+/// The genesis `endpoint` reports and, with `read_suffix`, its
+/// `NetworkSuffix` over the same connection.
+async fn probe_endpoint(
+	config: &NetworkConfig,
+	endpoint: &'static ChainEndpoint,
+	read_suffix: bool,
+) -> Result<EndpointReport, String> {
+	use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
+	let provider = crate::chain::CliChainProvider::for_endpoint(config, endpoint);
+	let client = provider.rpc_client(endpoint.genesis).await.map_err(|error| error.to_string())?;
+	let rpc = RpcClient::new(client);
+	let genesis = fetch_genesis_hash(&rpc).await.map_err(|error| error.to_string())?;
+	let network_suffix = match read_suffix && genesis == endpoint.genesis {
+		true => Some(slot::read_network_suffix(&rpc).await.map_err(|error| error.to_string())),
+		false => None,
+	};
+	Ok(EndpointReport { genesis, network_suffix })
+}
+
 /// Fails when one of `endpoints` reports a genesis other than the one it is
-/// routed as, or does not answer with `Unanswered::Fail`.
-async fn verify_endpoint_genesis(
+/// routed as, adding the restart hint of `built_in` to the error, when People
+/// reports a `NetworkSuffix` other than `expected_suffix`, or when an endpoint
+/// does not answer with `Unanswered::Fail`. A People chain without a readable
+/// suffix is logged.
+async fn verify_endpoints(
 	config: &NetworkConfig,
 	endpoints: &[&'static ChainEndpoint],
 	unanswered: Unanswered,
+	built_in: Option<&BuiltInOrigin>,
+	expected_suffix: Option<&str>,
 ) -> Result<()> {
-	use truapi::statement_allowance as alloc;
-
 	let checks = endpoints.iter().map(|&endpoint| async move {
-		let provider = crate::chain::CliChainProvider::for_endpoint(config, endpoint);
-		let reported = async {
-			let client =
-				provider.rpc_client(endpoint.genesis).await.map_err(|error| error.to_string())?;
-			alloc::fetch_genesis_hash(&alloc::rpc::RpcClient::new(client))
-				.await
-				.map_err(|error| error.to_string())
-		}
-		.await;
-		let reported = match (reported, unanswered) {
-			(Ok(reported), _) => reported,
+		let expected_suffix = expected_suffix.filter(|_| endpoint.genesis == config.people_genesis);
+		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
+		let report = match unanswered {
+			Unanswered::Fail => probe.await,
+			Unanswered::Warn => {
+				tokio::time::timeout(BUILT_IN_REFRESH_TIMEOUT, probe).await.unwrap_or_else(|_| {
+					Err(format!("no answer within {}s", BUILT_IN_REFRESH_TIMEOUT.as_secs()))
+				})
+			},
+		};
+		let report = match (report, unanswered) {
+			(Ok(report), _) => report,
 			(Err(error), Unanswered::Fail) => {
 				bail!("cannot check the genesis of {}: {error}", endpoint.ws)
 			},
@@ -668,13 +858,32 @@ async fn verify_endpoint_genesis(
 			},
 		};
 		ensure!(
-			reported == endpoint.genesis,
-			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}",
+			report.genesis == endpoint.genesis,
+			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}{}",
 			endpoint.ws,
-			hex::encode(reported),
+			hex::encode(report.genesis),
 			config.id,
-			hex::encode(endpoint.genesis)
+			hex::encode(endpoint.genesis),
+			built_in
+				.map(|origin| format!("; {}", format_restart_hint(origin)))
+				.unwrap_or_default()
 		);
+		let (Some(expected), Some(suffix)) = (expected_suffix, report.network_suffix) else {
+			return Ok(());
+		};
+		match suffix {
+			Ok(suffix) => ensure!(
+				suffix == expected.as_bytes(),
+				"{} reports NetworkSuffix {}, but the {} stack's tld is {expected}; identities \
+				 derived under one would not match the other",
+				endpoint.ws,
+				String::from_utf8_lossy(&suffix),
+				config.id
+			),
+			Err(error) => {
+				tracing::warn!("cannot read the NetworkSuffix of {}: {error}", endpoint.ws)
+			},
+		}
 		Ok(())
 	});
 	futures::future::try_join_all(checks).await?;
@@ -1360,29 +1569,35 @@ mod tests {
 		}
 	}
 
-	/// A loopback WebSocket node that answers every request with `genesis`.
-	async fn serve_genesis(genesis: [u8; 32]) -> String {
+	/// A loopback WebSocket node that answers `chain_getBlockHash` with
+	/// `genesis` and `state_getStorage` with `network_suffix`, SCALE-encoded,
+	/// or no value.
+	async fn serve_chain(genesis: [u8; 32], network_suffix: Option<&'static str>) -> String {
 		use futures_util::{SinkExt, StreamExt};
+		use parity_scale_codec::Encode;
 		use tokio_tungstenite::tungstenite::Message;
 
 		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 			.await
 			.expect("loopback bind failed");
 		let url = format!("ws://{}", listener.local_addr().expect("no listener address"));
+		let suffix = network_suffix
+			.map(|suffix| format!("0x{}", hex::encode(suffix.as_bytes().to_vec().encode())));
 		tokio::spawn(async move {
 			loop {
 				let (socket, _) = listener.accept().await.expect("accept failed");
+				let suffix = suffix.clone();
 				tokio::spawn(async move {
 					let mut socket =
 						tokio_tungstenite::accept_async(socket).await.expect("handshake failed");
 					while let Some(Ok(Message::Text(request))) = socket.next().await {
 						let request: serde_json::Value =
 							serde_json::from_str(&request).expect("request is not JSON");
-						let response = serde_json::json!({
-							"jsonrpc": "2.0",
-							"id": request["id"],
-							"result": format!("0x{}", hex::encode(genesis)),
-						});
+						let result = match request["method"].as_str() {
+							Some("state_getStorage") => serde_json::json!(suffix),
+							_ => serde_json::json!(format!("0x{}", hex::encode(genesis))),
+						};
+						let response = serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": result });
 						if socket.send(Message::text(response.to_string())).await.is_err() {
 							break;
 						}
@@ -1402,15 +1617,63 @@ mod tests {
 		})
 	}
 
+	/// The stack on closed ports with People served by `url`.
+	fn stack_with_people_at(url: &str) -> NetworkConfig {
+		let mut descriptor = stack_on_closed_ports();
+		descriptor
+			.chains
+			.iter_mut()
+			.find(|chain| chain.role == "People")
+			.expect("People missing")
+			.rpc = vec![url.to_owned()];
+		stack_network_config(&descriptor).unwrap()
+	}
+
+	/// The stack on closed ports with a loopback People that reports its own
+	/// genesis and `network_suffix`.
+	async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> NetworkConfig {
+		let genesis = stack_network_config(&stack_on_closed_ports()).unwrap().people_genesis;
+		stack_with_people_at(&serve_chain(genesis, network_suffix).await)
+	}
+
+	async fn verify_stack_endpoints(
+		config: &NetworkConfig,
+		unanswered: Unanswered,
+		built_in: Option<&BuiltInOrigin>,
+	) -> Result<()> {
+		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
+		verify_endpoints(config, &endpoints, unanswered, built_in, Some(config.network_suffix))
+			.await
+	}
+
 	/// An endpoint that does not answer is not evidence of a wrong stack, so it
 	/// is left to fail on first use.
 	#[tokio::test]
 	async fn test_stack_endpoint_unreachable() {
 		let config = stack_network_config(&stack_on_closed_ports()).unwrap();
-		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
-		verify_endpoint_genesis(&config, &endpoints, Unanswered::Warn)
+		verify_stack_endpoints(&config, Unanswered::Warn, None)
 			.await
 			.expect("unreachable endpoint rejected");
+	}
+
+	/// An endpoint that accepts the connection and then stays silent delays a
+	/// command by at most the probe deadline.
+	#[tokio::test]
+	async fn test_silent_endpoint_deadline() {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let url = format!("ws://{}", listener.local_addr().unwrap());
+		tokio::spawn(async move {
+			let mut sockets = Vec::new();
+			while let Ok((socket, _)) = listener.accept().await {
+				sockets.push(socket);
+			}
+		});
+		let config = stack_with_people_at(&url);
+		let start = std::time::Instant::now();
+		verify_stack_endpoints(&config, Unanswered::Warn, None)
+			.await
+			.expect("silent endpoint rejected");
+		assert!(start.elapsed() < BUILT_IN_REFRESH_TIMEOUT + Duration::from_secs(2));
 	}
 
 	/// An override is the user's own reroute, so an endpoint it points to that
@@ -1418,32 +1681,128 @@ mod tests {
 	#[tokio::test]
 	async fn test_rerouted_endpoint_unreachable_error() {
 		let config = stack_network_config(&stack_on_closed_ports()).unwrap();
-		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
-		let error = verify_endpoint_genesis(&config, &endpoints, Unanswered::Fail)
+		let error = verify_stack_endpoints(&config, Unanswered::Fail, None)
 			.await
 			.expect_err("unreachable rerouted endpoint accepted");
 		assert!(error.to_string().contains("ws://127.0.0.1:"));
 	}
 
 	/// The case the endpoint check exists for: an endpoint that answers as a
-	/// different chain from the genesis the descriptor declares.
+	/// different chain from the genesis the descriptor declares. Its suffix is
+	/// not read, so a restart reports the genesis rather than the suffix of
+	/// the wrong chain.
 	#[tokio::test]
 	async fn test_stack_endpoint_genesis_mismatch() {
-		let url = serve_genesis([0x5a; 32]).await;
-		let mut descriptor = stack_on_closed_ports();
-		descriptor
-			.chains
-			.iter_mut()
-			.find(|chain| chain.role == "People")
-			.expect("People missing")
-			.rpc = vec![url.clone()];
-		let config = stack_network_config(&descriptor).unwrap();
-		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
-		let error = verify_endpoint_genesis(&config, &endpoints, Unanswered::Warn)
+		let url = serve_chain([0x5a; 32], Some("testnet")).await;
+		let config = stack_with_people_at(&url);
+		let error = verify_stack_endpoints(&config, Unanswered::Warn, None)
 			.await
 			.expect_err("wrong genesis accepted");
 		assert!(error.to_string().contains(&url));
 		assert!(error.to_string().contains("reports genesis"));
+		assert!(!error.to_string().contains("NetworkSuffix"));
+	}
+
+	/// A built-in stack whose chains restarted fails with an error that
+	/// reports the restart and points at the descriptor in use.
+	#[tokio::test]
+	async fn test_built_in_genesis_mismatch_hint() {
+		let config = stack_with_people_at(&serve_chain([0x5a; 32], None).await);
+		let origin = BuiltInOrigin {
+			id: "paseo-next-v2",
+			url: "https://stack.example/s.json".to_owned(),
+			copy: BuiltInCopy::Published,
+		};
+		let error = verify_stack_endpoints(&config, Unanswered::Warn, Some(&origin))
+			.await
+			.expect_err("wrong genesis accepted");
+		assert!(error.to_string().ends_with(&format_restart_hint(&origin)));
+	}
+
+	/// The hint tells the user which copy is in use and why, so a restart on
+	/// the bundled copy points at the published descriptor that could not be
+	/// fetched or was rejected.
+	#[test]
+	fn test_restart_hint_by_copy() {
+		let url = "https://stack.example/s.json".to_owned();
+		let published = BuiltInOrigin { id: "previewnet", url, copy: BuiltInCopy::Published };
+		assert_eq!(
+			format_restart_hint(&published),
+			"the previewnet stack restarted from genesis after the published descriptor in use \
+			 (https://stack.example/s.json) was published"
+		);
+		let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
+		assert_eq!(
+			format_restart_hint(&unreachable),
+			"the previewnet stack restarted from genesis after the bundled descriptor in use was \
+			 built, and the published copy at https://stack.example/s.json could not be fetched"
+		);
+		let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
+		assert_eq!(
+			format_restart_hint(&rejected),
+			"the previewnet stack restarted from genesis after the bundled descriptor in use was \
+			 built, and the published copy at https://stack.example/s.json was rejected, as the \
+			 warning above reports"
+		);
+	}
+
+	/// Every identity derives under the TLD, so a People chain that scopes its
+	/// contexts with another suffix is an error that prints both.
+	#[tokio::test]
+	async fn test_network_suffix_mismatch_error() {
+		let config = stack_with_people_suffix(Some("testnet")).await;
+		let error = verify_stack_endpoints(&config, Unanswered::Warn, None)
+			.await
+			.expect_err("other suffix accepted");
+		let message = error.to_string();
+		assert!(message.contains("NetworkSuffix testnet") && message.contains("tld is paseo"));
+
+		let matching = stack_with_people_suffix(Some("paseo")).await;
+		verify_stack_endpoints(&matching, Unanswered::Warn, None)
+			.await
+			.expect("matching suffix rejected");
+	}
+
+	/// A People chain without the storage item, or one that does not answer,
+	/// is left to fail on first use.
+	#[tokio::test]
+	async fn test_network_suffix_absent_or_unreachable() {
+		let absent = stack_with_people_suffix(None).await;
+		verify_stack_endpoints(&absent, Unanswered::Warn, None)
+			.await
+			.expect("absent suffix rejected");
+		let closed_port_config = stack_network_config(&stack_on_closed_ports()).unwrap();
+		verify_stack_endpoints(&closed_port_config, Unanswered::Warn, None)
+			.await
+			.expect("unreachable People rejected");
+	}
+
+	/// Built-in stacks have every endpoint and the suffix checked, as a
+	/// `--stack` does; Polkadot's pinned values, a local network and the light
+	/// client, which does not use the RPC endpoints, do not, beyond what an
+	/// override reroutes.
+	#[test]
+	fn test_chain_checks_by_source() {
+		let paseo = Network::PaseoNextV2.config();
+		let built_in = plan_chain_checks(&paseo, &paseo, false, None);
+		assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
+		assert_eq!(built_in.expected_suffix, Some("paseo"));
+
+		let polkadot = Network::Polkadot.config();
+		let polkadot_checks = plan_chain_checks(&polkadot, &polkadot, false, None);
+		assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
+		assert_eq!(polkadot_checks.expected_suffix, None);
+
+		let light_client = NetworkConfig { chain_backend: ChainBackend::LightClient, ..paseo };
+		let light_client = plan_chain_checks(&light_client, &paseo, false, None);
+		assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
+		assert_eq!(light_client.expected_suffix, None);
+
+		let overrides =
+			ChainOverrides::parse([Some("ws://127.0.0.1:9".to_string()), None, None]).unwrap();
+		let local = plan_chain_checks(&apply_chain_overrides(paseo, overrides), &paseo, true, None);
+		assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
+		assert_eq!(local.expected_suffix, None);
 	}
 
 	/// Only the endpoints an override reroutes are checked as such, even one
@@ -1498,7 +1857,7 @@ mod tests {
 	}
 
 	/// `--network` picks a built-in network and a stack any other one, and the
-	/// error names where the stack came from.
+	/// error prints where the stack came from.
 	#[test]
 	fn test_network_with_stack_error() {
 		for source in ["--stack", STACK_ENV] {
@@ -1663,18 +2022,41 @@ mod tests {
 		}
 	}
 
-	/// A newer published copy is what the network runs on, and the user learns
-	/// that it is in use ahead of the release that ships it.
+	/// A newer published copy that changes a field the CLI reads is what the
+	/// network runs on, and the user learns that it is in use ahead of the
+	/// release that ships it.
 	#[test]
 	fn test_refresh_newer_notice() {
-		let published = sign_copy(11, "g1");
-		let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&published)).unwrap();
+		let remote_copy = sign_edited(|descriptor| {
+			descriptor["sequence"] = 11.into();
+			descriptor["generation"] = "g1".into();
+			let people = descriptor["chains"]
+				.as_array_mut()
+				.unwrap()
+				.iter_mut()
+				.find(|chain| chain["role"] == "People")
+				.unwrap();
+			people["rpc"] = serde_json::json!(["wss://people.example"]);
+		});
+		let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
 		assert_eq!(refresh.descriptor.sequence, 11);
+		assert_eq!(refresh.copy, BuiltInCopy::Published);
 		let notice = refresh.notice.expect("newer copy not reported");
 		assert_eq!((notice.bundle_sequence, notice.remote_sequence), (10, 11));
 		assert!(!notice.new_generation);
 		let text = notice.to_string();
 		assert!(text.contains("10") && text.contains("11") && text.contains("in use"));
+	}
+
+	/// A republish that changes only fields the CLI does not read, such as a
+	/// higher sequence, is used without a notice.
+	#[test]
+	fn test_refresh_sequence_only_silent() {
+		let remote_copy = sign_copy(11, "g1");
+		let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
+		assert_eq!(refresh.descriptor.sequence, 11);
+		assert_eq!(refresh.copy, BuiltInCopy::Published);
+		assert!(refresh.notice.is_none());
 	}
 
 	/// The chains behind the bundled copy are gone after a restart, which the
@@ -1703,6 +2085,7 @@ mod tests {
 		assert_eq!(refresh.descriptor.sequence, 10);
 		assert_eq!(refresh.descriptor.tld, "paseo");
 		assert!(refresh.notice.is_none());
+		assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 	}
 
 	/// A signed copy with a lower sequence is a replay of an older descriptor.
@@ -1712,6 +2095,7 @@ mod tests {
 		let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&older)).unwrap();
 		assert_eq!(refresh.descriptor.sequence, 10);
 		assert!(refresh.notice.is_none());
+		assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 	}
 
 	#[test]
@@ -1719,6 +2103,7 @@ mod tests {
 		let refresh = refresh(&sign_copy(10, "g1"), Fetched::Unreachable).unwrap();
 		assert_eq!(refresh.descriptor.sequence, 10);
 		assert!(refresh.notice.is_none());
+		assert_eq!(refresh.copy, BuiltInCopy::Unreachable);
 	}
 
 	/// An expired stack has shut down, from either copy.
