@@ -18,7 +18,7 @@ class HostPageLoadedTelemetryTest {
 
     @Test
     fun `reports the page load under its session with the time since the open was requested`() {
-        val event = reported { report("session-42", HUMANITY, openRequestedAtMillis = OPEN_REQUESTED_AT) }
+        val event = reported { report("session-42", HUMANITY, OPEN_REQUESTED_AT, loaded = true) }
 
         assertEquals(
             HostEvent(
@@ -43,9 +43,16 @@ class HostPageLoadedTelemetryTest {
     }
 
     @Test
+    fun `a page whose document failed to load is reported as an error`() {
+        val event = reported { report("session-42", HUMANITY, OPEN_REQUESTED_AT, loaded = false) }
+
+        assertEquals("error", event.tags["outcome"])
+    }
+
+    @Test
     fun `the event is not built when capture drops it`() {
         HostPageLoadedTelemetry(originProvider, timeProvider, HostEventCapture { })
-            .report("session-42", HUMANITY, OPEN_REQUESTED_AT)
+            .report("session-42", HUMANITY, OPEN_REQUESTED_AT, loaded = true)
 
         verify(exactly = 0) { originProvider.current() }
         verify(exactly = 0) { timeProvider.nowMillis() }
@@ -54,7 +61,7 @@ class HostPageLoadedTelemetryTest {
     @Test
     fun `a failing capture does not reach the page load`() {
         HostPageLoadedTelemetry(originProvider, timeProvider, HostEventCapture { error("Sentry unavailable") })
-            .report("session-42", HUMANITY, OPEN_REQUESTED_AT)
+            .report("session-42", HUMANITY, OPEN_REQUESTED_AT, loaded = true)
     }
 
     private fun reported(action: HostPageLoadedTelemetry.() -> Unit): HostEvent {

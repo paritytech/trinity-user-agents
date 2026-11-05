@@ -16,13 +16,13 @@ class HostPageLoadedTelemetry @Inject internal constructor(
 ) {
     fun openRequestedAtMillis(): Long = timeProvider.nowMillis()
 
-    fun report(sessionId: String, productId: ProductId, openRequestedAtMillis: Long) {
+    fun report(sessionId: String, productId: ProductId, openRequestedAtMillis: Long, loaded: Boolean) {
         runCatching {
             capture.capture {
                 val now = timeProvider.nowMillis()
                 originProvider.current().stepEvent(
                     name = EVENT_NAME,
-                    outcome = HostEventOutcome.OK,
+                    outcome = if (loaded) HostEventOutcome.OK else HostEventOutcome.ERROR,
                     monotonicMs = now,
                     durationMs = now - openRequestedAtMillis,
                     sessionId = sessionId,

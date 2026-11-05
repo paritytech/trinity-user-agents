@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -206,6 +207,18 @@ class BrowserWebViewProvider @AssistedInject constructor(
             if (waitForInitialTheme) {
                 view.postDelayed({ reveal(view) }, THEME_READY_FALLBACK.inWholeMilliseconds)
             }
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView,
+            request: WebResourceRequest,
+            errorResponse: WebResourceResponse,
+        ) {
+            if (request.isForMainFrame) notifyMainFrameFailed()
+        }
+
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            if (request.isForMainFrame) notifyMainFrameFailed()
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail?): Boolean {
