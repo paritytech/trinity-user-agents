@@ -45,8 +45,6 @@ enum class FeatureOption {
 
     // The docklet has four item slots, so Browse and the connectivity indicator cannot both show.
     BROWSE_TAB,
-
-    // The chain-health indicators repeated in the tab bar, with the expandable details above it.
     TAB_BAR_CONNECTIVITY_INDICATOR,
 
     // The "Debug features" card under the balance card: the holdings breakdown, the faucet top-up and
