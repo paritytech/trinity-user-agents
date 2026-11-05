@@ -17,14 +17,6 @@ interface DotNsResolver {
         retryPolicy: NetworkRetryPolicy = NetworkRetryPolicy.DEFAULT,
     ): Result<String?>
 
-    suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Boolean>
-
-    suspend fun applyUpdates(dotNsNames: Collection<String>)
-
-    fun observePendingUpdates(): Flow<Set<String>>
-
-    fun namesOnDevice(): Set<String>
-
     /** Observes resolution progress for [dotNsName]. Emits [DotNsLoadProgress.Idle] when nothing is in flight. */
     fun getProgressByDomain(dotNsName: String): Flow<DotNsLoadProgress>
 

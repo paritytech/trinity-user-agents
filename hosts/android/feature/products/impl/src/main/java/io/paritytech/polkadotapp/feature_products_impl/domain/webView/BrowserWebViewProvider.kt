@@ -31,14 +31,15 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecy
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductsInUse
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ShownPage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.parseProductLink
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -105,7 +106,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
         if (fixedProductId != null) {
             productsInUse.hold(fixedProductId, scope)
         } else {
-            productsInUse.track(pageUrl.map { url -> url?.let { productIdOf(it) } }, scope)
+            productsInUse.trackPage(pageUrl.map { url -> url?.let { shownPageOf(it) } }, scope)
         }
     }
 
@@ -183,8 +184,12 @@ class BrowserWebViewProvider @AssistedInject constructor(
         contentLoader.resolveToLocalUri(servingHost, NetworkRetryPolicy.UntilCancelled)
     }
 
-    private suspend fun productIdOf(url: String): ProductId? {
-        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
+    private suspend fun shownPageOf(url: String): ShownPage? {
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return null
+        val productId = productIdFromUrl(url.toUri(), tld).getOrNull() ?: return null
+        val dotNsName = url.toUri().host?.let { host -> servingHostResolver.servingHostFor(host, servedExecutable).getOrNull() }
+
+        return ShownPage(productId, dotNsName)
     }
 
     override fun onInitialThemeDelivered() {

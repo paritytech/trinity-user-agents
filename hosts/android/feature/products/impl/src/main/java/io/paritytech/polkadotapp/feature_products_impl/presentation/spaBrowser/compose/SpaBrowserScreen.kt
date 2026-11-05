@@ -4,22 +4,20 @@ import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,13 +38,16 @@ import io.paritytech.polkadotapp.design.components.button.default.PolkadotButton
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
+import io.paritytech.polkadotapp.design.components.dropdown.NovaDropdownMenu
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.icon.vectors.Info
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
+import io.paritytech.polkadotapp.design.components.icon.vectors.More
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
+import io.paritytech.polkadotapp.design.components.menu.NovaMenuOption
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -107,10 +108,18 @@ internal fun SpaBrowserScreenInternal(
             DotNsLoadProgressBar(progress = state.loadProgress)
             Box(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .collapsedBy { chromeCollapse.fraction }
                     .onSizeChanged { minimizePanelHeight = it.height }
             ) {
                 MinimizeButton(onClick = onMinimize)
+                MoreMenuButton(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    onRefresh = {
+                        reloadCount++
+                        onRefresh()
+                    },
+                )
             }
             PolkadotSurface(
                 modifier = Modifier.weight(1f),
@@ -164,6 +173,37 @@ private fun MinimizeButton(onClick: () -> Unit) {
         size = PolkadotIconButtonSize.medium(),
         shape = PolkadotButtonShape.pill,
     )
+}
+
+@Composable
+private fun MoreMenuButton(modifier: Modifier = Modifier, onRefresh: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val description = stringResource(RCommon.string.spa_browser_more)
+
+    Box(
+        modifier = modifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.small)
+    ) {
+        PolkadotIconButton(
+            icon = NovaIcons.More,
+            onClick = { expanded = true },
+            modifier = Modifier.semantics { contentDescription = description },
+            style = PolkadotButtonStyle.secondary(),
+            size = PolkadotIconButtonSize.medium(),
+            shape = PolkadotButtonShape.pill,
+        )
+
+        NovaDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            NovaMenuOption(
+                text = stringResource(RCommon.string.spa_browser_menu_refresh),
+                icon = NovaIcons.Refreshing,
+                color = PolkadotTheme.colors.fg.primary,
+                onClick = {
+                    expanded = false
+                    onRefresh()
+                },
+            )
+        }
+    }
 }
 
 @Composable

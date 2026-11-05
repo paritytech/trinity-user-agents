@@ -138,7 +138,7 @@ class SpaBrowserViewModel @Inject constructor(
 
     override fun onRefresh() {
         launch {
-            servedPage.value?.let { productUpdater.applyPage(it.product.id, it.pageName) }
+            servedPage.value?.let { productUpdater.applyPage(it.pageName) }
             productSessionController.reload()
         }
     }
@@ -171,7 +171,7 @@ class SpaBrowserViewModel @Inject constructor(
         val page = pagePendingUpdate.value ?: return
 
         launch {
-            productUpdater.applyPage(page.product.id, page.pageName)
+            productUpdater.applyPage(page.pageName)
             productSessionController.reload()
         }
     }

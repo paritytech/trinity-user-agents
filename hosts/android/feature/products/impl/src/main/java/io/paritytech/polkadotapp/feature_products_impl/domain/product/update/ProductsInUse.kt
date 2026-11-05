@@ -14,21 +14,27 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class ShownPage(val productId: ProductId, val dotNsName: String?)
+
 @Singleton
 class ProductsInUse @Inject constructor() {
-    private val holds = MutableStateFlow<Map<ProductId, Int>>(emptyMap())
+    private val productHolds = MutableStateFlow<Map<ProductId, Int>>(emptyMap())
 
-    fun observe(): Flow<Set<ProductId>> = holds.map { it.keys }.distinctUntilChanged()
+    private val shownNameHolds = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    fun observe(): Flow<Set<ProductId>> = productHolds.observeKeys()
+
+    fun observeShownNames(): Flow<Set<String>> = shownNameHolds.observeKeys()
 
     fun hold(productId: ProductId, scope: CoroutineScope) {
-        acquire(productId)
-        scope.invokeOnCompletion { release(productId) }
+        productHolds.acquire(productId)
+        scope.invokeOnCompletion { productHolds.release(productId) }
     }
 
-    fun track(productIds: Flow<ProductId?>, scope: CoroutineScope) {
-        var held: ProductId? = null
+    fun trackPage(pages: Flow<ShownPage?>, scope: CoroutineScope) {
+        var held: ShownPage? = null
 
-        productIds
+        pages
             .distinctUntilChanged()
             .onEach { next ->
                 held?.let(::release)
@@ -39,14 +45,26 @@ class ProductsInUse @Inject constructor() {
             .launchIn(scope)
     }
 
-    private fun acquire(productId: ProductId) {
-        holds.update { it + (productId to (it[productId] ?: 0) + 1) }
+    private fun acquire(page: ShownPage) {
+        productHolds.acquire(page.productId)
+        page.dotNsName?.let(shownNameHolds::acquire)
     }
 
-    private fun release(productId: ProductId) {
-        holds.update { holds ->
-            val left = (holds[productId] ?: 1) - 1
-            if (left > 0) holds + (productId to left) else holds - productId
-        }
+    private fun release(page: ShownPage) {
+        productHolds.release(page.productId)
+        page.dotNsName?.let(shownNameHolds::release)
+    }
+}
+
+private fun <K> MutableStateFlow<Map<K, Int>>.observeKeys(): Flow<Set<K>> = map { it.keys }.distinctUntilChanged()
+
+private fun <K> MutableStateFlow<Map<K, Int>>.acquire(key: K) {
+    update { it + (key to (it[key] ?: 0) + 1) }
+}
+
+private fun <K> MutableStateFlow<Map<K, Int>>.release(key: K) {
+    update { holds ->
+        val left = (holds[key] ?: 1) - 1
+        if (left > 0) holds + (key to left) else holds - key
     }
 }

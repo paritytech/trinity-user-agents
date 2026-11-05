@@ -8,6 +8,7 @@ import dagger.multibindings.IntoSet
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUpdates
 import io.paritytech.polkadotapp.feature_dotns_impl.data.config.DotNsConfigProvider
 import io.paritytech.polkadotapp.feature_dotns_impl.data.config.RemoteConfigDotNsConfigProvider
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
@@ -25,6 +26,7 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsTldSto
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsDotNsBuildStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsResolver
+import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsUpdates
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.tld.RealDotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_impl.presentation.DotNsTldInitializer
 import javax.inject.Singleton
@@ -35,6 +37,10 @@ internal interface DotNsModule {
     @Binds
     @Singleton
     fun bindDotNsResolver(impl: RealDotNsResolver): DotNsResolver
+
+    @Binds
+    @Singleton
+    fun bindDotNsUpdates(impl: RealDotNsUpdates): DotNsUpdates
 
     @Binds
     @Singleton
