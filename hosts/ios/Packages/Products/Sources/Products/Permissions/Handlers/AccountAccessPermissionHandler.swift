@@ -63,7 +63,7 @@ private extension AccountAccessPermissionHandler {
     func promptPermission(productId: ProductId, targetProductId: ProductId) async throws -> Bool {
         let permission = ProductPermission.accountAccess(targetProductId: targetProductId)
 
-        switch await requester.prompt(productId: productId, permission: permission) {
+        switch try await requester.prompt(productId: productId, permission: permission) {
         case .allowAlways:
             try await repository.grant(productId: productId, permission: permission)
             return true

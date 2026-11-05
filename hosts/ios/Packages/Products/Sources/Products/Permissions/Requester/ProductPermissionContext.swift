@@ -11,7 +11,7 @@ public final class ProductPermissionContext {
     public nonisolated let productId: ProductId
     public nonisolated let permissions: [ProductPermission]
 
-    private var continuation: CheckedContinuation<PermissionDecision, Never>?
+    private var continuation: CheckedContinuation<PermissionDecision, Error>?
 
     public init(productId: ProductId, permissions: [ProductPermission]) {
         self.productId = productId
@@ -23,12 +23,17 @@ public final class ProductPermissionContext {
         self.init(productId: productId, permissions: [permission])
     }
 
-    public func setContinuation(_ continuation: CheckedContinuation<PermissionDecision, Never>) {
+    public func setContinuation(_ continuation: CheckedContinuation<PermissionDecision, Error>) {
         self.continuation = continuation
     }
 
     public func deliver(_ decision: PermissionDecision) {
         continuation?.resume(returning: decision)
+        continuation = nil
+    }
+
+    public func fail(_ error: Error) {
+        continuation?.resume(throwing: error)
         continuation = nil
     }
 }

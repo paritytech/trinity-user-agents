@@ -17,7 +17,7 @@ final class MockConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked 
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String
-    ) async -> TrUAPIPermissionDecision {
+    ) async throws -> TrUAPIPermissionDecision {
         receivedReview = review
         receivedRequesterName = requesterName
         return permissionDecisionToReturn

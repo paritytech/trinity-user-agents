@@ -32,23 +32,23 @@ public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesti
     public func prompt(
         productId: ProductId,
         permission: ProductPermission
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: [permission]) else {
             return .allowAlways
         }
 
-        return await wrapped.prompt(productId: productId, permission: permission)
+        return try await wrapped.prompt(productId: productId, permission: permission)
     }
 
     public func promptBatched(
         productId: ProductId,
         permissions: [ProductPermission]
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: permissions) else {
             return .allowAlways
         }
 
-        return await wrapped.promptBatched(productId: productId, permissions: permissions)
+        return try await wrapped.promptBatched(productId: productId, permissions: permissions)
     }
 }
 
@@ -60,8 +60,16 @@ private extension TrustedRemoteProductPermissionRequester {
     /// hand over the camera on the strength of a network grant. An empty batch
     /// asks for nothing and is not something to grant.
     func grantsWithoutPrompting(productId: ProductId, permissions: [ProductPermission]) -> Bool {
-        guard !permissions.isEmpty, permissions.allSatisfy(\.isRemoteAccess) else { return false }
+        guard !permissions.isEmpty, permissions.allSatisfy(\.isGrantedToTrustedProducts) else { return false }
 
         return isTrustedForRemoteAccess(productId)
+    }
+}
+
+private extension ProductPermission {
+    var isGrantedToTrustedProducts: Bool {
+        if case .deviceCapability = self { return true }
+
+        return isRemoteAccess
     }
 }

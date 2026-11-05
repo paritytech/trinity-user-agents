@@ -76,7 +76,7 @@ private extension NetworkAccessPermissionHandler {
     func promptPermission(productId: ProductId, domain: String) async throws -> Bool {
         let permission = ProductPermission.networkAccess(domain: domain)
 
-        switch await requester.prompt(productId: productId, permission: permission) {
+        switch try await requester.prompt(productId: productId, permission: permission) {
         case .allowAlways:
             try await repository.grant(productId: productId, permission: permission)
             return true

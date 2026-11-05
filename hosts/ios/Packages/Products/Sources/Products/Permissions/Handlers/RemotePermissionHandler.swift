@@ -57,7 +57,7 @@ private extension RemotePermissionHandler {
         productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
-        switch await requester.prompt(productId: productId, permission: permission) {
+        switch try await requester.prompt(productId: productId, permission: permission) {
         case .allowAlways:
             try await repository.grant(productId: productId, permission: permission)
             return true

@@ -25,7 +25,7 @@ struct AutoAllowProductPermissionRequesterTests {
     func promptAutoAllowsAllowlisted() async throws {
         let (requester, wrapped) = makeSUT()
 
-        let decision = await requester.prompt(
+        let decision = try await requester.prompt(
             productId: try! ProductId("getcash.dot"),
             permission: .networkAccess(domain: "example.com")
         )
@@ -38,7 +38,7 @@ struct AutoAllowProductPermissionRequesterTests {
     func promptBatchedAutoAllowsAllowlisted() async throws {
         let (requester, wrapped) = makeSUT()
 
-        let decision = await requester.promptBatched(
+        let decision = try await requester.promptBatched(
             productId: try! ProductId("getcash.dot"),
             permissions: [.balanceAccess, .webRtcAccess]
         )
@@ -51,7 +51,7 @@ struct AutoAllowProductPermissionRequesterTests {
     func promptDelegatesNonAllowlisted() async throws {
         let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
 
-        let decision = await requester.prompt(
+        let decision = try await requester.prompt(
             productId: try! ProductId("other.dot"),
             permission: .balanceAccess
         )
@@ -65,7 +65,7 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT(allowedLabels: [""])
         let productId = try ProductId("localhost:3000")
 
-        let decision = await requester.prompt(productId: productId, permission: .balanceAccess)
+        let decision = try await requester.prompt(productId: productId, permission: .balanceAccess)
 
         #expect(decision == .deny)
         #expect(wrapped.promptCalls.map(\.productId) == [productId])

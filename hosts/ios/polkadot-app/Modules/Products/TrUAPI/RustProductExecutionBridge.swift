@@ -144,7 +144,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(
+        try await dependencies.confirmationPresenter.confirmPermission(
             review: review,
             from: dependencies.productId.rawValue
         )

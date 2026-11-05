@@ -3,8 +3,9 @@ import Products
 import UIKitExt
 
 /// One access point for the routers a product context needs. A single
-/// `setPresentationView` fans the anchor out to both routers — no router
-/// presents on the topmost view controller on its own.
+/// `setPresentationView` fans the anchor out to both routers. Only a worker's
+/// router falls back to the app's top screen: its anchor is the chat it was
+/// last shown in, and its requests arrive whether or not that chat is open.
 ///
 /// `productsRouter` is exposed concretely because one `ProductsRouter` instance
 /// serves three protocol lenses: app flows call its `ProductsRouting`
