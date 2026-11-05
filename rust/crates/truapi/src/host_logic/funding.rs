@@ -62,7 +62,7 @@ const NOT_PAYMENT_SCHEMES: &[&str] = &[
 const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// How long a top-up the user cancelled before paying stays open to a payment
 /// that arrives anyway, as a bank transfer already sent can take days.
-pub const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// An ended session as the session pack keeps it once nothing can change it.
 /// It keeps what history needs, so its owner can still read how it ended and
 /// the host can still list it; the pack is never trimmed.
@@ -1362,7 +1362,7 @@ impl FundingSession {
 	/// whose refund, after a failed payout or a cancel the user accepted, is
 	/// not settled yet. Whether the host acknowledged the session does not
 	/// matter.
-	pub fn awaits_provider(&self) -> bool {
+	fn awaits_provider(&self) -> bool {
 		matches!(self.stage, FundingStage::Released { .. }) &&
 			match (&self.refund, self.payout()) {
 				(Some(refund), _) => refund.refunded.is_none(),
@@ -1387,7 +1387,7 @@ impl FundingSession {
 	}
 
 	/// The provider's payout outcome, once it reported one.
-	pub fn payout(&self) -> Option<&FundingPayout> {
+	fn payout(&self) -> Option<&FundingPayout> {
 		self.updates.iter().find_map(|record| match &record.update {
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }) => Some(outcome),
 			_ => None,
@@ -1522,8 +1522,8 @@ impl FundingSession {
 
 	/// Whether a payment for this top-up may still arrive although the user
 	/// cancelled it: it was cancelled before money moved, a provider served
-	/// it, and less than [`LATE_ARRIVAL_MS`] passed. A bank transfer the user
-	/// had already sent still reaches the provider then.
+	/// it, and less than a week passed. A bank transfer the user had already
+	/// sent still reaches the provider then.
 	pub fn takes_late_arrival(&self, now_ms: u64) -> bool {
 		self.direction == FundingDirection::In &&
 			self.provider_id.is_some() &&
@@ -2104,23 +2104,6 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 	}
 }
 
-/// An ended session in the session pack, with whether the host has told the
-/// user how it ended. One it has not is handed to it again when funding
-/// resumes.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct PackedSession {
-	/// The session as history keeps it.
-	pub summary: FundingSessionSummary,
-	/// Whether the host told the user how the session ended.
-	pub acknowledged: bool,
-}
-
-impl From<&FundingSession> for PackedSession {
-	fn from(session: &FundingSession) -> Self {
-		Self { summary: session.summary(), acknowledged: session.acknowledged }
-	}
-}
-
 /// Split `sessions` into those kept in full and the ended ones to compact
 /// into the pack. Kept in full: every one its provider still has work on, a
 /// released withdrawal whose payout outcome is not in, as a payout can still
@@ -2311,14 +2294,13 @@ mod tests {
 
 		let (kept, ended) =
 			retained([seen.clone(), unseen.clone(), cancelled.clone(), open.clone()], NOW + 2);
-		let packed: Vec<PackedSession> = ended.iter().map(PackedSession::from).collect();
 		let (later, _) = retained([cancelled], NOW + LATE_ARRIVAL_MS + 1);
 
-		assert_eq!((kept.len(), packed.len(), later.len()), (2, 2, 0));
+		assert_eq!((kept.len(), ended.len(), later.len()), (2, 2, 0));
 		assert_eq!(
-			packed
+			ended
 				.iter()
-				.map(|packed| (packed.summary.intent.as_str(), packed.acknowledged))
+				.map(|session| (session.intent.as_str(), session.acknowledged))
 				.collect::<Vec<_>>(),
 			vec![("fs_seen", true), ("fs_unseen", false)]
 		);

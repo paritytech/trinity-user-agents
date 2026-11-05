@@ -9,26 +9,13 @@ enum FundingAmountIssue: Equatable {
 }
 
 extension FundingFlowModel {
-    var brandsInOrder: [ProductId] {
-        candidates.map(\.providerId)
-    }
-
     func brand(for providerId: ProductId) -> FundingProviderBrand {
         brands[providerId] ?? .placeholder(for: providerId)
     }
 
+    /// What the providers are asked to quote for the selection on screen.
     func currentAsk() -> FundingQuoteAsk? {
-        guard amount > 0 else { return nil }
-
-        let askedAsset: String
-        switch rail {
-        case .crypto:
-            guard let asset else { return nil }
-            askedAsset = asset
-        case .card,
-             .bank:
-            askedAsset = fiatAsset
-        }
+        guard amount > 0, let askedAsset else { return nil }
 
         return FundingQuoteAsk(
             direction: direction,
@@ -38,6 +25,12 @@ extension FundingFlowModel {
             amount: cash.units(amount),
             country: country?.code
         )
+    }
+
+    /// The asset an ask on this rail names: the chosen token for crypto,
+    /// the payment currency otherwise.
+    var askedAsset: String? {
+        rail == .crypto ? asset : fiatAsset
     }
 
     var amount: Decimal {
@@ -50,12 +43,6 @@ extension FundingFlowModel {
     var availableRails: Set<FundingRail> {
         guard !candidates.isEmpty else { return [] }
         return Set(FundingRail.displayOrder.filter { $0 != .crypto || !cryptoRoutes.isEmpty })
-    }
-
-    /// The providers declaring a route for this rail. Routes are hints: they
-    /// order the list and suggest the asset, they never leave a provider out.
-    var routedCandidates: [FundingCandidate] {
-        candidates.filter { $0.serves(rail: rail, direction: direction) }
     }
 
     /// The providers the list shows: the core's quote list in its order once it
@@ -77,28 +64,6 @@ extension FundingFlowModel {
         (min: cash.decimal(limits.min) ?? 0, max: cash.decimal(limits.max))
     }
 
-    /// Tells the core the rail, asset, network and country on screen when
-    /// they changed. The core answers inline with what they offer.
-    func reportSelection() {
-        let selection = FundingSelection(
-            rail: rail,
-            asset: askedAsset,
-            network: rail == .crypto ? network : nil,
-            country: country?.code
-        )
-        guard !hasStarted, selection != reportedSelection else { return }
-
-        reportedSelection = selection
-        runtime.selectFundingOptions(intent: intent, selection: selection)
-        refreshOptions()
-    }
-
-    /// The asset an ask on this rail names: the chosen token for crypto,
-    /// the payment currency otherwise.
-    var askedAsset: String? {
-        ask?.asset ?? (rail == .crypto ? asset : fiatAsset)
-    }
-
     var amountIssue: FundingAmountIssue? {
         if direction == .out, let spendable, amount > spendable {
             return .notEnoughBalance
@@ -118,25 +83,6 @@ extension FundingFlowModel {
         return nil
     }
 
-    /// Every provider asked about this exact amount refused it on a limit.
-    var refusalForCurrentAmount: FundingAmountIssue? {
-        guard let ask, ask.amount == cash.units(amount), !rows.isEmpty else { return nil }
-        guard !rows.values.contains(where: { $0.isPending || $0.quote != nil }) else { return nil }
-
-        let refusals = rows.values.compactMap(\.refusal)
-        let minimums = refusals.compactMap { refusal -> Decimal? in
-            guard case let .belowMinimum(min) = refusal else { return nil }
-            return cash.decimal(min)
-        }
-        if let lowest = minimums.min() { return .belowMinimum(lowest) }
-
-        let maximums = refusals.compactMap { refusal -> Decimal? in
-            guard case let .aboveMaximum(max) = refusal else { return nil }
-            return cash.decimal(max)
-        }
-        return maximums.max().map { .aboveMaximum($0) }
-    }
-
     /// The fiat asset a card or bank ask names: the payment country's currency
     /// when a provider takes it, otherwise the first a provider lists.
     var fiatAsset: String {
@@ -154,6 +100,56 @@ extension FundingFlowModel {
     /// decimals the quote carries.
     func quoteUnit(_ quote: FundingQuote) -> FundingAssetUnit {
         FundingAssetUnit(code: ask?.asset ?? session?.choice?.asset ?? fiatAsset, decimals: quote.assetDecimals)
+    }
+}
+
+// MARK: - Session
+
+extension FundingFlowModel {
+    /// Why the session ended, once it has failed.
+    var failure: FundingFailure? {
+        guard case let .failed(reason, _) = session?.stage else { return nil }
+        return reason
+    }
+
+    /// The session once it has ended, as its ended screen draws it.
+    var ended: FundingEndedSession? {
+        session.flatMap { FundingEndedSession(session: $0, progress: progress) }
+    }
+
+    /// The quote the session was started on, or the one on screen before it.
+    var chosenQuote: FundingQuote? {
+        session?.choice?.quote ?? selectedQuote
+    }
+
+    /// Whether the session got to `step`.
+    func hasReached(_ step: FundingStep) -> Bool {
+        progress?.steps.contains { $0.step == step && $0.reachedAtMs != nil } ?? false
+    }
+
+    /// A bank or crypto top-up whose payment the provider has not seen:
+    /// cancelling ends it outright, and money sent anyway still arrives.
+    var isUnpaidTopUp: Bool {
+        direction == .in && rail != .card && !hasReached(.received)
+    }
+
+    /// The provider's terms for cancelling, while it waits for the user.
+    var cancelOffer: (fee: U128, refund: U128)? {
+        guard case let .cancelOffered(fee, refund) = progress?.status else { return nil }
+        return (fee, refund)
+    }
+
+    /// Whether the user can cancel: the session is in flight, and either no
+    /// cancel is with the provider or no money moved yet, when a second cancel
+    /// ends the session. The core says when it is too late.
+    var canRequestCancel: Bool {
+        guard hasStarted, let progress, progress.status.isInFlight else { return false }
+        return FundingCancelPresentation.canCancel(progress.status, moneyMoved: progress.moneyMoved)
+    }
+
+    /// The cancel action's title for the session's status.
+    var cancelTitle: String {
+        progress.map { FundingCancelPresentation.cancelTitle($0.status) } ?? String(localized: .Funding.depositCancel)
     }
 }
 
@@ -207,10 +203,6 @@ extension FundingFlowModel {
 // MARK: - Crypto and countries
 
 extension FundingFlowModel {
-    var cryptoRoutes: [FundingRoute] {
-        candidates.flatMap { $0.routes(rail: .crypto, direction: direction) }
-    }
-
     var networks: [FundingNetwork] {
         var seen: [String] = []
         for id in cryptoRoutes.flatMap({ $0.networks ?? [] }) where !seen.contains(id) {
@@ -249,5 +241,38 @@ extension FundingFlowModel {
     func minimum(country code: String) -> Decimal? {
         guard case let .supported(min) = countrySupport[code.uppercased()], let min else { return nil }
         return cash.decimal(min)
+    }
+}
+
+// MARK: - Private
+
+private extension FundingFlowModel {
+    /// The providers declaring a route for this rail. Routes are hints: they
+    /// order the list and suggest the asset, they never leave a provider out.
+    var routedCandidates: [FundingCandidate] {
+        candidates.filter { $0.serves(rail: rail, direction: direction) }
+    }
+
+    var cryptoRoutes: [FundingRoute] {
+        candidates.flatMap { $0.routes(rail: .crypto, direction: direction) }
+    }
+
+    /// Every provider asked about this exact amount refused it on a limit.
+    var refusalForCurrentAmount: FundingAmountIssue? {
+        guard let ask, ask.amount == cash.units(amount), !rows.isEmpty else { return nil }
+        guard !rows.values.contains(where: { $0.isPending || $0.quote != nil }) else { return nil }
+
+        let refusals = rows.values.compactMap(\.refusal)
+        let minimums = refusals.compactMap { refusal -> Decimal? in
+            guard case let .belowMinimum(min) = refusal else { return nil }
+            return cash.decimal(min)
+        }
+        if let lowest = minimums.min() { return .belowMinimum(lowest) }
+
+        let maximums = refusals.compactMap { refusal -> Decimal? in
+            guard case let .aboveMaximum(max) = refusal else { return nil }
+            return cash.decimal(max)
+        }
+        return maximums.max().map { .aboveMaximum($0) }
     }
 }

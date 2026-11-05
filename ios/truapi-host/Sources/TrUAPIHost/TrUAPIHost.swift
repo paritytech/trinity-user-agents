@@ -739,16 +739,6 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     func detectedCountry() async -> String? {
         await bridge.detectedCountry()
     }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Adapter that bridges the public `TopUpHostBridge` to the generated UniFFI

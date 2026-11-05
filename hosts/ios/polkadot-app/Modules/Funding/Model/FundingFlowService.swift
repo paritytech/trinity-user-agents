@@ -1,0 +1,106 @@
+import Foundation
+import TrUAPIHost
+
+/// What a funding overlay asks of the core and of the providers. The calls
+/// run off the main actor; the overlay's model publishes what they return.
+protocol FundingFlowServiceProtocol: Sendable {
+    var branding: FundingProviderBranding { get }
+
+    /// What the core last pushed for session `intent`: what its overlay
+    /// offers, the session, and the session's progress.
+    func options(intent: String) -> FundingOptions?
+    func session(intent: String) -> FundingSession?
+    func progress(intent: String) -> FundingProgress?
+
+    /// Tells the core what the user picked, and returns what the core offers
+    /// for it, which it answers inline.
+    func select(_ selection: FundingSelection, intent: String) async -> FundingOptions?
+    /// Asks every provider to quote `ask`, and returns the core's id for the
+    /// request.
+    func requestQuote(_ ask: FundingQuoteAsk, intent: String) async -> UInt64
+    func stopQuotes(intent: String) async
+    func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool
+    func cancel(intent: String) async throws -> CancelOutcome
+    func confirmCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
+    func brand(for providerId: ProductId) async -> FundingProviderBrand
+}
+
+/// Makes the overlay's calls on its own executor, so the core's synchronous
+/// ones never hold up the main thread.
+actor FundingFlowService: FundingFlowServiceProtocol {
+    nonisolated let branding: FundingProviderBranding
+    private nonisolated let runtime: FundingRuntime
+    private nonisolated let book: FundingSessionBook
+
+    init(runtime: FundingRuntime, book: FundingSessionBook, branding: FundingProviderBranding) {
+        self.runtime = runtime
+        self.book = book
+        self.branding = branding
+    }
+
+    nonisolated func options(intent: String) -> FundingOptions? {
+        book.options(intent: intent)
+    }
+
+    nonisolated func session(intent: String) -> FundingSession? {
+        book.session(intent: intent)
+    }
+
+    nonisolated func progress(intent: String) -> FundingProgress? {
+        book.progress(intent: intent)
+    }
+
+    func select(_ selection: FundingSelection, intent: String) -> FundingOptions? {
+        runtime.selectFundingOptions(intent: intent, selection: selection)
+        return book.options(intent: intent)
+    }
+
+    func requestQuote(_ ask: FundingQuoteAsk, intent: String) -> UInt64 {
+        runtime.getFundingQuote(intent: intent, ask: ask)
+    }
+
+    func stopQuotes(intent: String) {
+        runtime.stopFundingQuotes(intent: intent)
+    }
+
+    func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool {
+        try await runtime.selectFundingProvider(intent: intent, providerId: providerId, quoteId: quoteId)
+    }
+
+    func cancel(intent: String) async throws -> CancelOutcome {
+        try await runtime.cancelFunding(intent: intent)
+    }
+
+    func confirmCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation {
+        try await runtime.confirmFundingCancel(intent: intent, terms: terms)
+    }
+
+    func brand(for providerId: ProductId) async -> FundingProviderBrand {
+        await branding.brand(for: providerId)
+    }
+}
+
+/// Makes a session's core calls one after another, each off the main actor,
+/// so the core sees the user's steps in the order they were taken.
+@MainActor
+final class FundingCoreCallQueue {
+    private let service: FundingFlowServiceProtocol
+    private var latest: Task<Void, Never>?
+
+    init(service: FundingFlowServiceProtocol) {
+        self.service = service
+    }
+
+    /// Makes `call` once the call before it has answered; `apply` takes its
+    /// answer back on the main actor.
+    func run<Answer: Sendable>(
+        _ call: @escaping @Sendable (FundingFlowServiceProtocol) async -> Answer,
+        then apply: @escaping @MainActor (Answer) -> Void = { _ in }
+    ) {
+        let previous = latest
+        latest = Task { [service] in
+            await previous?.value
+            await apply(call(service))
+        }
+    }
+}

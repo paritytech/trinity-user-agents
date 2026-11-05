@@ -36,6 +36,17 @@ public struct BundledProduct: Hashable, Sendable {
         return fileManager.contents(atPath: url.path).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// The Worker manifest it ships when that manifest serves Funding, read
+    /// the way a published manifest's `includes` is.
+    public func fundingWorkerManifest(fileManager: FileManager = .default) -> String? {
+        guard let manifest = workerManifest(fileManager: fileManager),
+              let dto = try? JSONDecoder().decode(ExecutableManifestDTO.self, from: Data(manifest.utf8)),
+              dto.includes?.contains(.funding) == true
+        else { return nil }
+
+        return manifest
+    }
+
     /// Whether it ships a Worker.
     public func hasWorker(fileManager: FileManager = .default) -> Bool {
         fileManager.fileExists(atPath: directory.appendingPathComponent(workerEntryRelativePath).path)

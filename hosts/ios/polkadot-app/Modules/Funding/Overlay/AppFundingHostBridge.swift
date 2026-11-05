@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import Keystore_iOS
 import TrUAPIHost
 
 /// What the funding overlay UI implements: the screen a session is started
@@ -54,13 +55,19 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 /// The runtime's funding overlay. Installed once, before any product
 /// execution opens. Keeps what the core pushes in the session book and
 /// forwards to whatever draws the overlay.
-final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
+final class AppFundingHostBridge: FundingHostBridge, Sendable {
     private let overlay: FundingOverlayPresenting
     private let book: FundingSessionBook
+    private let settingsManager: SettingsManagerProtocol
 
-    init(overlay: FundingOverlayPresenting, book: FundingSessionBook = .shared) {
+    init(
+        overlay: FundingOverlayPresenting,
+        book: FundingSessionBook = .shared,
+        settingsManager: SettingsManagerProtocol = SettingsManager.shared
+    ) {
         self.overlay = overlay
         self.book = book
+        self.settingsManager = settingsManager
     }
 
     func presentFunding(
@@ -107,7 +114,7 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     }
 
     func fundingInProgressChanged(_ inProgress: Bool) {
-        FundingResumeMarker.record(inProgress)
+        settingsManager.setFundingInProgress(inProgress)
     }
 
     func fundingOptionsChanged(intent: String, options: FundingOptions) {
