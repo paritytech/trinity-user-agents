@@ -609,7 +609,7 @@ mod tests {
 		// A light client may have no Bulletin peers yet, so a transient failure is
 		// asked again, as a preimage lookup does.
 		let bitswap = BitswapRpc::new(Arc::clone(&provider), network.bulletin_genesis);
-		let unstored = truapi::preimage_cid(&[0x22; 32]);
+		let unstored = truapi::BulletinCid::from([0x22; 32]);
 		for _ in 0..10 {
 			match bitswap.get(&unstored).await {
 				Ok(None) => return,

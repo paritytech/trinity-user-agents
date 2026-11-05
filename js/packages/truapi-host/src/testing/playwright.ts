@@ -297,6 +297,13 @@ export interface TestHost {
   setTheme(variant: string): Promise<void>;
   /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): Promise<void>;
+  /**
+   * Confirm or decline reviews, such as a signature, from now on. One test
+   * can decline a signature without a fixture booted with
+   * `confirmUserActions: false`. A permission the core has cached keeps its
+   * answer.
+   */
+  setConfirmUserActions(confirm: boolean): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -664,6 +671,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
         setScanAnswer: (answer) => call("setScanAnswer", answer),
+        setConfirmUserActions: (confirm) =>
+          call("setConfirmUserActions", confirm),
         getIsAuthenticated: () => call("getIsAuthenticated"),
         getChainStatus: () => call("getChainStatus"),
         getConnectionStatus: () => call("getConnectionStatus"),
