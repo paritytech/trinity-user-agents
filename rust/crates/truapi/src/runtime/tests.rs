@@ -10352,6 +10352,12 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 			crate::platform::FundingPresentOutcome::Started,
 		)));
+		let feed = Arc::new(GatedFundingPlatform {
+			answer: Mutex::new(None),
+			told: AtomicBool::new(false),
+			options: Mutex::new(Vec::new()),
+		});
+		assert!(services.funding().install_feed(feed.clone()));
 		let germany_only = RAMP_MANIFEST
 			.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
 		let crypto_only =
@@ -10370,48 +10376,55 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 				},
 			])
 			.expect("providers offered");
-		services
+		let intent = futures::executor::block_on(services.open_funding(
+			None,
+			new_intent(),
+			v01::FundingDirection::In,
+			Some(1_000),
+		))
+		.expect("opened")
+		.intent;
+		(services, feed, intent)
 	};
-	let services = start();
-	let intent = futures::executor::block_on(services.open_funding(
-		None,
-		new_intent(),
-		v01::FundingDirection::In,
-		Some(1_000),
-	))
-	.expect("opened")
-	.intent;
+	let first = start();
+	let (services, intent) = (&first.0, &first.2);
 	let refused = answer_asks(
-		&services,
+		services,
 		"ramp.dot",
 		v01::FundingQuoteAnswer::Refused { reason: v01::FundingQuoteRefusal::CountryUnsupported },
 	);
-	let quoted = answer_quotes(&services, "chain.dot", card_quote("q1"));
+	let quoted = answer_quotes(services, "chain.dot", card_quote("q1"));
 	let ask = || {
 		futures::executor::block_on(
 			services
-				.get_funding_quote_within(&intent, card_ask(Some("US")), Duration::from_secs(5))
+				.get_funding_quote_within(intent, card_ask(Some("US")), Duration::from_secs(5))
 				.collect::<Vec<_>>(),
 		)
 	};
 
 	ask();
 	ask();
-	let candidate = |services: &Arc<RuntimeServices>, provider: &str| {
-		services
-			.funding_candidates(v01::FundingDirection::In)
-			.into_iter()
-			.find(|candidate| candidate.provider_id == provider)
+	// The candidates the overlay is handed in the session's options.
+	type Started = (Arc<RuntimeServices>, Arc<GatedFundingPlatform>, String);
+	let candidate = |(services, feed, intent): &Started, provider: &str| {
+		services.send_funding_options(intent);
+		let pushed = feed.options.lock().expect("options mutex poisoned").last().cloned();
+		pushed.and_then(|(_, options)| {
+			options
+				.candidates
+				.into_iter()
+				.find(|candidate| candidate.provider_id == provider)
+		})
 	};
-	let serves_card_eur = |services: &Arc<RuntimeServices>| {
-		candidate(services, "chain.dot").is_some_and(|candidate| {
+	let serves_card_eur = |started: &Started| {
+		candidate(started, "chain.dot").is_some_and(|candidate| {
 			candidate.routes.iter().any(|route| {
 				route.rail == v01::FundingRail::Card && route.assets.contains(&"EUR".to_string())
 			})
 		})
 	};
-	let us_unsupported = |services: &Arc<RuntimeServices>| {
-		candidate(services, "ramp.dot").is_some_and(|candidate| {
+	let us_unsupported = |started: &Started| {
+		candidate(started, "ramp.dot").is_some_and(|candidate| {
 			candidate.unsupported ==
 				vec![crate::host_logic::funding_providers::FundingUnsupported {
 					rail: v01::FundingRail::Card,
@@ -10420,7 +10433,7 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 				}]
 		})
 	};
-	let before_restart = (serves_card_eur(&services), us_unsupported(&services));
+	let before_restart = (serves_card_eur(&first), us_unsupported(&first));
 	// What the answers showed is saved in the background, and a restart reads
 	// the saved records only once, so both have to be stored before it.
 	for _ in 0..200 {

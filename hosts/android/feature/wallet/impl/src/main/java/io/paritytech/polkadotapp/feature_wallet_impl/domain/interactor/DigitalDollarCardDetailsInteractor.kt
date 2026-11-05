@@ -11,9 +11,8 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldi
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
+import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
+import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
@@ -28,7 +27,7 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
     private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase,
     private val coinageBackupService: CoinageBackupService,
     private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase,
-    private val hostFunding: HostFunding,
+    private val fundingDomainProvider: FundingDomainProvider,
     private val coinageHoldingsUseCase: CoinageHoldingsUseCase,
     private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase
 ) {
@@ -37,13 +36,9 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
         private val NIGHTLY_TOP_UP_AMOUNT = 10.toBigDecimal()
     }
 
-    suspend fun openFunding(direction: FundingDirection): Result<Unit> = hostFunding.openFunding(direction, amount = null).map { }
+    suspend fun getFundingConfig(): Result<FundingConfig> = fundingDomainProvider.getFundingConfig()
 
     suspend fun asset(): Chain.Asset = chainAssetProvider.asset()
-
-    fun observeFundingActivity(): Flow<FundingActivity> = hostFunding.observeActivity()
-
-    suspend fun showFundingSession(intent: String) = hostFunding.showSession(intent)
 
     /**
      * The four figures and the rows beneath them, off one classification.

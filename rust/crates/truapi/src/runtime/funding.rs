@@ -25,7 +25,8 @@ pub(crate) use store::{fail_writes, stored_sessions};
 /// commit fails before it changes anything.
 #[cfg(target_arch = "wasm32")]
 mod store {
-	use crate::host_logic::funding::{FundingSession, FundingSessionError, PackedSession};
+	use super::PackedSession;
+	use crate::host_logic::funding::{FundingSession, FundingSessionError};
 
 	pub(super) enum Db {}
 
@@ -61,6 +62,7 @@ use futures::{
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
+use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
 	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
 	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
@@ -73,8 +75,8 @@ use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
 		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, FundingSessionSummary, PackedSession, Settlement, StartRecord,
-		StartedFunds, UNACKNOWLEDGED_LIMIT, retained,
+		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
+		UNACKNOWLEDGED_LIMIT, retained,
 	},
 	platform::{
 		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
@@ -108,6 +110,23 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Wait before handing a worker its sessions again after a call went
 /// unanswered.
 const CATCH_UP_RETRY: Duration = Duration::from_secs(5);
+
+/// An ended session in the session pack, with whether the host has told the
+/// user how it ended. One it has not is handed to it again when funding
+/// resumes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+struct PackedSession {
+	/// The session as history keeps it.
+	summary: FundingSessionSummary,
+	/// Whether the host told the user how the session ended.
+	acknowledged: bool,
+}
+
+impl From<&FundingSession> for PackedSession {
+	fn from(session: &FundingSession) -> Self {
+		Self { summary: session.summary(), acknowledged: session.acknowledged }
+	}
+}
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
 

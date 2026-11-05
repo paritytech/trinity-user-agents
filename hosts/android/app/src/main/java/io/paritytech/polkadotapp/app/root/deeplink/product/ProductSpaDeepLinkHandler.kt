@@ -8,11 +8,14 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessing
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import kotlinx.coroutines.withContext
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 internal class ProductSpaDeepLinkHandler @Inject constructor(
@@ -26,8 +29,10 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
         if (!DotNsUtils.isDotDomain(data, tld)) return false
 
-        return gate.opens()
+        return gate.opens(data.productId(tld))
     }
+
+    private fun Uri.productId(tld: DotNsTld): ProductId? = productIdFromUrl(this, tld).getOrNull()
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> =

@@ -60,14 +60,13 @@ internal class ManifestParser @Inject constructor(
 
                 ExecutableKind.WORKER -> {
                     val entrypoint = requireNotNull(remote.entrypoint) { "worker missing entrypoint" }
-                    // A modality the worker does not list is one it does not serve, such as a worker that only funds.
-                    val includesPocket = remote.includes?.pocket ?: false
+                    val includes = requireNotNull(remote.includes) { "worker missing includes" }
+                    val includesPocket = requireNotNull(includes.pocket) { "worker includes missing 'pocket'" }
                     ProductExecutable.Worker(
                         scriptUrl = "https://${host.value}/$entrypoint",
                         appVersion = appVersion,
-                        includesChat = remote.includes?.chat ?: false,
+                        includesChat = requireNotNull(includes.chat) { "worker includes missing 'chat'" },
                         includesPocket = includesPocket,
-                        includesFunding = remote.includes?.funding?.isJsonObject == true,
                         pocketCards = remote.pocket.toCardDefinitions(includesPocket),
                     )
                 }

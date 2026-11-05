@@ -6,8 +6,6 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -49,9 +47,6 @@ sealed interface WorkerExecutionState {
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
- * A worker that fails to boot, or whose renderer goes away while it runs, is reported to the core as
- * exited, which starts it again with backoff while it is still held. A stop the core asked for is not.
- * A worker the app ships runs from its own files, with no dotNS lookup.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -62,7 +57,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
-    private val bundledProducts: BundledProducts,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
@@ -109,18 +103,14 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 .logFailure("TrUAPI worker for ${productId.value} failed to start")
                 // A half-booted worker left in the map swallows every later start, and the core
                 // keeps counting the reference the card holds, so no stop ever arrives to clear it.
-                // Only this one: a stop and a new start may have overtaken the failure. The core
-                // starts it again while it is held, backing off between crashes.
+                // Only this one: a stop and a new start may have overtaken the failure.
                 .onFailure { cause ->
-                    val exited = transitions.withLock {
-                        val current = workers[productId] === worker
-                        if (current) {
+                    transitions.withLock {
+                        if (workers[productId] === worker) {
                             stop(productId)
                             executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
                         }
-                        current
                     }
-                    if (exited) reportExited(productId)
                 }
                 .onSuccess { execution ->
                     transitions.withLock {
@@ -134,25 +124,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val bundled = bundledProducts.product(productId)?.takeIf(bundledProducts::hasWorker)
-        val (scriptUrl, includesChat) = if (bundled != null) {
-            bundled.workerScriptUrl to bundledProducts.includesChat(bundled)
-        } else {
-            val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
-            resolved.scriptUrl to resolved.includesChat
-        }
+        val script = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
-        val workerScript = WorkerScript.of(scriptUrl)
-        val bundledContent = bundled?.let { BundledProductContent.worker(it, bundledProducts) }
+        val workerScript = WorkerScript.of(script.scriptUrl)
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, bundledContent), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
             webViewRuntime.initialize()
             bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
         }.getOrElse { return Result.failure(it) }
-        provider.addOnWebViewDestroyedListener { reportRendererLoss(productId, worker) }
+        provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
 
         return hostBridgeFactory.create(worker.scope)
             .attach(
@@ -161,7 +144,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 navigation.policy(productId, worker.scope),
                 ExecutableKind.WORKER,
-                chat = if (includesChat) {
+                chat = if (script.includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {
                     null
@@ -182,27 +165,15 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             }
     }
 
-    /**
-     * The renderer took the running script with it: the worker stopped without the core asking. It is torn down and
-     * reported as exited, and the core asks for it again while anything still holds it. A stop the core asked for
-     * destroys the WebView too, but has already taken the worker out of [workers], so it is not reported.
-     */
-    private fun reportRendererLoss(productId: ProductId, worker: RunningWorker) {
+    // The renderer takes the running script with it, and only a fresh boot runs the script again.
+    private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
-            val exited = transitions.withLock {
-                val running = workers[productId] === worker && currentExecution(productId) != null
-                if (running) stop(productId)
-                running
+            transitions.withLock {
+                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
+                stop(productId)
+                start(productId)
             }
-            if (exited) reportExited(productId)
         }
-    }
-
-    /** Called outside [transitions]: the core may answer with a start at once, which takes it. */
-    private suspend fun reportExited(productId: ProductId) {
-        runtimeProvider.get().runtime()
-            .mapCatching { it.workerExited(productId) }
-            .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
     }
 
     private fun stop(productId: ProductId) {

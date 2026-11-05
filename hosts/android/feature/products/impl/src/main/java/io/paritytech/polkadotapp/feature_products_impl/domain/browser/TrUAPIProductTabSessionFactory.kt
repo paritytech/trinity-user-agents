@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
@@ -22,7 +21,6 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
     private val browserWebViewProviderFactory: BrowserWebViewProvider.Factory,
     private val sessionStarter: TrUAPISessionStarter,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val bundledProducts: BundledProducts,
 ) {
     fun create(
         url: String,
@@ -33,14 +31,11 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
         // A dev server page loads from the address that reaches the developer's machine but runs under
         // the id the core gave it, so neither can be read off the other.
         val devServerProductId = devServer?.productId
-        // A product the app ships opens from its own files, under its own id, as it does in a sheet.
-        val bundled = bundledProducts.appFor(url)
         val provider = browserWebViewProviderFactory.create(
             url,
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
             allowIframes = true,
             scope,
-            bundledProduct = bundled,
             fixedProductId = devServerProductId,
             firstPartyOrigin = devServer?.origin,
         )
@@ -51,7 +46,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = bundled?.id ?: devServerProductId)
+        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = devServerProductId)
         return provider
     }
 }

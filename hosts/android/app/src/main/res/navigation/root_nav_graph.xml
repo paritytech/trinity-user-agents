@@ -76,6 +76,11 @@
         android:label="SpaBrowserFragment" />
 
     <dialog
+        android:id="@+id/spaSheetBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.spaSheet.SpaSheetBottomSheet"
+        android:label="SpaSheetBottomSheet" />
+
+    <dialog
         android:id="@+id/pocketAddCardBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardBottomSheet"
         android:label="PocketAddCardBottomSheet" />
@@ -99,21 +104,6 @@
         android:id="@+id/paymentRequestBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.paymentRequest.PaymentRequestBottomSheet"
         android:label="PaymentRequestBottomSheet" />
-
-    <dialog
-        android:id="@+id/fundingBottomSheet"
-        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet"
-        android:label="FundingBottomSheet" />
-
-    <dialog
-        android:id="@+id/fundingEndedBottomSheet"
-        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet"
-        android:label="FundingEndedBottomSheet" />
-
-    <dialog
-        android:id="@+id/fundingProviderFrameBottomSheet"
-        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet"
-        android:label="FundingProviderFrameBottomSheet" />
 
     <dialog
         android:id="@+id/topUpRequestBottomSheet"
@@ -263,6 +253,10 @@
         app:destination="@id/scan_graph" />
 
     <action
+        android:id="@+id/action_global_to_spaSheetBottomSheet"
+        app:destination="@id/spaSheetBottomSheet" />
+
+    <action
         android:id="@+id/action_global_to_pocketAddCardBottomSheet"
         app:destination="@id/pocketAddCardBottomSheet" />
 
@@ -285,18 +279,6 @@
     <action
         android:id="@+id/action_global_to_topUpRequestBottomSheet"
         app:destination="@id/topUpRequestBottomSheet" />
-
-    <action
-        android:id="@+id/action_global_to_fundingBottomSheet"
-        app:destination="@id/fundingBottomSheet" />
-
-    <action
-        android:id="@+id/action_global_to_fundingEndedBottomSheet"
-        app:destination="@id/fundingEndedBottomSheet" />
-
-    <action
-        android:id="@+id/action_global_to_fundingProviderFrameBottomSheet"
-        app:destination="@id/fundingProviderFrameBottomSheet" />
 
     <dialog
         android:id="@+id/truapiConfirmationBottomSheet"

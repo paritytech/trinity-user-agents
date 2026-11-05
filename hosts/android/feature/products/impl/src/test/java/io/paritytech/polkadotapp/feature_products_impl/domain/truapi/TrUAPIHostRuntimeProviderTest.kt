@@ -8,18 +8,15 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
-import io.mockk.verify
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.pinnedCard
 import io.paritytech.polkadotapp.test_shared.testDispatchers
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -27,27 +24,21 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import uniffi.truapi.FundingProviderEntry
-import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.PinnedPocketCard
-import uniffi.truapi.ProductId
 
 class TrUAPIHostRuntimeProviderTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
-    private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
-    private val configuredProviders = CompletableDeferred<Result<List<ProductId>>>()
-    private var bundledProviders = emptyList<FundingProviderEntry>()
     private val paseo = requireNotNull(DotNsTld.parse("paseo"))
 
     @Before
     fun captureRuntimeConfig() {
         mockkObject(NativeTrUApiHostRuntime.Companion)
-        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns nativeRuntime
+        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns mockk(relaxed = true)
     }
 
     @After
@@ -60,69 +51,8 @@ class TrUAPIHostRuntimeProviderTest {
         assertEquals("1.0.0 (1022)", runtimeConfig.captured.hostVersion)
     }
 
-    @Test
-    fun `lists the bundled providers at once and the configured ones once remote config arrives`() = runTest {
-        val bundledOnly = bundled("fundtest.dot")
-        val bundledAlsoConfigured = bundled("ramp.dot")
-        bundledProviders = listOf(bundledAlsoConfigured, bundledOnly)
-        provider().runtime().getOrThrow()
-        runCurrent()
-
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(any()) }
-        verify { nativeRuntime.setFundingProviders(bundledProviders) }
-
-        configuredProviders.complete(Result.success(listOf(id("ramp.dot"), id("other.dot"))))
-        runCurrent()
-
-        verify {
-            nativeRuntime.setFundingProviders(listOf(published("ramp.dot"), published("other.dot"), bundledOnly))
-        }
-    }
-
-    @Test
-    fun `keeps the bundled providers when remote config cannot be read`() = runTest {
-        bundledProviders = listOf(bundled("fundtest.dot"))
-        provider().runtime().getOrThrow()
-
-        configuredProviders.complete(Result.failure(IllegalStateException("offline")))
-        runCurrent()
-
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(bundledProviders) }
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(any()) }
-    }
-
-    @Test
-    fun `lists nothing before remote config when no provider is bundled`() = runTest {
-        provider().runtime().getOrThrow()
-        runCurrent()
-
-        verify(exactly = 0) { nativeRuntime.setFundingProviders(any()) }
-
-        configuredProviders.complete(Result.success(listOf(id("ramp.dot"))))
-        runCurrent()
-
-        verify { nativeRuntime.setFundingProviders(listOf(published("ramp.dot"))) }
-    }
-
-    private fun id(name: String) = ProductId.parse(name).getOrThrow()
-
-    private fun published(name: String) =
-        FundingProviderEntry(productId = id(name), workerManifest = null, origin = FundingProviderOrigin.PUBLISHED)
-
-    private fun bundled(name: String) =
-        FundingProviderEntry(productId = id(name), workerManifest = "{}", origin = FundingProviderOrigin.BUNDLED)
-
     // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
     // name shows no cards offline. The name an earlier run read is the one this build's network has.
-    // Products open through the runtime this hands out, so the core must already have the funding callbacks: a product
-    // asking for funding before them would be told the host does not support it.
-    @Test
-    fun `installs the funding callbacks before handing the runtime out`() = runTest {
-        provider().runtime().getOrThrow()
-
-        verify(exactly = 1) { nativeRuntime.setFundingCallbacks(any()) }
-    }
-
     @Test
     fun `boots offline on the network name an earlier run saved`() = runTest {
         provider(saved = paseo, read = Result.failure(IllegalStateException("offline"))).runtime().getOrThrow()
@@ -160,16 +90,12 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
-        fundingBridge = mockk(relaxed = true),
-        bundledProducts = mockk { every { fundingProviders() } returns bundledProviders },
-        fundingProvidersConfig = mockk { coEvery { getFundingProviderIds() } coAnswers { configuredProviders.await() } },
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),
         extensionVersions = mockk(),
         pinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
         workerSupervisor = { mockk(relaxed = true) },
-        workerCrashNotice = mockk(relaxed = true),
         dispatchers = testDispatchers(),
     )
 

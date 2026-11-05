@@ -88,7 +88,7 @@ pub struct LearnedLimit {
 
 impl LearnedLimit {
 	/// The limit, while it is still trusted at `now_ms`.
-	pub fn fresh(limit: Option<Self>, now_ms: u64) -> Option<u128> {
+	fn fresh(limit: Option<Self>, now_ms: u64) -> Option<u128> {
 		limit
 			.filter(|limit| now_ms.saturating_sub(limit.learned_at_ms) < LEARNED_SUPPORT_TTL_MS)
 			.map(|limit| limit.amount)
@@ -102,7 +102,7 @@ impl LearnedSupport {
 	}
 
 	/// Whether the provider quoted the ask, rather than refusing it.
-	pub fn is_quoted(&self) -> bool {
+	fn is_quoted(&self) -> bool {
 		self.supported && self.min.is_none() && self.max.is_none()
 	}
 

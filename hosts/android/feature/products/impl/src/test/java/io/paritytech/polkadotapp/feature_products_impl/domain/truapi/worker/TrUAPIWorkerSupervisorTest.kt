@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
-import com.google.gson.Gson
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -9,15 +8,10 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
-import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
-import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -50,10 +44,6 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
-    private var attachFailure: Throwable? = null
-    private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
-    private var resolvedWorkers = 0
-    private val configs = mutableListOf<ChatWebViewConfig>()
 
     @Before
     fun parseScriptUrls() {
@@ -64,24 +54,16 @@ class TrUAPIWorkerSupervisorTest {
             every { port } returns -1
             every { path } returns "/worker.js"
         }
-        every { Uri.parse(BUNDLED_SCRIPT_URL) } returns mockk {
-            every { scheme } returns "https"
-            every { host } returns "worker.worker.paseo"
-            every { port } returns -1
-            every { path } returns "/index.js"
-        }
     }
 
     @After
     fun restoreUri() = unmockkStatic(Uri::class)
 
-    // A dead renderer takes the worker's running script with it. The core is told the worker exited,
-    // and asks for it again while it still holds it, so its card does not sit on a dead execution.
+    // A dead renderer takes the worker's running script with it, and the core still wants the worker,
+    // so nothing else would ever bring it back: its card would sit on a dead execution.
     @Test
-    fun `a running worker whose renderer died is reported exited and boots again`() = runTest {
+    fun `a running worker whose renderer died boots again`() = runTest {
         val supervisor = supervisor()
-        // The core still holds the worker, so it answers the exit with a start.
-        every { runtime.workerExited(PRODUCT) } answers { supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) }
         val seen = mutableListOf<TrUAPIProductExecution?>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { supervisor.execution(PRODUCT).toList(seen) }
 
@@ -90,35 +72,7 @@ class TrUAPIWorkerSupervisorTest {
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
-        verify(exactly = 1) { runtime.workerExited(PRODUCT) }
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
-    }
-
-    // A script that fails to boot is a crash too; the core restarts it with backoff while it is held.
-    @Test
-    fun `a worker that fails to boot is reported exited`() = runTest {
-        attachFailure = IllegalStateException("boot failed")
-        val supervisor = supervisor()
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
-        advanceUntilIdle()
-
-        verify(exactly = 1) { runtime.workerExited(PRODUCT) }
-    }
-
-    // The core asked for the stop, so it knows; reporting it as an exit would start the worker again.
-    @Test
-    fun `a worker the core stopped is not reported exited`() = runTest {
-        val supervisor = supervisor()
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
-        advanceUntilIdle()
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP)
-        advanceUntilIdle()
-        rendererGoneListeners.getValue(providers.single()).forEach { it() }
-        advanceUntilIdle()
-
-        verify(exactly = 0) { runtime.workerExited(any()) }
     }
 
     @Test
@@ -165,37 +119,9 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    // A worker the app ships boots from its own files: nothing asks dotNS where its script is, and its
-    // WebView serves the script from the bundle under the worker's own subname.
-    @Test
-    fun `a bundled worker boots from its files without resolving its script`() = runTest {
-        val bundled = BundledProducts(
-            InMemoryBundledProductFiles(
-                mapOf(
-                    "bundled-products/worker.paseo/worker-manifest.json" to
-                        """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":true}}""",
-                    "bundled-products/worker.paseo/worker/index.js" to "export {}",
-                ),
-            ),
-            ManifestParser(Gson()),
-            enabled = true,
-        )
-        val supervisor = supervisor(bundled)
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
-        advanceUntilIdle()
-
-        assertEquals(0, resolvedWorkers)
-        assertEquals(WorkerScript("https://worker.worker.paseo", "index.js"), configs.single().workerScript)
-        assertEquals("worker.worker.paseo", configs.single().bundledContent?.host)
-        assertEquals(1, chatBridges.filterNotNull().size)
-    }
-
-    private fun TestScope.supervisor(
-        bundledProducts: BundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), ManifestParser(Gson()), enabled = true),
-    ) = TrUAPIWorkerSupervisor(
+    private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
-            mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
+            mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
         },
         hostBridgeFactory = object : ProductTrUAPIHostBridge.Factory {
             override fun create(scope: CoroutineScope) = bridge()
@@ -204,20 +130,15 @@ class TrUAPIWorkerSupervisorTest {
         scriptResolver = object : ProductScriptResolver {
             override suspend fun resolveWorker(productId: ProductId) = Result.success(
                 mockk<ProductExecutable.Worker> {
-                    resolvedWorkers++
                     every { scriptUrl } returns SCRIPT_URL
                     every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
                 },
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also {
-                workerScopes += scope
-                configs += config
-            }
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
         },
         bootstrapInstaller = bootstrapInstaller,
-        bundledProducts = bundledProducts,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         dispatchers = testDispatchers(),
@@ -228,7 +149,7 @@ class TrUAPIWorkerSupervisorTest {
         coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(5)
-            attachFailure?.let { Result.failure(it) } ?: Result.success(execution)
+            Result.success(execution)
         }
     }
 
@@ -248,6 +169,5 @@ class TrUAPIWorkerSupervisorTest {
     private companion object {
         val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
-        const val BUNDLED_SCRIPT_URL = "https://worker.worker.paseo/index.js"
     }
 }

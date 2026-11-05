@@ -87,9 +87,10 @@ class CoinageCoinField {
 
     /**
      * Re-aims every coin. A coin already in the field keeps where it has got to and simply gets a new
-     * destination. A coin new to the field drops onto its place from just above, fully worn, and settles in.
+     * destination. A coin new to the field arrives from off the right edge at a fraction of its size and
+     * fully worn, and settles in.
      */
-    fun retarget(targets: List<Pair<CoinageScene.Coin, Target>>, stagger: Stagger) {
+    fun retarget(targets: List<Pair<CoinageScene.Coin, Target>>, spawnEdge: Float, stagger: Stagger) {
         val updated = ArrayList<Member>(targets.size)
         val lookup = HashMap<String, Int>(targets.size)
         val count = maxOf(targets.size, 1)
@@ -107,7 +108,7 @@ class CoinageCoinField {
                 updated += Member(
                     coin = coin,
                     seed = seed(coin.id),
-                    channels = seeded(target),
+                    channels = seeded(target, spawnEdge),
                     target = target,
                     hold = hold
                 )
@@ -162,13 +163,13 @@ class CoinageCoinField {
     }
 
     /**
-     * Where a coin new to the field starts: just above its place and as traceable as a coin can be, so arriving
-     * money visibly drops into the stack and then clears.
+     * Where a coin new to the field starts: off the right edge, small, and as traceable as a coin can be, so
+     * arriving money visibly settles into the strip and then clears.
      */
-    private fun seeded(target: Target) = Channels().apply {
-        centreX.value = target.centreX
-        centreY.value = target.centreY - SPAWN_DROP
-        height.value = target.height
+    private fun seeded(target: Target, edge: Float) = Channels().apply {
+        centreX.value = edge + SPAWN_OFFSET
+        centreY.value = target.centreY
+        height.value = target.height * SPAWN_SCALE
         turn.value = target.turn
         tilt.value = target.tilt
         thickness.value = target.thickness
@@ -213,7 +214,8 @@ class CoinageCoinField {
     }
 
     companion object {
-        private const val SPAWN_DROP = 34f
+        private const val SPAWN_OFFSET = 30f
+        private const val SPAWN_SCALE = 0.4f
 
         fun seed(id: String): Float {
             var hashed = 0x9E3779B97F4A7C15uL

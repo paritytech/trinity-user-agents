@@ -13,16 +13,6 @@ interface SendPaymentContract {
 
     fun onSendToYourselfClick()
 
-    fun onSendMoneyOutClick()
-
-    fun onFundingHistoryClick()
-
-    fun onFundingSheetBack()
-
-    fun onFundingSheetDismiss()
-
-    fun onFundingRowClick(id: String)
-
     fun onPasteClick()
 
     fun onScannerClick()
