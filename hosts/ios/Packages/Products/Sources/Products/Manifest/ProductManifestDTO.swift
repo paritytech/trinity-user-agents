@@ -50,6 +50,25 @@ struct ExecutableManifestDTO: Decodable {
 struct IncludesDTO: Decodable {
     let chat: Bool?
     let pocket: Bool?
+    /// Only whether the worker lists funding matters here; the core reads the routes.
+    let funding: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case chat
+        case pocket
+        case funding
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        chat = try container.decodeIfPresent(Bool.self, forKey: .chat)
+        pocket = try container.decodeIfPresent(Bool.self, forKey: .pocket)
+        funding = container.contains(.funding)
+    }
+
+    var listsAnyModality: Bool {
+        chat != nil || pocket != nil || funding
+    }
 }
 
 /// The section decodes leniently so a publisher who typed it wrong costs the product its cards and
