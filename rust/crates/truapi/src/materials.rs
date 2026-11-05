@@ -136,7 +136,7 @@ impl Materials {
 	}
 
 	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
-		let answer = self.resolve(id).await;
+		let answer = self.resolve(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -153,7 +153,7 @@ impl Materials {
 		}
 	}
 
-	async fn resolve(&self, id: [u8; 32]) -> Result<Vec<u8>, MaterialFailure> {
+	async fn resolve(&self, id: [u8; 32], own: &AbortHandle) -> Result<Vec<u8>, MaterialFailure> {
 		match self.kept(id).await {
 			Ok(Some(text)) => return Ok(text),
 			Ok(None) => {},
@@ -173,7 +173,7 @@ impl Materials {
 					},
 					None => return Err(MaterialFailure::NotFound),
 				},
-				() = deadline => self.report(id, MaterialFailure::NotFound),
+				() = deadline => self.report(id, MaterialFailure::NotFound, own),
 			}
 		}
 	}
@@ -206,8 +206,12 @@ impl Materials {
 		Ok(text)
 	}
 
-	fn report(&self, id: [u8; 32], failure: MaterialFailure) {
-		if let Some(fetch) = self.0.fetches.lock().get_mut(&id) {
+	fn report(&self, id: [u8; 32], failure: MaterialFailure, own: &AbortHandle) {
+		let mut fetches = self.0.fetches.lock();
+		if own.is_aborted() {
+			return;
+		}
+		if let Some(fetch) = fetches.get_mut(&id) {
 			fetch.failure = Some(failure);
 			for caller in &fetch.callers {
 				let _ = caller.unbounded_send(Err(failure));
@@ -294,7 +298,11 @@ fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
 		RendererNode::Row { children, .. } |
 		RendererNode::Text { children, .. } |
 		RendererNode::Button { children, .. } => children,
-		_ => return,
+		RendererNode::Nil |
+		RendererNode::String { .. } |
+		RendererNode::Spacer { .. } |
+		RendererNode::TextField { .. } |
+		RendererNode::Image { .. } => return,
 	};
 	for child in children {
 		collect_material_ids(child, ids);

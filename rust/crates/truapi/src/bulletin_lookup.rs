@@ -38,7 +38,7 @@ use crate::{
 
 /// How long a miss waits before asking the node again: about one Bulletin block.
 const POLL_INTERVAL: Duration = Duration::from_secs(6);
-/// Bound on one round trip to the node over the core's own connection.
+/// Bound on connecting to the node and one round trip to it over the core's own connection.
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
 // `bitswap_v1_get` errors by code, the only part of the error the bitswap JSON-RPC spec
@@ -106,14 +106,15 @@ impl BlobSource for Weak<RuntimeServices> {
 		let Some(services) = self.upgrade() else {
 			return Err(SourceError::Permanent("the runtime is gone".to_string()));
 		};
-		let client =
-			services.bulletin.client("bitswap_v1_get").await.map_err(|error| {
+		let read = async {
+			let client = services.bulletin.client("bitswap_v1_get").await.map_err(|error| {
 				SourceError::Transient(format!("connecting to Bulletin: {error}"))
 			})?;
-		let request = bitswap_request(&client, cid);
-		pin_mut!(request);
-		match future::select(request, RealTimer.sleep(RPC_TIMEOUT)).await {
-			Either::Left((result, _)) => bitswap_answer(result),
+			bitswap_answer(bitswap_request(&client, cid).await)
+		};
+		pin_mut!(read);
+		match future::select(read, RealTimer.sleep(RPC_TIMEOUT)).await {
+			Either::Left((answer, _)) => answer,
 			Either::Right(_) => Err(SourceError::Transient("bitswap_v1_get timed out".to_string())),
 		}
 	}

@@ -1045,7 +1045,9 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
 		let Ok(db) = self.services.core_db() else {
-			tracing::warn!("no core database set, durable transactions and NFT purses are off");
+			tracing::warn!(
+				"no core database set, materials, durable transactions and NFT purses are off"
+			);
 			return;
 		};
 		self.start_material_fetch(db.clone());
