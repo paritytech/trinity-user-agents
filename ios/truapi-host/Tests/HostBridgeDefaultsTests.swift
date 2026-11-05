@@ -10,8 +10,8 @@ struct HostBridgeDefaultsTests {
     func defaultBeginOperationNamesEachOperationSeparately() async throws {
         let bridge = StubHostBridge()
 
-        let first = try await bridge.beginOperation(productId: "test.dot", label: "funding")
-        let second = try await bridge.beginOperation(productId: "test.dot", label: "")
+        let first = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "funding")
+        let second = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "")
 
         #expect(first != second)
         #expect(first != 0)

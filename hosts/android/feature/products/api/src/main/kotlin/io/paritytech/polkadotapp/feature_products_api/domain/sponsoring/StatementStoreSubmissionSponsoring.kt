@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.domain.sponsoring
 
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * Sponsoring entry point for Statement Store flows. Owns slot-key lifecycle and

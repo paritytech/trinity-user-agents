@@ -27,7 +27,7 @@ use crate::{
 
 /// Chain interaction methods.
 #[wire_trait(id = 3)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Chain: Send + Sync {
 	/// Follow the chain head and receive block events.
 	///

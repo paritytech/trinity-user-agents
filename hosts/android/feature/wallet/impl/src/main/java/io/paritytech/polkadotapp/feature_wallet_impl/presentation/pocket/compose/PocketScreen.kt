@@ -25,6 +25,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNotifier
@@ -40,7 +42,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
@@ -61,6 +62,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.MutableStateFlow
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val CollectiblesSketchbookPeek = 80.dp
@@ -75,6 +77,7 @@ fun PocketScreen() {
     val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onShown() }
 
     PocketScreenInternal(
         screenState = screenState,
@@ -84,9 +87,8 @@ fun PocketScreen() {
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
-        onSketchbookSelected = viewModel::showCollectiblesSketchbook,
+        onSketchbookSelected = viewModel::openCollectibles,
         onSketchbookDismissed = viewModel::hideCollectiblesSketchbook,
-        onOpenCollectibles = viewModel::openCollectibles,
         onExpandedCardSettled = viewModel::hostExpandedProduct,
         onProductCardRemovalRequested = viewModel::requestRemoval,
         onRemovalConfirmed = viewModel::confirmRemoval,
@@ -105,7 +107,6 @@ private fun PocketScreenInternal(
     onCardDismissed: () -> Unit,
     onSketchbookSelected: () -> Unit,
     onSketchbookDismissed: () -> Unit,
-    onOpenCollectibles: () -> Unit,
     onExpandedCardSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit,
     onRemovalConfirmed: () -> Unit,
@@ -119,6 +120,7 @@ private fun PocketScreenInternal(
         SharedTransitionLayout {
             CompositionLocalProvider(
                 LocalSharedTransitionScope provides this,
+                LocalPocketScreenTransition provides transition,
                 LocalCardTilt provides cardTilt
             ) {
                 transition.AnimatedContent(
@@ -161,10 +163,7 @@ private fun PocketScreenInternal(
                             }
 
                             is PocketScreenState.Collectibles -> {
-                                PocketCollectibles(
-                                    onBack = onSketchbookDismissed,
-                                    onViewButtonClick = onOpenCollectibles
-                                )
+                                PocketCollectibles(onBack = onSketchbookDismissed)
                             }
                         }
                     }
@@ -312,8 +311,7 @@ private fun PocketList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onCollectiblesSelected),
-                blackAndWhite = true,
-                onViewButtonClick = {}
+                blackAndWhite = true
             )
         }
     }
@@ -341,7 +339,7 @@ private fun PocketScreenPreview() {
                         syncInProgress = false,
                     ),
                     PocketCardUiModel.ProductCard(
-                        key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId("humanity")),
+                        key = PocketCardKey(ProductId.parse("peopl.dot").getOrThrow(), PocketCardId("humanity")),
                         title = "Humanity",
                         pinned = true
                     )
@@ -360,7 +358,6 @@ private fun PocketScreenPreview() {
                 onCardDismissed = {},
                 onSketchbookSelected = {},
                 onSketchbookDismissed = {},
-                onOpenCollectibles = {},
                 onProductCardRemovalRequested = {},
                 onRemovalConfirmed = {},
                 onRemovalDismissed = {}

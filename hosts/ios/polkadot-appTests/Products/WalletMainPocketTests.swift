@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import ChainRegistry
 import Foundation
 import os
@@ -50,7 +51,7 @@ struct WalletMainPocketTests {
         try await presenter.waitForCards { $0.contains(loyalty.key) }
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
 
-        _ = try await collection.removeCard(loyalty.key)
+        try await collection.removeCard(loyalty.key)
         try await presenter.waitForCards { !$0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)
@@ -69,7 +70,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == "stash.\(network)")
+        #expect(try screen.wireframe.openedProduct == ProductId("stash.\(network)"))
     }
 
     /// The remote switch pulls the card from every installed app without a
@@ -102,7 +103,7 @@ struct WalletMainPocketTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
@@ -216,19 +217,20 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
+    var openCard: PocketCardKey? { nil }
     func setOpenCard(_: PocketCardKey?) {}
     func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
-    private(set) var openedProduct: String?
+    private(set) var openedProduct: ProductId?
 
     func showProduct(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
     }
 
-    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
 }
 
@@ -254,6 +256,14 @@ private final class LateTld: DotNsTldProviding {
 
     func refresh() {}
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {

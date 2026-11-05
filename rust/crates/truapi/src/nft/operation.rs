@@ -10,11 +10,12 @@ use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
 use super::{
-	dao::{self, KeyStanding},
+	dao,
 	item::{AllocateItemsError, Allocation, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver, ItemSlot},
+	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
 	durable::{
@@ -63,12 +64,33 @@ pub enum StartOperationError {
 	/// The item is handed off or spent by a live transaction.
 	#[error("item {} is in use", hex::encode(.0.0))]
 	ItemUnavailable(ItemKey),
+	/// No key was handed off under the tag.
+	#[error("no key was handed off under this tag")]
+	TagNotFound,
+	/// No operation is registered under the import's key.
+	#[error("no import is registered under this key")]
+	ImportNotFound,
+	/// A move of the import can still land or fail.
+	#[error("the import has moves that are not final yet")]
+	ImportUnsettled,
+	/// Every item the import landed is consumed already.
+	#[error("no item the import landed is idle")]
+	NothingIdle,
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
+}
+
+impl From<ItemRefusal> for StartOperationError {
+	fn from(refusal: ItemRefusal) -> Self {
+		match refusal {
+			ItemRefusal::NotFound(key) => Self::ItemNotFound(key),
+			ItemRefusal::Unavailable(key) => Self::ItemUnavailable(key),
+		}
+	}
 }
 
 /// Which items an operation transfers and where they go.
@@ -92,10 +114,10 @@ pub enum TransferType {
 
 impl TransferType {
 	/// The items the transfers spend, in the order they are registered.
-	pub fn inputs(&self) -> Vec<ItemKey> {
+	pub fn inputs(&self) -> BTreeSet<ItemKey> {
 		match self {
-			Self::Local { inputs, .. } => inputs.iter().copied().collect(),
-			Self::Foreign { input, .. } => vec![*input],
+			Self::Local { inputs, .. } => inputs.clone(),
+			Self::Foreign { input, .. } => BTreeSet::from([*input]),
 		}
 	}
 }
@@ -129,7 +151,7 @@ pub fn plan_transfers(
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
 	validate_operation_unused(tx, &request.operation)?;
-	let sources = idle_items(tx, request.from, &request.transfer.inputs())?;
+	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
 	let destinations = match request.transfer {
 		TransferType::Local { into, .. } => allocate_destinations(tx, into, sources.len(), keys)?,
 		TransferType::Foreign { into, .. } => vec![into],
@@ -138,14 +160,12 @@ pub fn plan_transfers(
 	Ok(sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(IdleItem { key: source, slot, instance }, destination)| {
-			let signed_state_nonce = None;
+		.map(|(IdleItem { key: source, slot }, destination)| {
 			TransferParams {
 				source,
-				slot,
-				instance,
+				signer: TransferSigner::Derived(slot),
 				destination,
-				signed_state_nonce,
+				submitted_attempt: None,
 				give_up_after,
 			}
 			.into()
@@ -160,11 +180,11 @@ pub fn validate_can_start(
 	request: &TransferRequest,
 ) -> Result<(), StartOperationError> {
 	validate_operation_unused(conn, &request.operation)?;
-	idle_items(conn, request.from, &request.transfer.inputs()).map(|_| ())
+	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs()).map(|_| ())
 }
 
 /// Refuses `operation` when it is already registered.
-fn validate_operation_unused(
+pub fn validate_operation_unused(
 	conn: &Connection,
 	operation: &OperationKey,
 ) -> Result<(), StartOperationError> {
@@ -174,15 +194,21 @@ fn validate_operation_unused(
 	Ok(())
 }
 
-/// An item that holds an NFT and that nothing spends.
-struct IdleItem {
-	key: ItemKey,
-	slot: ItemSlot,
-	instance: u64,
+/// Refuses the first of `sources` that a live transaction already moves.
+pub fn validate_not_moving(
+	conn: &Connection,
+	sources: &BTreeSet<ItemKey>,
+) -> Result<(), StartOperationError> {
+	let keys: Vec<ItemKey> = sources.iter().copied().collect();
+	let moving = dao::moving_keys(conn, &keys)?;
+	match moving.first() {
+		Some(key) => Err(StartOperationError::ItemUnavailable(*key)),
+		None => Ok(()),
+	}
 }
 
 /// `item_count` fresh keys in `purse`.
-fn allocate_destinations(
+pub fn allocate_destinations(
 	tx: &Transaction<'_>,
 	purse: PurseId,
 	item_count: usize,
@@ -194,32 +220,14 @@ fn allocate_destinations(
 	Ok(allocate_items_in(tx, allocation, keys.deriver)??)
 }
 
-/// Each of `items` with its slot and instance, in order, when every one is
-/// idle in `purse`. Reads every standing in one query.
-fn idle_items(
-	conn: &Connection,
-	purse: PurseId,
-	items: &[ItemKey],
-) -> Result<Vec<IdleItem>, StartOperationError> {
-	let standings = dao::key_standings(conn, purse, items)?;
-	let idle_item = |key: &ItemKey| match standings.get(key) {
-		Some(KeyStanding::Idle { instance, slot }) => {
-			Ok(IdleItem { key: *key, slot: *slot, instance: *instance })
-		},
-		Some(KeyStanding::Spent) => Err(StartOperationError::ItemUnavailable(*key)),
-		None => Err(StartOperationError::ItemNotFound(*key)),
-	};
-	items.iter().map(idle_item).collect()
-}
-
 /// Records that the transfer with each id of `ids` spends the item at the same
 /// position of `items`.
 pub fn record_inputs(
 	tx: &Transaction<'_>,
-	items: &[ItemKey],
+	items: impl IntoIterator<Item = ItemKey>,
 	ids: &[DurableTxId],
 ) -> Result<(), StartOperationError> {
-	let inputs: Vec<_> = items.iter().copied().zip(ids.iter().copied()).collect();
+	let inputs: Vec<_> = items.into_iter().zip(ids.iter().copied()).collect();
 	Ok(dao::insert_inputs(tx, &inputs)?)
 }
 
@@ -265,6 +273,20 @@ impl From<DurableTxStatus> for TransferState {
 /// is an error: registration writes them with every transfer.
 pub fn progress_of(transfers: Vec<DurableTxState>) -> Result<Vec<TransferProgress>, DbError> {
 	transfers.into_iter().map(transfer_progress).collect()
+}
+
+/// The latest of `transfers` for each key they consume, in the order those
+/// latest moves were registered. A later move of a key replaces an earlier
+/// one, as when a repeated revoke retries a reclaim that failed.
+pub fn latest_per_source(transfers: Vec<TransferProgress>) -> Vec<TransferProgress> {
+	let mut seen = BTreeSet::new();
+	let mut latest: Vec<_> = transfers
+		.into_iter()
+		.rev()
+		.filter(|transfer| seen.insert(transfer.consumed))
+		.collect();
+	latest.reverse();
+	latest
 }
 
 fn transfer_progress(state: DurableTxState) -> Result<TransferProgress, DbError> {
@@ -506,6 +528,25 @@ mod tests {
 		let purses = purses_holding(1);
 
 		assert_eq!(transfers_of(&purses, &operation(9)), vec![]);
+	}
+
+	/// A retried move replaces the failure before it, so the operation's
+	/// status follows the retry while other keys keep their only move.
+	#[test]
+	fn only_the_latest_move_of_each_key_is_kept_in_registration_order() {
+		let progress = |consumed: u8, state: TransferState| TransferProgress {
+			consumed: ItemKey([consumed; 32]),
+			minted: ItemKey([0xa0 + consumed; 32]),
+			tx_hash: None,
+			state,
+		};
+		let first_failed = progress(1, TransferState::Failed);
+		let other = progress(2, TransferState::Waiting);
+		let retried = progress(1, TransferState::Landed { finalized: true });
+
+		let latest = latest_per_source(vec![first_failed, other, retried]);
+
+		assert_eq!(latest, vec![other, retried]);
 	}
 
 	#[test]

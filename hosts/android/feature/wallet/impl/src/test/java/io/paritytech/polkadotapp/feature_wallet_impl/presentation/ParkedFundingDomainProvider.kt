@@ -2,8 +2,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation
 
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.CompletableDeferred
+import uniffi.truapi.ProductId
 
 // Mockito cannot suspend a stubbed suspend call.
 internal class ParkedFundingDomainProvider : FundingDomainProvider {

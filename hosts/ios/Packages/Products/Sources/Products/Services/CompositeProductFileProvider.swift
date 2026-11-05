@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public protocol ChatProductFileProviding: ProductFileProviding {
@@ -40,6 +41,6 @@ public final class CompositeProductFileProvider: ChatProductFileProviding {
     // MARK: - Private
 
     private func resolveContentHash(productId: ProductId) -> String? {
-        contentHashCache.getContentHash(name: productId)
+        contentHashCache.getContentHash(name: productId.rawValue)
     }
 }

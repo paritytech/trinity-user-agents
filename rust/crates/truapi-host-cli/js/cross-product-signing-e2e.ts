@@ -1,3 +1,5 @@
+import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/index.ts";
+
 // Cross-product account signing against a real signing-host CLI.
 //
 // The sibling of `cross-product-ringvrf-e2e.ts`, for the same `context` scope
@@ -47,9 +49,9 @@
 
 export {};
 
-const OWNER = "peopl.paseo";
-const GRANTED = "dim2.paseo";
-const UNTRUSTED = "stash.paseo";
+const OWNER = asProductId("peopl.paseo");
+const GRANTED = asProductId("dim2.paseo");
+const UNTRUSTED = asProductId("stash.paseo");
 
 const INDEX = { tag: "Index" as const, value: 0 };
 const OWNER_HANDLE = { dotNsIdentifier: OWNER, derivationIndex: INDEX };
@@ -77,7 +79,7 @@ function refusalTag(error: unknown): string | null {
   return domain.value?.value?.tag ?? null;
 }
 
-function expectProduct(expected: string): void {
+function expectProduct(expected: ProductId): void {
   if (host.productId !== expected) {
     throw new Error(
       `phase expects --product-id ${expected}, host serves ${host.productId}`,

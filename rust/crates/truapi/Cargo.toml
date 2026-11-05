@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.27.0"
+version = "0.29.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -49,6 +49,8 @@ runtime = [
     "dep:nanoid",
     "dep:blake2b_simd",
     "dep:sp-crypto-hashing",
+    "dep:alloy-primitives",
+    "dep:alloy-sol-types",
     "dep:schnorrkel",
     "dep:substrate-bip39",
     "dep:zeroize",
@@ -90,11 +92,11 @@ wasm-signing-host = ["runtime"]
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime", "dep:strum"]
+mock = ["runtime"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
-strum = { workspace = true, optional = true }
+strum = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
@@ -116,6 +118,8 @@ url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-sol-types = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
 substrate-bip39 = { workspace = true, optional = true }
 zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
@@ -166,27 +170,26 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 [dev-dependencies]
 bip39 = { workspace = true }
 scale-info = { workspace = true, features = ["std"] }
-strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "golden_frame"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "platform_bounds"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "wasm_crypto_vectors"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "wire_result_shape"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "signing_host_mock_platform"

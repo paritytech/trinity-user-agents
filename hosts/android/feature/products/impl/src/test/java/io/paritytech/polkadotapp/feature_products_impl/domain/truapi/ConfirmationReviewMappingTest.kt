@@ -25,6 +25,7 @@ import uniffi.truapi.NftPurseDrainDestination
 import uniffi.truapi.NftPurseDrainReview
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductAccountTxPayload
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.RawPayload
 import uniffi.truapi.ResourceAllocationReview
@@ -40,7 +41,9 @@ import uniffi.truapi.ProductAccountId as NativeProductAccountId
 private const val ALICE_SS58 = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
 
 class ConfirmationReviewMappingTest {
-    private val caller = "caller-product.dot"
+    private val drainer = ProductId.parse("drainer.dot").getOrThrow()
+    private val owner = ProductId.parse("owner.dot").getOrThrow()
+    private val caller = ProductId.parse("caller-product.dot").getOrThrow()
 
     @OptIn(ExperimentalStdlibApi::class)
     private fun aliceAccountId() =
@@ -57,7 +60,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Transaction
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.account)
         assertArrayEquals(byteArrayOf(0xde.toByte(), 0xad.toByte()), body.payload.method)
         assertEquals(listOf("CheckNonce", "CheckWeight"), body.payload.signedExtensions)
         assertEquals(4, body.payload.version)
@@ -111,7 +114,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Raw
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.account)
         val content = body.payload.type as RawPayloadContent.Bytes
         assertArrayEquals(byteArrayOf(0xca.toByte(), 0xfe.toByte()), content.data)
     }
@@ -181,7 +184,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.CreateTransaction
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.signer)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.signer)
         val extension = body.payload.extensions.single()
         assertEquals("CheckNonce", extension.id)
         assertArrayEquals(byteArrayOf(1), extension.explicit.value)
@@ -211,7 +214,7 @@ class ConfirmationReviewMappingTest {
     fun `sign vrf maps transcript`() {
         val review = UserConfirmationReview.SignVrf(
             SignVrfReview(
-                callingProductId = "caller-product.dot",
+                callingProductId = ProductId.parse("caller-product.dot").getOrThrow(),
                 request = HostAccountSignVrfRequest(
                     account = nativeAccount(),
                     transcriptLabel = "pop:airdrop".toByteArray(),
@@ -224,7 +227,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.SignVrf
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.account)
         assertArrayEquals("pop:airdrop".toByteArray(), body.transcriptLabel)
         val item = body.items.single()
         assertArrayEquals("round".toByteArray(), item.label.value)
@@ -250,10 +253,10 @@ class ConfirmationReviewMappingTest {
 
     private fun signVrfReview(derivationIndex: DerivationIndex) = UserConfirmationReview.SignVrf(
         SignVrfReview(
-            callingProductId = "caller-product.dot",
+            callingProductId = ProductId.parse("caller-product.dot").getOrThrow(),
             request = HostAccountSignVrfRequest(
                 account = NativeProductAccountId(
-                    dotNsIdentifier = "demo-product.dot",
+                    dotNsIdentifier = ProductId.parse("demo-product.dot").getOrThrow(),
                     derivationIndex = derivationIndex,
                 ),
                 transcriptLabel = ByteArray(0),
@@ -274,27 +277,27 @@ class ConfirmationReviewMappingTest {
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.StatementSign
 
-        assertEquals("demo-product.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("demo-product.dot").getOrThrow(), confirmation.requesterProductId)
         assertEquals(3, confirmation.payloadSize)
     }
 
     @Test
     fun `account access maps both products`() {
         val review = UserConfirmationReview.AccountAccess(
-            AccountAccessReview(requestingProductId = "caller.dot", targetProductId = "target.dot"),
+            AccountAccessReview(requestingProductId = ProductId.parse("caller.dot").getOrThrow(), targetProductId = ProductId.parse("target.dot").getOrThrow()),
         )
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.AccountAccess
 
-        assertEquals("caller.dot", confirmation.requesterProductId)
-        assertEquals("target.dot", confirmation.targetProductId)
+        assertEquals(ProductId.parse("caller.dot").getOrThrow(), confirmation.requesterProductId)
+        assertEquals(ProductId.parse("target.dot").getOrThrow(), confirmation.targetProductId)
     }
 
     @Test
     fun `nft purse drain maps the purse, its root owner and the destination purse`() {
         val review = UserConfirmationReview.NftPurseDrain(
             NftPurseDrainReview(
-                callingProductId = "drainer.dot",
+                callingProductId = drainer,
                 fromPurse = 4u,
                 owner = NftPurseOwner.Root,
                 itemCount = 2u,
@@ -305,7 +308,7 @@ class ConfirmationReviewMappingTest {
         val confirmation = review.toConfirmation(caller)
 
         val expected = TrUAPIConfirmation.NftPurseDrain(
-            requesterProductId = "drainer.dot",
+            requesterProductId = drainer,
             fromPurse = 4u,
             ownerProductId = null,
             itemCount = 2u,
@@ -315,30 +318,78 @@ class ConfirmationReviewMappingTest {
     }
 
     @Test
+    fun `nft purse drain into a cheque maps to the cheque destination`() {
+        val review = UserConfirmationReview.NftPurseDrain(
+            NftPurseDrainReview(
+                callingProductId = drainer,
+                fromPurse = 4u,
+                owner = NftPurseOwner.Product(owner),
+                itemCount = 1u,
+                destination = NftPurseDrainDestination.Cheque,
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = drainer,
+            fromPurse = 4u,
+            ownerProductId = owner,
+            itemCount = 1u,
+            destination = TrUAPIConfirmation.NftPurseDrain.Destination.Cheque,
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
+    fun `nft purse drain back to a cheque's sender maps to the refund destination`() {
+        val review = UserConfirmationReview.NftPurseDrain(
+            NftPurseDrainReview(
+                callingProductId = drainer,
+                fromPurse = 4u,
+                owner = NftPurseOwner.Product(owner),
+                itemCount = 2u,
+                destination = NftPurseDrainDestination.Refund,
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = drainer,
+            fromPurse = 4u,
+            ownerProductId = owner,
+            itemCount = 2u,
+            destination = TrUAPIConfirmation.NftPurseDrain.Destination.Refund,
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
     fun `product subtree maps the product as its own requester`() {
-        val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = "self.dot"))
+        val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = ProductId.parse("self.dot").getOrThrow()))
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ProductSubtree
 
-        assertEquals("self.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("self.dot").getOrThrow(), confirmation.requesterProductId)
     }
 
     @Test
     fun `identity disclosure maps the product`() {
         val review = UserConfirmationReview.IdentityDisclosure(
-            IdentityDisclosureReview(productId = "discloser.dot"),
+            IdentityDisclosureReview(productId = ProductId.parse("discloser.dot").getOrThrow()),
         )
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
 
-        assertEquals("discloser.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("discloser.dot").getOrThrow(), confirmation.requesterProductId)
     }
 
     @Test
     fun `resource allocation labels every resource`() {
         val review = UserConfirmationReview.ResourceAllocation(
             ResourceAllocationReview(
-                callingProductId = "caller.dot",
+                callingProductId = ProductId.parse("caller.dot").getOrThrow(),
                 resources = listOf(
                     AllocatableResource.StatementStoreAllowance,
                     AllocatableResource.AutoSigning,
@@ -355,7 +406,7 @@ class ConfirmationReviewMappingTest {
         (toConfirmation(caller) as TrUAPIConfirmation.Signing).request
 
     private fun nativeAccount() = NativeProductAccountId(
-        dotNsIdentifier = "demo-product.dot",
+        dotNsIdentifier = ProductId.parse("demo-product.dot").getOrThrow(),
         derivationIndex = DerivationIndex.Index(7u),
     )
 

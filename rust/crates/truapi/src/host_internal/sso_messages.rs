@@ -31,7 +31,9 @@ use truapi::latest::{
 };
 
 #[cfg(test)]
-use crate::host_logic::sso::pairing::{AEAD_NONCE_LEN, encrypt_session_statement_data_with_nonce};
+use crate::host_logic::{
+	sso::pairing::encrypt_session_statement_data_with_nonce, x25519_seal::AEAD_NONCE_LEN,
+};
 use crate::{
 	host_logic::{
 		session::SsoSessionInfo,
@@ -762,7 +764,7 @@ mod tests {
 			ProductRequest {
 				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
+					owner: ProductId::for_test("peopl.dot"),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::Anonymized,
 				},
 			},
@@ -837,7 +839,7 @@ mod tests {
 			v1::RemoteMessage::ListRingVrfKeysRequest(ProductRequest {
 				calling_product_id: ProductId::for_test("game.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
+					owner: ProductId::for_test("peopl.dot"),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::PublicKey,
 				},
 			}),
@@ -866,7 +868,7 @@ mod tests {
 	#[test]
 	fn ring_vrf_messages_wire_shape_pin() {
 		let context = truapi::latest::ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Index(0),
 		};
 		let ring_location = RingLocation {

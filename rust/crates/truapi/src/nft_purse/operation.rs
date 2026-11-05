@@ -8,11 +8,11 @@ use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
-	NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey, NftPurseItemKey,
-	NftPurseStatus,
+	NftPurseChequeId, NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey,
+	NftPurseItemKey, NftPurseOwner, NftPurseStatus,
 };
 
-use super::{NftPurses, PurseOwner};
+use super::NftPurses;
 use crate::{
 	durable::RegistrationError,
 	nft::{
@@ -107,12 +107,19 @@ impl NftPurses {
 
 /// Whether `caller` must confirm draining a purse `owner` holds: one owned by
 /// Root or by another product.
-pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool {
-	!matches!(owner, PurseOwner::Product(id) if id == caller)
+pub fn drain_needs_confirmation(caller: &ProductId, owner: &NftPurseOwner) -> bool {
+	!matches!(owner, NftPurseOwner::Product(id) if id == caller)
+}
+
+/// The idempotency key of the operation `domain` names for cheque `id`, as
+/// products derive it to observe a revoke or a refund.
+pub fn cheque_idempotency_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+	let preimage = [domain, &id.0].concat();
+	NftPurseIdempotencyKey(blake2_256(&preimage))
 }
 
 /// The operation `caller` names `idempotency_key`, scoped to `caller`.
-fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
+pub fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
 	OperationKey::new(caller.as_str().as_bytes(), idempotency_key.0)
 }
 
@@ -300,8 +307,8 @@ mod tests {
 	fn the_status_stream_ends_with_its_terminal_status() {
 		let (_dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
-		let purses = NftPurses::new(ledger.clone());
-		let caller: ProductId = "tickets.dot".parse().unwrap();
+		let purses = crate::nft_purse::test_purses(db.clone());
+		let caller = ProductId::for_test("tickets.dot");
 		let item = held_item_in_new_purses(&ledger);
 		let key = NftPurseIdempotencyKey([1; 32]);
 		let items = BTreeSet::from([item]);

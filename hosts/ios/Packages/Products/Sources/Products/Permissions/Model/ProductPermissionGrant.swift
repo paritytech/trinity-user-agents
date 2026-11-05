@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Persisted record of a product's permission grant.
@@ -16,7 +17,7 @@ public struct ProductPermissionGrant: Equatable, Sendable {
     }
 
     public init(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission,
         granted: Bool,
         grantedAt: Date?
@@ -28,7 +29,7 @@ public struct ProductPermissionGrant: Equatable, Sendable {
     }
 
     public static func makeIdentifier(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) -> String {
         "\(productId):\(permission.typeName):\(permission.key)"

@@ -23,9 +23,7 @@ use truapi::{
 	SigningHostRuntime, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
-	platform::{
-		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
-	},
+	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
 };
 
 use crate::transcript::Transcript;
@@ -108,7 +106,7 @@ fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
 	async fn present_funding(
 		&self,
@@ -148,6 +146,17 @@ impl FundingPlatform for CliFundingHost {
 			}
 		});
 		Ok(FundingPresentOutcome::Started)
+	}
+
+	// The scripted host stands in for the provider, so it has no screens of
+	// the provider's to show.
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}
 
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {

@@ -1,6 +1,8 @@
 //! The NFT purse calls a host with a core database serves.
 
+mod cheques;
 mod operations;
+mod payments;
 
 use tracing::instrument;
 use truapi::{
@@ -8,22 +10,33 @@ use truapi::{
 	api::NftPurse,
 	latest,
 	versioned::nft_purse::{
-		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
-		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
-		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+		HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+		HostNftPurseCreateChequeResponse, HostNftPurseCreateItemsError,
+		HostNftPurseCreateItemsRequest, HostNftPurseCreateItemsResponse,
+		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
+		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseListenPaymentInboxError,
+		HostNftPurseListenPaymentInboxItem, HostNftPurseListenPaymentInboxRequest,
 		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
 		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
 		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
-		HostNftPurseRebalancePurseResponse, HostNftPurseTransferItemError,
-		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+		HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+		HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemResponse,
 	},
 };
 
 use crate::{
 	nft::{AllocateItemsError, CreatePurseError, PurseId, UnknownPurse},
-	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize, PurseOwner},
+	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize},
 	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
 };
 
@@ -34,7 +47,7 @@ impl ProductConnection {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl NftPurse for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_purse"))]
 	async fn create_purse(
@@ -72,6 +85,62 @@ impl NftPurse for ProductRuntimeHost {
 		version(request).exec(|request| self.list_nft_purses(request)).await
 	}
 
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_receive_key"))]
+	async fn create_receive_key(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseCreateReceiveKeyRequest,
+	) -> Result<HostNftPurseCreateReceiveKeyResponse, CallError<HostNftPurseCreateReceiveKeyError>>
+	{
+		version(request).exec(|request| self.create_nft_receive_key(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_cheque"))]
+	async fn create_cheque(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseCreateChequeRequest,
+	) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
+		version(request).exec(|request| self.create_nft_cheque(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.revoke_cheque"))]
+	async fn revoke_cheque(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseRevokeChequeRequest,
+	) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
+		version(request).exec(|request| self.revoke_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.refund"))]
+	async fn refund(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseRefundRequest,
+	) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+		version(request).exec(|request| self.refund_nft_cheque(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.deposit"))]
+	async fn deposit(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseDepositRequest,
+	) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+		version(request).exec(|request| self.deposit_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.static_receive_key"))]
+	async fn static_receive_key(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseStaticReceiveKeyRequest,
+	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
+	{
+		version(request).exec(|_| self.static_nft_receive_key()).await
+	}
+
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]
 	async fn rebalance_purse(
 		&self,
@@ -88,6 +157,30 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseTransferItemRequest,
 	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 		version(request).exec(|request| self.transfer_nft_item(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.listen_one_time_payment"))]
+	async fn listen_one_time_payment(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseListenOneTimePaymentRequest,
+	) -> Subscription<
+		HostNftPurseListenOneTimePaymentItem,
+		CallError<HostNftPurseListenOneTimePaymentError>,
+	> {
+		version(request).exec(|request| self.listen_one_time_nft_payment(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.listen_payment_inbox"))]
+	async fn listen_payment_inbox(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseListenPaymentInboxRequest,
+	) -> Subscription<
+		HostNftPurseListenPaymentInboxItem,
+		CallError<HostNftPurseListenPaymentInboxError>,
+	> {
+		version(request).exec(|request| self.listen_nft_payment_inbox(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]
@@ -128,7 +221,6 @@ impl ProductRuntimeHost {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
 		let latest::HostNftPurseListPursesRequest { owner } = request;
-		let owner = PurseOwner::parse(&owner)?;
 		if let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) {
 			let denied = latest::HostNftPurseListPursesError::Denied;
 			self.connection.require_remote_permission(grant, denied).await?;

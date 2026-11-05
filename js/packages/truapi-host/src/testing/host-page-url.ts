@@ -4,6 +4,7 @@
 //
 // Keeping it here rather than inline in each means a new option cannot be
 // taught to one entry point and forgotten by the other.
+import type { ProductId } from "@parity/truapi";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 
 /** Host configuration the page understands. */
@@ -11,7 +12,7 @@ export interface HostPageConfig {
   /** URL of the product under test. */
   productUrl: string;
   /** dotNS identifier the host runs the product under. */
-  productId?: string;
+  productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host. */
   mock?: MockHostConfig;
   /** Overrides merged into the host's runtime config. */
@@ -51,6 +52,12 @@ export interface HostPageConfig {
    * logs why a call failed before mapping it to a protocol answer.
    */
   logLevel?: string;
+  /**
+   * Product storage the host holds before the product loads, by the product's
+   * own keys, stored as UTF-8. It travels in the page URL, so a reload of the
+   * host page starts from it again.
+   */
+  productStorage?: Record<string, string>;
 }
 
 /** Apply `config` to a host page URL, returning the configured URL. */
@@ -61,6 +68,9 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
   if (config.productId) url.searchParams.set("productId", config.productId);
   if (config.runtimeConfig) {
     url.searchParams.set("runtimeConfig", JSON.stringify(config.runtimeConfig));
+  }
+  if (config.productStorage && Object.keys(config.productStorage).length) {
+    url.searchParams.set("storage", JSON.stringify(config.productStorage));
   }
   if (config.accounts) {
     // `name` for a built-in, `name:<64 hex>` when the test supplies entropy.
@@ -85,4 +95,36 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
   }
   if (config.logLevel) url.searchParams.set("logLevel", config.logLevel);
   return url.toString();
+}
+
+/** Why a derivation URI cannot name an account. */
+const NO_DERIVATION_URI =
+  "is not supported by the TrUAPI test host: a session activates from 32 " +
+  "bytes of BIP-39 entropy, not a `//Alice`-style derivation path, so the " +
+  "addresses differ from polkadot-js's by construction. Use a built-in name " +
+  "(alice, bob, charlie, dave) or pass explicit entropy.";
+
+/** Account names for the page URL, rejecting anything the host cannot honour. */
+export function accountNames(
+  accounts: (string | { name: string; uri?: string; entropy?: Uint8Array })[],
+): (string | { name: string; entropy: Uint8Array })[] {
+  return accounts.map((account) => {
+    if (typeof account === "string") return account;
+    if (account.uri !== undefined) {
+      throw new Error(
+        `testHost account "${account.name}": \`uri\` ${NO_DERIVATION_URI}`,
+      );
+    }
+    // Entropy is carried through rather than reduced to a name: it is the only
+    // way to sign as an identity that is not one of the built-ins.
+    if (account.entropy !== undefined) {
+      if (account.entropy.length !== 32) {
+        throw new Error(
+          `testHost account "${account.name}": entropy must be 32 bytes, got ${account.entropy.length}`,
+        );
+      }
+      return { name: account.name, entropy: account.entropy };
+    }
+    return account.name;
+  });
 }

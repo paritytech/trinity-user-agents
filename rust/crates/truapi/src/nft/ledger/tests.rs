@@ -15,7 +15,6 @@ use crate::{
 			FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, insert_item_row, test_ledger_deps,
 		},
 	},
-	platform::async_trait,
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
 };
@@ -237,7 +236,7 @@ impl ItemKeyDeriver for OneKeyShort {
 /// A host that cannot name its installation.
 struct NoInstallation;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl InstallationIdProvider for NoInstallation {
 	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
 		Err(GenericError { reason: "no installation".to_owned() })

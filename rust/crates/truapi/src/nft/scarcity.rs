@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
-pub use policy::{TRANSFER_POLICY, TRANSFER_WAIT_LIMIT_SECS, TransferParams};
+pub use policy::{TRANSFER_POLICY, TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
 #[cfg(test)]
 pub use testing::ASSET_HUB_PIPELINE;
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
@@ -23,7 +23,7 @@ use self::{
 	oracle::ScarcityTransferOracle,
 	policy::{ScarcityTransferPolicy, ScarcityTransferPolicyDeps},
 };
-use super::{ItemSigner, operation::nft_domain};
+use super::{ImportedSecretStore, ItemSigner, operation::nft_domain};
 use crate::{
 	chain::{ChainHeads, ExtrinsicService, WatchedStorage},
 	durable::DurableRegistry,
@@ -37,8 +37,10 @@ pub struct ScarcityTransfersDeps {
 	pub heads: Arc<dyn ChainHeads>,
 	/// Genesis of that chain.
 	pub genesis: H256,
-	/// Signs with item keys.
+	/// Signs with the item keys the host derives.
 	pub signer: Arc<dyn ItemSigner>,
+	/// Holds the secrets of imported item keys.
+	pub imported: ImportedSecretStore,
 	/// Builds the transfers.
 	pub extrinsics: Arc<ExtrinsicService>,
 }
@@ -49,10 +51,10 @@ pub fn with_scarcity_transfers(
 	registry: DurableRegistry,
 	deps: ScarcityTransfersDeps,
 ) -> DurableRegistry {
-	let ScarcityTransfersDeps { storage, heads, genesis, signer, extrinsics } = deps;
+	let ScarcityTransfersDeps { storage, heads, genesis, signer, imported, extrinsics } = deps;
 	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
 	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone(), genesis));
-	let policy_deps = ScarcityTransferPolicyDeps { chain, signer, extrinsics, genesis };
+	let policy_deps = ScarcityTransferPolicyDeps { chain, signer, imported, extrinsics, genesis };
 	let policy = ScarcityTransferPolicy::new(policy_deps);
 	registry.with_domain(nft_domain(), oracle).with_policy(Arc::new(policy))
 }
