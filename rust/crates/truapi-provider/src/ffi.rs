@@ -1289,6 +1289,30 @@ mod tests {
 		assert!(matches!(error, ChainProviderError::Connect { .. }), "{error}");
 	}
 
+	/// A node URL can carry an API key in its path or query, and the error
+	/// reaches the host's logs.
+	#[test]
+	fn a_failed_handshake_names_the_node_without_its_path_or_query() {
+		// Bound and released, so nothing listens on the port.
+		let port = std::net::TcpListener::bind("127.0.0.1:0")
+			.and_then(|tcp| tcp.local_addr())
+			.expect("a free port")
+			.port();
+		let (listener, _messages, _closed) = Collector::new();
+
+		let error = rpc_provider(format!("ws://127.0.0.1:{port}/rpc/PATHKEY?apikey=SECRET"))
+			.connect(NODE_CHAIN.to_vec(), listener)
+			.err()
+			.expect("nothing answers on the port");
+
+		let ChainProviderError::Connect { reason } = error else {
+			panic!("expected a connect error, got {error:?}");
+		};
+		assert!(!reason.contains("SECRET"), "{reason}");
+		assert!(!reason.contains("PATHKEY"), "{reason}");
+		assert!(reason.contains(&format!("ws://127.0.0.1:{port}")), "{reason}");
+	}
+
 	#[test]
 	fn a_malformed_node_url_is_rejected_without_echoing_it() {
 		let error = ChainProvider::with_rpc_nodes(vec![RpcNode {
