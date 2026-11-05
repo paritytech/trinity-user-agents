@@ -42,13 +42,16 @@ use crate::subscription::Spawner;
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
 
-/// How long a request may wait on a connection that delivers no frame at all.
+/// How long a request may wait on a connection that delivers nothing at all.
 ///
 /// The host notices a dead socket only when a ping goes unanswered, which can
 /// take most of a minute, and every request sent on it meanwhile hangs. One
 /// frame holds back every answer behind it, so the bound outlasts the largest
 /// frame on a slow link: the 1.3 MB runtime metadata of Asset Hub takes about
-/// 14 s at 780 kbps, and two such frames sharing that link take 27 s.
+/// 14 s at 780 kbps, and two such frames sharing that link take 27 s. On a
+/// connection that reports its bytes ([`JsonRpcConnection::silent_for`]), a
+/// frame still arriving counts too, so there a larger one, such as a Bulletin
+/// block body, gets as long as its bytes keep coming.
 const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
 const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 
@@ -240,7 +243,7 @@ impl HostRpcClient {
 	/// Wrap `connection` and start the response pump on `spawner`.
 	///
 	/// The pump also closes the connection once a request has waited out a
-	/// silence deadline with no frame arriving, so the requests on a dead socket
+	/// silence deadline with nothing arriving, so the requests on a dead socket
 	/// fail and the next caller can open a new one.
 	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
 		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
@@ -518,8 +521,9 @@ impl HostRpcClientInner {
 		}
 	}
 
-	/// Whether a request has waited out the silence deadline with no frame
-	/// arriving since it was sent.
+	/// Whether a request has waited out the silence deadline with nothing
+	/// arriving since it was sent: no frame, and no byte where the connection
+	/// reports them.
 	fn silent_past_deadline(&self, now: Instant) -> bool {
 		let oldest_sent_at =
 			self.pending.lock().unwrap().values().map(|request| request.sent_at).min();
@@ -527,7 +531,9 @@ impl HostRpcClientInner {
 			return false;
 		};
 		let silent_since = oldest_sent_at.max(*self.last_frame_at.lock().unwrap());
-		now.saturating_duration_since(silent_since) >= self.silence_deadline
+		let no_frame_for = now.saturating_duration_since(silent_since);
+		let no_byte_for = self.connection.silent_for().unwrap_or(no_frame_for);
+		no_frame_for.min(no_byte_for) >= self.silence_deadline
 	}
 
 	fn close_with_error(&self, error: RpcError) {
@@ -1264,6 +1270,45 @@ mod tests {
 
 		let tripped = [REQUEST_SILENCE_DEADLINE, frame_after + REQUEST_SILENCE_DEADLINE]
 			.map(|wait| client.inner.silent_past_deadline(sent_at + wait));
+
+		assert_eq!(tripped, [false, true]);
+	}
+
+	/// A connection that reports a byte only `no_byte_for` ago, with no frame
+	/// yet.
+	struct DownloadingConnection {
+		no_byte_for: Duration,
+	}
+
+	impl JsonRpcConnection for DownloadingConnection {
+		fn send(&self, _request: String) {}
+
+		fn responses(&self) -> BoxStream<'static, String> {
+			futures::stream::pending().boxed()
+		}
+
+		fn silent_for(&self) -> Option<Duration> {
+			Some(self.no_byte_for)
+		}
+
+		fn close(&self) {}
+	}
+
+	/// A frame larger than the deadline, such as a Bulletin block body on a slow
+	/// link, keeps the request waiting while its bytes arrive. A connection
+	/// whose bytes stopped is still closed at the deadline.
+	#[test]
+	fn bytes_still_arriving_keep_a_request_waiting() {
+		let sent_at = Instant::now();
+		let tripped = [Duration::from_secs(1), REQUEST_SILENCE_DEADLINE].map(|no_byte_for| {
+			let client = HostRpcClient::new(
+				Arc::new(DownloadingConnection { no_byte_for }),
+				Arc::new(|_| {}),
+			);
+			*client.inner.last_frame_at.lock().unwrap() = sent_at;
+			waiting_request(&client, sent_at);
+			client.inner.silent_past_deadline(sent_at + REQUEST_SILENCE_DEADLINE * 2)
+		});
 
 		assert_eq!(tripped, [false, true]);
 	}

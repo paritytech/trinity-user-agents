@@ -1900,8 +1900,10 @@ With `rpc`, each routed chain is registered as its endpoint's RPC node, and ever
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
 the limits and timeouts. The connection sends a ping after the keepalive
 interval without an outgoing request, and is treated as dead if no byte arrives
-within the read timeout, so a large message that is still arriving keeps it
-open. The response stream ends when the socket closes or
+within the read timeout. The 30-second limit above also counts a byte of a
+message that is still arriving, so a large message, such as a Bulletin block
+body on a slow link, keeps both the connection and the request waiting on it
+alive. The response stream ends when the socket closes or
 dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.

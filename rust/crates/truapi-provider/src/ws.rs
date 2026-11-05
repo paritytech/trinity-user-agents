@@ -201,7 +201,8 @@ where
 /// When bytes last arrived on a connection's socket.
 ///
 /// jsonrpsee yields only whole messages, so the reader times out this silence
-/// instead, which a large message that is still arriving does not trip.
+/// instead, which a large message that is still arriving does not trip. The
+/// connection reports it as [`JsonRpcConnection::silent_for`].
 #[derive(Clone)]
 struct LastRead(Arc<Mutex<Instant>>);
 
@@ -212,6 +213,10 @@ impl LastRead {
 
 	fn touch(&self) {
 		*self.0.lock().expect("last-read mutex poisoned") = Instant::now();
+	}
+
+	fn elapsed(&self) -> Duration {
+		self.0.lock().expect("last-read mutex poisoned").elapsed()
 	}
 
 	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
@@ -284,6 +289,7 @@ struct WsConnection {
 	responses: Mutex<Option<BoxStream<'static, String>>>,
 	stream_abort: AbortHandle,
 	closed: AtomicBool,
+	last_read: LastRead,
 }
 
 impl WsConnection {
@@ -307,13 +313,15 @@ impl WsConnection {
 		R: TransportReceiverT + Send,
 	{
 		let (requests, request_queue) = mpsc::channel(buffer);
-		let (responses, stream_abort) = stream::abortable(response_stream(receiver, last_read));
+		let (responses, stream_abort) =
+			stream::abortable(response_stream(receiver, last_read.clone()));
 		tokio::spawn(writer_pump(sender, request_queue, stream_abort.clone()));
 		WsConnection {
 			requests: Mutex::new(requests),
 			responses: Mutex::new(Some(responses.boxed())),
 			stream_abort,
 			closed: AtomicBool::new(false),
+			last_read,
 		}
 	}
 }
@@ -343,6 +351,10 @@ impl JsonRpcConnection for WsConnection {
 			Some(responses) => responses,
 			None => stream::empty().boxed(),
 		}
+	}
+
+	fn silent_for(&self) -> Option<Duration> {
+		Some(self.last_read.elapsed())
 	}
 
 	fn close(&self) {
@@ -680,6 +692,28 @@ mod tests {
 			last_read,
 		);
 		assert_eq!(connection.responses().next().await.as_deref(), Some("block"));
+	}
+
+	/// The consumer times silence by whole messages, so it reads the socket's
+	/// last byte through the connection to tell a slow message from a dead link.
+	#[tokio::test(start_paused = true)]
+	async fn the_connection_reports_how_long_its_socket_has_been_silent() {
+		let (sent, _sent_rx) = mpsc::unbounded::<String>();
+		let last_read = LastRead::now();
+		let connection = WsConnection::start(
+			FakeSender { sent, closed: std::sync::Arc::new(Mutex::new(false)) },
+			SilentReceiver,
+			last_read.clone(),
+		);
+		let quiet = READ_TIMEOUT / 2;
+		tokio::time::advance(quiet).await;
+		let before_the_read = connection.silent_for();
+		last_read.touch();
+
+		assert_eq!(
+			[before_the_read, connection.silent_for()],
+			[Some(quiet), Some(core::time::Duration::ZERO)]
+		);
 	}
 
 	/// Bytes read through the socket restart the silence the reader times out.
