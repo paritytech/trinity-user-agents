@@ -187,23 +187,6 @@ struct ProductManifestParserTests {
         #expect(!worker.serves(.pocket))
     }
 
-    /// A worker serving no user-facing surface is valid and still launches.
-    @Test func acceptsWorkerServingNoSurface() throws {
-        let executable = parser.parseExecutable(
-            Fixtures.worker(chat: "false", pocket: "false"),
-            kind: .worker,
-            identifier: try! ProductId("worker.hackm3.dot")
-        )
-
-        guard case let .worker(worker)? = executable else {
-            Issue.record("expected a worker executable")
-            return
-        }
-
-        #expect(!worker.serves(.chat))
-        #expect(!worker.serves(.pocket))
-    }
-
     // MARK: - Pocket cards
 
     @Test func parsesPocketCardsAWorkerPublishes() throws {
@@ -395,10 +378,11 @@ struct ProductManifestParserTests {
         #expect(fundingOnly?.modalities.isEmpty == true)
     }
 
-    @Test func rejectsAWorkerThatListsNoModality() {
+    @Test func rejectsAWorkerThatServesNoModality() {
         for manifest in [
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
-            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{}}"#
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{}}"#,
+            Fixtures.worker(chat: "false", pocket: "false")
         ] {
             #expect(parser.parseExecutable(
                 manifest,

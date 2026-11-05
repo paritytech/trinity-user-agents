@@ -47,11 +47,14 @@ struct ExecutableManifestDTO: Decodable {
     }
 }
 
-struct IncludesDTO: Decodable {
-    let chat: Bool?
-    let pocket: Bool?
-    /// Only whether the worker lists funding matters here; the core reads the routes.
-    let funding: Bool
+/// The modalities a worker serves: `chat` and `pocket` when their flag is `true`, `funding` when its
+/// section is there. The core reads the funding routes themselves.
+struct IncludesDTO: OptionSet, Decodable {
+    let rawValue: UInt8
+
+    static let chat = IncludesDTO(rawValue: 1 << 0)
+    static let pocket = IncludesDTO(rawValue: 1 << 1)
+    static let funding = IncludesDTO(rawValue: 1 << 2)
 
     private enum CodingKeys: String, CodingKey {
         case chat
@@ -59,15 +62,17 @@ struct IncludesDTO: Decodable {
         case funding
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        chat = try container.decodeIfPresent(Bool.self, forKey: .chat)
-        pocket = try container.decodeIfPresent(Bool.self, forKey: .pocket)
-        funding = container.contains(.funding)
+    init(rawValue: UInt8) {
+        self.rawValue = rawValue
     }
 
-    var listsAnyModality: Bool {
-        chat != nil || pocket != nil || funding
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var served: IncludesDTO = []
+        if try container.decodeIfPresent(Bool.self, forKey: .chat) == true { served.insert(.chat) }
+        if try container.decodeIfPresent(Bool.self, forKey: .pocket) == true { served.insert(.pocket) }
+        if container.contains(.funding), try !container.decodeNil(forKey: .funding) { served.insert(.funding) }
+        self = served
     }
 }
 
