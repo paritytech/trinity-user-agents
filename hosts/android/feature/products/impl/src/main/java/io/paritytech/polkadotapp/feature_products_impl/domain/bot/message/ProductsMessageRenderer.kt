@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.Message
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
+import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
@@ -35,7 +36,14 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidg
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.serialization.KSerializer
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
@@ -103,6 +111,7 @@ class ProductsMessageRenderer(
     ) {
         val render = remember(renders, messageId) { renders.render(roomId, messageId, content) }
         val state by render.collectAsState()
+        val spinner by remember(render) { render.spinnerAfter(SpinnerDelay) }.collectAsState(initial = false)
 
         when (val currentState = state) {
             is LoadingState.Loading -> {
@@ -112,11 +121,13 @@ class ProductsMessageRenderer(
                         .heightIn(min = LoadingMinHeight),
                     contentAlignment = Alignment.Center,
                 ) {
-                    NovaCircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = PolkadotTheme.colors.fg.secondary,
-                        strokeWidth = 2.dp,
-                    )
+                    if (spinner) {
+                        NovaCircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = PolkadotTheme.colors.fg.secondary,
+                            strokeWidth = 2.dp,
+                        )
+                    }
                 }
             }
             is LoadingState.Loaded -> {
@@ -160,5 +171,19 @@ class ProductsMessageRenderer(
 
     private companion object {
         val LoadingMinHeight = 44.dp
+
+        // A tree that arrives within this shows no spinner at all, so a quick load does not flash one.
+        val SpinnerDelay = 1.seconds
     }
 }
+
+/** Whether a cell still in [LoadingState.Loading] shows its spinner: never before [delay] has passed. */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun Flow<LoadingState<JsWidget>>.spinnerAfter(delay: Duration): Flow<Boolean> =
+    transformLatest { state ->
+        emit(false)
+        if (state is LoadingState.Loading) {
+            delay(delay)
+            emit(true)
+        }
+    }.distinctUntilChanged()
