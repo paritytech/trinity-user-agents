@@ -48,7 +48,7 @@ import { createTestHostServer } from "./server.js";
 
 export { fromNetworks } from "./networks.js";
 export type { LoopbackStatements, NetworkConfig } from "./networks.js";
-import { accountNames, hostPageUrl } from "./host-page-url.js";
+import { accountNames, deepLinkUrl, hostPageUrl } from "./host-page-url.js";
 import type { TestHostServer } from "./server.js";
 
 // Re-exported so a test file imports the fixture and the chain constants from
@@ -297,6 +297,14 @@ export interface TestHost {
   setTheme(variant: string): Promise<void>;
   /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): Promise<void>;
+  /**
+   * Open the product at `link`, a path with an optional query and hash such
+   * as `/notes/1?view=raw#top`, as a link opened from outside the product
+   * would. The host page loads again with the fixture's configuration, so the
+   * host starts fresh: only state the configuration carries, such as
+   * `productStorage`, is there again.
+   */
+  openDeepLink(link: string): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -664,6 +672,12 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
         setScanAnswer: (answer) => call("setScanAnswer", answer),
+        openDeepLink: async (link) => {
+          await page.goto(deepLinkUrl(url, link));
+          await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
+            timeout: defaults.readyTimeoutMs ?? 30_000,
+          });
+        },
         getIsAuthenticated: () => call("getIsAuthenticated"),
         getChainStatus: () => call("getChainStatus"),
         getConnectionStatus: () => call("getConnectionStatus"),
