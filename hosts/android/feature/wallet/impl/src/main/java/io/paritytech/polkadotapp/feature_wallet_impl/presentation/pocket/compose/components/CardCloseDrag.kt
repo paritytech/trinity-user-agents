@@ -23,7 +23,6 @@ private const val MIN_CLOSE_DISTANCE_PX = 1f
 
 private val CloseDragMaxBlur = 12.dp
 
-// SwiftUI's .spring(duration: 0.45, bounce: 0.15), which the iOS card springs back with.
 private val SpringBack = spring<Float>(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow)
 
 @Stable
