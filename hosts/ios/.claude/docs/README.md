@@ -16,7 +16,7 @@
 | Chat, messaging, chat extensions               | architecture/chat-extension.md                             |
 | Chat attachments, HOP file transfer, bitswap   | architecture/chat-attachments.md                           |
 | Message compaction, compacted batches, expansion | architecture/message-compaction.md                       |
-| Tab bar, bottom bar visibility, tab safe area  | architecture/tab-bar-container.md                          |
+| Tab bar, bottom bar visibility, tab safe area, Docklet, tuck, edge glow, auto-hide | architecture/tab-bar-container.md                          |
 | SSO, sign-in host, dApp authentication         | architecture/sso.md                                        |
 | Products, WebView, JS bridge, HostApi          | architecture/host-api-products.md                          |
 | Product loading, archive cache, refresh, update notice, worker reload | architecture/product-loading.md |
