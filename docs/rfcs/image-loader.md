@@ -22,7 +22,7 @@ References the core loads, and where it finds each one's CID:
 
 | Reference | CID source | Drawn on |
 | --- | --- | --- |
-| Bulletin CID | the reference itself | renderer tree (chat card, Pocket face, face preview), product icon from the manifest |
+| Bulletin CID, with the format its source declares, if any | the reference itself | renderer tree (chat card, Pocket face, face preview), product icon from the manifest |
 | Username | the `profile` text record under the dotNS name | contact avatar |
 | NFT item | the item's Scarcity metadata | NFT purse, purse confirmation, NFT chat message |
 
@@ -34,7 +34,7 @@ The design has three parts:
 
 ## Compatibility
 
-This introduces breaking changes for products and host app testers. Once hosts adopt the loader, SVG, Bulletin CIDs other than raw blake2b-256, and images over 2 MiB no longer render. The core loader and the iOS and Android switch from their Kingfisher and Coil fetchers to `load_image` merge together.
+This introduces breaking changes for products and host app testers. Once hosts adopt the loader, SVG, Bulletin CIDs other than raw blake2b-256, and images over 2 MiB no longer render. Most recent blobs on Paseo Bulletin have SHA2-256 CIDs, so an image among them renders only once it is stored again under a blake2b-256 CID. On iOS one Kingfisher provider, and on Android one Coil fetcher, call `load_image` in place of the per-feature fetchers. The core loader and both host switches merge together.
 
 This also amends [unified-renderer.md](unified-renderer.md), where `ImageSource` lists SVG and fetches any CID through the gateway, and [core-resolved public profiles](https://github.com/paritytech/trinity-user-agents/pull/1709), whose avatars load through `load_image`.
 
