@@ -8,7 +8,6 @@ import Operation_iOS
 import AsyncExtensions
 import SDKLogger
 import StateMachine
-import StructuredConcurrency
 
 /// Protocol defining the coinage facade operations.
 public protocol CoinageServicing: Actor {
@@ -401,16 +400,14 @@ extension CoinageService: CoinageServicing {
         amount: BigUInt,
         externalAssetHolder: any WalletManaging
     ) async throws -> BigUInt {
-        try await markStallRegion("Loading vouchers") {
-            let context = try await requireContext()
-            let vouchers = try await voucherService.load(
-                amount: amount,
-                externalAssetHolder: externalAssetHolder,
-                breakdownContext: context,
-                groupId: nil
-            )
-            return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
-        }
+        let context = try await requireContext()
+        let vouchers = try await voucherService.load(
+            amount: amount,
+            externalAssetHolder: externalAssetHolder,
+            breakdownContext: context,
+            groupId: nil
+        )
+        return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
     }
 
     public func coinageBalanceService() async throws -> CoinageBalanceServiceProtocol {

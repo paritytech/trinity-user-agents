@@ -551,6 +551,17 @@
         }
       }
     },
+    "tabBarShowAccessibilityLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show tab bar"
+          }
+        }
+      }
+    },
     "transaction.failed" : {
       "extractionState" : "manual",
       "localizations" : {
