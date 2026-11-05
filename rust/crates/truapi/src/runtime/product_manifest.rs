@@ -59,7 +59,7 @@ const WORKER_SUBNAME: &str = "worker";
 ///
 /// [tlds]: crate::platform::DOTNS_TLDS
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
-pub async fn fetch_root_manifest(
+async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
@@ -79,7 +79,7 @@ pub async fn fetch_root_manifest(
 /// at its `executable` record. `Ok(None)` means the product publishes no
 /// Worker, as [`fetch_root_manifest`] reads an absent root manifest.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch_worker"))]
-pub async fn fetch_worker_manifest(
+async fn fetch_worker_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
@@ -172,7 +172,7 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
 /// reads today, so a later consumer needs no cache migration.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
@@ -217,7 +217,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// a user's explicit denial, an unreadable keychain and a manifest that failed
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
@@ -234,7 +234,7 @@ enum RefusedBecause {
 }
 
 impl RefusedBecause {
-	fn as_str(self) -> &'static str {
+	fn as_str(&self) -> &'static str {
 		match self {
 			Self::NotGranted => "not granted",
 			Self::UserDenied => "user denied",
@@ -705,7 +705,7 @@ pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
 }
 
 /// Where [`cached_dotns_json`] read its answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum DotnsRead {
 	/// From the cache on this device, written `age_secs` ago.
 	Cached { age_secs: u64 },
@@ -721,7 +721,7 @@ pub enum DotnsRead {
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
-pub async fn cached_dotns_json<F, E>(
+async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
 	key: CoreStorageKey,
 	fetch: impl FnOnce() -> F,

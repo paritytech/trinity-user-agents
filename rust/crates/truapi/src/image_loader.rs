@@ -127,8 +127,10 @@ impl ImageLoader {
 		Self { services, timer }
 	}
 
-	/// The image `reference` names. Dropping the future stops the load. A username without an
-	/// avatar is immediately unavailable; a later call can refresh its record with `force`.
+	/// Loads the image named by `reference`.
+	///
+	/// Dropping the future stops the load. A username without an avatar is immediately
+	/// unavailable; a later call can refresh its record with `force`.
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		let (cid, declared_format) = match reference {

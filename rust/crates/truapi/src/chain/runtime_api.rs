@@ -12,8 +12,10 @@ pub trait RuntimeApiCaller: Send {
 	/// Returns the runtime's encoded result without interpreting its shape.
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error>;
 
-	/// Calls one runtime function for each input, preserving input order and failures.
-	/// The transport controls concurrency and the block context.
+	/// Calls `function` for every input.
+	///
+	/// Returns one result per input in input order, retaining individual failures.
+	/// The transport determines concurrency and the block context.
 	async fn call_batch(
 		&mut self,
 		function: &str,

@@ -33,7 +33,7 @@ use crate::transcript::Transcript;
 const SETTLE_AFTER: Duration = Duration::from_millis(500);
 
 /// What the scripted provider does with one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Outcome {
 	/// The user starts and the funds arrive.
 	Deliver(u128),
@@ -176,22 +176,4 @@ impl FundingPlatform for CliFundingHost {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	// The battery seeds one outcome per request it makes, in order. An entry
-	// this host cannot read is skipped, and the entries after it keep their
-	// order.
-	#[test]
-	fn outcomes_are_read_in_order_and_unknown_entries_dropped() {
-		assert_eq!(
-			parse_outcomes("deliver:900, release:500,fail,bogus,dismiss,deliver:x"),
-			VecDeque::from([
-				Outcome::Deliver(900),
-				Outcome::Release(500),
-				Outcome::Fail,
-				Outcome::Dismiss,
-			])
-		);
-	}
-}
+mod tests;
