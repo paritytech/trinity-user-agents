@@ -148,7 +148,7 @@ struct Cli {
 	command: Command,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, derive_more::Display)]
+#[derive(Clone, ValueEnum, derive_more::Display, Debug, PartialEq, Copy)]
 #[display(rename_all = "lowercase")]
 enum LogLevel {
 	Error,
@@ -175,7 +175,7 @@ impl LogLevel {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Clone, derive_more::Display, derive_more::Error, Debug, PartialEq)]
 #[display("invalid log level `{value}`; expected error, warn, info, debug, or trace")]
 struct InvalidLogLevel {
 	value: String,
@@ -360,7 +360,7 @@ enum Command {
 }
 
 /// Execution kind the CLI serves a product as.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Default, ValueEnum, Copy)]
 enum ExecutionKind {
 	/// Ordinary full-page product. Chat requests answer `Denied`, as they do
 	/// on any host that does not serve chat.
@@ -1617,7 +1617,7 @@ struct SigningHostSession {
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
-#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[derive(derive_more::Display, derive_more::Error, Debug)]
 enum SessionOperationError {
 	#[display("failed to activate cached session")]
 	CachedActivation(GenericError),

@@ -39,7 +39,7 @@ use super::sso_remote::{
 };
 
 /// Trust boundary for product identity and host permissions.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum AccountCaller<'a> {
 	/// Product identity bound by this host's runtime.
 	Local {
@@ -113,7 +113,7 @@ impl AutoSigningKey {
 /// This is the neutral session projection product runtimes can use while
 /// preserving authority-private material inside the concrete authority
 /// implementation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AuthoritySession {
 	/// Root account public key for the active authority session.
 	pub public_key: [u8; 32],
@@ -313,7 +313,7 @@ impl AuthorityCancelError {
 }
 
 /// Payload-signing request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum SignPayloadAuthorityRequest {
 	/// Sign a payload with a product-derived account.
 	Product(HostSignPayloadRequest),
@@ -327,7 +327,7 @@ pub enum SignPayloadAuthorityRequest {
 }
 
 /// Raw-signing request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum SignRawAuthorityRequest {
 	/// Sign raw data with a product-derived account.
 	Product(HostSignRawRequest),
@@ -341,7 +341,7 @@ pub enum SignRawAuthorityRequest {
 }
 
 /// Transaction-creation request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum CreateTransactionAuthorityRequest {
 	/// Create a transaction with a product-derived account.
 	Product(ProductAccountTxPayload),
@@ -362,7 +362,7 @@ pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &ProductId) -> bo
 }
 
 /// Whether this product account can sign without confirmation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AutoSigningGrant {
 	/// The authority holds the signing keys and needs no prompt.
 	Active,

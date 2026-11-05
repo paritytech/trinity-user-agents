@@ -75,7 +75,7 @@ mod wss_tunnel;
 pub use config::ChainSource;
 #[cfg(feature = "smoldot")]
 pub use config::LightClientBuilder;
-#[cfg(all(feature = "smoldot", target_arch = "wasm32"))]
+#[cfg(feature = "smoldot")]
 pub use connection_types::ConnectionTypes;
 pub use error::ProviderError;
 #[cfg(feature = "smoldot")]

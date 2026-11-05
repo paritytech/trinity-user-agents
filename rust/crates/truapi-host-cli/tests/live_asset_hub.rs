@@ -10,19 +10,22 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
-mod common;
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/live.rs"]
+mod live;
 
 use truapi::statement_allowance::{self as alloc, collection::PersonhoodCollection, pgas};
 
 /// `LIVE_ASSET_HUB_WS` points the dotNS checks at another Asset Hub, for
 /// instance previewnet's.
 fn asset_hub_ws() -> String {
-	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| common::paseo_next_v2_rpc("AssetHub"))
+	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| live::paseo_next_v2_rpc("AssetHub"))
 }
 
 /// `LIVE_TLD`, or the bundled paseo-next-v2 stack's `tld`.
 fn live_tld() -> String {
-	std::env::var("LIVE_TLD").unwrap_or_else(|_| common::paseo_next_v2().tld)
+	std::env::var("LIVE_TLD").unwrap_or_else(|_| bundled::paseo_next_v2().tld)
 }
 
 /// Must stay active so the ignored live tests can resolve its mirrored roots.
@@ -81,7 +84,7 @@ async fn live_asset_hub_declares_both_pgas_claim_budgets() {
 #[ignore = "needs network access to a live Asset Hub and People chain"]
 async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 	let (asset_hub_rpc, asset_hub_metadata) = asset_hub().await;
-	let people_rpc = alloc::rpc::RpcClient::connect(&common::paseo_next_v2_rpc("People"))
+	let people_rpc = alloc::rpc::RpcClient::connect(&live::paseo_next_v2_rpc("People"))
 		.await
 		.expect("connect to the People chain");
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.expect("People metadata");
@@ -193,7 +196,7 @@ use truapi::{
 /// CREATE3 address on every network per dotns `DEPLOYMENTS.md`. Only used to
 /// find an account that holds a settled name.
 fn dotns_registrar() -> [u8; 20] {
-	let stack = common::paseo_next_v2();
+	let stack = bundled::paseo_next_v2();
 	let address = &stack.dotns.as_ref().expect("bundled stack lacks dotns")["registrar"];
 	let mut bytes = [0u8; 20];
 	hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)

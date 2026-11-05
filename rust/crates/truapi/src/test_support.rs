@@ -1054,7 +1054,7 @@ impl PlatformProductOperations for StubPlatform {
 		let id = {
 			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
 			begun.push((product.product_id.clone(), label));
-			begun.len() as u32
+			u32::try_from(begun.len()).expect("test product count fits in u32")
 		};
 		// The operation exists host-side from here on, so a test holding the
 		// gate keeps only the answer in flight.
