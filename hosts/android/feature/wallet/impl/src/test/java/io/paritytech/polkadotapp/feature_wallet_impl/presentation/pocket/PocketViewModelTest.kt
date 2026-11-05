@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
+import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -30,10 +32,12 @@ import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -51,6 +55,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.ProductId
 
 class PocketViewModelTest {
@@ -60,6 +65,7 @@ class PocketViewModelTest {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
+        every { observeBack(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         coEvery { faceShownOnOpen(any()) } returns true
     }
@@ -394,6 +400,53 @@ class PocketViewModelTest {
 
         assertEquals(face, viewModel.bindingsOf(uiCard).face.value)
         listCopy.cancel()
+    }
+
+    // A card turned before its product draws a back shows none; one the product takes away goes too.
+    @Test
+    fun `the back shows what the product draws, and its presses go to the back`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        val backs = MutableSharedFlow<JsWidget?>()
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        every { interactor.observeBack(card.key) } returns backs
+        justRun { interactor.sendFaceAction(any(), any(), any(), any()) }
+
+        val viewModel = createViewModel()
+        val back = viewModel.backBindingsOf(settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single())
+        val shown = mutableListOf<JsWidget?>()
+        val opened = launch { back.face.collect { shown += it } }
+        advanceUntilIdle()
+        backs.emit(JsWidget.Text(text = "Code"))
+        backs.emit(null)
+        advanceUntilIdle()
+        back.onFaceAction("stamp-back", JsUiEvent.Type.ButtonClick)
+
+        assertEquals(listOf(null, JsWidget.Text(text = "Code"), null), shown)
+        verify { interactor.sendFaceAction(card.key, PocketCardSide.BACK, "stamp-back", ByteArray(0)) }
+        opened.cancel()
+    }
+
+    // Each back stream holds the product's worker, so only cards the host places get one from the list.
+    @Test
+    fun `a privileged card keeps its back current from the list, an added card does not`() = runTest(testDispatcher) {
+        val privileged = privilegedCard("humanity")
+        val added = productCard("loyalty")
+        val front = JsWidget.Text(text = "Front")
+        val backsOpened = mutableListOf<PocketCardKey>()
+        every { interactor.observeProductCards() } returns flowOf(listOf(privileged, added))
+        every { interactor.observeFace(any()) } returns flowOf(front)
+        every { interactor.observeBack(any()) } answers {
+            flowOf<JsWidget?>(JsWidget.Text(text = "Back")).onStart { backsOpened += firstArg<PocketCardKey>() }
+        }
+
+        val viewModel = createViewModel()
+        val listed = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+        val onList = listed.map { card -> launch { viewModel.bindingsOf(card).face.collect {} } }
+        advanceUntilIdle()
+
+        assertEquals(listOf(privileged.key), backsOpened)
+        assertEquals(listOf(front, front), listed.map { viewModel.bindingsOf(it).face.value })
+        onList.forEach { it.cancel() }
     }
 
     // A link can name a card before the Pocket tab has ever been shown, and a tab shown for the first

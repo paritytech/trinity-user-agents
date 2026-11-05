@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.PocketCardSide
 import javax.inject.Inject
 
 class PocketInteractor @Inject constructor(
@@ -62,10 +63,13 @@ class PocketInteractor @Inject constructor(
     /** Collect only while the face is on screen: collecting keeps the backing product's worker running. */
     fun observeFace(key: PocketCardKey): Flow<JsWidget> = pocketFaceSource.observeFace(key)
 
+    /** Like [observeFace]; `null` while the card has no back. */
+    fun observeBack(key: PocketCardKey): Flow<JsWidget?> = pocketFaceSource.observeBack(key)
+
     suspend fun removeProductCard(key: PocketCardKey): Result<Unit> = pocketCollection.removeCard(key)
 
-    fun sendFaceAction(key: PocketCardKey, actionId: String, payload: ByteArray) =
-        pocketFaceSource.sendAction(key, actionId, payload)
+    fun sendFaceAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray) =
+        pocketFaceSource.sendAction(key, side, actionId, payload)
 
     suspend fun resolveFaceImage(key: PocketCardKey, source: JsImageSource): Result<Uri> =
         pocketFaceSource.resolveImage(key, source)
