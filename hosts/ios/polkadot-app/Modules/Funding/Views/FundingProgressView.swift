@@ -53,7 +53,7 @@ private extension FundingProgressView {
             direction: model.direction,
             rail: model.rail,
             asset: model.asset,
-            amount: amountUnits.map { model.cash.label(model.cash.decimal($0)) }
+            amount: cashAmount.map { model.cash.label($0) }
         )
     }
 
@@ -62,8 +62,10 @@ private extension FundingProgressView {
         model.progress.map { [.retrying, .delayed].contains($0.band) } ?? false
     }
 
-    var amountUnits: U128? {
-        item?.amount ?? model.chosenQuote.map { model.direction == .in ? $0.receiveAmount : $0.sendAmount }
+    /// The CASH the session is for.
+    var cashAmount: Decimal? {
+        if let balance = item?.amount { return model.cash.decimal(fromPlanks: balance) }
+        return model.cash.decimal(model.chosenQuote.map { model.direction == .in ? $0.receiveAmount : $0.sendAmount })
     }
 
     var steps: [FundingStepBar.Step] {
@@ -103,7 +105,7 @@ private extension FundingProgressView {
     }
 
     var quotedSendAmount: String? {
-        model.chosenQuote.map { model.quoteUnit($0).format($0.sendAmount) }
+        model.chosenQuote.flatMap { model.quoteUnit($0).format($0.sendAmount) }
     }
 }
 
@@ -140,8 +142,8 @@ private extension FundingProgressView {
                 .foregroundStyle(isSlow ? Color.fgWarning : Color.fgPrimary)
                 .frame(width: 40, height: 40)
                 .background(.bgSurfaceMain, in: Circle())
-            if let units = amountUnits {
-                let figure = model.cash.figure(model.cash.decimal(units))
+            if let value = cashAmount {
+                let figure = model.cash.figure(value)
                 DSAmount(
                     amount: figure,
                     symbol: model.cash.symbol,
@@ -198,7 +200,7 @@ private extension FundingProgressView {
             case (.out, _):
                 feesRow(
                     String(localized: .Funding.summaryWithdrawCaption),
-                    model.chosenQuote.map { model.quoteUnit($0).format($0.receiveAmount) }
+                    model.chosenQuote.flatMap { model.quoteUnit($0).format($0.receiveAmount) }
                 )
                 arrivesRow
             }
@@ -241,7 +243,7 @@ private extension FundingProgressView {
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
                     action: model.showDeposit
                 ) {
-                    value(FundingAssetUnit(code: asset, decimals: decimals).format(amount))
+                    FundingAssetUnit(code: asset, decimals: decimals).format(amount).map { value($0) }
                 }
             } else {
                 pending(.Funding.depositPreparing)
@@ -454,15 +456,18 @@ struct FundingCancelOfferView: View {
         .padding(DSSpacings.medium)
     }
 
+    @ViewBuilder
     private func row(_ title: String, _ units: U128) -> some View {
-        HStack {
-            Text(verbatim: title)
-                .typography(.bodyMedium)
-                .foregroundStyle(.fgSecondary)
-            Spacer()
-            Text(verbatim: model.cash.label(model.cash.decimal(units)))
-                .typography(.bodyMediumEmphasized)
-                .foregroundStyle(.fgPrimary)
+        if let amount = model.cash.label(units: units) {
+            HStack {
+                Text(verbatim: title)
+                    .typography(.bodyMedium)
+                    .foregroundStyle(.fgSecondary)
+                Spacer()
+                Text(verbatim: amount)
+                    .typography(.bodyMediumEmphasized)
+                    .foregroundStyle(.fgPrimary)
+            }
         }
     }
 }

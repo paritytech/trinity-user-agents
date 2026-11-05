@@ -215,9 +215,8 @@ private extension FundingActivityRowContent {
     }
 
     static func title(_ item: FundingActivityItem, cash: FundingCash) -> String {
-        guard let units = item.amount else { return "" }
+        guard let balance = item.amount, let value = cash.decimal(fromPlanks: balance) else { return "" }
 
-        let value = cash.decimal(units)
         switch item.status {
         case .toppedUp,
              .sent:

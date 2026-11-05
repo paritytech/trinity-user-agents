@@ -61,9 +61,9 @@ private extension FundingSummaryView {
     /// What the user pays for value in, what they receive for value out.
     @ViewBuilder
     var headline: some View {
-        if let quote = model.selectedQuote {
-            let units = model.direction == .in ? quote.sendAmount : quote.receiveAmount
-            Text(verbatim: model.quoteUnit(quote).format(units))
+        if let quote = model.selectedQuote,
+           let figure = model.quoteUnit(quote).format(model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
+            Text(verbatim: figure)
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
                 .lineLimit(1)
@@ -151,13 +151,7 @@ private extension FundingSummaryView {
             }
 
         return FundingValueRow(title: title) {
-            if let quote = model.selectedQuote {
-                let payout =
-                    if model.direction == .in {
-                        model.cash.label(model.cash.decimal(quote.receiveAmount))
-                    } else {
-                        model.quoteUnit(quote).format(quote.receiveAmount)
-                    }
+            if let quote = model.selectedQuote, let payout = payout(quote) {
                 Text(verbatim: payout)
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
@@ -165,6 +159,13 @@ private extension FundingSummaryView {
                 FundingSkeleton()
             }
         }
+    }
+
+    /// The CASH value in adds, or what value out pays in the provider's asset.
+    func payout(_ quote: FundingQuote) -> String? {
+        model.direction == .in
+            ? model.cash.label(units: quote.receiveAmount)
+            : model.quoteUnit(quote).format(quote.receiveAmount)
     }
 
     var arrivesRow: some View {

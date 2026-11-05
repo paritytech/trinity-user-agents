@@ -1,5 +1,4 @@
 import Foundation
-import os
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
 import Testing
@@ -97,10 +96,10 @@ struct FundingCloseFrameTests {
     @Test
     func closingTheFrameAnswersClosedAndShowsTheSessionSheet() async throws {
         let environment = WindowEnvironment()
-        let book = FundingSessionBook()
+        let book = FundingSessionBook(logger: MockLogger())
         book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
         let coordinator = FundingOverlayCoordinator(
-            runtime: StubFundingRuntime(),
+            runtime: MockFundingRuntime(),
             environment: environment,
             book: book
         )
@@ -117,10 +116,10 @@ struct FundingCloseFrameTests {
     @Test
     func anotherProvidersCloseLeavesTheFrameOpen() async throws {
         let environment = WindowEnvironment()
-        let book = FundingSessionBook()
+        let book = FundingSessionBook(logger: MockLogger())
         book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
         let coordinator = FundingOverlayCoordinator(
-            runtime: StubFundingRuntime(),
+            runtime: MockFundingRuntime(),
             environment: environment,
             book: book
         )
@@ -214,40 +213,6 @@ private func session(_ intent: String, stage: FundingStage) -> FundingSession {
     )
 }
 
-private final class StubFundingRuntime: FundingRuntime, @unchecked Sendable {
-    private struct Refused: Error {}
-
-    private let state: OSAllocatedUnfairLock<(failNext: Bool, acknowledged: [String])>
-    var acknowledged: [String] { state.withLock { $0.acknowledged } }
-
-    init(failsFirstAcknowledgement: Bool = false) {
-        state = OSAllocatedUnfairLock(initialState: (failsFirstAcknowledgement, []))
-    }
-
-    func selectFundingOptions(intent _: String, selection _: FundingSelection) {}
-    func getFundingQuote(intent _: String, ask _: FundingQuoteAsk) -> UInt64 { 0 }
-    func stopFundingQuotes(intent _: String) {}
-    func selectFundingProvider(
-        intent _: String,
-        providerId _: ProductId,
-        quoteId _: String
-    ) async throws -> Bool { true }
-    func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
-    func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
-    func fundingHistory() -> [FundingSessionSummary] { [] }
-    func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }
-
-    func acknowledgeFundingSession(intent: String) async throws -> Bool {
-        let failed = state.withLock { state in
-            state.acknowledged.append(intent)
-            defer { state.failNext = false }
-            return state.failNext
-        }
-        if failed { throw Refused() }
-        return true
-    }
-}
-
 /// Presents for real, over a window of its own, so frames go on and off
 /// screen as they do in the app.
 @MainActor
@@ -316,7 +281,7 @@ struct FundingReopenTests {
     @Test
     func anEndedSessionIsAcknowledgedOnceItsSheetIsShown() async throws {
         let environment = WindowEnvironment()
-        let runtime = StubFundingRuntime()
+        let runtime = MockFundingRuntime()
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
 
         coordinator.reopen(intent: "intent")
@@ -329,7 +294,7 @@ struct FundingReopenTests {
     func aSheetThatCannotBePresentedLeavesTheSessionUnacknowledged() async throws {
         let environment = WindowEnvironment()
         environment.presents = false
-        let runtime = StubFundingRuntime()
+        let runtime = MockFundingRuntime()
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
 
         coordinator.reopen(intent: "intent")
@@ -340,7 +305,7 @@ struct FundingReopenTests {
     }
 
     private func endedBook() -> FundingSessionBook {
-        let book = FundingSessionBook()
+        let book = FundingSessionBook(logger: MockLogger())
         book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
         return book
     }
@@ -353,9 +318,9 @@ struct FundingWorkerCrashingTests {
     func aCrashingProviderIsNamedOverWhateverIsOnScreen() async {
         let environment = WindowEnvironment()
         let coordinator = FundingOverlayCoordinator(
-            runtime: StubFundingRuntime(),
+            runtime: MockFundingRuntime(),
             environment: environment,
-            book: FundingSessionBook()
+            book: FundingSessionBook(logger: MockLogger())
         )
 
         await coordinator.workerCrashing(productId: try! ProductId("ramp.dot"))

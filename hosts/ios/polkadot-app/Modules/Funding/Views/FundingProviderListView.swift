@@ -112,12 +112,16 @@ private extension FundingProviderListView {
             let providerSide = model.direction == .in ? quote.sendAmount : quote.receiveAmount
             let cashSide = model.direction == .in ? quote.receiveAmount : quote.sendAmount
             VStack(alignment: .trailing, spacing: 2) {
-                Text(verbatim: "≈ " + model.quoteUnit(quote).formatWithCode(providerSide))
-                    .typography(.bodyMediumEmphasized)
-                    .foregroundStyle(.fgPrimary)
-                Text(.Funding.providersFor(amount: model.cash.label(model.cash.decimal(cashSide))))
-                    .typography(.captionSmall)
-                    .foregroundStyle(.fgSecondary)
+                if let providerAmount = model.quoteUnit(quote).formatWithCode(providerSide) {
+                    Text(verbatim: "≈ " + providerAmount)
+                        .typography(.bodyMediumEmphasized)
+                        .foregroundStyle(.fgPrimary)
+                }
+                if let cashAmount = model.cash.label(units: cashSide) {
+                    Text(.Funding.providersFor(amount: cashAmount))
+                        .typography(.captionSmall)
+                        .foregroundStyle(.fgSecondary)
+                }
             }
         case .unavailable:
             EmptyView()
@@ -131,9 +135,11 @@ private extension FundingProviderListView {
         case let .refused(refusal):
             switch refusal {
             case let .belowMinimum(min):
-                String(localized: .Funding.errorMinimum(amount: model.cash.label(model.cash.decimal(min))))
+                model.cash.label(units: min).map { String(localized: .Funding.errorMinimum(amount: $0)) }
+                    ?? String(localized: .Funding.providersUnavailable)
             case let .aboveMaximum(max):
-                String(localized: .Funding.errorMaximum(amount: model.cash.label(model.cash.decimal(max))))
+                model.cash.label(units: max).map { String(localized: .Funding.errorMaximum(amount: $0)) }
+                    ?? String(localized: .Funding.providersUnavailable)
             case .countryUnsupported:
                 String(localized: .Funding.providersCountryUnsupported)
             case .unavailable,
