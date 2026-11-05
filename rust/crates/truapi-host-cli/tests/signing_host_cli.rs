@@ -1,4 +1,7 @@
-//! Process-boundary smoke tests for signing-host invocation modes.
+//! Process-boundary smoke tests for signing-host invocation modes, on a paseo-next-v2 stack
+//! whose chains are unreachable, so they do not depend on live chains.
+
+mod common;
 
 use std::{
 	path::{Path, PathBuf},
@@ -6,7 +9,7 @@ use std::{
 };
 
 fn command() -> Command {
-	Command::new(env!("CARGO_BIN_EXE_truapi-host"))
+	common::offline_host_command()
 }
 
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
