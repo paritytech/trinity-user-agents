@@ -14,6 +14,7 @@ object FeatureFlags {
             FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
+            // Only four tabs fit in the docklet, so Browse is hidden whenever the network status tab is shown.
             FeatureOption.BROWSE_TAB -> fullFeatured && !BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
 
             FeatureOption.ARBITRARY_PRODUCTS,
@@ -42,8 +43,6 @@ enum class FeatureOption {
     // build type alone: nightly and safetynet are debuggable too, and src/debug's network config, which
     // lets the WebView reach the server in the clear, does not apply to them.
     DEV_SERVER_PRODUCTS,
-
-    // The docklet has four item slots, so Browse and the connectivity indicator cannot both show.
     BROWSE_TAB,
     TAB_BAR_CONNECTIVITY_INDICATOR,
 
