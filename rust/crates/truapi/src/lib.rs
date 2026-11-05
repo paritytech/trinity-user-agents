@@ -915,6 +915,9 @@ pub mod durable;
 pub mod encrypted_storage;
 
 #[cfg(feature = "runtime")]
+mod image_loader;
+
+#[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod installation;
 
@@ -939,10 +942,9 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::{
-	bulletin::{preimage_cid, preimage_key},
-	extrinsic::Sr25519Signer,
-};
+pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
+#[cfg(feature = "runtime")]
+pub use host_internal::{bulletin::preimage_key, extrinsic::Sr25519Signer};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
@@ -951,6 +953,8 @@ pub use host_logic::session::{
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
+#[cfg(feature = "runtime")]
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{

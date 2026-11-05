@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, sync::Mutex};
 
+use truapi::preimage_key;
+
 use super::*;
 
 /// A source that answers from a script, one entry per call, and counts the calls.
@@ -10,7 +12,7 @@ struct Scripted {
 
 #[async_trait::async_trait]
 impl BlobSource for Scripted {
-	async fn get(&self, _cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+	async fn get(&self, _cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		*self.calls.lock().unwrap() += 1;
 		self.answers
 			.lock()
@@ -96,23 +98,4 @@ async fn a_request_that_turns_permanent_while_polling_stops_the_poll() {
 		vec![Ok(None), Err("invalid CID".to_string())]
 	);
 	assert_eq!(calls(&lookup), 2);
-}
-
-/// The bitswap spec makes only the code stable, and `Fail` covers data that is not held yet,
-/// so every `Fail` is a miss to poll on, whatever its message or data.
-#[test]
-fn call_errors_are_classified_by_code() {
-	let kind = |code| {
-		let error = UserError { code, message: "from the node".to_string(), data: None };
-		match call_error(&error) {
-			Ok(None) => "miss",
-			Ok(Some(_)) => "value",
-			Err(SourceError::Transient(_)) => "retry",
-			Err(SourceError::Permanent(_)) => "stop",
-		}
-	};
-	assert_eq!(
-		[FAIL, INVALID_PARAMS, METHOD_NOT_FOUND, -32811, -32812].map(kind),
-		["miss", "stop", "stop", "retry", "retry"]
-	);
 }

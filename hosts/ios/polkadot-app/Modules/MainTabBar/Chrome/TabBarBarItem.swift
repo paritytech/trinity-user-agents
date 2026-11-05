@@ -9,17 +9,17 @@ struct TabBarBarItem: Equatable {
     }
 
     let content: Content
-    let title: String?
-    let accessibilityLabel: String
+    let title: LocalizedStringResource?
+    let accessibilityLabel: LocalizedStringResource
     let accessibilityID: AccessibilityID.Tab?
-    let accessibilityValue: String?
+    let accessibilityValue: LocalizedStringResource?
 
     init(
         content: Content,
-        title: String?,
-        accessibilityLabel: String,
+        title: LocalizedStringResource?,
+        accessibilityLabel: LocalizedStringResource,
         accessibilityID: AccessibilityID.Tab? = nil,
-        accessibilityValue: String? = nil
+        accessibilityValue: LocalizedStringResource? = nil
     ) {
         self.content = content
         self.title = title
@@ -30,10 +30,10 @@ struct TabBarBarItem: Equatable {
 
     init(
         icon: UIImage,
-        title: String?,
-        accessibilityLabel: String,
+        title: LocalizedStringResource?,
+        accessibilityLabel: LocalizedStringResource,
         accessibilityID: AccessibilityID.Tab? = nil,
-        accessibilityValue: String? = nil
+        accessibilityValue: LocalizedStringResource? = nil
     ) {
         self.init(
             content: .icon(icon),

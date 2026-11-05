@@ -59,6 +59,31 @@ extension NSManagedObjectContext {
         return message
     }
 
+    /// The notification extension may have saved it already, and a missing chat must not fail the accept.
+    func setupPeerAcceptanceMessage(_ acceptance: Chat.RemoteMessage, from contact: CDChatContact) throws {
+        let existing: CDChatMessage? = try first(for: .chatMessage(with: acceptance.messageId))
+
+        guard
+            existing == nil,
+            contact.chat != nil,
+            let peerAccountId = try contact.identifier?.fromHex(),
+            let localMessage = Chat.LocalMessage(
+                remote: acceptance,
+                creationSource: .localDevice,
+                status: .incoming(.new),
+                contactId: peerAccountId
+            )
+        else {
+            return
+        }
+
+        try ChatMessageEntityMapper().populate(
+            entity: CDChatMessage(context: self),
+            from: localMessage,
+            using: self
+        )
+    }
+
     @discardableResult
     func setupAcceptMessage(
         for requestId: String,

@@ -8,15 +8,13 @@ enum TabBarSelectionPlacement: Equatable {
     case productCell(UUID)
 }
 
-enum TabBarSelectionPolicy {
-    static func placement(
-        tabItemIndex: Int,
-        mountedProductId: UUID?,
-        isShelfOpen: Bool
-    ) -> TabBarSelectionPlacement {
+extension TabBarSelectionPlacement {
+    /// The placement for the current tab, the mounted product's Apps item, or its shelf cell while the shelf is open.
+    init(tabItemIndex: Int, mountedProductId: UUID?, isShelfOpen: Bool) {
         guard let mountedProductId else {
-            return .tab(itemIndex: tabItemIndex)
+            self = .tab(itemIndex: tabItemIndex)
+            return
         }
-        return isShelfOpen ? .productCell(mountedProductId) : .appsItem
+        self = isShelfOpen ? .productCell(mountedProductId) : .appsItem
     }
 }

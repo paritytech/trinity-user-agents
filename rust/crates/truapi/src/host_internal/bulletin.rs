@@ -1,4 +1,7 @@
-//! Bulletin store transaction construction and signing.
+//! Bulletin store transactions, and reading stored blobs back by CID.
+
+mod cid;
+mod read;
 
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 
@@ -8,6 +11,9 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
+pub use cid::{BulletinCid, BulletinCidError};
+pub use read::{BitswapError, bitswap_get};
+
 /// Pallet the store transaction targets.
 pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 /// Call name within [`STORE_PALLET_NAME`].
@@ -16,31 +22,6 @@ pub const STORE_CALL_NAME: &str = "store";
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
 	sp_crypto_hashing::blake2_256(value)
-}
-
-/// The CID transaction storage serves a preimage under, as a Bulletin node's
-/// `bitswap_v1_get` takes it: CIDv1, the `raw` codec and the blake2b-256 multihash of the
-/// content, which is the preimage key itself, in lower-case base32 with the multibase `b`
-/// prefix.
-pub fn preimage_cid(key: &[u8; 32]) -> String {
-	const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-	// CIDv1, raw, then the multihash: blake2b-256 (0xb220 as a varint) of 32 bytes.
-	let mut bytes = vec![0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
-	bytes.extend_from_slice(key);
-	let mut cid = String::from("b");
-	let (mut buffer, mut bits) = (0u32, 0u32);
-	for byte in bytes {
-		buffer = (buffer << 8) | u32::from(byte);
-		bits += 8;
-		while bits >= 5 {
-			cid.push(char::from(ALPHABET[((buffer >> (bits - 5)) & 31) as usize]));
-			bits -= 5;
-		}
-	}
-	if bits > 0 {
-		cid.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
-	}
-	cid
 }
 
 /// Build the signed store transaction for `data` on the Bulletin chain
