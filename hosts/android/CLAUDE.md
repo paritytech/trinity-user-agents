@@ -41,7 +41,14 @@ These are the cross-cutting rules that apply to **all** code writing, regardless
 12. **Package leaves** are camelCase (`pairRequest`, not `pairrequest`).
 13. **No default values** in data-carrying constructors (requests, payloads, domain models).
 14. **Imports**, never fully-qualified types inline.
-15. **Comments** — minimal is **mandatory**. Default to none. Write one ONLY where the code is genuinely specific and a reader could misread the logic without it (non-obvious **why**: invariant, workaround, platform quirk). Never restate what the code does. KDoc on `api/` public methods only.
+15. **Comments** — minimal is **mandatory**. Default to none. Write one ONLY where the code is genuinely specific and a reader could misread the logic without it (non-obvious **why**: invariant, workaround, platform quirk, algorithm). Never restate what the code does, and do not delete a comment that explains an algorithm. KDoc on `api/` public methods only.
+16. **Repositories** fetch and map one source. No state, scope, retry policy, aggregation or business guard; SCALE and DTO types never leave the data layer.
+17. **Composables only render.** Enabled flags, validation, eligibility and page state live in the ViewModel.
+18. **Formatting** of locale-sensitive values happens in the composable through the `Local*` formatters. UI state carries raw values, enums and `UiModel`s, never domain models, `String` messages or `@StringRes`.
+19. **`when`** over a sealed type or enum is exhaustive, with no `else`.
+20. **Shared or lazily created state** is guarded by a `Mutex`; `@Volatile` is not atomic. No `GlobalScope` or free-standing `CoroutineScope`.
+21. **One owner per piece of state.** Never mirror it in a second class or storage, and never reset another component's state holder.
+22. **Failures** are logged with `logFailure` before they are collapsed into an error state, never with `onFailure { Timber… }`.
 
 When a more specific rule conflicts with one above (rare), the docs win — they have the rationale.
 
