@@ -16,6 +16,11 @@
 //! [`MAX_UNDELIVERED_FRAMES`], so a chain that never syncs refuses work
 //! instead of growing the queue.
 //!
+//! Statement subscriptions: smoldot keeps no statement store and answers a
+//! subscription with an empty first page, while its peers replay what they
+//! store a moment later. [`crate::statement_snapshot`] turns that replay back
+//! into the initial pages a full node sends.
+//!
 //! Warm-start snapshots: take one with
 //! [`EmbeddedChainProvider::snapshot`](crate::EmbeddedChainProvider::snapshot),
 //! persist the returned string, and feed it back on a later run through
@@ -54,6 +59,7 @@ use smoldot_light::{
 use crate::{
 	config::ChainSource,
 	error::{ProviderError, synthetic_error_frame},
+	statement_snapshot::{InitialPages, SnapshotTiming, StatementRequests},
 };
 
 /// Lock a mutex, recovering the guard if a previous holder panicked.
@@ -365,25 +371,26 @@ impl LightState {
 		let (errors_tx, errors_rx) = mpsc::channel(MAX_UNDELIVERED_FRAMES);
 		let (closing_tx, closing_rx) = oneshot::channel();
 
-		Ok(Box::new(LightConnection {
-			pipe: Arc::new(Pipe {
-				inner,
-				chain_id: success.chain_id,
-				errors_tx: Mutex::new(errors_tx),
-				undelivered: AtomicUsize::new(0),
-				held: Mutex::new(Some(Vec::new())),
-				closing: Mutex::new(Some(closing_tx)),
-			}),
-			genesis_hash,
-			relay: relay_genesis,
-			responses: Mutex::new(Some(ResponseSources {
-				responses,
-				errors: errors_rx,
-				lifecycle,
-				closing: closing_rx,
-			})),
-		}))
-	}
+        Ok(Box::new(LightConnection {
+            pipe: Arc::new(Pipe {
+                inner,
+                chain_id: success.chain_id,
+                errors_tx: Mutex::new(errors_tx),
+                undelivered: AtomicUsize::new(0),
+                held: Mutex::new(Some(Vec::new())),
+                closing: Mutex::new(Some(closing_tx)),
+                statements: statement_protocol.then(Default::default),
+            }),
+            genesis_hash,
+            relay: relay_genesis,
+            responses: Mutex::new(Some(ResponseSources {
+                responses,
+                errors: errors_rx,
+                lifecycle,
+                closing: closing_rx,
+            })),
+        }))
+    }
 }
 
 /// Add the relay chain for a parachain entry, reusing an already-added one and
@@ -559,19 +566,23 @@ struct ResponseSources {
 /// The request side of a connection, shared with the stream that releases
 /// held requests once the chain syncs.
 struct Pipe {
-	inner: Arc<Mutex<LightInner>>,
-	chain_id: ChainId,
-	/// Synthetic JSON-RPC error frames for requests smoldot rejected, merged
-	/// into the response stream so the caller fails fast.
-	errors_tx: Mutex<mpsc::Sender<String>>,
-	/// Frames owed to the consumer, bounded by [`MAX_UNDELIVERED_FRAMES`].
-	undelivered: AtomicUsize,
-	/// Requests sent before the chain first synced, in send order. `None`
-	/// once they are released, after which requests go straight to smoldot.
-	held: Mutex<Option<Vec<String>>>,
-	/// Taken by `close`, which ends the wait for the chain to sync. `None`
-	/// means the connection is closed.
-	closing: Mutex<Option<oneshot::Sender<()>>>,
+    inner: Arc<Mutex<LightInner>>,
+    chain_id: ChainId,
+    /// Synthetic JSON-RPC error frames for requests smoldot rejected, merged
+    /// into the response stream so the caller fails fast.
+    errors_tx: Mutex<mpsc::Sender<String>>,
+    /// Frames owed to the consumer, bounded by [`MAX_UNDELIVERED_FRAMES`].
+    undelivered: AtomicUsize,
+    /// Requests sent before the chain first synced, in send order. `None`
+    /// once they are released, after which requests go straight to smoldot.
+    held: Mutex<Option<Vec<String>>>,
+    /// Taken by `close`, which ends the wait for the chain to sync. `None`
+    /// means the connection is closed.
+    closing: Mutex<Option<oneshot::Sender<()>>>,
+    /// Statement subscriptions in flight, whose initial pages the response
+    /// stream fills from the peers' replay. `None` on a chain without the
+    /// statement protocol, where nothing is replayed.
+    statements: Option<Arc<StatementRequests>>,
 }
 
 /// Decrement `counter` unless it is already zero.
@@ -624,10 +635,14 @@ impl Pipe {
 		lock(&self.closing).is_none()
 	}
 
-	fn send(&self, request: String) {
-		// Parsed before taking the client lock, which every connection shares.
-		let holding = lock(&self.held).is_some();
-		let needs_sync = holding && waits_for_sync(&request);
+    fn send(&self, request: String) {
+        // Parsed before taking the client lock, which every connection shares.
+        let holding = lock(&self.held).is_some();
+        let needs_sync = holding && waits_for_sync(&request);
+        // Ahead of smoldot seeing the request, so its answer is recognized.
+        if let Some(statements) = &self.statements {
+            statements.note(&request);
+        }
 
 		// The chain-removal check and the request must happen under the same
 		// lock: json_rpc_request panics on a removed ChainId.
@@ -708,27 +723,37 @@ impl JsonRpcConnection for LightConnection {
 		self.pipe.send(request);
 	}
 
-	fn responses(&self) -> BoxStream<'static, String> {
-		let Some(sources) = lock(&self.responses).take() else {
-			return stream::empty().boxed();
-		};
-		let responses = stream::unfold(sources.responses, |mut responses| async move {
-			responses.next().await.map(|item| (item, responses))
-		});
-		let pipe = Arc::clone(&self.pipe);
-		// Yields nothing: it ends once the chain syncs, releasing what was
-		// held, or once the connection closes.
-		let release = stream::once(async move {
-			let ready = core::pin::pin!(first_ready(sources.lifecycle));
-			future::select(ready, sources.closing).await;
-			pipe.release_held();
-		})
-		.filter_map(|()| future::ready(None));
-		let pipe = Arc::clone(&self.pipe);
-		stream::select(stream::select(responses, sources.errors), release)
-			.inspect(move |_| decrement_saturating(&pipe.undelivered))
-			.boxed()
-	}
+    fn responses(&self) -> BoxStream<'static, String> {
+        let Some(sources) = lock(&self.responses).take() else {
+            return stream::empty().boxed();
+        };
+        let responses = stream::unfold(sources.responses, |mut responses| async move {
+            responses.next().await.map(|item| (item, responses))
+        });
+        let pipe = Arc::clone(&self.pipe);
+        // Yields nothing: it ends once the chain syncs, releasing what was
+        // held, or once the connection closes.
+        let release = stream::once(async move {
+            let ready = core::pin::pin!(first_ready(sources.lifecycle));
+            future::select(ready, sources.closing).await;
+            pipe.release_held();
+        })
+        .filter_map(|()| future::ready(None));
+        let pipe = Arc::clone(&self.pipe);
+        let answers = stream::select(responses, sources.errors).boxed();
+        let answers = match &pipe.statements {
+            Some(statements) => InitialPages::new(
+                answers,
+                Arc::clone(statements),
+                SnapshotTiming::LIGHT_CLIENT,
+            )
+            .boxed(),
+            None => answers,
+        };
+        stream::select(answers, release)
+            .inspect(move |_| decrement_saturating(&pipe.undelivered))
+            .boxed()
+    }
 
 	fn close(&self) {
 		let mut guard = lock(&self.pipe.inner);
@@ -1158,15 +1183,49 @@ mod tests {
 		assert_eq!(frame_id(&frame), 2, "the statement subscription is not held");
 	}
 
-	/// A chain that has not synced must not hold requests without limit: the
-	/// ones past the budget are refused, and the ones within it are answered
-	/// once the chain syncs.
-	#[test]
-	fn held_requests_count_against_the_budget() {
-		let provider = offline_provider();
-		let connection =
-			block_on(provider.connect(RELAY_GENESIS)).expect("offline add_chain succeeds");
-		let mut responses = connection.responses();
+    /// smoldot sends its empty first page right behind the subscription id.
+    /// The connection keeps it back for the peers' replay of stored
+    /// statements, so offline, with nothing replayed, it comes once the
+    /// replay window has passed, still empty and still ending the snapshot.
+    #[test]
+    fn the_initial_statement_page_waits_for_the_replay() {
+        let provider = offline_provider();
+        let connection =
+            block_on(provider.connect(RELAY_GENESIS)).expect("offline add_chain succeeds");
+        let mut responses = connection.responses();
+        connection.send(
+            r#"{"jsonrpc":"2.0","id":1,"method":"statement_subscribeStatement","params":["any"]}"#
+                .to_owned(),
+        );
+        let mut next = || -> serde_json::Value {
+            serde_json::from_str(&block_on(responses.next()).expect("the connection stays alive"))
+                .expect("valid JSON")
+        };
+
+        let subscribed = next();
+        let started = std::time::Instant::now();
+        let page = next();
+        assert!(
+            started.elapsed()
+                >= super::SnapshotTiming::LIGHT_CLIENT.window - Duration::from_millis(100),
+            "the empty page was not held for the replay"
+        );
+        assert_eq!(page["params"]["subscription"], subscribed["result"]);
+        assert_eq!(
+            page["params"]["result"]["data"],
+            serde_json::json!({ "statements": [], "remaining": 0 })
+        );
+    }
+
+    /// A chain that has not synced must not hold requests without limit: the
+    /// ones past the budget are refused, and the ones within it are answered
+    /// once the chain syncs.
+    #[test]
+    fn held_requests_count_against_the_budget() {
+        let provider = offline_provider();
+        let connection =
+            block_on(provider.connect(RELAY_GENESIS)).expect("offline add_chain succeeds");
+        let mut responses = connection.responses();
 
 		let overshoot = 64;
 		let sent = super::MAX_UNDELIVERED_FRAMES + overshoot;
