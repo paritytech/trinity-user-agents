@@ -10,16 +10,20 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
+mod common;
+
 use truapi::statement_allowance::{self as alloc, collection::PersonhoodCollection, pgas};
 
-const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
-
 /// `LIVE_ASSET_HUB_WS` points the dotNS checks at another Asset Hub, for
-/// instance previewnet's `wss://previewnet.substrate.dev/asset-hub`.
+/// instance previewnet's.
 fn asset_hub_ws() -> String {
-	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.to_string())
+	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| common::paseo_next_v2_rpc("AssetHub"))
 }
-const PEOPLE_WS: &str = "wss://paseo-people-next-system-rpc.polkadot.io";
+
+/// `LIVE_TLD`, or the bundled paseo-next-v2 stack's `tld`.
+fn live_tld() -> String {
+	std::env::var("LIVE_TLD").unwrap_or_else(|_| common::paseo_next_v2().tld)
+}
 
 /// Must stay active so the ignored live tests can resolve its mirrored roots.
 const RING_INDEX: u32 = 1;
@@ -38,7 +42,7 @@ async fn asset_hub() -> (alloc::rpc::RpcClient, alloc::extension::Metadata) {
 #[ignore = "needs network access to a live Asset Hub"]
 async fn live_asset_hub_reports_the_product_context_suffix() {
 	let (rpc, _metadata) = asset_hub().await;
-	let expected = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let expected = live_tld();
 
 	assert_eq!(
 		alloc::slot::read_network_suffix(&rpc)
@@ -77,7 +81,7 @@ async fn live_asset_hub_declares_both_pgas_claim_budgets() {
 #[ignore = "needs network access to a live Asset Hub and People chain"]
 async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 	let (asset_hub_rpc, asset_hub_metadata) = asset_hub().await;
-	let people_rpc = alloc::rpc::RpcClient::connect(PEOPLE_WS)
+	let people_rpc = alloc::rpc::RpcClient::connect(&common::paseo_next_v2_rpc("People"))
 		.await
 		.expect("connect to the People chain");
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.expect("People metadata");
@@ -185,25 +189,28 @@ use truapi::{
 	},
 };
 
-/// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
-/// per dotns `DEPLOYMENTS.md`. Only used to find an account that holds a
-/// settled name.
-const DOTNS_REGISTRAR: [u8; 20] = [
-	0x4f, 0x06, 0xe8, 0x18, 0xba, 0x3d, 0x98, 0x77, 0x04, 0xfd, 0x91, 0xcf, 0x3d, 0x86, 0x8e, 0x4b,
-	0x01, 0x91, 0x06, 0xab,
-];
+/// The `DotnsRegistrar` (ERC721) from the bundled paseo-next-v2 stack, the same
+/// CREATE3 address on every network per dotns `DEPLOYMENTS.md`. Only used to
+/// find an account that holds a settled name.
+fn dotns_registrar() -> [u8; 20] {
+	let stack = common::paseo_next_v2();
+	let address = &stack.dotns.as_ref().expect("bundled stack lacks dotns")["registrar"];
+	let mut bytes = [0u8; 20];
+	hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
+		.expect("invalid registrar address");
+	bytes
+}
 
 /// A label minted through the public registrar on the checked network, whose
 /// owner therefore has a settled `LabelStore`. `LIVE_MINTED_LABEL` overrides
-/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD
-/// (`paseo` by default, `dot` on previewnet).
+/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD.
 fn minted_label() -> String {
 	std::env::var("LIVE_MINTED_LABEL").unwrap_or_else(|_| "e2epoolns01".to_string())
 }
 
 /// `namehash(<minted label>.<tld>)`, the registrar's token id.
 fn minted_node() -> [u8; 32] {
-	let tld = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let tld = live_tld();
 	namehash_under(&namehash_under(&[0u8; 32], &tld), &minted_label())
 }
 
@@ -261,7 +268,7 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 	// to an AccountId32 by `0xEE` padding, which `account_to_h160` truncates.
 	let owner_of = DotnsRegistrar::ownerOfCall { tokenId: U256::from_be_bytes(minted_node()) };
 	let owner_output = transport
-		.view(&DOTNS_REGISTRAR, owner_of.abi_encode())
+		.view(&dotns_registrar(), owner_of.abi_encode())
 		.await
 		.expect("registrar ownerOf");
 	let owner = DotnsRegistrar::ownerOfCall::abi_decode_returns_validate(&owner_output)

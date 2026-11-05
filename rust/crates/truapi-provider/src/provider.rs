@@ -35,6 +35,12 @@ pub struct EmbeddedChainProviderBuilder {
 	/// The peer connections the browser light client opens.
 	#[cfg(feature = "smoldot")]
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Set by [`keep_chains_running`](Self::keep_chains_running).
+	#[cfg(feature = "smoldot")]
+	keep_chains_running: bool,
+	/// Set by [`catalog`](Self::catalog).
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl core::fmt::Debug for EmbeddedChainProviderBuilder {
@@ -46,7 +52,10 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("relays", &self.relays)
 			.field("seeded_databases", &self.seeded_databases)
 			.field("storage", &self.storage.is_some())
-			.field("connection_types", &self.connection_types);
+			.field("connection_types", &self.connection_types)
+			.field("keep_chains_running", &self.keep_chains_running);
+		#[cfg(feature = "networks")]
+		builder.field("catalog", &self.catalog);
 		builder.finish()
 	}
 }
@@ -111,6 +120,23 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Keep each light-client chain running from its first connect until the
+	/// provider is dropped, so it keeps its sync and peers between connections.
+	#[cfg(feature = "smoldot")]
+	pub fn keep_chains_running(mut self) -> Self {
+		self.keep_chains_running = true;
+		self
+	}
+
+	/// Resolve a genesis nobody registered from the bundled catalog. Without it, a
+	/// provider answers only for the chains registered on it, so one for remote
+	/// nodes never starts the light client.
+	#[cfg(feature = "networks")]
+	pub fn catalog(mut self) -> Self {
+		self.catalog = true;
+		self
+	}
+
 	/// Build the provider. Light-client resources start lazily on the first
 	/// light-client connect.
 	pub fn build(self) -> EmbeddedChainProvider {
@@ -125,7 +151,9 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
-			light: crate::light::LightState::new(self.connection_types),
+			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
+			#[cfg(feature = "networks")]
+			catalog: self.catalog,
 		}
 	}
 }
@@ -142,6 +170,9 @@ impl EmbeddedChainProviderBuilder {
 ///
 /// The `responses()` stream of returned connections is take-once: the first
 /// call yields the live stream, later calls yield an ended stream.
+///
+/// A genesis nobody registered is resolved from the bundled catalog only on a
+/// provider built with `catalog()`, which the `networks` feature adds.
 pub struct EmbeddedChainProvider {
 	chains: HashMap<[u8; 32], ChainSource>,
 	/// The relay each explicitly-registered parachain syncs through; catalog
@@ -163,12 +194,34 @@ pub struct EmbeddedChainProvider {
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl EmbeddedChainProvider {
 	/// Start building a provider.
 	pub fn builder() -> EmbeddedChainProviderBuilder {
 		EmbeddedChainProviderBuilder::new()
+	}
+
+	/// The chains of the bundled network `genesis_hash` belongs to and the relay
+	/// it syncs through, on a provider built with
+	/// [`catalog`](EmbeddedChainProviderBuilder::catalog).
+	#[cfg(feature = "networks")]
+	fn catalog_network(&self, genesis_hash: [u8; 32]) -> Option<crate::networks::ResolvedNetwork> {
+		self.catalog
+			.then(|| crate::networks::catalog_network_chains(genesis_hash))
+			.flatten()
+	}
+
+	/// Whether [`connect`](ChainProvider::connect) can reach `genesis_hash`.
+	#[cfg(feature = "smoldot")]
+	fn serves(&self, genesis_hash: [u8; 32]) -> bool {
+		#[cfg(feature = "networks")]
+		if self.catalog && crate::networks::catalog_service(genesis_hash).is_some() {
+			return true;
+		}
+		self.chains.contains_key(&genesis_hash)
 	}
 
 	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
@@ -301,7 +354,7 @@ impl EmbeddedChainProvider {
 			return Some(*relay);
 		}
 		#[cfg(feature = "networks")]
-		if let Some((_, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
+		if let Some((_, relay)) = self.catalog_network(genesis_hash) {
 			return relay;
 		}
 		None
@@ -342,9 +395,14 @@ impl EmbeddedChainProvider {
 	/// Fails when a read is needed and the provider was built without storage.
 	/// A chain that silently never resumes is indistinguishable from one that
 	/// has nothing stored yet, so missing configuration is reported rather than
-	/// swallowed. A chain that is already running, or already holds a blob,
-	/// answers without consulting storage at all.
+	/// swallowed. For the same reason a chain this provider cannot connect to
+	/// fails as unknown, as [`connect`](crate::platform::ChainProvider::connect)
+	/// would. A chain that is already running, or already holds a blob, answers
+	/// without consulting storage at all.
 	pub async fn load_database(&self, genesis_hash: [u8; 32]) -> Result<bool, ProviderError> {
+		if !self.serves(genesis_hash) {
+			return Err(ProviderError::UnknownGenesis { genesis: genesis_hash });
+		}
 		// A parachain is only as cold as the relay under it, and the relay is
 		// the one that warp syncs, so it is seeded first.
 		if let Some(relay) = self.relay_of(genesis_hash) &&
@@ -555,7 +613,7 @@ impl ChainProvider for EmbeddedChainProvider {
 			return connected;
 		}
 		#[cfg(feature = "networks")]
-		if let Some((catalog, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
+		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
 			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
 				tracing::info!(network, service, "connecting via light client");
 			}
@@ -588,6 +646,86 @@ mod tests {
 			.err()
 			.expect("connect must fail for an unregistered genesis");
 		assert!(error.to_string().contains(&"ab".repeat(32)));
+	}
+
+	/// The genesis hashes of the bundled Paseo Next v2 network.
+	#[cfg(feature = "networks")]
+	fn paseo_next_v2() -> crate::NetworkChains {
+		let (_, chains) = EmbeddedChainProvider::builder()
+			.add_network("paseo-next-v2")
+			.expect("the network is bundled");
+		chains
+	}
+
+	/// An unregistered chain must not start the light client from the catalog,
+	/// including on a provider with nothing registered.
+	#[cfg(all(feature = "ws", feature = "networks"))]
+	#[test]
+	fn a_provider_without_the_catalog_does_not_resolve_from_it() {
+		let catalog = paseo_next_v2();
+		let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
+		let empty = EmbeddedChainProvider::builder().build();
+		let remote = EmbeddedChainProvider::builder()
+			.chain(catalog.people, ChainSource::rpc_node(url))
+			.build();
+
+		for provider in [empty, remote] {
+			let Err(error) = futures::executor::block_on(provider.connect(catalog.relay)) else {
+				panic!("an unregistered genesis must not connect");
+			};
+			assert!(
+				matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.relay),
+				"{error}"
+			);
+			assert!(!provider.is_connected(catalog.relay), "the light client never started");
+		}
+	}
+
+	/// A chain `connect` would refuse is refused here too, so no stored blob is
+	/// read for it.
+	#[cfg(feature = "networks")]
+	#[test]
+	fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
+		let catalog = paseo_next_v2();
+		let store = std::sync::Arc::new(MemoryStorageClient::default());
+		for genesis in [catalog.bulletin, catalog.relay] {
+			store
+				.stored
+				.lock()
+				.expect("test store")
+				.insert(genesis, "stored-blob".to_owned());
+		}
+		let provider = EmbeddedChainProvider::builder().storage(store.clone()).build();
+
+		let Err(error) = futures::executor::block_on(provider.load_database(catalog.bulletin))
+		else {
+			panic!("a chain the provider cannot connect to has nothing to load");
+		};
+		assert!(
+			matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.bulletin),
+			"{error}"
+		);
+		assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+	}
+
+	/// The native bindings register nothing and reach every chain through the
+	/// catalog, so a catalog chain they never registered still loads.
+	#[cfg(feature = "networks")]
+	#[test]
+	fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
+		let catalog = paseo_next_v2();
+		let store = std::sync::Arc::new(MemoryStorageClient::default());
+		store
+			.stored
+			.lock()
+			.expect("test store")
+			.insert(catalog.relay, "stored-blob".to_owned());
+		let provider = EmbeddedChainProvider::builder().catalog().storage(store.clone()).build();
+
+		assert!(
+			futures::executor::block_on(provider.load_database(catalog.relay))
+				.expect("the store answers")
+		);
 	}
 
 	/// A blob registered for a relay reaches it even when the relay is never

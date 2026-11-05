@@ -4,8 +4,11 @@
 //! that streams frames says so where the developer is already looking, and a
 //! host that does not says that too. Whether a host role still makes the report
 //! is only visible from a real invocation, so these run the binary.
+//! They run on a paseo-next-v2 stack whose chains are unreachable.
 
-use std::process::{Command, Stdio};
+mod common;
+
+use std::process::Stdio;
 
 /// Which headless host role to start. `dev` reaches the report through
 /// `signing-host`, so it is covered by the signing-host case.
@@ -35,7 +38,7 @@ const OFF: Switch<'static> = Switch { flag: None, variable: None };
 /// not resolve. Both print the report before that.
 fn dial_report(role: Role, switch: Switch<'_>) -> Vec<String> {
 	let temporary = tempfile::tempdir().expect("create temporary state root");
-	let mut command = Command::new(env!("CARGO_BIN_EXE_truapi-host"));
+	let mut command = common::offline_host_command();
 	command
 		.env_remove("TRUAPI_DEBUGGER_URL")
 		.env_remove("TRUAPI_HOST_BASE_PATH")
@@ -116,7 +119,7 @@ fn a_dialling_host_names_the_endpoint_and_the_switch_clap_read_it_from() {
 #[test]
 fn a_debugger_url_that_is_not_loopback_fails_startup() {
 	let temporary = tempfile::tempdir().expect("create temporary state root");
-	let output = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
+	let output = common::offline_host_command()
 		.env_remove("TRUAPI_DEBUGGER_URL")
 		.env_remove("TRUAPI_HOST_BASE_PATH")
 		.env("TRUAPI_HOST_NO_UPDATE", "1")
