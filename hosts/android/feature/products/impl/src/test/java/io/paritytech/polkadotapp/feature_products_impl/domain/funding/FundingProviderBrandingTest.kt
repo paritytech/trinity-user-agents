@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import com.google.gson.Gson
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -19,6 +21,7 @@ class FundingProviderBrandingTest {
     private val resolveProduct = mockk<ResolveProductUseCase>()
     private val bundledProducts = BundledProducts(
         InMemoryBundledProductFiles(mapOf("bundled-products/bundled.dot/worker/index.js" to "export {}")),
+        ManifestParser(Gson()),
         enabled = true,
     )
     private val branding = FundingProviderBranding(resolveProduct, mockk(), bundledProducts)

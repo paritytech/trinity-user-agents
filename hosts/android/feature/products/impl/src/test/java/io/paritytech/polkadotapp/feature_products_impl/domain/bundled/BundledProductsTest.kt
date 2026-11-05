@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
+import com.google.gson.Gson
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -25,8 +27,11 @@ class InMemoryBundledProductFiles(private val files: Map<String, String>) : Bund
     override fun open(path: String): InputStream? = files[path]?.let { ByteArrayInputStream(it.toByteArray()) }
 }
 
+private fun workerManifestJson(includes: String) =
+    """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":$includes}"""
+
 class BundledProductsTest {
-    private val manifest = """{"${'$'}v":1,"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[]}}}"""
+    private val manifest = workerManifestJson("""{"funding":{"routes":[]}}""")
 
     private val files = InMemoryBundledProductFiles(
         mapOf(
@@ -34,15 +39,15 @@ class BundledProductsTest {
             "bundled-products/provider.dot/worker/index.js" to "export {}",
             "bundled-products/provider.dot/app/index.html" to "<html></html>",
             "bundled-products/provider.dot/app/assets/main.js" to "export {}",
-            "bundled-products/chat.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker","includes":{"chat":true}}""",
+            "bundled-products/chat.dot/worker-manifest.json" to workerManifestJson("""{"chat":true}"""),
             "bundled-products/chat.dot/worker/index.js" to "export {}",
-            "bundled-products/quiet.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker","includes":{"chat":false}}""",
+            "bundled-products/quiet.dot/worker-manifest.json" to workerManifestJson("""{"chat":false}"""),
             "bundled-products/quiet.dot/worker/index.js" to "export {}",
             "bundled-products/.provider.dot.staging/worker/index.js" to "ignored",
         ),
     )
 
-    private val products = BundledProducts(files, enabled = true)
+    private val products = BundledProducts(files, ManifestParser(Gson()), enabled = true)
 
     @Test
     fun `reads each product under the root`() {
@@ -59,7 +64,13 @@ class BundledProductsTest {
     @Test
     fun `lists only the products that serve funding as bundled providers`() {
         assertEquals(
-            listOf(FundingProviderEntry(productId = ProductId.parse("provider.dot").getOrThrow(), workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)),
+            listOf(
+                FundingProviderEntry(
+                    productId = ProductId.parse("provider.dot").getOrThrow(),
+                    workerManifest = manifest,
+                    origin = FundingProviderOrigin.BUNDLED,
+                ),
+            ),
             products.fundingProviders(),
         )
     }
@@ -93,9 +104,10 @@ class BundledProductsTest {
     fun `ships nothing without the bundle or in a build that leaves it out`() {
         val provider = ProductId.parse("provider.dot").getOrThrow()
 
-        assertNull(BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true).product(provider))
-        assertNull(BundledProducts(files, enabled = false).product(provider))
-        assertTrue(BundledProducts(files, enabled = false).fundingProviders().isEmpty())
+        val empty = InMemoryBundledProductFiles(emptyMap())
+        assertNull(BundledProducts(empty, ManifestParser(Gson()), enabled = true).product(provider))
+        assertNull(BundledProducts(files, ManifestParser(Gson()), enabled = false).product(provider))
+        assertTrue(BundledProducts(files, ManifestParser(Gson()), enabled = false).fundingProviders().isEmpty())
     }
 }
 
@@ -108,7 +120,7 @@ class BundledProductContentTest {
             "bundled-products/provider.dot/app/assets/core.wasm" to "wasm",
         ),
     )
-    private val products = BundledProducts(files, enabled = true)
+    private val products = BundledProducts(files, ManifestParser(Gson()), enabled = true)
     private val product = products.product(ProductId.parse("provider.dot").getOrThrow())!!
     private val headers = mapOf("Content-Security-Policy" to "frame-ancestors *")
     private val app = BundledProductContent.app(product, products, headers)

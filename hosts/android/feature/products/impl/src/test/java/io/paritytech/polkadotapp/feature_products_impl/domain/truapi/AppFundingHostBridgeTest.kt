@@ -210,6 +210,17 @@ class AppFundingHostBridgeTest {
         assertEquals(true, bridge.providerHasApp(ramp))
     }
 
+    // An App the app ships is answered from the bundle, with nothing asked of dotNS.
+    @Test
+    fun `a bundled provider with a bundled App has one without a lookup`() = runBlocking {
+        val bundled = mockk<BundledProduct>()
+        every { bundledProducts.product(ramp) } returns bundled
+        every { bundledProducts.hasApp(bundled) } returns true
+
+        assertEquals(true, bridge.providerHasApp(ramp))
+        coVerify(exactly = 0) { resolveProduct.resolve(any()) }
+    }
+
     // Not knowing must not refuse a provider's screen that would open.
     @Test
     fun `a provider that cannot be resolved keeps its App route`() = runBlocking {

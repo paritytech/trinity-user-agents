@@ -171,6 +171,21 @@ class ManifestParserTest {
     }
 
     @Test
+    fun `a worker includes funding only when it lists a funding section`() {
+        fun parsedWorker(includes: String) = parser.parseExecutable(
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":$includes}""",
+            ExecutableKind.WORKER,
+            host("worker.coinflip.dot"),
+        ).getOrNull() as? ProductExecutable.Worker
+
+        assertEquals(true, parsedWorker("""{"funding":{"routes":[]}}""")?.includesFunding)
+        assertEquals(false, parsedWorker("""{"chat":true}""")?.includesFunding)
+        // A malformed section costs the worker its Funding, not the record.
+        assertEquals(false, parsedWorker("""{"chat":true,"funding":true}""")?.includesFunding)
+        assertEquals(true, parsedWorker("""{"chat":true,"funding":true}""")?.includesChat)
+    }
+
+    @Test
     fun `worker publishes pocket cards behind includes pocket`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
