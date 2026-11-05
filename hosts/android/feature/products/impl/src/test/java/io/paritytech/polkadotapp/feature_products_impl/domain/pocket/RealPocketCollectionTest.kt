@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.RendererNode
 
 class RealPocketCollectionTest {
@@ -67,16 +68,20 @@ class RealPocketCollectionTest {
     }
 
     // The bundled face is what a pinned card shows before its product has ever drawn one.
+    // It is a front, so turning the card over must not show it again.
     @Test
     fun `a pinned card with nothing drawn yet still shows the face bundled with the app`() = runTest {
-        assertEquals(humanity.face, collection.cachedFace(humanity.card.key))
+        assertEquals(
+            listOf(humanity.face, null),
+            listOf(collection.cachedFace(humanity.card.key), collection.cachedFace(humanity.card.key, PocketCardSide.BACK)),
+        )
     }
 
     // Reading a kept face goes through the runtime, which may not have started yet.
     @Test
     fun `a pinned card shows its bundled face when the kept one cannot be read`() = runTest {
         val unreadable = object : PocketCardRepository by repository {
-            override suspend fun face(key: PocketCardKey): RendererNode? = error("runtime unavailable")
+            override suspend fun face(key: PocketCardKey, side: PocketCardSide): RendererNode? = error("runtime unavailable")
         }
 
         val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), unreadable)

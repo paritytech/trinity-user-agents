@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRep
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.PinnedPocketCard
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
@@ -40,21 +41,21 @@ internal class FakePinnedPocketCards(private val cards: List<CachedPocketCard>) 
 /** The collection as the core keeps it: [pinned] first and removable by nobody, then added cards. */
 internal class InMemoryPocketCardRepository(pinned: List<PocketCard> = emptyList()) : PocketCardRepository {
     private val cards = MutableStateFlow(pinned)
-    private val faces = mutableMapOf<PocketCardKey, RendererNode>()
+    val faces = mutableMapOf<Pair<PocketCardKey, PocketCardSide>, RendererNode>()
 
     override fun observeCards(): Flow<List<PocketCard>> = cards
 
     override suspend fun insert(card: CachedPocketCard) {
         if (cards.value.none { it.key == card.card.key }) cards.value += card.card
-        faces[card.card.key] = card.face
+        faces[card.card.key to PocketCardSide.FRONT] = card.face
     }
 
     override suspend fun remove(key: PocketCardKey) {
         val held = cards.value.firstOrNull { it.key == key } ?: return
         if (held.privileged) return
         cards.value -= held
-        faces -= key
+        faces.keys.removeAll { it.first == key }
     }
 
-    override suspend fun face(key: PocketCardKey): RendererNode? = faces[key]
+    override suspend fun face(key: PocketCardKey, side: PocketCardSide): RendererNode? = faces[key to side]
 }

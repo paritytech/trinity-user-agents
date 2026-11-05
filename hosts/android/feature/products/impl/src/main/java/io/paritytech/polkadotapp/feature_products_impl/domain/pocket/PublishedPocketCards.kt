@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -16,6 +17,10 @@ sealed class PocketPublishError(message: String) : Throwable(message) {
     // Variants are singletons, so a captured trace would point at classloading, not the failure.
     override fun fillInStackTrace(): Throwable = this
 }
+
+/** Whether a failed lookup is the manifest's own answer; a read that did not land says nothing about the card. */
+val Throwable.isManifestAnswer: Boolean
+    get() = this is PocketPublishError || this is ProductResolutionError.MalformedManifest
 
 data class PublishedPocketCard(
     val product: Product,

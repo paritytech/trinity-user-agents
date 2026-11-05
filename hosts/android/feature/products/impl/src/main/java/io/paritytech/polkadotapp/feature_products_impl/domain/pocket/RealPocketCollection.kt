@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,9 +27,9 @@ class RealPocketCollection @Inject constructor(
     }
 
     /** The newest face the product drew, else the one bundled with a pinned card for its first run. */
-    override suspend fun cachedFace(key: PocketCardKey): RendererNode? =
-        runCancellableCatching { repository.face(key) }
+    override suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide): RendererNode? =
+        runCancellableCatching { repository.face(key, side) }
             .logFailure("pocket: no kept face for ${key.cardId.value}")
             .getOrNull()
-            ?: pinnedPocketCards.pinned(key)?.face
+            ?: pinnedPocketCards.pinned(key)?.face?.takeIf { side == PocketCardSide.FRONT }
 }
