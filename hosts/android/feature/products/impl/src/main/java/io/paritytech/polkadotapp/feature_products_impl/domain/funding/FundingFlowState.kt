@@ -51,22 +51,22 @@ data class FundingFlowState(
     val rows: Map<ProductId, FundingQuoteState>,
     val ask: FundingQuoteAsk?,
     /** The quotes on screen before the same ask went out again, shown greyed while the new ones arrive. */
-    val staleQuotes: Map<ProductId, FundingQuote> = emptyMap(),
+    val staleQuotes: Map<ProductId, FundingQuote>,
     /** The provider the core marks best among the quotes. */
-    val best: ProductId? = null,
+    val best: ProductId?,
     /** When the core asks every provider again. */
-    val refreshAt: Instant? = null,
+    val refreshAt: Instant?,
     /** What the core knows about each country on this rail and asset, by ISO code. */
-    val countrySupport: Map<String, FundingCountrySupport> = emptyMap(),
+    val countrySupport: Map<String, FundingCountrySupport>,
     /**
      * The earliest quote request whose lists still belong on screen; a list for an earlier one is dropped. The core
      * numbers requests in order, so a new ask moves this past every request made so far.
      */
-    val requestId: ULong? = null,
+    val requestId: ULong?,
     /** What the core says this rail, asset, network and country take. */
-    val amountLimits: FundingLimits = FundingLimits(minimum = null, maximum = null),
+    val amountLimits: FundingLimits,
     /** The least each crypto network takes for the asset on screen, as the core says. */
-    val networkMinimums: Map<String, BigDecimal> = emptyMap(),
+    val networkMinimums: Map<String, BigDecimal>,
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -91,6 +91,13 @@ data class FundingFlowState(
             chosenProviderId = null,
             rows = emptyMap(),
             ask = null,
+            staleQuotes = emptyMap(),
+            best = null,
+            refreshAt = null,
+            countrySupport = emptyMap(),
+            requestId = null,
+            amountLimits = FundingLimits(minimum = null, maximum = null),
+            networkMinimums = emptyMap(),
         )
 
         fun textFor(value: BigDecimal): String =
