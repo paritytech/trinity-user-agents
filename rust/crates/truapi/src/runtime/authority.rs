@@ -179,6 +179,22 @@ pub enum AuthorityError {
 	Unknown { reason: String },
 }
 
+/// Starts the reason a signing host answers with when it could not reach the
+/// chain, since an SSO answer carries only a string.
+const SSO_CHAIN_UNAVAILABLE_PREFIX: &str = "ChainUnavailable: ";
+
+impl AuthorityError {
+	/// The reason a signing host answers a failed SSO request with. A chain it
+	/// could not reach is marked, so the pairing host reports it as
+	/// `ChainUnavailable` rather than `Unknown`.
+	pub fn into_sso_reason(self) -> String {
+		match self {
+			Self::ChainUnavailable { reason } => format!("{SSO_CHAIN_UNAVAILABLE_PREFIX}{reason}"),
+			failure => failure.to_string(),
+		}
+	}
+}
+
 impl From<ProductAccountError> for AuthorityError {
 	fn from(err: ProductAccountError) -> Self {
 		Self::Unavailable { reason: err.to_string() }
@@ -194,12 +210,13 @@ impl From<SsoRemoteResponseError> for AuthorityError {
 			SsoRemoteResponseError::LocalDisconnected |
 			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
 			SsoRemoteResponseError::ChainUnavailable(reason) => Self::ChainUnavailable { reason },
-			// The signing host answers with only a reason, so a chain it could
-			// not reach cannot be told apart and stays `Unknown`.
 			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
 				"Rejected" | "User rejected" => Self::Rejected,
 				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
-				_ => Self::Unknown { reason },
+				other => match other.strip_prefix(SSO_CHAIN_UNAVAILABLE_PREFIX) {
+					Some(cause) => Self::ChainUnavailable { reason: cause.to_string() },
+					None => Self::Unknown { reason },
+				},
 			},
 		}
 	}
@@ -617,4 +634,31 @@ pub fn authority_session_validation_id(session: &SessionInfo) -> Vec<u8> {
 		id.extend_from_slice(&session.public_key);
 	}
 	id
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// An SSO answer is only a string, so a chain the signing host could not
+	/// reach must survive the trip to reach the product as `ChainUnavailable`,
+	/// while every other failure reads back as it was sent.
+	#[test]
+	fn a_signing_host_failure_keeps_its_kind_through_the_sso_answer() {
+		let failures = [
+			AuthorityError::ChainUnavailable {
+				reason: "cannot select a metadata block".to_string(),
+			},
+			AuthorityError::Rejected,
+			AuthorityError::Unknown { reason: "the payload did not decode".to_string() },
+		];
+
+		let relayed: Vec<AuthorityError> = failures
+			.iter()
+			.cloned()
+			.map(|failure| SsoRemoteResponseError::Failure(failure.into_sso_reason()).into())
+			.collect();
+
+		assert_eq!(relayed, failures);
+	}
 }

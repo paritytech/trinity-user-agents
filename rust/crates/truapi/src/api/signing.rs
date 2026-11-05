@@ -45,8 +45,8 @@ pub trait Signing: Send + Sync {
 	/// Fails as `ChainUnavailable` when the chain stays unreachable, such as
 	/// during a halt. Nothing was signed, so the call can be retried. Bound the
 	/// attempts, and expect a confirmed call to prompt again. When the paired
-	/// wallet builds the transaction, it answers a failure with only a reason,
-	/// so a chain the wallet cannot reach fails as `Unknown`.
+	/// wallet builds the transaction, it reports this only if it answers
+	/// through the TrUAPI core. Other and older wallets report it as `Unknown`.
 	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();
