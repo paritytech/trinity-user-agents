@@ -53,4 +53,5 @@ private final class ProductLinkNavigator: ModuleNavigating {
     func presentProduct(page _: ProductPage) {}
     func openPocket() {}
     func openScanPanel() {}
+    func openBackupSettings() {}
 }

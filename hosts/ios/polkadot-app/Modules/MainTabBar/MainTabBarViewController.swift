@@ -310,6 +310,10 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         productGamePill = viewModel
         applyProductGamePill()
     }
+
+    func showSettingsAttention(_ isVisible: Bool) {
+        chromeController.setSettingsAttention(isVisible)
+    }
 }
 
 // MARK: - Scan panel
@@ -317,6 +321,11 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 extension MainTabBarViewController {
     func openScanPanel() {
         chromeController.setPanel(.content(.scan))
+    }
+
+    func openBackupSettings() {
+        chromeController.setPanel(nil)
+        presenter.didRequestBackupSettings()
     }
 
     func makeScanPanel() -> UIViewController? {

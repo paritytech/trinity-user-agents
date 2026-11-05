@@ -16,6 +16,7 @@ struct TabBarShelfView: View {
     let onChipCloseRequested: (UUID) -> Void
     let onConnectionStatusTapped: () -> Void
     let onSettingsTapped: () -> Void
+    let showsSettingsAttention: Bool
 
     var body: some View {
         VStack(spacing: DSSpacings.large) {
@@ -47,6 +48,7 @@ private extension TabBarShelfView {
             iconButton(
                 UIImage.tabSettings,
                 label: String(localized: .tabSettings),
+                showsAttention: showsSettingsAttention,
                 action: onSettingsTapped
             )
             .accessibilityId(AccessibilityID.Tab.settings)
@@ -74,7 +76,12 @@ private extension TabBarShelfView {
         }
     }
 
-    func iconButton(_ image: UIImage, label: String, action: @escaping () -> Void) -> some View {
+    func iconButton(
+        _ image: UIImage,
+        label: String,
+        showsAttention: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(uiImage: image)
                 .renderingMode(.template)
@@ -82,6 +89,7 @@ private extension TabBarShelfView {
                 .scaledToFit()
                 .frame(width: Self.iconSize, height: Self.iconSize)
                 .foregroundStyle(Color.fgSecondary)
+                .attentionDot(showsAttention)
                 .frame(width: Self.touchSize, height: Self.touchSize)
                 .contentShape(Rectangle())
         }

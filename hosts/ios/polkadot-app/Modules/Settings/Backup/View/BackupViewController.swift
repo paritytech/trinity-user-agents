@@ -1,4 +1,6 @@
 import UIKit
+import SwiftUI
+import SnapKit
 import PolkadotUI
 import FoundationExt
 
@@ -8,6 +10,8 @@ final class BackupViewController: UIViewController, ViewHolder {
     typealias RootViewType = BackupViewLayout
 
     let presenter: BackupPresenterProtocol
+
+    private lazy var restoredBalanceHost = UIHostingController(rootView: makeRestoredBalanceCard(nil))
 
     // MARK: Initial methods
 
@@ -31,6 +35,7 @@ final class BackupViewController: UIViewController, ViewHolder {
         super.viewDidLoad()
 
         configureController()
+        configureRestoredBalanceHost()
         presenter.setup()
         rootView.buttonsDelegate = self
     }
@@ -41,6 +46,26 @@ final class BackupViewController: UIViewController, ViewHolder {
         title = String(localized: .backupMainTitle)
         view.backgroundColor = .bgSurfaceMain
     }
+
+    private func configureRestoredBalanceHost() {
+        restoredBalanceHost.view.backgroundColor = .clear
+        restoredBalanceHost.sizingOptions = [.intrinsicContentSize]
+        addChild(restoredBalanceHost)
+        rootView.restoredBalanceContainer.addSubview(restoredBalanceHost.view)
+        restoredBalanceHost.view.snp.makeConstraints {
+            $0.edges.equalToSuperview()
+        }
+        restoredBalanceHost.didMove(toParent: self)
+    }
+
+    private func makeRestoredBalanceCard(_ viewModel: BackupRestoredBalanceViewModel?) -> BackupRestoredBalanceCard {
+        BackupRestoredBalanceCard(
+            viewModel: viewModel ?? BackupRestoredBalanceViewModel(balance: nil, isUpdating: false),
+            onUpdate: { [weak self] in self?.presenter.onRestoredBalanceUpdate() },
+            onClose: { [weak self] in self?.presenter.onRestoredBalanceClose() },
+            onWhyUpdate: { [weak self] in self?.presenter.onRestoredBalanceWhyUpdate() }
+        )
+    }
 }
 
 // MARK: - BackupViewProtocol
@@ -48,6 +73,11 @@ final class BackupViewController: UIViewController, ViewHolder {
 extension BackupViewController: BackupViewProtocol {
     func updateViewModel(_ viewModel: BackupViewModel) {
         rootView.bind(model: viewModel)
+    }
+
+    func updateRestoredBalance(_ viewModel: BackupRestoredBalanceViewModel?) {
+        restoredBalanceHost.rootView = makeRestoredBalanceCard(viewModel)
+        rootView.setRestoredBalanceVisible(viewModel != nil)
     }
 }
 
