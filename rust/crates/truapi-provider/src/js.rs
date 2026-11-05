@@ -872,6 +872,47 @@ mod tests {
 		assert_eq!(calls.borrow().as_slice(), [format!("load {genesis}")]);
 	}
 
+	/// The first `addRpcChain` turns the catalog off. A host that mixes remote
+	/// nodes with bundled networks relies on that: a bundled chain it did not
+	/// register is refused rather than started on the light client, and one
+	/// that `addNetwork` registered first is still served.
+	///
+	/// `loadDatabase` refuses a chain `connect` would refuse, without starting
+	/// anything, so it stands in for `connect` here.
+	#[cfg(feature = "networks")]
+	#[wasm_bindgen_test]
+	async fn the_first_add_rpc_chain_turns_the_catalog_off() {
+		let paseo = ChainProviderBuilder::new().add_network("paseo-next-v2").expect("bundled");
+		let previewnet = ChainProviderBuilder::new().add_network("previewnet").expect("bundled");
+		let remote_people = |builder: &mut ChainProviderBuilder| {
+			builder
+				.add_rpc_chain(&paseo.people(), "ws://people.invalid")
+				.expect("registers")
+		};
+
+		let catalog_only = ChainProviderBuilder::new();
+		let mut remote_only = ChainProviderBuilder::new();
+		remote_people(&mut remote_only);
+		let mut network_then_remote = ChainProviderBuilder::new();
+		network_then_remote.add_network("paseo-next-v2").expect("bundled");
+		remote_people(&mut network_then_remote);
+
+		let mut served = Vec::new();
+		for mut builder in [catalog_only, remote_only, network_then_remote] {
+			builder
+				.set_storage(recording_client(std::rc::Rc::default()))
+				.expect("the client has load and save");
+			let provider = builder.build().expect("builds");
+			let mut relays = Vec::new();
+			for relay in [paseo.relay(), previewnet.relay()] {
+				relays.push(provider.load_database(&relay).await.is_ok());
+			}
+			served.push(relays);
+		}
+
+		assert_eq!(served, [[true, true], [false, false], [true, false]]);
+	}
+
 	/// A seeded blob is used without consulting the client at all.
 	#[wasm_bindgen_test]
 	async fn a_seeded_blob_beats_the_client() {
