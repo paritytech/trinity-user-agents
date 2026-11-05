@@ -9,6 +9,7 @@ import Products
 final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable {
     private struct State {
         var openedIds: [ProductId] = []
+        var openedWorkerIds: [ProductId] = []
         var refreshedIds: [ProductId] = []
         var appliedUpdates: [ExecutableRelease] = []
         var contentHash = "00"
@@ -30,6 +31,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     }
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
+    var openedWorkerIds: [ProductId] { state.withLock { $0.openedWorkerIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
     var appliedUpdates: [ExecutableRelease] { state.withLock { $0.appliedUpdates } }
     var keptHashesOnRemoval: [Set<String>] { state.withLock { $0.keptHashesOnRemoval } }
@@ -77,7 +79,8 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     }
 
     func openWorker(_ productId: ProductId, policy _: ProductLoadPolicy) async throws -> ResolvedProduct {
-        product ?? .legacy(id: productId)
+        state.withLock { $0.openedWorkerIds.append(productId) }
+        return product ?? .legacy(id: productId)
     }
 
     @discardableResult

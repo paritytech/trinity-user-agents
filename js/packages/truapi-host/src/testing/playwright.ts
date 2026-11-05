@@ -305,6 +305,13 @@ export interface TestHost {
    * `productStorage`, is there again.
    */
   openDeepLink(link: string): Promise<void>;
+  /**
+   * Confirm or decline reviews, such as a signature, from now on. One test
+   * can decline a signature without a fixture booted with
+   * `confirmUserActions: false`. A permission the core has cached keeps its
+   * answer.
+   */
+  setConfirmUserActions(confirm: boolean): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -672,6 +679,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
         setScanAnswer: (answer) => call("setScanAnswer", answer),
+        setConfirmUserActions: (confirm) =>
+          call("setConfirmUserActions", confirm),
         openDeepLink: async (link) => {
           await page.goto(deepLinkUrl(url, link));
           await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
