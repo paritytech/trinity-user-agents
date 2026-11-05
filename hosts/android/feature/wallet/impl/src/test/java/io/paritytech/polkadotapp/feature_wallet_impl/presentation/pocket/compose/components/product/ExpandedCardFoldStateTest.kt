@@ -13,9 +13,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-private const val FRAME_NANOS = 16_000_000L
+internal const val FRAME_NANOS = 16_000_000L
 
-private object SteppingFrameClock : MonotonicFrameClock {
+internal object SteppingFrameClock : MonotonicFrameClock {
     private var nanos = 0L
 
     override suspend fun <R> withFrameNanos(onFrame: (Long) -> R): R {
