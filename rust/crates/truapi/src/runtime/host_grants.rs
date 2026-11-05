@@ -856,6 +856,11 @@ impl HostGrantGuard<'_> {
 	}
 
 	/// Queue the old session's durable grants before its caches are detached.
+	///
+	/// Product subtrees are queued from the in-memory set, so a product never
+	/// opened since launch keeps its slot. Those address session ids that
+	/// cannot recur, and clearing them belongs to the host, as `CoreStorage`
+	/// states.
 	pub fn revoke_session(&mut self, previous: Option<&SessionInfo>) {
 		self.advance();
 		self.state.queue_deletion(CoreStorageKey::AutoSigningKeys);

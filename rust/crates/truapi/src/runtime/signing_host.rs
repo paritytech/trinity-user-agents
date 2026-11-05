@@ -342,18 +342,9 @@ impl SigningHost {
 
 	/// Clear one product's grants and Allow once answers, keeping the wallet
 	/// and other products.
-	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), String> {
+	pub fn clear_product_state(&self, product_id: &ProductId) {
 		self.consent.forget_allowed_once_for(product_id);
-		let session = {
-			let mut lifecycle = self.grants.lifecycle();
-			lifecycle.revoke_product(product_id);
-			self.session_state.current()
-		};
-		self.grants
-			.persistence()
-			.await
-			.clear_product(session.as_ref(), product_id)
-			.await
+		self.grants.lifecycle().revoke_product(product_id);
 	}
 
 	/// Derive the product's hard-subtree public key from the active session root.
@@ -3518,10 +3509,7 @@ mod tests {
 			.expect("product grant succeeds");
 		}
 
-		futures::executor::block_on(
-			authority.clear_product_state(&ProductId::for_test("myapp.dot")),
-		)
-		.expect("product clear succeeds");
+		authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 
 		let current = authority.session_state().current().expect("session remains active");
 		assert_eq!(

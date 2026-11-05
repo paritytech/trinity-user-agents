@@ -38,10 +38,7 @@ fn pending_account_access_tracks_wallet_activation() {
 				futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 					.unwrap();
 			},
-			"reset" => futures::executor::block_on(
-				authority.clear_product_state(&ProductId::for_test("myapp.dot")),
-			)
-			.unwrap(),
+			"reset" => authority.clear_product_state(&ProductId::for_test("myapp.dot")),
 			_ => unreachable!(),
 		}
 		release.send(()).unwrap();
@@ -85,8 +82,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 	);
 	futures::pin_mut!(allocation);
 	assert!(allocation.as_mut().now_or_never().is_none());
-	futures::executor::block_on(authority.clear_product_state(&ProductId::for_test("myapp.dot")))
-		.unwrap();
+	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 	release.send(()).unwrap();
 	let result = futures::executor::block_on(allocation);
 	let status = keeps_auto_signing(&authority, "myapp.dot");
@@ -138,8 +134,7 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 	prompts.push(prompts_after_request());
 	futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
 	prompts.push(prompts_after_request());
-	futures::executor::block_on(authority.clear_product_state(&ProductId::for_test("myapp.dot")))
-		.unwrap();
+	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 	prompts.push(prompts_after_request());
 	assert_eq!(prompts, vec![1, 1, 2, 3, 4]);
 }

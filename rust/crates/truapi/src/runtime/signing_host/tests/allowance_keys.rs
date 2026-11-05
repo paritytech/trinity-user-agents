@@ -270,8 +270,7 @@ fn clearing_a_product_forgets_only_its_key() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	remember(&signing_host, "other.dot", PERIOD);
 
-	futures::executor::block_on(signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID)))
-		.expect("the product's grants clear");
+	signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID));
 
 	assert_eq!(
 		(remembered(&signing_host, PRODUCT_ID), remembered(&signing_host, "other.dot"),),
