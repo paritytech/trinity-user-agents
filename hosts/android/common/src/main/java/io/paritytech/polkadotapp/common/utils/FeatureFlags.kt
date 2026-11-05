@@ -14,7 +14,6 @@ object FeatureFlags {
             FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
-            // Only four tabs fit in the docklet, so Browse is hidden whenever the network status tab is shown.
             FeatureOption.BROWSE_TAB -> fullFeatured && !BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
 
             FeatureOption.ARBITRARY_PRODUCTS,
