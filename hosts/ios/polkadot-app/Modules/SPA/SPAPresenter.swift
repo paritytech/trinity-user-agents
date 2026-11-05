@@ -75,6 +75,10 @@ extension SPAPresenter: SPAPresenterProtocol {
         interactor.reloadLatestBuild()
     }
 
+    func didBecomeVisible() {
+        interactor.checkForNewBuild()
+    }
+
     func hasChatEntry() -> Bool {
         interactor.hasChatEntry()
     }

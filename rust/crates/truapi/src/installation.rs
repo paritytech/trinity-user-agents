@@ -1,7 +1,6 @@
 //! The id of this app installation, which NFT item keys are derived under,
 //! and the trait the host provides it through.
 
-use async_trait::async_trait;
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
@@ -24,7 +23,7 @@ impl TryFrom<Vec<u8>> for InstallationId {
 }
 
 /// Hands out the current app installation.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait InstallationIdProvider: Send + Sync {
 	/// The id of the current installation, created on first use.
 	async fn current_installation(&self) -> Result<InstallationId, GenericError>;

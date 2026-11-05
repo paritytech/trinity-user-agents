@@ -231,3 +231,5 @@ sentry {
 configurations.configureEach {
     exclude(group = "io.sentry", module = "sentry-android-timber")
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

@@ -12,7 +12,7 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.notFoundResponse
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.getProductIdOrNull
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
 import javax.inject.Inject
@@ -80,7 +81,7 @@ class WebViewPermissionClient(
         if (index < 0 || index >= size) return null
         val url = getItemAtIndex(index)?.url ?: return null
         val tld = dotNsTldProvider.currentTldOrNull() ?: return null
-        return ProductId.fromUrl(url.toUri(), tld).getOrNull()
+        return productIdFromUrl(url.toUri(), tld).getOrNull()
     }
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest?): WebResourceResponse? {
@@ -96,7 +97,7 @@ class WebViewPermissionClient(
         }
 
         val requestProductId = dotNsTldProvider.currentTldOrNull()?.let { tld ->
-            ProductId.fromUrl(url, tld).getOrNull()
+            productIdFromUrl(url, tld).getOrNull()
         }
         if (requestProductId == callingProductId || requestProductId in recentProductIds || url.isFirstParty()) {
             return null

@@ -45,3 +45,5 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -11,6 +10,7 @@ import org.mockito.Mockito.anyBoolean
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 
 class GameReminderAlarmHandlerTest {
     private val publisher: VideoGameNotificationPublisher = mock(VideoGameNotificationPublisher::class.java)
@@ -20,7 +20,7 @@ class GameReminderAlarmHandlerTest {
 
     private val handler = GameReminderAlarmHandler(publisher, lifecycle, reminder, telemetry)
 
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     @Test
     fun `a background alarm for a held game is reported as fired and posts the notification`() {
@@ -65,7 +65,7 @@ class GameReminderAlarmHandlerTest {
     }
 
     private fun withScheduledGame() {
-        whenever(reminder.scheduledFor(game)).thenReturn(ScheduledProductGame(game.value, START))
+        whenever(reminder.scheduledFor(game)).thenReturn(ScheduledProductGame(game, START))
     }
 
     private fun verifyReported(event: GameReminderEvent) {

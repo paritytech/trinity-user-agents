@@ -23,7 +23,7 @@ use truapi::{
 		GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
 		HostPocketRemoveCardRequest,
 	},
-	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
+	platform::{PocketPlatform, ProductContext, ProductId},
 	v01,
 };
 
@@ -115,7 +115,7 @@ impl CliPocketHost {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl PocketPlatform for CliPocketHost {
 	fn subscribe_pocket_cards(
 		&self,
