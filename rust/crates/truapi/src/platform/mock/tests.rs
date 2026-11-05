@@ -262,6 +262,24 @@ fn confirm_records_kind_and_answers() {
 }
 
 #[test]
+fn set_confirm_user_actions_answers_until_reset() {
+	let p = MockPlatform::new();
+	p.set_confirm_user_actions(false);
+	assert!(!block_on(p.confirm_user_action(resource_review())).unwrap());
+	p.set_confirm_user_actions(true);
+	assert!(block_on(p.confirm_user_action(resource_review())).unwrap());
+	p.set_confirm_user_actions(false);
+	p.reset();
+	assert!(block_on(p.confirm_user_action(resource_review())).unwrap());
+
+	let declining =
+		MockPlatform::with_config(MockConfig { confirm_user_actions: false, ..Default::default() });
+	declining.set_confirm_user_actions(true);
+	declining.reset();
+	assert!(!block_on(declining.confirm_user_action(resource_review())).unwrap());
+}
+
+#[test]
 fn feature_supported_reflects_config() {
 	let p =
 		MockPlatform::with_config(MockConfig { feature_supported: false, ..Default::default() });

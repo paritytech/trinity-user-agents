@@ -26,8 +26,14 @@ fn the_exported_map_holds_every_entry_and_nothing_else() {
 #[test]
 fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	let exported = crate::native::core_markers();
-	assert_eq!(exported.get(TRACING_ERROR.target), Some(&MarkerClass::Export(Severity::Error)));
-	assert_eq!(exported.get(TRACING_WARN.target), Some(&MarkerClass::Export(Severity::Warn)));
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
 

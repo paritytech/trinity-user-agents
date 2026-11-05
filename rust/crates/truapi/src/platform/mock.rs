@@ -239,6 +239,7 @@ pub struct MockConfig {
 	/// BCP 47 language tag the mock reports.
 	pub language_tag: String,
 	/// Whether `confirm_user_action` confirms reviewed actions.
+	/// [`MockPlatform::set_confirm_user_actions`] changes it for one test.
 	pub confirm_user_actions: bool,
 	/// Chains the mock reports serving (RFC 0026).
 	///
@@ -330,6 +331,8 @@ pub struct MockPlatform {
 	/// When set, a permission with no explicit answer is denied instead of
 	/// falling back to the config policy.
 	enforce_permissions: Arc<AtomicBool>,
+	/// The answer reviews get, seeded from `confirm_user_actions`.
+	confirming: Arc<AtomicBool>,
 	permission_log: Arc<Mutex<Vec<PermissionLogEntry>>>,
 	chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
 	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
@@ -369,6 +372,7 @@ impl MockPlatform {
 	/// Build a mock platform with explicit behavior.
 	pub fn with_config(config: MockConfig) -> Self {
 		let theme = config.theme;
+		let confirming = config.confirm_user_actions;
 		Self {
 			config: Arc::new(config),
 			storage: Arc::new(Mutex::new(HashMap::new())),
@@ -382,6 +386,7 @@ impl MockPlatform {
 			next_notification_id: Arc::new(AtomicU32::new(1)),
 			permission_decisions: Arc::new(Mutex::new(BTreeMap::new())),
 			enforce_permissions: Arc::new(AtomicBool::new(false)),
+			confirming: Arc::new(AtomicBool::new(confirming)),
 			permission_log: Arc::new(Mutex::new(Vec::new())),
 			chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
@@ -664,6 +669,13 @@ impl MockPlatform {
 		*self.scan_answer.lock().expect("scan answer poisoned") = answer;
 	}
 
+	/// Answer reviews from now on with `confirm`. A review already answered
+	/// keeps its answer, and so does a permission the core has cached.
+	/// [`MockPlatform::reset`] restores the configured value.
+	pub fn set_confirm_user_actions(&self, confirm: bool) {
+		self.confirming.store(confirm, Ordering::SeqCst);
+	}
+
 	/// Replace the reported theme and push it to every live subscriber.
 	pub fn set_theme(&self, variant: latest::ThemeVariant) {
 		*self.theme.lock().expect("theme poisoned") = variant;
@@ -765,6 +777,7 @@ impl MockPlatform {
 		self.set_theme(self.config.theme);
 		self.simulate_reconnect();
 		self.set_enforce_permissions(false);
+		self.set_confirm_user_actions(self.config.confirm_user_actions);
 		self.next_notification_id.store(1, Ordering::SeqCst);
 		self.next_chat_message_id.store(0, Ordering::SeqCst);
 		self.open_operations.lock().expect("open operations poisoned").clear();
@@ -1162,7 +1175,7 @@ impl UserConfirmation for MockPlatform {
 		if let Some(reason) = &self.config.faults.confirmation_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(self.config.confirm_user_actions)
+		Ok(self.confirming.load(Ordering::SeqCst))
 	}
 }
 
