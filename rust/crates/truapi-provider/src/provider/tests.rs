@@ -31,8 +31,10 @@ fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 	let (genesis, source) =
 		provider.resolve_relay(&chains, RELAY).expect("the relay is registered");
 	assert_eq!(genesis, RELAY);
-	let ChainSource::LightClient { database_content, .. } = source else {
-		panic!("expected a LightClient source");
+	let database_content = match source {
+		ChainSource::LightClient { database_content, .. } => database_content,
+		#[cfg(feature = "ws")]
+		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
 	};
 	assert_eq!(database_content.as_deref(), Some("relay-blob"));
 }
@@ -124,8 +126,10 @@ fn a_stored_blob_seeds_a_chain() {
 	);
 
 	let seeded = provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-	let ChainSource::LightClient { database_content, .. } = seeded else {
-		panic!("expected a LightClient source");
+	let database_content = match seeded {
+		ChainSource::LightClient { database_content, .. } => database_content,
+		#[cfg(feature = "ws")]
+		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
 	};
 	assert_eq!(database_content.as_deref(), Some("stored-blob"));
 	assert!(
@@ -208,8 +212,10 @@ fn a_rust_client_is_driven_by_both_database_calls() {
 	assert_eq!(client.loads.load(std::sync::atomic::Ordering::Relaxed), 1);
 
 	let seeded = provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-	let ChainSource::LightClient { database_content, .. } = seeded else {
-		panic!("expected a LightClient source");
+	let database_content = match seeded {
+		ChainSource::LightClient { database_content, .. } => database_content,
+		#[cfg(feature = "ws")]
+		ChainSource::RpcNode { .. } => panic!("expected a LightClient source"),
 	};
 	assert_eq!(
 		database_content.as_deref(),

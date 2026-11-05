@@ -265,14 +265,16 @@ impl LightState {
 		source: &ChainSource,
 		relay: Option<([u8; 32], ChainSource)>,
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		// `ChainSource` collapses to a single variant when only the smoldot
-		// backend is enabled (e.g. the iOS build), making this match irrefutable.
-		let ChainSource::LightClient { specification, database_content, statement_protocol } =
-			source
-		else {
-			return Err(ProviderError::Transport {
-				reason: "light backend invoked with a non-light chain source".to_owned(),
-			});
+		let (specification, database_content, statement_protocol) = match source {
+			ChainSource::LightClient { specification, database_content, statement_protocol } => {
+				(specification, database_content, statement_protocol)
+			},
+			#[cfg(feature = "ws")]
+			ChainSource::RpcNode { .. } => {
+				return Err(ProviderError::Transport {
+					reason: "light backend invoked with a non-light chain source".to_owned(),
+				});
+			},
 		};
 
 		// Before the lock: this parses the whole spec and needs no shared state,
@@ -387,12 +389,14 @@ fn add_relay(
 		return Ok(chain_id);
 	}
 
-	// `ChainSource` collapses to a single variant when only the smoldot backend
-	// is enabled, making this match irrefutable.
-	let ChainSource::LightClient { specification, database_content, statement_protocol, .. } =
-		relay_source
-	else {
-		return Err(ProviderError::UnknownRelay { relay: relay_genesis });
+	let (specification, database_content, statement_protocol) = match relay_source {
+		ChainSource::LightClient { specification, database_content, statement_protocol } => {
+			(specification, database_content, statement_protocol)
+		},
+		#[cfg(feature = "ws")]
+		ChainSource::RpcNode { .. } => {
+			return Err(ProviderError::UnknownRelay { relay: relay_genesis });
+		},
 	};
 
 	let specification = dialable_spec(specification);
