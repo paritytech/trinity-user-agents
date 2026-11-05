@@ -7,8 +7,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 @Immutable
 data class PocketFacePreviewState(
     val url: String,
+    val backUrl: String,
     /** Null until a face has been asked for, so the screen opens on its instructions. */
     val face: LoadingState<JsWidget>?,
+    /** Null unless the last Draw named a back. */
+    val back: LoadingState<JsWidget>?,
     // Counts presses of Draw, so an unchanged face is still redrawn and its images fetched again.
     val draws: Int,
 )

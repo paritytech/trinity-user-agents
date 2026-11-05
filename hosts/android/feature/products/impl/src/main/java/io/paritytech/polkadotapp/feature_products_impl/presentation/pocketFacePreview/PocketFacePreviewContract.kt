@@ -8,9 +8,13 @@ interface PocketFacePreviewContract {
 
     val imageResolver: JsImageResolver
 
+    val backImageResolver: JsImageResolver
+
     fun onBackClick()
 
     fun onUrlChanged(url: String)
+
+    fun onBackUrlChanged(url: String)
 
     fun onDrawClick()
 }

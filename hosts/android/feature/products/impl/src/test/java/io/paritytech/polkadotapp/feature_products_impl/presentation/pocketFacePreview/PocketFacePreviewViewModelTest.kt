@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview
 
+import coil.request.ImageRequest
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview.PocketFacePreviewInteractor
@@ -23,23 +25,25 @@ import org.mockito.Mockito.mock
 import uniffi.truapi.RendererNode
 
 private const val FACE_URL = "http://127.0.0.1:5173/pocket/devicehood.json"
+private const val BACK_URL = "http://127.0.0.1:5174/pocket/devicehood-back.json"
 
 class PocketFacePreviewViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
     private val fetched = mutableListOf<String>()
     private var answer: Result<RendererNode> = Result.success(RendererNode.String("drawn"))
+    private val answers = mutableMapOf<String, Result<RendererNode>>()
     private val remoteFaces = object : RemoteFaceSource {
         override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> {
             fetched += url
-            return answer
+            return answers[url] ?: answer
         }
     }
 
     private val router: ProductsRouter = mock()
 
     private fun viewModel() =
-        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router, mockk())
+        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router, mockk(relaxed = true))
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
@@ -127,5 +131,48 @@ class PocketFacePreviewViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(FACE_URL), fetched)
+    }
+
+    // A developer edits both faces of a card, and a broken back must not hide a working front.
+    @Test
+    fun `a back url draws the back as well, with its own error`() = runTest(testDispatcher) {
+        answers[BACK_URL] = Result.failure(IllegalArgumentException("renderer node missing 'end'"))
+        val model = viewModel()
+        model.onUrlChanged(FACE_URL)
+        model.onBackUrlChanged(BACK_URL)
+
+        model.onDrawClick()
+        advanceUntilIdle()
+
+        assertEquals(listOf(FACE_URL, BACK_URL), fetched.sorted())
+        assertEquals(LoadingState.Loaded(JsWidget.Text(text = "drawn")), model.state.value.face)
+        assertEquals("renderer node missing 'end'", (model.state.value.back as LoadingState.Error).exception.message)
+    }
+
+    @Test
+    fun `with no back url only the front is drawn`() = runTest(testDispatcher) {
+        val model = viewModel()
+        model.onUrlChanged(FACE_URL)
+        model.onBackUrlChanged("  ")
+
+        model.onDrawClick()
+        advanceUntilIdle()
+
+        assertEquals(listOf(FACE_URL), fetched)
+        assertNull(model.state.value.back)
+    }
+
+    // The back may be served from another folder than the front, and its archive paths are its own.
+    @Test
+    fun `the back's images are looked up on the back's server`() = runTest(testDispatcher) {
+        val model = viewModel()
+        model.onUrlChanged(FACE_URL)
+        model.onBackUrlChanged(BACK_URL)
+        model.onDrawClick()
+        advanceUntilIdle()
+
+        val image = model.backImageResolver.resolve(JsImageSource.Archive("faces/code.png")) as ImageRequest
+
+        assertEquals("http://127.0.0.1:5174/faces/code.png", image.data)
     }
 }
