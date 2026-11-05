@@ -5,27 +5,27 @@ use std::{
 	fs,
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
-	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use crossterm::style::Stylize;
-use reqwest::Url;
 use trinity_stack::{
-	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, render,
+	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, open,
+	render,
 };
 use zeroize::Zeroizing;
 
-use crate::{platform, terminal_ui::qr_rows};
+use crate::{
+	platform,
+	stack_descriptor::{
+		FETCH_TIMEOUT, StackProjection, fetch, pointer_of, read_stack, refused, unix_now,
+	},
+	terminal_ui::qr_rows,
+};
 
 /// Where `publish` writes the descriptor under its output directory.
 const WELL_KNOWN: &str = ".well-known/trinity-stack.json";
-/// A local file has no URL of its own; the pointer only carries the key to check.
-const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
-const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-/// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
-const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
 
 #[derive(Subcommand)]
 pub enum StackCommand {
@@ -71,7 +71,7 @@ pub enum StackCommand {
 	/// Fetch and verify a signed stack, and write the copy a host build ships.
 	///
 	/// The previous copy at `--out` counts as stored, so a rebundle never lowers
-	/// `sequence`. Refuses an expired copy.
+	/// `sequence`, and pins the `tld`. Refuses an expired copy.
 	Bundle {
 		/// A link or a URL.
 		stack: String,
@@ -81,6 +81,10 @@ pub enum StackCommand {
 		/// File to write the bundled copy to.
 		#[arg(long)]
 		out: PathBuf,
+		/// Leave `--out` untouched when the fetched copy differs from it only in
+		/// fields truapi-host does not read.
+		#[arg(long)]
+		skip_same_projection: bool,
 	},
 	/// Print the link that carries a pointer, and its QR code.
 	Link {
@@ -102,7 +106,9 @@ pub async fn run(command: StackCommand) -> Result<()> {
 			publish(&model, &generation, &out, secret, state.as_deref(), url.as_deref())
 		},
 		StackCommand::Verify { stack, key } => verify(&stack, key.as_deref()).await,
-		StackCommand::Bundle { stack, key, out } => bundle(&stack, key.as_deref(), &out).await,
+		StackCommand::Bundle { stack, key, out, skip_same_projection } => {
+			bundle(&stack, key.as_deref(), &out, skip_same_projection).await
+		},
 		StackCommand::Link { url, key } => {
 			let link =
 				Pointer::new(&url, key.as_deref()).map_err(refused)?.to_link(DEFAULT_LINK_BASE);
@@ -117,10 +123,6 @@ pub async fn run(command: StackCommand) -> Result<()> {
 			Ok(())
 		},
 	}
-}
-
-fn refused(error: trinity_stack::Error) -> anyhow::Error {
-	anyhow!("refused ({}): {error}", error.code())
 }
 
 fn keygen(out: &Path) -> Result<()> {
@@ -205,43 +207,11 @@ fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
 	Ok(())
 }
 
-/// A link (any URL with a `url` parameter) or a descriptor URL as a pointer, with `key` filling in
-/// a link that has none. `None` for a path, which never parses as an absolute URL.
-fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
-	let Ok(parsed) = Url::parse(stack) else { return Ok(None) };
-	if !parsed.query_pairs().any(|(name, _)| name == "url") {
-		return Ok(Some(Pointer::new(stack, key).map_err(refused)?));
-	}
-	let linked = Pointer::from_link(stack).map_err(refused)?;
-	let Some(given) = key else { return Ok(Some(linked)) };
-	let keyed = Pointer::new(linked.url().as_str(), Some(given)).map_err(refused)?;
-	if linked.key().is_some_and(|own| Some(own) != keyed.key()) {
-		bail!("--key contradicts the key the link carries");
-	}
-	Ok(Some(keyed))
-}
-
 async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
-	let (pointer, fetched) = match pointer_of(stack, key)? {
-		Some(pointer) => {
-			let fetched = fetch(pointer.url().as_str()).await;
-			(pointer, fetched)
-		},
-		None => (
-			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
-			Ok(fs::read(stack).with_context(|| format!("read {stack}"))?),
-		),
-	};
-	let bytes = fetched
-		.as_deref()
-		.map_err(|cause| anyhow!("{} is unreachable: {cause}", pointer.url()))?;
-	let accepted = accept(
-		&pointer,
-		None,
-		Fetched::Document(bytes),
-		i64::try_from(unix_now()).expect("unix seconds fit in i64"),
-	)
-	.map_err(refused)?;
+	let (pointer, bytes) = read_stack(stack, key).await?;
+	let bytes = bytes.as_slice();
+	let accepted =
+		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;
 	// `signed` means a signature was checked against a key; `envelope` says the file carries one,
 	// so a signed stack read without `--key` is not mistaken for an unsigned one.
 	let envelope = matches!(Document::parse(bytes), Ok(Document::Envelope { .. }));
@@ -259,7 +229,12 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
-async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
+async fn bundle(
+	stack: &str,
+	key: Option<&str>,
+	out: &Path,
+	skip_same_projection: bool,
+) -> Result<()> {
 	let Some(pointer) = pointer_of(stack, key)?.filter(|pointer| pointer.key().is_some()) else {
 		bail!("bundle needs a signed stack: a link or URL with a key");
 	};
@@ -268,16 +243,12 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 		Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
 		Err(error) => return Err(error).with_context(|| format!("read {}", out.display())),
 	};
-	let fetched = fetch(pointer.url().as_str())
+	let fetched = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
 		.await
 		.map_err(|cause| anyhow!("not bundled: {} is unreachable: {cause}", pointer.url()))?;
-	let accepted = accept(
-		&pointer,
-		previous.as_deref(),
-		Fetched::Document(&fetched),
-		i64::try_from(unix_now()).expect("unix seconds fit in i64"),
-	)
-	.map_err(refused)?;
+	let accepted =
+		accept(&pointer, previous.as_deref(), Fetched::Document(&fetched), unix_now() as i64)
+			.map_err(refused)?;
 	match &accepted.status {
 		Status::Updated | Status::Unchanged => {},
 		Status::Refused(error) => {
@@ -291,54 +262,43 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 	if accepted.stale {
 		eprintln!("warning: {} is past validUntil; its operator should republish", pointer.url());
 	}
-	write_atomically(out, &accepted.document)?;
 	let descriptor = &accepted.stack.descriptor;
+	if let Some(bytes) = previous.as_deref() {
+		let stored_document = Document::parse(bytes).map_err(|error| {
+			anyhow!(
+				"not bundled: cannot read the tld of {}: {}; remove it to bundle {} on purpose",
+				out.display(),
+				refused(error),
+				pointer.url()
+			)
+		})?;
+		let stored_descriptor = stored_document.descriptor();
+		if stored_descriptor.tld != descriptor.tld {
+			bail!(
+				"not bundled: {} changes the tld from {} to {}, which changes every account derived \
+				 under it; remove {} to bundle the new tld on purpose",
+				pointer.url(),
+				stored_descriptor.tld,
+				descriptor.tld,
+				out.display()
+			);
+		}
+		let is_current = skip_same_projection &&
+			open(bytes, &pointer).is_ok() &&
+			StackProjection::of(stored_descriptor) == StackProjection::of(descriptor) &&
+			stored_descriptor.expires_at == descriptor.expires_at &&
+			stored_descriptor.valid_until == descriptor.valid_until;
+		if is_current {
+			println!(
+				"{} is current: {} sequence {} changes no field truapi-host reads",
+				out.display(),
+				descriptor.id,
+				descriptor.sequence
+			);
+			return Ok(());
+		}
+	}
+	write_atomically(out, &accepted.document)?;
 	println!("wrote {}, {} sequence {}", out.display(), descriptor.id, descriptor.sequence);
 	Ok(())
 }
-
-/// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
-/// rules hold for the URL the pointer names, and a redirect could lead to plain http.
-async fn fetch(url: &str) -> Result<Vec<u8>, String> {
-	let client = reqwest::Client::builder()
-		.timeout(FETCH_TIMEOUT)
-		.redirect(reqwest::redirect::Policy::none())
-		.build()
-		.map_err(|error| error.to_string())?;
-	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
-		true => format!("no answer within {}s", FETCH_TIMEOUT.as_secs()),
-		false => error.to_string(),
-	})?;
-	let status = response.status();
-	if status.is_redirection() {
-		let location = response.headers().get(reqwest::header::LOCATION);
-		let location = location.and_then(|value| value.to_str().ok()).unwrap_or("nowhere");
-		return Err(format!("HTTP {status} to {location}; redirects are not followed"));
-	}
-	if !status.is_success() {
-		return Err(format!("HTTP {status}"));
-	}
-	let too_large = || format!("larger than {MAX_DESCRIPTOR_BYTES} bytes");
-	if response
-		.content_length()
-		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
-	{
-		return Err(too_large());
-	}
-	let mut response = response;
-	let mut body = Vec::new();
-	while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
-		body.extend_from_slice(&chunk);
-		if body.len() > MAX_DESCRIPTOR_BYTES {
-			return Err(too_large());
-		}
-	}
-	Ok(body)
-}
-
-fn unix_now() -> u64 {
-	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs())
-}
-
-#[cfg(test)]
-mod tests;

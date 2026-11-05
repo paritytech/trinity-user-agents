@@ -1,24 +1,40 @@
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
+use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use truapi::{
 	latest::ChainIdentifier,
-	platform::{ChainExtensionVersion, ExtensionVersionMap, HostChainEntry, HostChainSet},
+	platform::{
+		ChainExtensionVersion, DOTNS_TLDS, ExtensionVersionMap, HostChainEntry, HostChainSet,
+	},
 };
 
-use crate::chain::ChainBackend;
+use crate::{
+	chain::ChainBackend,
+	stack_descriptor::{
+		FETCH_TIMEOUT, FetchError, ROLE_NAMES, Roles, StackProjection, fetch, load_descriptor,
+		unix_now,
+	},
+};
 
-/// Supported live network presets for the headless hosts.
+pub mod local_network;
+
+/// Networks the headless hosts know by name.
 ///
-/// The CLI account store keeps BIP-39 mnemonics in plaintext (`accounts.rs`),
-/// which is only acceptable for disposable test identities. A preset that sets
+/// The CLI account store saves BIP-39 mnemonics in plaintext (`accounts.rs`),
+/// which is only acceptable for disposable test identities. A network that sets
 /// [`NetworkConfig::disposable_identities`] may use that store; any other
-/// preset only signs with a mnemonic supplied per process, never writes one,
+/// network only signs with a mnemonic supplied per process, never writes one,
 /// and never approves a confirmation without a prompt.
-#[derive(Clone, Default, ValueEnum, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Network {
+	/// Built-in stack, read from the descriptor its operator publishes.
 	#[value(name = "paseo-next-v2")]
 	#[default]
 	PaseoNextV2,
-	/// Named for the id the playground and dotli already use for this network
+	/// Built-in stack, read from the descriptor its operator publishes. Its id is
+	/// the id the playground and dotli already use for this network
 	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so `HostChainSet::network`
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
@@ -34,14 +50,21 @@ pub enum Network {
 /// `http://localhost:8080/api/v1`.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
-/// Env vars overriding one chain's WebSocket URL, for a fork of the preset's
-/// network. The genesis hashes stay the preset's, which a fork keeps.
+/// Env var supplying `--stack` when the flag is absent; a blank value is unset.
+pub const STACK_ENV: &str = "HOST_CLI_STACK";
+
+/// Env var overriding the People chain's WebSocket URL, for a fork of the
+/// resolved network with the same genesis hash.
 pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
+/// Env var overriding the Asset Hub chain's WebSocket URL, for a fork of the
+/// resolved network with the same genesis hash.
 pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
+/// Env var overriding the Bulletin chain's WebSocket URL, for a fork of the
+/// resolved network with the same genesis hash.
 pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
 
-/// Chain URL overrides; `None` keeps the preset's URL.
-#[derive(Default, Debug)]
+/// Chain URL overrides; `None` leaves the network's URL in place.
+#[derive(Debug)]
 struct ChainOverrides {
 	people_ws: Option<String>,
 	asset_hub_ws: Option<String>,
@@ -49,22 +72,23 @@ struct ChainOverrides {
 }
 
 impl ChainOverrides {
-	fn from_env() -> anyhow::Result<Self> {
+	fn from_env() -> Result<Self> {
 		Self::parse(
 			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
 		)
 	}
 
-	/// Blank values keep the preset. Anything else must be a `ws` or `wss` URL.
-	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> anyhow::Result<Self> {
-		let url = |name: &str, value: Option<String>| -> anyhow::Result<Option<String>> {
-			let Some(value) = value.map(|value| value.trim().to_string()).filter(|v| !v.is_empty())
+	/// Blank values are unset. Anything else must be a `ws` or `wss` URL.
+	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> Result<Self> {
+		let url = |name: &str, value: Option<String>| -> Result<Option<String>> {
+			let Some(value) =
+				value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 			else {
 				return Ok(None);
 			};
 			let url = reqwest::Url::parse(&value)
-				.map_err(|err| anyhow::anyhow!("{name} is not a URL ({err}): {value}"))?;
-			anyhow::ensure!(
+				.map_err(|err| anyhow!("{name} is not a URL ({err}): {value}"))?;
+			ensure!(
 				matches!(url.scheme(), "ws" | "wss"),
 				"{name} must be a ws:// or wss:// URL: {value}"
 			);
@@ -78,7 +102,7 @@ impl ChainOverrides {
 	}
 
 	/// The env vars behind the overrides that are set.
-	fn set_names(&self) -> Vec<&'static str> {
+	fn env_names_in_use(&self) -> Vec<&'static str> {
 		[
 			(PEOPLE_WS_ENV, &self.people_ws),
 			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
@@ -90,190 +114,582 @@ impl ChainOverrides {
 	}
 }
 
-impl Network {
-	/// CLI resolution: the preset with the backend and chain URL overrides, or
-	/// the opt-in disposable local-network configuration, which cannot be
-	/// combined with the chain URL overrides. `chain_backend` selects how the
-	/// chains are reached; the light client cannot be combined with either.
-	///
-	/// A rerouted chain must still be the chain the preset names: each endpoint
-	/// that differs from the preset's is asked for its genesis before anything
-	/// runs against it, and a disposable configuration may never carry the
-	/// genesis of a preset whose identities are real.
-	pub async fn cli_config(self, chain_backend: ChainBackend) -> anyhow::Result<NetworkConfig> {
-		let overrides = ChainOverrides::from_env()?;
-		let set = overrides.set_names();
-		let mut base = apply_chain_overrides(self.with_backend_override(), overrides);
-		base.chain_backend = chain_backend;
-		refuse_light_client(&base, &set)?;
-		let config = crate::local_network::resolve(base, &set)?;
-		refuse_real_identity_genesis(&config)?;
-		verify_rerouted_endpoints(&config, &self.preset()).await?;
-		Ok(config)
-	}
+/// How long a built-in stack's published descriptor may take before the
+/// bundled copy is used instead.
+const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
 
-	/// [`Self::cli_config`] without the local-network file, for tests.
-	#[cfg(test)]
-	pub fn config(self) -> NetworkConfig {
-		let overrides = ChainOverrides::from_env().expect("valid chain URL overrides");
-		apply_chain_overrides(self.with_backend_override(), overrides)
-	}
+/// A stack this build ships a signed copy of, so a command starts without the
+/// published descriptor when it is unreachable. `scripts/update-stacks.sh`
+/// refreshes `stacks/<name>.json` from the link in `stacks/<name>.link`.
+struct BuiltInStack {
+	link: &'static str,
+	bundle: &'static [u8],
+}
 
-	fn with_backend_override(self) -> NetworkConfig {
-		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
-	}
-
-	/// The unmodified preset values.
-	fn preset(self) -> NetworkConfig {
-		match self {
-			Self::PaseoNextV2 => NetworkConfig {
-				id: "paseo-next-v2",
-				network_suffix: "paseo",
-				identity_backend_base: Some("https://identity.dotspark.app/api/v1"),
-				people_ws: PASEO_PEOPLE.ws,
-				bulletin_ws: PASEO_BULLETIN.ws,
-				asset_hub_ws: PASEO_ASSET_HUB.ws,
-				people_genesis: PASEO_PEOPLE.genesis,
-				bulletin_genesis: PASEO_BULLETIN.genesis,
-				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
-				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
-				dotns_pop_controller: None,
-				disposable_identities: true,
-				chain_backend: ChainBackend::Rpc,
-			},
-			Self::Previewnet => NetworkConfig {
-				id: "previewnet",
-				network_suffix: "testnet",
-				identity_backend_base: Some("https://identity-previewnet.dotspark.app/api/v1"),
-				people_ws: PREVIEWNET_PEOPLE.ws,
-				bulletin_ws: PREVIEWNET_BULLETIN.ws,
-				asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
-				people_genesis: PREVIEWNET_PEOPLE.genesis,
-				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
-				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
-				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
-				dotns_pop_controller: None,
-				disposable_identities: true,
-				chain_backend: ChainBackend::Rpc,
-			},
-			Self::Polkadot => NetworkConfig {
-				id: "polkadot",
-				network_suffix: "dot",
-				identity_backend_base: None,
-				people_ws: POLKADOT_PEOPLE.ws,
-				bulletin_ws: POLKADOT_BULLETIN.ws,
-				asset_hub_ws: POLKADOT_ASSET_HUB.ws,
-				people_genesis: POLKADOT_PEOPLE.genesis,
-				bulletin_genesis: POLKADOT_BULLETIN.genesis,
-				asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
-				live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
-				dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
-				disposable_identities: false,
-				chain_backend: ChainBackend::Rpc,
-			},
-		}
+impl BuiltInStack {
+	fn pointer(&self) -> Pointer {
+		Pointer::from_link(self.link.trim()).expect("invalid built-in stack link")
 	}
 }
 
-/// The light client knows only the networks `truapi-provider` bundles, by
-/// genesis hash, so it can serve neither another network nor a fork.
-fn refuse_light_client(config: &NetworkConfig, chain_overrides: &[&str]) -> anyhow::Result<()> {
-	if config.chain_backend != ChainBackend::LightClient {
-		return Ok(());
+const PASEO_NEXT_V2_STACK: BuiltInStack = BuiltInStack {
+	link: include_str!("../stacks/paseo-next-v2.link"),
+	bundle: include_bytes!("../stacks/paseo-next-v2.json"),
+};
+
+const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
+	link: include_str!("../stacks/previewnet.link"),
+	bundle: include_bytes!("../stacks/previewnet.json"),
+};
+
+/// Where a command's network comes from: `--chain-backend`, `--network` and
+/// `--stack`.
+#[derive(Debug, Clone)]
+pub struct NetworkSource {
+	pub chain_backend: ChainBackend,
+	/// paseo-next-v2 when neither this nor `stack` is set.
+	pub network: Option<Network>,
+	pub stack: Option<StackArg>,
+}
+
+/// A `--stack` value and where it came from, for error messages.
+#[derive(Debug, Clone)]
+pub struct StackArg {
+	/// A descriptor URL, a stack link or a local descriptor file.
+	pub value: String,
+	/// `--stack` or [`STACK_ENV`].
+	pub source: &'static str,
+}
+
+/// What the CLI checks against the chains before a command runs.
+struct ChainChecks {
+	/// Endpoints an override reroutes; one that does not answer is an error.
+	rerouted: Vec<&'static ChainEndpoint>,
+	/// The other endpoints of a stack network; one that does not answer within
+	/// [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
+	from_stack: Vec<&'static ChainEndpoint>,
+	/// For a built-in stack, the descriptor in use.
+	built_in: Option<BuiltInOrigin>,
+	/// For a stack network, the TLD People's `NetworkSuffix` must equal.
+	expected_suffix: Option<&'static str>,
+}
+
+impl ChainChecks {
+	/// Fails when an endpoint an override reroutes fails its check; otherwise
+	/// the outcome of the stack's own endpoints, which a fetch of the published
+	/// descriptor may resolve.
+	async fn verify(&self, config: &NetworkConfig) -> Result<Result<()>> {
+		let (rerouted, from_stack) = futures::join!(
+			verify_endpoints(config, &self.rerouted, Unanswered::Fail, None, self.expected_suffix),
+			verify_endpoints(
+				config,
+				&self.from_stack,
+				Unanswered::Warn,
+				self.built_in.as_ref(),
+				self.expected_suffix
+			),
+		);
+		rerouted?;
+		Ok(from_stack)
 	}
-	anyhow::ensure!(
-		truapi_provider::known_networks().any(|network| network == config.id),
-		"--chain-backend light-client has no chain specs for {}; it bundles {}",
-		config.id,
-		truapi_provider::known_networks().collect::<Vec<_>>().join(", ")
+
+	fn copy_in_use(&self) -> Option<BuiltInCopy> {
+		self.built_in.as_ref().map(|origin| origin.copy)
+	}
+}
+
+impl NetworkSource {
+	/// The network a command runs against: the built-in network or the stack,
+	/// then `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` on top.
+	///
+	/// Fails when the routing sources cannot be combined, when a `--stack`
+	/// descriptor is unreachable, when the descriptor in use is expired or
+	/// lacks a role, when a disposable-identity network carries Polkadot's
+	/// genesis hashes, TLD or namespace, when the light client cannot serve the
+	/// network, when an endpoint reports a genesis other than the one it is
+	/// routed as, when an endpoint an override reroutes does not answer, and
+	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
+	/// network whose published descriptor is unreachable runs on its bundled
+	/// copy; when that copy fails a check, the descriptor is fetched once more
+	/// and the checks repeat only when the published copy is then in use.
+	pub async fn cli_config(&self) -> Result<NetworkConfig> {
+		let (config, checks) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
+		let Err(error) = checks.verify(&config).await? else { return Ok(config) };
+		if checks.copy_in_use() != Some(BuiltInCopy::Unreachable) {
+			return Err(error);
+		}
+		tracing::info!("{error}; fetching the published descriptor again");
+		let (config, checks) = self.resolve_routes(FETCH_TIMEOUT).await?;
+		if checks.copy_in_use() != Some(BuiltInCopy::Published) {
+			return Err(error);
+		}
+		checks.verify(&config).await??;
+		Ok(config)
+	}
+
+	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
+	/// fetched. An unreachable descriptor fails only for `--stack`.
+	pub async fn resolve(&self) -> Result<NetworkConfig> {
+		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
+	}
+
+	/// The network and the [`ChainChecks`] to run against its chains. A
+	/// built-in stack's published descriptor gets `fetch_timeout`.
+	async fn resolve_routes(
+		&self,
+		fetch_timeout: Duration,
+	) -> Result<(NetworkConfig, ChainChecks)> {
+		let overrides = ChainOverrides::from_env()?;
+		let override_names = overrides.env_names_in_use();
+		let local_path = local_network::config_path();
+		ensure_sources_compatible(
+			self.stack.as_ref(),
+			self.network,
+			&override_names,
+			local_path.is_some(),
+			self.chain_backend,
+		)?;
+		let (base, built_in) = match (&self.stack, &local_path) {
+			(Some(stack), _) => {
+				let descriptor = load_descriptor(&stack.value).await;
+				let base = descriptor
+					.and_then(|descriptor| stack_network_config(&descriptor))
+					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
+				(base, None)
+			},
+			// A local copy replaces every route, so the bundled copy is enough.
+			(None, Some(_)) => (self.network.unwrap_or_default().config(), None),
+			(None, None) => {
+				self.network.unwrap_or_default().resolve_built_in(fetch_timeout).await?
+			},
+		};
+		let mut config = apply_chain_overrides(
+			apply_backend_override(base, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
+			overrides,
+		);
+		config.chain_backend = self.chain_backend;
+		if let Some(path) = &local_path {
+			config = local_network::resolve(config, path)?;
+		}
+		refuse_light_client(&config)?;
+		ensure_no_real_identity_values(&config)?;
+		let checks = plan_chain_checks(&config, &base, local_path.is_some(), built_in);
+		Ok((config, checks))
+	}
+}
+
+/// The checks for `config`, resolved from `base`: endpoints `config` routes
+/// differently from `base` are rerouted. A stack network reached over RPC
+/// without a local network also has its other endpoints and People's
+/// `NetworkSuffix` checked.
+fn plan_chain_checks(
+	config: &NetworkConfig,
+	base: &NetworkConfig,
+	local_network: bool,
+	built_in: Option<BuiltInOrigin>,
+) -> ChainChecks {
+	let (rerouted, untouched) = split_rerouted(config, base);
+	let is_stack_network =
+		base.disposable_identities && !local_network && config.chain_backend == ChainBackend::Rpc;
+	ChainChecks {
+		rerouted,
+		from_stack: if is_stack_network { untouched } else { Vec::new() },
+		built_in,
+		expected_suffix: is_stack_network.then_some(config.network_suffix),
+	}
+}
+
+/// Fails when two routing sources cannot be combined: `--network` with a
+/// stack, a stack or a `HOST_CLI_*_WS` override with the local-network file,
+/// and the light client with a stack, an override or the local-network file.
+/// Each message prints both sources.
+fn ensure_sources_compatible(
+	stack: Option<&StackArg>,
+	network: Option<Network>,
+	override_names: &[&str],
+	local_network: bool,
+	chain_backend: ChainBackend,
+) -> Result<()> {
+	let local_env = local_network::CONFIG_ENV;
+	let light_client = chain_backend == ChainBackend::LightClient;
+	if let Some(stack) = stack {
+		let source = stack.source;
+		ensure!(network.is_none(), "--network cannot be used with {source}; unset one of them");
+		ensure!(
+			!local_network,
+			"{local_env} and {source} cannot be used together: both route every chain; unset one \
+			 of them"
+		);
+		let bundled = truapi_provider::known_networks().collect::<Vec<_>>().join(", ");
+		ensure!(
+			!light_client,
+			"--chain-backend light-client cannot run {source} {}: the light client syncs only the \
+			 networks truapi-provider bundles ({bundled}); use --chain-backend rpc",
+			stack.value
+		);
+	}
+	// The chain URL overrides point a network at a fork with the same genesis;
+	// the local-network file replaces the genesis too. Applying one over the
+	// other would route some roles to one network and some to another.
+	ensure!(
+		override_names.is_empty() || !local_network,
+		"{local_env} and {} cannot be used together: the file routes every chain itself; unset \
+		 one of them",
+		override_names.join(", ")
 	);
-	anyhow::ensure!(
-		chain_overrides.is_empty(),
-		"{} and --chain-backend light-client cannot be used together: the light client \
-         syncs the live chains by genesis hash; unset one of them",
-		chain_overrides.join(", ")
+	ensure!(
+		override_names.is_empty() || !light_client,
+		"{} and --chain-backend light-client cannot be used together: the light client syncs the \
+		 live chains by genesis hash; unset one of them",
+		override_names.join(", ")
+	);
+	ensure!(
+		!local_network || !light_client,
+		"{local_env} and --chain-backend light-client cannot be used together: the light client \
+		 resolves chains by genesis hash from its bundled catalog, which has no local network; \
+		 unset one of them"
 	);
 	Ok(())
 }
 
-/// Replaces the preset's identity backend base with `base` when it carries a
-/// non-empty URL. Trailing slashes are stripped so path joins stay clean. The
-/// override string is leaked; the CLI reads it a handful of times per process.
+/// `config`'s endpoints split into those that `base` does not route the same
+/// way, by genesis and URL, and those it does.
+fn split_rerouted(
+	config: &NetworkConfig,
+	base: &NetworkConfig,
+) -> (Vec<&'static ChainEndpoint>, Vec<&'static ChainEndpoint>) {
+	config.live_chain_endpoints.iter().partition(|endpoint| {
+		!base
+			.live_chain_endpoints
+			.iter()
+			.any(|chain| (chain.genesis, chain.ws) == (endpoint.genesis, endpoint.ws))
+	})
+}
+
+impl Network {
+	/// The product namespace this network runs under.
+	pub fn id(self) -> &'static str {
+		match self {
+			Self::PaseoNextV2 => "paseo-next-v2",
+			Self::Previewnet => "previewnet",
+			Self::Polkadot => POLKADOT.id,
+		}
+	}
+
+	fn built_in_stack(self) -> Option<BuiltInStack> {
+		match self {
+			Self::PaseoNextV2 => Some(PASEO_NEXT_V2_STACK),
+			Self::Previewnet => Some(PREVIEWNET_STACK),
+			Self::Polkadot => None,
+		}
+	}
+
+	/// The values compiled into this build, without fetching anything: a
+	/// built-in stack's bundled copy, or Polkadot's pinned values.
+	pub fn config(self) -> NetworkConfig {
+		let Some(built_in) = self.built_in_stack() else { return POLKADOT };
+		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
+			.expect("invalid bundled stack");
+		stack_config(&bundled.descriptor, self.id()).expect("invalid bundled stack")
+	}
+
+	/// For a built-in stack, the published descriptor when it is newer than the
+	/// bundled copy, otherwise the bundled copy, with which of the two is in
+	/// use; Polkadot's pinned values otherwise. Logs a notice when the published
+	/// descriptor changes a field the CLI reads.
+	async fn resolve_built_in(
+		self,
+		fetch_timeout: Duration,
+	) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
+		let Some(built_in) = self.built_in_stack() else { return Ok((POLKADOT, None)) };
+		let pointer = built_in.pointer();
+		let url = pointer.url().as_str();
+		let fetched = fetch(url, fetch_timeout).await;
+		match &fetched {
+			Err(cause @ FetchError::Http(_)) => tracing::warn!(
+				"the {} stack descriptor at {url} returned {cause}; using the bundled copy",
+				self.id()
+			),
+			Err(cause) => tracing::debug!("{} stack descriptor is unreachable: {cause}", self.id()),
+			Ok(_) => {},
+		}
+		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
+		let now = unix_now() as i64;
+		let refresh = refresh_stack(self.id(), &pointer, built_in.bundle, fetched, now)?;
+		match &refresh.notice {
+			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
+			Some(notice) => tracing::info!("{notice}"),
+			None => {},
+		}
+		let origin = BuiltInOrigin { id: self.id(), url: url.to_owned(), copy: refresh.copy };
+		Ok((stack_config(&refresh.descriptor, self.id())?, Some(origin)))
+	}
+}
+
+/// Which copy of a built-in stack's descriptor a network runs on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuiltInCopy {
+	/// The published descriptor, also when it equals the bundled copy.
+	Published,
+	/// The bundled copy, because the published descriptor could not be
+	/// fetched; a later fetch may still return it.
+	Unreachable,
+	/// The bundled copy, because the published descriptor was refused, a
+	/// rollback, a conflict, or changed the TLD; fetching it again returns the
+	/// same.
+	Rejected,
+}
+
+/// The descriptor a built-in stack runs on.
+struct BuiltInOrigin {
+	id: &'static str,
+	url: String,
+	copy: BuiltInCopy,
+}
+
+/// What a genesis mismatch on a built-in stack's endpoints adds to its error.
+fn format_restart_hint(origin: &BuiltInOrigin) -> String {
+	let BuiltInOrigin { id, url, copy } = origin;
+	match copy {
+		BuiltInCopy::Published => format!(
+			"the {id} stack restarted from genesis after the published descriptor in use ({url}) \
+			 was published"
+		),
+		BuiltInCopy::Unreachable => format!(
+			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
+			 and the published copy at {url} could not be fetched"
+		),
+		BuiltInCopy::Rejected => format!(
+			"the {id} stack restarted from genesis after the bundled descriptor in use was built, \
+			 and the published copy at {url} was rejected, as the warning above reports"
+		),
+	}
+}
+
+/// The descriptor a built-in stack runs on and the notice to print about it.
+struct StackRefresh {
+	descriptor: Descriptor,
+	notice: Option<StackNotice>,
+	copy: BuiltInCopy,
+}
+
+/// A published descriptor that changes a field the CLI reads.
+struct StackNotice {
+	id: String,
+	bundle_sequence: u32,
+	remote_sequence: u32,
+	/// The stack restarted its chains from genesis since the bundled copy.
+	new_generation: bool,
+}
+
+impl std::fmt::Display for StackNotice {
+	fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let Self { id, bundle_sequence, remote_sequence, .. } = self;
+		if self.new_generation {
+			write!(
+				formatter,
+				"the {id} stack restarted from genesis: its published descriptor (sequence \
+				 {remote_sequence}) is in use instead of the copy this truapi-host ships \
+				 (sequence {bundle_sequence}), whose chains are gone; a later truapi-host \
+				 release ships the new descriptor"
+			)
+		} else {
+			write!(
+				formatter,
+				"the published {id} stack descriptor (sequence {remote_sequence}) changes the \
+				 copy this truapi-host ships (sequence {bundle_sequence}) and is in use; a later \
+				 truapi-host release ships it"
+			)
+		}
+	}
+}
+
+/// The descriptor a built-in stack runs on: `fetched` when [`accept`] takes it
+/// over `bundled` and it has the bundled copy's `tld`, otherwise `bundled`,
+/// with a notice when the descriptor in use changes a field the CLI reads.
+/// Fails when that descriptor is past `expiresAt`.
+fn refresh_stack(
+	id: &str,
+	pointer: &Pointer,
+	bundled: &[u8],
+	fetched: Fetched,
+	now_unix_seconds: i64,
+) -> Result<StackRefresh> {
+	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
+		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
+	let accepted = accept(pointer, Some(bundled), fetched, now_unix_seconds)
+		.map_err(|error| anyhow!("the {id} stack has no usable descriptor: {error}"))?;
+	match &accepted.status {
+		Status::Updated | Status::Unchanged | Status::Unreachable => {},
+		Status::Refused(error) => tracing::warn!(
+			"the published {id} stack descriptor is refused ({}): {error}; using the bundled copy",
+			error.code()
+		),
+		status => tracing::warn!(
+			"the published {id} stack descriptor is a {}; using the bundled copy",
+			status.code()
+		),
+	}
+	let bundled_descriptor = &bundled_copy.stack.descriptor;
+	let is_same_tld = accepted.stack.descriptor.tld == bundled_descriptor.tld;
+	if !is_same_tld {
+		tracing::warn!(
+			"the published {id} stack descriptor changes the TLD from {} to {}, which would \
+			 change every account derived under it; using the bundled copy",
+			bundled_descriptor.tld,
+			accepted.stack.descriptor.tld
+		);
+	}
+	let is_projection_change = is_same_tld &&
+		StackProjection::of(&accepted.stack.descriptor) !=
+			StackProjection::of(bundled_descriptor);
+	let notice = is_projection_change.then(|| StackNotice {
+		id: id.to_owned(),
+		bundle_sequence: bundled_descriptor.sequence,
+		remote_sequence: accepted.stack.descriptor.sequence,
+		new_generation: accepted.new_generation,
+	});
+	let (accepted, copy) = match (is_same_tld, &accepted.status) {
+		(true, Status::Updated | Status::Unchanged) => (accepted, BuiltInCopy::Published),
+		(true, Status::Unreachable) => (accepted, BuiltInCopy::Unreachable),
+		(true, _) => (accepted, BuiltInCopy::Rejected),
+		(false, _) => (bundled_copy, BuiltInCopy::Rejected),
+	};
+	ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
+	if accepted.stale {
+		tracing::warn!("the {id} stack descriptor in use is past validUntil");
+	}
+	Ok(StackRefresh { descriptor: accepted.stack.descriptor, notice, copy })
+}
+
+/// A `--stack` descriptor's network, under the product namespace of the
+/// descriptor's `id` without a trailing `-fork`.
+fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
+	let id = descriptor.id.strip_suffix("-fork").unwrap_or(&descriptor.id);
+	ensure!(
+		truapi::platform::is_dns_label(id),
+		"the stack id {:?} is not a lowercase label to use as the product namespace",
+		descriptor.id
+	);
+	stack_config(descriptor, leak_str(id))
+}
+
+/// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
+/// dotNS `popController` under the product namespace `id`, with disposable
+/// identities, read through its [`StackProjection`]. Fails when a role is
+/// missing, when two roles share a genesis hash, and when the TLD is not one
+/// the core serves.
+fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConfig> {
+	let projection = StackProjection::of(descriptor);
+	let roles = ROLE_NAMES.zip(projection.roles).try_map(|(role, chain)| {
+		let (ws, genesis_hash) =
+			chain.with_context(|| format!("the {} stack has no {role} chain", descriptor.id))?;
+		let mut genesis = [0u8; 32];
+		hex::decode_to_slice(genesis_hash.trim_start_matches("0x"), &mut genesis)
+			.expect("invalid genesisHash in a validated descriptor");
+		anyhow::Ok(ChainEndpoint { genesis, ws: leak_str(ws), required_for_host: true })
+	})?;
+	let network_suffix =
+		DOTNS_TLDS.iter().find(|tld| **tld == projection.tld).with_context(|| {
+			format!(
+				"the {} stack's tld {} is not one the core serves ({})",
+				descriptor.id,
+				projection.tld,
+				DOTNS_TLDS.join(", ")
+			)
+		})?;
+	let identity_backend_base = projection
+		.dub
+		.map(|url| leak_str(&format!("{}/api/v1", url.trim_end_matches('/'))));
+	let dotns_pop_controller = projection.pop_controller.map(|address| {
+		let mut bytes = [0u8; 20];
+		hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
+			.expect("invalid dotns address in a validated descriptor");
+		bytes
+	});
+	roles.ensure_distinct_genesis()?;
+	Ok(NetworkConfig {
+		id,
+		network_suffix,
+		identity_backend_base,
+		people_ws: roles.people.ws,
+		bulletin_ws: roles.bulletin.ws,
+		asset_hub_ws: roles.asset_hub.ws,
+		people_genesis: roles.people.genesis,
+		bulletin_genesis: roles.bulletin.genesis,
+		asset_hub_genesis: roles.asset_hub.genesis,
+		live_chain_endpoints: roles.leak_endpoints(),
+		dotns_pop_controller,
+		disposable_identities: true,
+		chain_backend: ChainBackend::Rpc,
+	})
+}
+
+impl Roles<ChainEndpoint> {
+	/// Fails when two roles share a genesis hash, since the host routes each
+	/// role by its genesis.
+	fn ensure_distinct_genesis(&self) -> Result<()> {
+		let Self { people, asset_hub, bulletin } = self;
+		ensure!(
+			people.genesis != asset_hub.genesis &&
+				people.genesis != bulletin.genesis &&
+				asset_hub.genesis != bulletin.genesis,
+			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each \
+			 role by its genesis"
+		);
+		Ok(())
+	}
+
+	/// The genesis-keyed routing table of a [`NetworkConfig`].
+	fn leak_endpoints(self) -> &'static [ChainEndpoint] {
+		Box::leak(Box::new([self.people, self.asset_hub, self.bulletin]))
+	}
+}
+
+/// `NetworkConfig` is `Copy` with process-lifetime fields; the CLI resolves a
+/// network a handful of times per process.
+fn leak_str(value: &str) -> &'static str {
+	Box::leak(value.to_owned().into_boxed_str())
+}
+
+/// The light client knows only the networks `truapi-provider` bundles, by
+/// genesis hash, so it can serve neither another network nor a built-in stack
+/// that restarted after this build's chain specs.
+fn refuse_light_client(config: &NetworkConfig) -> Result<()> {
+	if config.chain_backend != ChainBackend::LightClient {
+		return Ok(());
+	}
+	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+		.add_network(config.id)
+		.map_err(|error| {
+			anyhow!("--chain-backend light-client has no chain specs for {}: {error}", config.id)
+		})?;
+	ensure!(
+		(catalog.people, catalog.assethub, catalog.bulletin) ==
+			(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
+		"this build's light-client chain specs for {} predate the stack's restart from genesis; \
+		 use --chain-backend rpc, or `truapi-host update` once a release ships the new specs",
+		config.id
+	);
+	Ok(())
+}
+
+/// Replaces the identity backend base with `base` when it carries a non-empty
+/// URL. Trailing slashes are stripped so path joins stay clean.
 fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> NetworkConfig {
 	if let Some(base) = base {
 		let trimmed = base.trim().trim_end_matches('/');
 		if !trimmed.is_empty() {
-			config.identity_backend_base = Some(Box::leak(trimmed.to_string().into_boxed_str()));
+			config.identity_backend_base = Some(leak_str(trimmed));
 		}
 	}
 	config
 }
 
-/// Refuses a disposable-identity configuration whose chains are a real-identity
-/// preset's. A fork or local copy of mainnet keeps mainnet's genesis, and a
-/// signature made against it is valid on mainnet itself.
-fn refuse_real_identity_genesis(config: &NetworkConfig) -> anyhow::Result<()> {
-	if !config.disposable_identities {
-		return Ok(());
-	}
-	for real in Network::value_variants().iter().map(|network| network.preset()) {
-		if real.disposable_identities {
-			continue;
-		}
-		for endpoint in config.live_chain_endpoints {
-			anyhow::ensure!(
-				!real.live_chain_endpoints.iter().any(|chain| chain.genesis == endpoint.genesis),
-				"{} would route to {}'s chain at {}, whose identities are real; point it at a \
-				 test network",
-				config.id,
-				real.id,
-				endpoint.ws
-			);
-		}
-	}
-	Ok(())
-}
-
-/// Asks every endpoint that differs from the preset's for its genesis, and
-/// refuses one that is not the chain it is routed as.
-async fn verify_rerouted_endpoints(
-	config: &NetworkConfig,
-	preset: &NetworkConfig,
-) -> anyhow::Result<()> {
-	use truapi::statement_allowance as alloc;
-
-	for endpoint in config.live_chain_endpoints {
-		if preset.live_chain_endpoints.iter().any(|chain| chain.ws == endpoint.ws) {
-			continue;
-		}
-		let rpc = alloc::rpc::RpcClient::new(
-			crate::chain::CliChainProvider::for_endpoint(config, endpoint)
-				.rpc_client(endpoint.genesis)
-				.await
-				.map_err(|err| {
-					anyhow::anyhow!("cannot reach {} to check its genesis: {err}", endpoint.ws)
-				})?,
-		);
-		let reported = alloc::fetch_genesis_hash(&rpc)
-			.await
-			.map_err(|err| anyhow::anyhow!("cannot read the genesis of {}: {err}", endpoint.ws))?;
-		anyhow::ensure!(
-			reported == endpoint.genesis,
-			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}",
-			endpoint.ws,
-			hex::encode(reported),
-			config.id,
-			hex::encode(endpoint.genesis)
-		);
-	}
-	Ok(())
-}
-
-/// Points each overridden role at its new URL, in both the preset field and the
-/// genesis-keyed routing table, so the two cannot disagree. Overridden values
-/// are leaked like the backend override.
+/// Points each overridden role at its new URL, in both the role field and the
+/// genesis-keyed routing table, so the two cannot disagree.
 fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
-	let leak = |value: Option<String>| value.map(|url| &*Box::leak(url.into_boxed_str()));
+	let leak = |value: Option<String>| value.map(|url| leak_str(&url));
 	let routes = [
 		(leak(overrides.people_ws), config.people_genesis),
 		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
@@ -301,59 +717,147 @@ fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -
 	config
 }
 
-// Each chain is declared once and reused by both the preset fields and the
-// endpoint table. A genesis hash can therefore never drift from the URL it
+/// Fails for a disposable-identity network that carries Polkadot's genesis
+/// hashes, its `dot` TLD or its product namespace. A fork of mainnet has
+/// mainnet's genesis, and a signature made against it is valid on mainnet
+/// itself; mainnet's namespace contains its real-identity sessions.
+fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
+	if !config.disposable_identities {
+		return Ok(());
+	}
+	ensure!(
+		config.id != POLKADOT.id,
+		"a stack cannot run under the {} namespace, whose identities are real; use a stack \
+		 with another id",
+		POLKADOT.id
+	);
+	ensure!(
+		config.network_suffix != POLKADOT.network_suffix,
+		"{} uses Polkadot's TLD .{}, whose identities are real; point it at a test network",
+		config.id,
+		config.network_suffix
+	);
+	for endpoint in config.live_chain_endpoints {
+		ensure!(
+			!POLKADOT_CHAIN_ENDPOINTS.iter().any(|chain| chain.genesis == endpoint.genesis),
+			"{} would route to {}'s chain at {}, whose identities are real; point it at a test \
+			 network",
+			config.id,
+			POLKADOT.id,
+			endpoint.ws
+		);
+	}
+	Ok(())
+}
+
+/// What a genesis check does with an endpoint that does not answer.
+#[derive(Clone, Copy)]
+enum Unanswered {
+	/// Fail the command.
+	Fail,
+	/// Log it after at most [`BUILT_IN_REFRESH_TIMEOUT`] and leave it to fail
+	/// on first use.
+	Warn,
+}
+
+/// What an endpoint reports about its chain.
+struct EndpointReport {
+	genesis: [u8; 32],
+	/// People's `NetworkSuffix`, read only when requested and the genesis
+	/// matches the one the endpoint is routed as.
+	network_suffix: Option<Result<Vec<u8>, String>>,
+}
+
+/// The genesis `endpoint` reports and, with `read_suffix`, its
+/// `NetworkSuffix` over the same connection.
+async fn probe_endpoint(
+	config: &NetworkConfig,
+	endpoint: &'static ChainEndpoint,
+	read_suffix: bool,
+) -> Result<EndpointReport, String> {
+	use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
+	let provider = crate::chain::CliChainProvider::for_endpoint(config, endpoint);
+	let client = provider.rpc_client(endpoint.genesis).await.map_err(|error| error.to_string())?;
+	let rpc = RpcClient::new(client);
+	let genesis = fetch_genesis_hash(&rpc).await.map_err(|error| error.to_string())?;
+	let network_suffix = match read_suffix && genesis == endpoint.genesis {
+		true => Some(slot::read_network_suffix(&rpc).await.map_err(|error| error.to_string())),
+		false => None,
+	};
+	Ok(EndpointReport { genesis, network_suffix })
+}
+
+/// Fails when one of `endpoints` reports a genesis other than the one it is
+/// routed as, adding the restart hint of `built_in` to the error, when People
+/// reports a `NetworkSuffix` other than `expected_suffix`, or when an endpoint
+/// does not answer with `Unanswered::Fail`. A People chain without a readable
+/// suffix is logged.
+async fn verify_endpoints(
+	config: &NetworkConfig,
+	endpoints: &[&'static ChainEndpoint],
+	unanswered: Unanswered,
+	built_in: Option<&BuiltInOrigin>,
+	expected_suffix: Option<&str>,
+) -> Result<()> {
+	let checks = endpoints.iter().map(|&endpoint| async move {
+		let expected_suffix = expected_suffix.filter(|_| endpoint.genesis == config.people_genesis);
+		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
+		let report = match unanswered {
+			Unanswered::Fail => probe.await,
+			Unanswered::Warn => {
+				tokio::time::timeout(BUILT_IN_REFRESH_TIMEOUT, probe).await.unwrap_or_else(|_| {
+					Err(format!("no answer within {}s", BUILT_IN_REFRESH_TIMEOUT.as_secs()))
+				})
+			},
+		};
+		let report = match (report, unanswered) {
+			(Ok(report), _) => report,
+			(Err(error), Unanswered::Fail) => {
+				bail!("cannot check the genesis of {}: {error}", endpoint.ws)
+			},
+			(Err(error), Unanswered::Warn) => {
+				tracing::warn!("cannot check the genesis of {}: {error}", endpoint.ws);
+				return Ok(());
+			},
+		};
+		ensure!(
+			report.genesis == endpoint.genesis,
+			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}{}",
+			endpoint.ws,
+			hex::encode(report.genesis),
+			config.id,
+			hex::encode(endpoint.genesis),
+			built_in
+				.map(|origin| format!("; {}", format_restart_hint(origin)))
+				.unwrap_or_default()
+		);
+		let (Some(expected), Some(suffix)) = (expected_suffix, report.network_suffix) else {
+			return Ok(());
+		};
+		match suffix {
+			Ok(suffix) => ensure!(
+				suffix == expected.as_bytes(),
+				"{} reports NetworkSuffix {}, but the {} stack's tld is {expected}; identities \
+				 derived under one would not match the other",
+				endpoint.ws,
+				String::from_utf8_lossy(&suffix),
+				config.id
+			),
+			Err(error) => {
+				tracing::warn!("cannot read the NetworkSuffix of {}: {error}", endpoint.ws)
+			},
+		}
+		Ok(())
+	});
+	futures::future::try_join_all(checks).await?;
+	Ok(())
+}
+
+// Each Polkadot chain is declared once and reused by both the network fields
+// and the endpoint table, so a genesis hash cannot drift from the URL it
 // routes to. Every route below is host-required: session identity (dotNS
 // usernames) resolves through Asset Hub, SSO through People, preimages through
 // Bulletin.
-
-pub const PASEO_ASSET_HUB: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
-	),
-	ws: "wss://paseo-asset-hub-next-rpc.polkadot.io",
-	required_for_host: true,
-};
-
-const PASEO_PEOPLE: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
-	),
-	ws: "wss://paseo-people-next-system-rpc.polkadot.io",
-	required_for_host: true,
-};
-
-const PASEO_BULLETIN: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
-	),
-	ws: "wss://paseo-bulletin-next-rpc.polkadot.io",
-	required_for_host: true,
-};
-
-const PREVIEWNET_ASSET_HUB: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"bac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896",
-	),
-	ws: "wss://previewnet.substrate.dev/asset-hub",
-	required_for_host: true,
-};
-
-const PREVIEWNET_PEOPLE: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
-	),
-	ws: "wss://previewnet.substrate.dev/people",
-	required_for_host: true,
-};
-
-const PREVIEWNET_BULLETIN: ChainEndpoint = ChainEndpoint {
-	genesis: hex_literal_genesis(
-		"a081192b90c1f6a3f8e9ce7b2a8246f41af805c66456c84e05fd97c2b3502425",
-	),
-	ws: "wss://previewnet.substrate.dev/bulletin",
-	required_for_host: true,
-};
 
 const POLKADOT_ASSET_HUB: ChainEndpoint = ChainEndpoint {
 	genesis: hex_literal_genesis(
@@ -386,23 +890,35 @@ const POLKADOT_BULLETIN: ChainEndpoint = ChainEndpoint {
 const POLKADOT_DOTNS_DEPLOYMENT: &str = include_str!("../deployments/polkadot-420420419.json");
 
 /// `DotnsPopController`, read out of [`POLKADOT_DOTNS_DEPLOYMENT`] at compile
-/// time. The preset carries it because Polkadot Asset Hub can leave
+/// time. Polkadot carries it because its Asset Hub can leave
 /// `DotnsGateway.DispatcherAddress` unset, and discovery then finds nothing.
 const POLKADOT_DOTNS_POP_CONTROLLER: [u8; 20] =
 	manifest_address(POLKADOT_DOTNS_DEPLOYMENT, "DotnsPopController");
 
-const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
-	&[PASEO_ASSET_HUB, PASEO_PEOPLE, PASEO_BULLETIN];
-
-const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
-	&[PREVIEWNET_ASSET_HUB, PREVIEWNET_PEOPLE, PREVIEWNET_BULLETIN];
-
 const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
 
-/// Resolved RPC/backend/genesis values for one network preset.
-#[derive(Clone, Debug, Copy)]
+const POLKADOT: NetworkConfig = NetworkConfig {
+	id: "polkadot",
+	network_suffix: "dot",
+	identity_backend_base: None,
+	people_ws: POLKADOT_PEOPLE.ws,
+	bulletin_ws: POLKADOT_BULLETIN.ws,
+	asset_hub_ws: POLKADOT_ASSET_HUB.ws,
+	people_genesis: POLKADOT_PEOPLE.genesis,
+	bulletin_genesis: POLKADOT_BULLETIN.genesis,
+	asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
+	live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
+	dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
+	disposable_identities: false,
+	chain_backend: ChainBackend::Rpc,
+};
+
+/// Resolved RPC/backend/genesis values for one network.
+#[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
+	/// The product namespace: what `HostChainSet::network` reports and where
+	/// the CLI stores this network's state.
 	pub id: &'static str,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
@@ -411,7 +927,7 @@ pub struct NetworkConfig {
 	/// this network. `live_people_chain::network_suffix_matches_the_preset`
 	/// holds it against the chain.
 	pub network_suffix: &'static str,
-	/// Identity backend base URL including `/api/v1`. `None` on a preset with
+	/// Identity backend base URL including `/api/v1`. `None` on a network with
 	/// no published backend, where [`IDENTITY_BACKEND_BASE_ENV`] must supply it.
 	pub identity_backend_base: Option<&'static str>,
 	pub people_ws: &'static str,
@@ -433,14 +949,14 @@ pub struct NetworkConfig {
 	/// answers.
 	pub dotns_pop_controller: Option<[u8; 20]>,
 	/// Whether identities on this network are disposable test identities the
-	/// plaintext account store may keep and auto-accept may sign for. Only
+	/// plaintext account store may save and auto-accept may sign for. Only
 	/// test networks set it.
 	pub disposable_identities: bool,
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub chain_backend: ChainBackend,
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct ChainEndpoint {
 	pub genesis: [u8; 32],
 	pub ws: &'static str,
@@ -451,7 +967,7 @@ pub struct ChainEndpoint {
 
 impl NetworkConfig {
 	/// The identity backend base URL, or an error naming the override when the
-	/// preset has none.
+	/// network has none.
 	pub fn identity_backend(&self) -> anyhow::Result<&'static str> {
 		self.identity_backend_base.ok_or_else(|| {
 			anyhow::anyhow!(
@@ -467,14 +983,14 @@ impl NetworkConfig {
 	pub fn ensure_disposable_identities(&self) -> anyhow::Result<()> {
 		anyhow::ensure!(
 			self.disposable_identities,
-			"{} holds real identities, which the plaintext account store must not keep; \
+			"{} has real identities, which the plaintext account store must not save; \
 			 pass the signer with --mnemonic or HOST_CLI_SIGNER_MNEMONIC",
 			self.id
 		);
 		Ok(())
 	}
 
-	/// The chain set this preset serves, for `Features::supported_chains`.
+	/// The chain set this network serves, for `Features::supported_chains`.
 	///
 	/// One entry per role this struct names a genesis hash for. `ChainEndpoint`
 	/// carries no role, so `live_chain_endpoints` cannot supply one — an endpoint's
@@ -520,7 +1036,7 @@ impl NetworkConfig {
 		}
 	}
 
-	/// The preset's own URL for a served role, independent of the genesis-keyed
+	/// The network's own URL for a served role, independent of the genesis-keyed
 	/// routing table. Every genesis test resolves the role this way so that a
 	/// drifted hash cannot silently move them onto the fallback URL.
 	///
