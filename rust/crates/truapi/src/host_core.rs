@@ -1033,8 +1033,9 @@ impl SigningHostRuntime {
 		self.services.install_encrypted_storage(storage)
 	}
 
-	/// Starts what runs over the core database: the durable transaction
-	/// engine, then NFT purses with the tracker of their holdings. Call it
+	/// Starts what runs over the core database: the fetch of the materials
+	/// saved Pocket faces draw, the durable transaction engine, then NFT
+	/// purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
 	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
 	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
@@ -1047,11 +1048,28 @@ impl SigningHostRuntime {
 			tracing::warn!("no core database set, durable transactions and NFT purses are off");
 			return;
 		};
+		self.start_material_fetch(db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
+	}
+
+	/// Fetches the materials saved Pocket faces draw and `db` lacks, over the
+	/// core's own Bulletin connection.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_material_fetch(&self, db: crate::store::Db) {
+		let timer: Arc<dyn crate::time::Timer> = Arc::new(crate::time::RealTimer);
+		let bulletin =
+			crate::BulletinLookup::new(Arc::new(Arc::downgrade(&self.services)), timer.clone());
+		let materials = crate::materials::Materials::new(
+			db,
+			Arc::new(bulletin),
+			timer,
+			self.services.spawner.clone(),
+		);
+		(self.services.spawner)(Box::pin(materials.fetch_saved()));
 	}
 
 	/// Installs the NFT ledger over `db` and `durable`, with the static receive

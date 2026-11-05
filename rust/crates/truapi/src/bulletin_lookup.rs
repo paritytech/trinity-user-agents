@@ -14,7 +14,7 @@
 //! Every value is checked against the key before it is emitted.
 
 use core::time::Duration;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use futures::{
 	future::{self, Either, FutureExt},
@@ -91,12 +91,16 @@ fn call_error(error: &UserError) -> Result<Option<Vec<u8>>, SourceError> {
 	}
 }
 
-/// Blobs over the Bulletin connection the core already holds for preimage submission.
+/// Blobs over the Bulletin connection the core already holds for preimage submission. Held
+/// weakly, so a lookup in flight does not keep the services once the runtime is gone.
 #[async_trait::async_trait]
-impl BlobSource for RuntimeServices {
+impl BlobSource for Weak<RuntimeServices> {
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError> {
+		let Some(services) = self.upgrade() else {
+			return Err(SourceError::Permanent("the runtime is gone".to_string()));
+		};
 		let client =
-			self.bulletin.client("bitswap_v1_get").await.map_err(|error| {
+			services.bulletin.client("bitswap_v1_get").await.map_err(|error| {
 				SourceError::Transient(format!("connecting to Bulletin: {error}"))
 			})?;
 		let request = bitswap_get(&client, cid);

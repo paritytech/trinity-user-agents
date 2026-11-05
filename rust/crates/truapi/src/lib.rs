@@ -964,6 +964,10 @@ mod pocket_cards;
 mod bulletin_lookup;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod materials;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
