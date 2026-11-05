@@ -17,14 +17,14 @@ use super::{
 };
 use crate::{
 	host_logic::x25519_seal::X25519PrivateKey,
-	platform::{NftPurseDrainDestination, NftPurseDrainReview, async_trait},
+	platform::{NftPurseDrainDestination, NftPurseDrainReview},
 	store::DbError,
 };
 
 /// Encrypted storage that refuses every write, as a host without the callback does.
 struct RejectingStorage;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EncryptedStorage for RejectingStorage {
 	async fn read_encrypted(
 		&self,

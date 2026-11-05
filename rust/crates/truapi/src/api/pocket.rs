@@ -15,7 +15,7 @@ use crate::{
 /// remove them, but cannot add one.
 #[wire_trait(id = 18)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Pocket: Send + Sync {
 	/// Subscribe to the calling product's cards.
 	///

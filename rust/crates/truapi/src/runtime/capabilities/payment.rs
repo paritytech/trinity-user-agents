@@ -57,7 +57,7 @@ use crate::{
 	},
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl CoinPayment for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
 	async fn create_purse(
@@ -277,7 +277,7 @@ impl ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Payment for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
 	async fn balance_subscribe(

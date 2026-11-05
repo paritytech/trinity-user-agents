@@ -942,7 +942,6 @@ mod tests {
 			platform::JsonRpcConnection,
 			subscription::thread_per_subscription_spawner,
 		};
-		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 		use parity_scale_codec::{Compact, Decode, Encode};
 		use schnorrkel::{PublicKey, Signature};
@@ -1209,7 +1208,7 @@ mod tests {
 			}
 		}
 
-		#[async_trait]
+		#[async_trait::async_trait]
 		impl RuntimeChainProvider for BulletinScriptedProvider {
 			async fn connect(
 				&self,
