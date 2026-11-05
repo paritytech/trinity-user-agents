@@ -36,6 +36,7 @@ final class TabBarBarViewModel {
     var onShelfChipTapped: ((UUID) -> Void)?
     var onShelfChipCloseRequested: ((UUID) -> Void)?
     var onShelfSettingsTapped: (() -> Void)?
+    var showsSettingsAttention = false
     var onShelfConnectionStatusTapped: (() -> Void)?
 
     var selectionPlacement: TabBarSelectionPlacement {

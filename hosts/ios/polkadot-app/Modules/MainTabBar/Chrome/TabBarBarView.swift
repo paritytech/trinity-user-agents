@@ -45,7 +45,8 @@ struct TabBarBarView: View {
                     onChipTapped: { model.onShelfChipTapped?($0) },
                     onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
                     onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
-                    onSettingsTapped: { model.onShelfSettingsTapped?() }
+                    onSettingsTapped: { model.onShelfSettingsTapped?() },
+                    showsSettingsAttention: model.showsSettingsAttention
                 )
             }
         )
@@ -66,6 +67,7 @@ struct TabBarBarView: View {
                 item: item,
                 isSelected: index == model.selectedSlot,
                 isActive: index == model.activeActionItemIndex,
+                showsAttention: model.showsSettingsAttention && index == model.appsItemIndex,
                 action: { model.onSlotTapped?(index) }
             )
         }
@@ -78,6 +80,7 @@ private struct TabBarSlotView: View {
     let item: TabBarBarItem
     let isSelected: Bool
     let isActive: Bool
+    let showsAttention: Bool
     let action: () -> Void
 
     private var isEmphasized: Bool {
@@ -92,6 +95,7 @@ private struct TabBarSlotView: View {
         Button(action: action) {
             VStack(spacing: 0) {
                 icon
+                    .attentionDot(showsAttention)
                 if let title = item.title {
                     Text(title)
                         .font(Font(UIFont.labelSmallEmphasized))

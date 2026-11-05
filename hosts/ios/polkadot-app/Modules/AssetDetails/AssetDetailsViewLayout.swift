@@ -52,10 +52,9 @@ struct AssetDetailsView: View {
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsBackupNotification {
-                backupCard()
-            } else {
-                actions()
+            actions()
+            if viewModel.showsRestoredBalanceHint {
+                restoredBalanceHint()
             }
             #if DEBUG
                 // The card stays on a wallet that holds no coinage, which is where the test
@@ -105,13 +104,22 @@ struct AssetDetailsView: View {
         )
     }
 
-    private func backupCard() -> some View {
-        WalletBackupNotificationCard(
-            isUpdating: viewModel.isUpdating,
-            onSync: viewModel.onBackupSync,
-            onCancel: viewModel.onBackupCancel,
-            onWhyUpdate: viewModel.onBackupWhyUpdate
-        )
+    private func restoredBalanceHint() -> some View {
+        Button {
+            viewModel.onOpenBackupSettings?()
+        } label: {
+            HStack(spacing: 0) {
+                Text(.BalanceSync.pocketHint)
+                    .typography(.bodySmall)
+                Image(.iconArrowRight20)
+                    .renderingMode(.template)
+                    .resizable()
+                    .frame(width: Constants.hintIconSize, height: Constants.hintIconSize)
+            }
+            .foregroundStyle(Color.fgSecondary)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     private func actions() -> some View {
@@ -208,4 +216,10 @@ struct AssetDetailsView: View {
             .disabled(viewModel.isTestnetTopUpInProgress)
         }
     #endif
+}
+
+private extension AssetDetailsView {
+    enum Constants {
+        static let hintIconSize: CGFloat = 16
+    }
 }

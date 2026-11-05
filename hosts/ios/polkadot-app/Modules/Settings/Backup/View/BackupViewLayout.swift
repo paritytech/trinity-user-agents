@@ -1,5 +1,6 @@
 import UIKit
 import SnapKit
+import DesignSystem
 
 final class BackupViewLayout: UIView {
     // MARK: Properties
@@ -10,8 +11,10 @@ final class BackupViewLayout: UIView {
         }
     }
 
+    let restoredBalanceContainer = UIView()
     private let infoView = BackupInfoView()
     private let buttonsView = BackupButtonsView()
+    private var restoredBalanceHeight: Constraint?
 
     // MARK: Initial methods
 
@@ -33,6 +36,21 @@ final class BackupViewLayout: UIView {
         buttonsView.bind(model: model.statusType)
     }
 
+    func setRestoredBalanceVisible(_ isVisible: Bool) {
+        restoredBalanceContainer.isHidden = !isVisible
+
+        if isVisible {
+            restoredBalanceHeight?.deactivate()
+        } else {
+            restoredBalanceHeight?.activate()
+        }
+
+        infoView.snp.updateConstraints {
+            $0.top.equalTo(restoredBalanceContainer.snp.bottom)
+                .offset(isVisible ? Constants.defaultOffset : Constants.infoViewTopOffset)
+        }
+    }
+
     // MARK: Private methods
 
     private func convertStatusToInfoType(
@@ -46,11 +64,19 @@ final class BackupViewLayout: UIView {
     }
 
     private func configureView() {
+        addSubview(restoredBalanceContainer)
         addSubview(infoView)
         addSubview(buttonsView)
 
+        restoredBalanceContainer.isHidden = true
+        restoredBalanceContainer.snp.makeConstraints {
+            $0.top.equalTo(safeAreaLayoutGuide.snp.top)
+            $0.left.right.equalToSuperview().inset(Constants.cardOffset)
+            restoredBalanceHeight = $0.height.equalTo(0).constraint
+        }
+
         infoView.snp.makeConstraints {
-            $0.top.equalTo(safeAreaLayoutGuide.snp.top).inset(Constants.infoViewTopOffset)
+            $0.top.equalTo(restoredBalanceContainer.snp.bottom).offset(Constants.infoViewTopOffset)
             $0.left.right.equalToSuperview().inset(Constants.defaultOffset)
         }
 
@@ -66,4 +92,5 @@ final class BackupViewLayout: UIView {
 private enum Constants {
     static let infoViewTopOffset: CGFloat = 85
     static let defaultOffset: CGFloat = 24
+    static let cardOffset = DSSpacings.mediumIncreased
 }
