@@ -236,6 +236,14 @@ export interface TestHost {
   setPermissionBehavior(
     behavior: PermissionPolicy | PermissionPolicyAlias,
   ): Promise<void>;
+  /**
+   * Switch whether signing and other confirmations are approved, until `reset`.
+   *
+   * A product holding an auto-signing allowance is not asked, as on any host,
+   * so declining does not reach its signatures. To test that path, refuse it
+   * one: `behaviors: { resourceAllocation: { AutoSigning: false } }`.
+   */
+  setConfirmUserActions(confirm: boolean): Promise<void>;
   getChatRooms(): Promise<unknown[]>;
   getChatBots(): Promise<unknown[]>;
   getChatMessageLog(): Promise<ChatMessageRecord[]>;
@@ -331,8 +339,27 @@ export interface TestHost {
   setAccounts(names: string[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
   signOut(): Promise<void>;
+  /**
+   * Sign in as `name` and answer the product's held login request `Success`.
+   * Under `loginBehavior: "manual"` that request waits for this or
+   * `declineLogin`. Called before the request arrives, it answers the next
+   * one. A request that arrives while it signs in finds the session and is
+   * answered `AlreadyConnected`. Throws unless `loginBehavior` is `"manual"`.
+   */
+  approveLogin(name: string): Promise<void>;
+  /**
+   * Answer the product's held login request `Rejected`, or its next one when
+   * none is waiting. Throws unless `loginBehavior` is `"manual"`.
+   */
+  declineLogin(): Promise<void>;
   /** Return the host to its constructed state between cases. */
   reset(): Promise<void>;
+  /**
+   * Reload the host page with the product opened at `deepLink`, a path,
+   * query and hash such as `/item/7?tab=history#top`. The host starts over,
+   * as on any page load.
+   */
+  goto(deepLink: string): Promise<void>;
 
   /**
    * Statements the product submitted.
@@ -530,27 +557,31 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
       { page }: { page: Page },
       use: (fixture: TestHost) => Promise<void>,
     ) => {
-      const url = hostPageUrl(await hostBase(), {
-        productUrl: defaults.productUrl,
-        productId: defaults.productId,
-        mock,
-        runtimeConfig,
-        accounts,
-        loginBehavior: defaults.loginBehavior,
-        topology: defaults.topology,
-        allowances: defaults.allowances,
-        withheldResources,
-        logLevel: defaults.logLevel,
-        productStorage: defaults.productStorage,
-      });
-      await page.goto(url);
+      const open = async (deepLink?: string) => {
+        const url = hostPageUrl(await hostBase(), {
+          productUrl: defaults.productUrl,
+          deepLink,
+          productId: defaults.productId,
+          mock,
+          runtimeConfig,
+          accounts,
+          loginBehavior: defaults.loginBehavior,
+          topology: defaults.topology,
+          allowances: defaults.allowances,
+          withheldResources,
+          logLevel: defaults.logLevel,
+          productStorage: defaults.productStorage,
+        });
+        await page.goto(url);
 
-      // The page publishes its control surface once the WASM core is up and
-      // the product iframe is created. The product may still be loading, so
-      // a spec waits for the product's own UI before relying on it.
-      await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
-        timeout: defaults.readyTimeoutMs ?? 30_000,
-      });
+        // The page publishes its control surface once the WASM core is up and
+        // the product iframe is created. The product may still be loading, so
+        // a spec waits for the product's own UI before relying on it.
+        await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
+          timeout: defaults.readyTimeoutMs ?? 30_000,
+        });
+      };
+      await open();
 
       /** Call one control method in the page and return its result. */
       const call = <T>(method: string, ...args: unknown[]): Promise<T> =>
@@ -586,6 +617,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           call("setEnforcePermissions", enforce),
         setPermissionBehavior: (behavior) =>
           call("setPermissionBehavior", behavior),
+        setConfirmUserActions: (confirm) =>
+          call("setConfirmUserActions", confirm),
         getChatRooms: () => call("getChatRooms"),
         getChatBots: () => call("getChatBots"),
         getChatMessageLog: () => call("getChatMessageLog"),
@@ -699,7 +732,10 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
             .waitFor({ state: "attached" });
         },
         signOut: () => call("signOut"),
+        approveLogin: (name) => call("approveLogin", name),
+        declineLogin: () => call("declineLogin"),
         reset: () => call("reset"),
+        goto: open,
 
         // Sent as hex, not bytes: `page.evaluate` serialises a Uint8Array as a
         // plain index object, which would inject a statement of nothing.

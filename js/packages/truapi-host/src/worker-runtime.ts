@@ -875,6 +875,44 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     }
+    case "setHoldLogins": {
+      const { hold } = msg;
+      void handleSessionActivation(msg.requestId, "setHoldLogins", (booted) => {
+        const signing = signingRuntime(booted, "setHoldLogins");
+        if (typeof signing.setHoldLogins !== "function") {
+          return Promise.reject(
+            new Error(
+              "setHoldLogins needs a signing host built with `test-host`; " +
+                "this core does not carry it",
+            ),
+          );
+        }
+        signing.setHoldLogins(hold);
+        return Promise.resolve();
+      });
+      break;
+    }
+    case "answerHeldLogins": {
+      const { approved } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "answerHeldLogins",
+        (booted) => {
+          const signing = signingRuntime(booted, "answerHeldLogins");
+          if (typeof signing.answerHeldLogins !== "function") {
+            return Promise.reject(
+              new Error(
+                "answerHeldLogins needs a signing host built with `test-host`; " +
+                  "this core does not carry it",
+              ),
+            );
+          }
+          signing.answerHeldLogins(approved);
+          return Promise.resolve();
+        },
+      );
+      break;
+    }
     case "resetSessionState":
       void handleSessionActivation(
         msg.requestId,

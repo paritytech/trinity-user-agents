@@ -128,6 +128,18 @@ export type MainToWorker =
       /** Resource tags answered as refused, replacing any earlier set. */
       tags: string[];
     }
+  | {
+      kind: "setHoldLogins";
+      requestId: number;
+      /** Hold later login requests while set, declining those held so far. */
+      hold: boolean;
+    }
+  | {
+      kind: "answerHeldLogins";
+      requestId: number;
+      /** Answer the held login requests, or the next one when none is held. */
+      approved: boolean;
+    }
   | { kind: "resetSessionState"; requestId: number }
   | {
       kind: "getPermissionAuthorizationStatus";

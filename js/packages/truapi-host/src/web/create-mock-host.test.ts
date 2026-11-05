@@ -156,6 +156,20 @@ describe("createMockHost callbacks", () => {
     expect(host.sentRpc()).toEqual(["rpc-1"]);
   });
 
+  it("declines confirmations from setConfirmUserActions until reset", async () => {
+    // One fixture covers both an approved and a rejected signature.
+    const host = createMockHost();
+    const confirm = () =>
+      host.callbacks.userConfirmation.confirmUserAction({
+        tag: "ResourceAllocation",
+        value: { callingProductId: "mock.dot", resources: [] },
+      });
+    host.setConfirmUserActions(false);
+    expect(await confirm()).toBe(false);
+    host.reset();
+    expect(await confirm()).toBe(true);
+  });
+
   it("replays scripted chain frames", async () => {
     const host = createMockHost({ chainResponses: ["f1", "f2"] });
     const conn = await host.callbacks.chain.connect(new Uint8Array(32));
@@ -1122,6 +1136,23 @@ describe("statement injection through the chain connection", () => {
 });
 
 describe("reading back submitted statements", () => {
+  it("keeps the channel, expiry and decryption key a suite injects", () => {
+    // Products filter and decrypt on these, so a suite has to set them.
+    const statement = {
+      topics: [`0x${"11".repeat(32)}`],
+      data: "0x01",
+      channel: `0x${"22".repeat(32)}`,
+      expiry: 2n ** 40n,
+      decryptionKey: `0x${"33".repeat(32)}`,
+    };
+    expect(createMockHost().injectStatement(statement)).toEqual({
+      ...statement,
+      proof: expect.anything(),
+      fromProduct: false,
+      timestamp: expect.any(Number),
+    });
+  });
+
   it("returns the hex the core put on the wire, in order", async () => {
     const original = globalThis.WebSocket;
     (globalThis as { WebSocket: unknown }).WebSocket = class {

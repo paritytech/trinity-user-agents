@@ -11,6 +11,11 @@ import type { MockHostConfig } from "../web/create-mock-host.js";
 export interface HostPageConfig {
   /** URL of the product under test. */
   productUrl: string;
+  /**
+   * Path, query and hash to open the product at, as a deep link on dot.li
+   * carries them. The host page passes them on to the product.
+   */
+  deepLink?: string;
   /** dotNS identifier the host runs the product under. */
   productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host. */
@@ -60,21 +65,86 @@ export interface HostPageConfig {
   productStorage?: Record<string, string>;
 }
 
-/** Apply `config` to a host page URL, returning the configured URL. */
+/** Paths the test host server answers with its own files, not the host page. */
+export const SERVER_FILES = {
+  page: "/test-host.js",
+  worker: "/test-host-worker.js",
+  /** A prefix: the WASM bundles and their glue. */
+  wasm: "/wasm/",
+};
+
+/** Whether the server answers `path` with one of its own files. */
+export const isServerFile = (path: string): boolean =>
+  path === SERVER_FILES.page ||
+  path === SERVER_FILES.worker ||
+  path.startsWith(SERVER_FILES.wasm);
+
+/** Query parameters the host page reads, which never reach the product. */
+const HOST_PAGE_PARAMS = new Set([
+  "product",
+  "mock",
+  "productId",
+  "runtimeConfig",
+  "accounts",
+  "login",
+  "topology",
+  "allowances",
+  "withheld",
+  "logLevel",
+  "storage",
+]);
+
+/** A query's `name=value` pairs, encoded as they came. */
+const queryPairs = (search: string): string[] =>
+  search.slice(1).split("&").filter(Boolean);
+
+const isHostParam = (pair: string): boolean =>
+  HOST_PAGE_PARAMS.has(
+    decodeURIComponent(pair.split("=", 1)[0]!.replaceAll("+", " ")),
+  );
+
+/**
+ * Apply `config` to a host page URL, returning the configured URL.
+ *
+ * A deep link lands on `base`, whose own query may carry a server's
+ * configuration. The product's part of the query keeps its encoding.
+ */
 export function hostPageUrl(base: string, config: HostPageConfig): string {
   const url = new URL(base);
-  url.searchParams.set("product", config.productUrl);
-  if (config.mock) url.searchParams.set("mock", JSON.stringify(config.mock));
-  if (config.productId) url.searchParams.set("productId", config.productId);
+  const link = config.deepLink ? new URL(config.deepLink, url) : undefined;
+  if (link && (link.origin !== url.origin || isServerFile(link.pathname))) {
+    throw new Error(
+      `testHost deep link "${config.deepLink}" does not open the host page: ` +
+        `a deep link is a path on it, and not one of the files its server ` +
+        `serves (${Object.values(SERVER_FILES).join(", ")}).`,
+    );
+  }
+  const shadowed = queryPairs(link?.search ?? "").filter(isHostParam);
+  if (shadowed.length) {
+    throw new Error(
+      `testHost deep link "${config.deepLink}" uses a query name the host ` +
+        `page reads itself (${shadowed.join(", ")}), so the product would ` +
+        `never see it.`,
+    );
+  }
+  if (link) {
+    url.pathname = link.pathname;
+    url.hash = link.hash;
+  }
+  const pairs = [url.search, link?.search ?? ""].flatMap(queryPairs);
+  const host = new URLSearchParams(pairs.filter(isHostParam).join("&"));
+  host.set("product", config.productUrl);
+  if (config.mock) host.set("mock", JSON.stringify(config.mock));
+  if (config.productId) host.set("productId", config.productId);
   if (config.runtimeConfig) {
-    url.searchParams.set("runtimeConfig", JSON.stringify(config.runtimeConfig));
+    host.set("runtimeConfig", JSON.stringify(config.runtimeConfig));
   }
   if (config.productStorage && Object.keys(config.productStorage).length) {
-    url.searchParams.set("storage", JSON.stringify(config.productStorage));
+    host.set("storage", JSON.stringify(config.productStorage));
   }
   if (config.accounts) {
     // `name` for a built-in, `name:<64 hex>` when the test supplies entropy.
-    url.searchParams.set(
+    host.set(
       "accounts",
       config.accounts
         .map((account) =>
@@ -87,13 +157,17 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
         .join(","),
     );
   }
-  if (config.loginBehavior) url.searchParams.set("login", config.loginBehavior);
-  if (config.topology) url.searchParams.set("topology", config.topology);
-  if (config.allowances) url.searchParams.set("allowances", config.allowances);
+  if (config.loginBehavior) host.set("login", config.loginBehavior);
+  if (config.topology) host.set("topology", config.topology);
+  if (config.allowances) host.set("allowances", config.allowances);
   if (config.withheldResources?.length) {
-    url.searchParams.set("withheld", config.withheldResources.join(","));
+    host.set("withheld", config.withheldResources.join(","));
   }
-  if (config.logLevel) url.searchParams.set("logLevel", config.logLevel);
+  if (config.logLevel) host.set("logLevel", config.logLevel);
+  url.search = [
+    ...pairs.filter((pair) => !isHostParam(pair)),
+    host.toString(),
+  ].join("&");
   return url.toString();
 }
 
@@ -127,4 +201,30 @@ export function accountNames(
     }
     return account.name;
   });
+}
+
+/**
+ * The product URL a host page at `page` opens: the page's path, query and
+ * hash, as a deep link on dot.li carries them, on top of `productUrl`.
+ *
+ * The path resolves under the product's own, so a link never leaves the
+ * product's origin. Its query follows the product's and keeps its encoding,
+ * less the host page's own parameters. Its hash, when it has one, replaces
+ * the product's.
+ */
+export function deepLinkedProductUrl(productUrl: string, page: URL): string {
+  const url = new URL(productUrl);
+  if (page.pathname !== "/") {
+    // Under the whole path: "/app" is a directory here, not a file to replace.
+    const base = url.pathname.endsWith("/")
+      ? url
+      : new URL(`${url.pathname}/`, url);
+    url.pathname = new URL(`.${page.pathname}`, base).pathname;
+  }
+  url.search = [
+    ...queryPairs(url.search),
+    ...queryPairs(page.search).filter((pair) => !isHostParam(pair)),
+  ].join("&");
+  if (page.hash) url.hash = page.hash;
+  return url.href;
 }

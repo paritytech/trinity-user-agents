@@ -99,6 +99,10 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
   setGrantAllowancesUnchecked?(granted: boolean): void;
   /** Only on a core built with `wasm-signing-host`. */
   setWithheldResources?(tags: string[]): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setHoldLogins?(hold: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  answerHeldLogins?(approved: boolean): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with. Optional: a core built before this

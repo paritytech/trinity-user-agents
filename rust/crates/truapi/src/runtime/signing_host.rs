@@ -229,6 +229,31 @@ impl SigningHost {
 		self.resource_controls.set_grant_allowances_unchecked(granted);
 	}
 
+	/// Hold later signed-out login requests while `hold` is set, declining
+	/// those held so far.
+	#[cfg(feature = "test-host")]
+	pub fn set_hold_logins(&self, hold: bool) {
+		self.resource_controls.set_hold_logins(hold);
+	}
+
+	/// Answer the held login requests, or the next one when none is held. An
+	/// approved request is answered `Success` when a session is then active.
+	#[cfg(feature = "test-host")]
+	pub fn answer_held_logins(&self, approved: bool) {
+		self.resource_controls.answer_held_logins(approved);
+	}
+
+	#[cfg(feature = "test-host")]
+	fn answer_login(&self, approved: bool) -> latest::HostRequestLoginResponse {
+		match self.session_state.current() {
+			Some(session) if approved => {
+				self.auth_state.connected(&connected_session_ui_info(&session));
+				latest::HostRequestLoginResponse::Success
+			},
+			_ => latest::HostRequestLoginResponse::Rejected,
+		}
+	}
+
 	/// Replace refused resource tags; SmartContractAllowance covers every index.
 	#[cfg(feature = "test-host")]
 	pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
@@ -830,13 +855,21 @@ impl HostSession for SigningHost {
 		&self,
 		_product: &ProductContext,
 	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
+		// Taken before the session check: approving signs in before answering.
+		#[cfg(feature = "test-host")]
+		if let Some(approved) = self.resource_controls.take_login_answer() {
+			return Ok(self.answer_login(approved));
+		}
 		if let Some(session) = self.session_state.current() {
 			self.auth_state.connected(&connected_session_ui_info(&session));
-			Ok(latest::HostRequestLoginResponse::AlreadyConnected)
-		} else {
-			// Wallet unlock and session activation are platform-owned.
-			Ok(latest::HostRequestLoginResponse::Rejected)
+			return Ok(latest::HostRequestLoginResponse::AlreadyConnected);
 		}
+		#[cfg(feature = "test-host")]
+		if let Some(answered) = self.resource_controls.hold_login() {
+			return Ok(self.answer_login(answered.await.unwrap_or(false)));
+		}
+		// Wallet unlock and session activation are platform-owned.
+		Ok(latest::HostRequestLoginResponse::Rejected)
 	}
 
 	async fn disconnect(&self) {
@@ -1474,6 +1507,8 @@ mod tests {
 	mod allowance_keys;
 	mod auto_signing;
 	mod cross_product_account;
+	#[cfg(feature = "test-host")]
+	mod held_logins;
 	#[cfg(feature = "test-host")]
 	mod local_preimages;
 	mod raw_signing;

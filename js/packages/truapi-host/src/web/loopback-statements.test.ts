@@ -262,4 +262,15 @@ describe("the statement encoding the store actually sees", () => {
       encodeStatement({ topics: Array(5).fill(`0x${"11".repeat(32)}`) }),
     ).toThrow(/at most 4 topics/);
   });
+
+  it("refuses fields the codec would truncate or wrap", () => {
+    // A 40-byte channel would arrive as its first 32 bytes, and an expiry of
+    // -1 as 2^64 - 1: a statement the suite never meant to send.
+    const statement = (fields: object) => () =>
+      encodeStatement({ topics: [], ...fields });
+    expect(statement({ channel: `0x${"11".repeat(40)}` })).toThrow(/`channel`/);
+    expect(statement({ decryptionKey: "0x22" })).toThrow(/`decryptionKey`/);
+    expect(statement({ expiry: -1 })).toThrow(/`expiry` is a u64/);
+    expect(statement({ expiry: 2n ** 64n })).toThrow(/`expiry` is a u64/);
+  });
 });

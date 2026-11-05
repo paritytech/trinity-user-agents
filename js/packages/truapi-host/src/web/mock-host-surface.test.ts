@@ -66,6 +66,8 @@ const JS_ONLY: Record<string, string> = {
     "host-api-test-sdk reader over `getProductStorage`, decoded as UTF-8",
   setPermissionBehavior:
     "host-api-test-sdk name for the policy Rust sets through MockConfig",
+  setConfirmUserActions:
+    "runtime switch for what Rust sets through MockConfig, for one fixture",
   statements: "loopback statement store, refused on both sides",
   getSubmittedStatements: "loopback statement store, refused on both sides",
   getStatements: "loopback statement store, refused on both sides",
