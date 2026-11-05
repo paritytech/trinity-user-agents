@@ -1,9 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 
+import com.google.gson.Gson
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
@@ -37,6 +39,7 @@ class ProductTabSessionFactoryTest {
                 "bundled-products/provider.dot/app/index.html" to "<html></html>",
             ),
         ),
+        ManifestParser(Gson()),
         enabled = true,
     )
 

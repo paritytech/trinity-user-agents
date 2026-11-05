@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost
 
+import com.google.gson.Gson
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -7,6 +8,7 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +28,7 @@ class RuntimeSelectingSpaHostTest {
     private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
     private val bundledProducts = BundledProducts(
         InMemoryBundledProductFiles(mapOf("bundled-products/provider.dot/app/index.html" to "<html></html>")),
+        ManifestParser(Gson()),
         enabled = true,
     )
     private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, bundledProducts)
