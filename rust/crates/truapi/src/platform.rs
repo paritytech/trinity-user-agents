@@ -72,7 +72,7 @@ pub struct HostIdentity {
 
 /// Pairing-host runtime configuration supplied by the embedding host.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PairingHostConfig {
 	/// Host identity shown to the signing host during pairing.
 	///
@@ -793,7 +793,7 @@ const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
 /// The string representation remains the host callback ABI. Native hosts that
 /// need separate backing stores can decode it without duplicating the wire
 /// format.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProductStorageKey {
 	product_id: ProductId,
 	key: String,
@@ -1168,7 +1168,7 @@ pub trait Features: Send + Sync {
 
 /// A chain the host builds as V5 general transactions, and the transaction
 /// extension pipeline it uses there.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChainExtensionVersion {
 	/// Genesis hash of the chain.
@@ -1179,7 +1179,7 @@ pub struct ChainExtensionVersion {
 
 /// The chains a host builds as V5 general transactions. A chain not listed is
 /// built as V4.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Default, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ExtensionVersionMap {
 	/// One entry per V5 chain.
@@ -1713,7 +1713,7 @@ pub enum AuthState {
 
 /// Why a login attempt failed, for hosts that need to act on the cause rather
 /// than only display it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum LoginFailureKind {
 	/// The wallet has no free statement-store allowance slot for this period,
@@ -2211,7 +2211,7 @@ pub enum FundingQuoteUnavailable {
 }
 
 /// How the user left the funding overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingPresentOutcome {
 	/// The user went ahead; the session runs on without the overlay.
@@ -2353,7 +2353,7 @@ pub trait PermissionStatusHost: Send + Sync {
 }
 
 /// What the host did with a request to show or hide the expanded card face.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ExpandedCardFaceOutcome {
 	/// The face is now in the requested state, including when it already was.
@@ -2415,7 +2415,7 @@ pub trait ProductOperations: Send + Sync {
 /// being its 32 raw bytes. The host holds the accounts, so it is the one that
 /// can match: hash each contact's account under `handle_key`, or keep that hash
 /// as an indexed column for the session, and look the handles up.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactLookup {
 	/// The key every handle here was minted under. Per session, and never
@@ -2428,7 +2428,7 @@ pub struct HostContactLookup {
 /// The host's answer to a [`HostContactLookup`].
 ///
 /// A named wrapper because the callback emitter cannot return a bare `Vec`.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactMatches {
 	/// One entry per requested handle, in order: the contact's account, or
@@ -2437,7 +2437,7 @@ pub struct HostContactMatches {
 }
 
 /// How a host's contact picker ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostContactPick {
 	/// The user chose this account.
@@ -2509,7 +2509,7 @@ pub trait ContactsPlatform: Send + Sync {
 }
 
 /// How the host's scanner ended.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostScan {
 	/// The user scanned a code the request accepts.

@@ -60,7 +60,7 @@ const COMPOSER_HORIZONTAL_PADDING: u16 = 1;
 const QR_INDENT: usize = 2;
 
 /// Choices presented for an action or a permission request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Copy)]
 pub enum ApprovalKind {
 	/// Approve or reject one action.
 	Action,
@@ -96,7 +96,7 @@ impl ApprovalKind {
 /// Tracing target reserved for SSO summaries that must remain visible at every log level.
 pub const SSO_TRANSCRIPT_TARGET: &str = "truapi::sso_transcript";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum NoticeTone {
 	Info,
 	Success,
@@ -104,13 +104,13 @@ enum NoticeTone {
 	Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 enum StreamKind {
 	Stdout,
 	Stderr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub enum ActivityState {
 	Running,
 	Succeeded,
@@ -119,7 +119,6 @@ pub enum ActivityState {
 	Cancelled,
 }
 
-#[derive(Debug)]
 enum FeedItem {
 	Log(String),
 	Notice {
@@ -158,7 +157,7 @@ enum FeedItem {
 }
 
 /// A QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct PairingQr {
 	rows: Vec<String>,
 }
@@ -185,7 +184,7 @@ impl PairingQr {
 }
 
 /// Stable lifecycle events with separate machine and interactive presentations.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SystemEvent {
 	FramesListening {
 		url: String,
@@ -309,7 +308,7 @@ impl SystemEvent {
 	}
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 struct SsoEvent {
 	kind: Option<String>,
 	request: Option<String>,
@@ -1104,7 +1103,7 @@ fn is_clipboard_image_paste(key: KeyEvent) -> bool {
 		matches!(key.code, KeyCode::Char('v' | 'V'))
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum PairingImageRequest {
 	Clipboard,
 	Path(PathBuf),
@@ -1233,7 +1232,7 @@ struct PendingApproval {
 	saved_input: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum HostRole {
 	Pairing,
 	Signing,

@@ -101,11 +101,11 @@ fn emit_debug(sink: Arc<dyn DebugSink>, event: DebugEvent) {
 
 /// Identifies which product channel on a host a debug event belongs to, so one
 /// debugger app can demultiplex several channels.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ChannelId(pub String);
 
 /// Direction of a tapped frame relative to the host core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameDirection {
 	/// Product to core (inbound to the host).
 	In,
@@ -132,7 +132,7 @@ impl FrameDirection {
 /// `ProtocolMessage`; the debugger decodes them, so the core never does. The
 /// enum leaves room for host-internal events (e.g. SSO) that have no wire frame,
 /// so it is `#[non_exhaustive]`: adding a variant is not a breaking change.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum DebugEvent {
 	/// A SCALE wire frame crossing a product channel.

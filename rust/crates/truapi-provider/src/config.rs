@@ -52,7 +52,7 @@ impl ChainSource {
 /// A chain built here runs the statement-store protocol; whether a bundled
 /// chain runs it is set by the catalog, which owns statement-store placement.
 #[cfg(feature = "smoldot")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LightClientBuilder {
 	specification: std::borrow::Cow<'static, str>,
 	database_content: Option<String>,

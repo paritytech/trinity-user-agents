@@ -31,7 +31,7 @@ impl RgbaFrame {
 	}
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum FrameOutcome {
 	NoQr,
 	NotPairing,
@@ -52,7 +52,7 @@ impl FrameOutcome {
 	}
 }
 
-#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(derive_more::Display, derive_more::Error, Debug, PartialEq)]
 enum FrameError {
 	#[display("image dimensions {width}x{height} exceed the supported limit")]
 	Dimensions { width: usize, height: usize },
@@ -60,7 +60,7 @@ enum FrameError {
 	Length { expected: usize, actual: usize },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LineFinder {
 	line: f64,
 	center: f64,
@@ -68,7 +68,7 @@ struct LineFinder {
 	foreground: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Finder {
 	x: f64,
 	y: f64,

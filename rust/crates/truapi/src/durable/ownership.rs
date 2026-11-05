@@ -25,7 +25,7 @@ struct OwnershipState {
 }
 
 /// One acquisition of a transaction by a submission watch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct OwnershipClaim {
 	id: DurableTxId,
 	serial: u64,

@@ -44,7 +44,7 @@ pub enum TransferSigner {
 /// What the policy stores with each transfer: the key it spends and where
 /// that key sits, the key it goes to, the attempt it submitted, and when it
 /// stops waiting. Everything a build needs, so it reads no table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct TransferParams {
 	/// The key the NFT leaves, which signs the transfer.
 	pub source: ItemKey,
@@ -119,7 +119,7 @@ struct PlannedTransfer {
 }
 
 /// What the chain says about one planned transfer at the best head.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TransferView {
 	/// What the source key holds.
 	source: Option<ScarcityNft>,
@@ -154,7 +154,7 @@ impl BatchBuild {
 }
 
 /// What the chain says to do with one transfer this time.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 enum TransferDecision {
 	/// It can never land.
 	GiveUp,

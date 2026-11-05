@@ -35,7 +35,7 @@ pub struct NewStatements {
 }
 
 /// Topic filter flavor used by statement-store subscribe requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum TopicFilterKind {
 	/// Require every listed topic to match.
 	MatchAll,

@@ -544,7 +544,7 @@ fn request_path(head: &[u8]) -> Option<String> {
 	Some(target.split(['?', '#']).next()?.to_string())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 enum ConnectionPeer {
 	Tcp(SocketAddr),
 	LocalSocket,

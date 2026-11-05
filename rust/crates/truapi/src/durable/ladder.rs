@@ -43,7 +43,7 @@ pub enum SearchResult {
 }
 
 /// What the ladder concluded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuleOutcome {
 	/// A verdict, which may restate the current status.
 	Decided(Verdict),
@@ -53,7 +53,7 @@ pub enum RuleOutcome {
 
 /// Whether the block a transaction's success was recorded at is still on the
 /// canonical chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RecordedCanonicity {
 	/// The canonical block at that height is the recorded one.
 	Canonical,

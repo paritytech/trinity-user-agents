@@ -54,7 +54,7 @@ const LOCK_FILE: &str = "update.lock";
 const INSTALLER_URL: &str = "https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh";
 
 /// An install laid out by the installer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ManagedInstall {
 	root: PathBuf,
 }
@@ -120,7 +120,7 @@ impl ManagedInstall {
 }
 
 /// Throttle state persisted across runs.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct CheckState {
 	/// Seconds since the Unix epoch when a check was last attempted.
 	last_check: u64,

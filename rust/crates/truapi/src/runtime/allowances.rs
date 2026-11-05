@@ -8,7 +8,7 @@ use super::{authority::AuthorityError, sso_remote::SsoSessionKey};
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
 /// Chain resource an allowance key grants access to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Clone, PartialEq, Eq, Hash, Encode, Decode)]
 pub enum AllowanceResource {
 	/// Bulletin-chain transaction storage.
 	Bulletin,
@@ -17,7 +17,7 @@ pub enum AllowanceResource {
 }
 
 /// Memory-cache key: `(session, product_id, resource)`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
 	session: SsoSessionKey,
 	product_id: ProductId,
@@ -45,7 +45,7 @@ impl AllowanceCacheKey {
 	}
 }
 
-#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 struct StoredAllowanceEntry {
 	product_id: ProductId,
 	resource: AllowanceResource,

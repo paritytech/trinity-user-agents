@@ -13,7 +13,7 @@ use crate::{
 
 /// One NFT transfer: the instance at the source key, the revision it must sign,
 /// and the key it goes to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct NftTransfer {
 	/// The instance the source key holds.
 	pub instance: u64,
@@ -56,7 +56,7 @@ struct TransferCallArgs {
 
 /// `AsScarcity`: the transaction acts as the NFT it names, at the revision it
 /// signs over.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct AsScarcityExtension {
 	instance: u64,
 	state_nonce: u64,

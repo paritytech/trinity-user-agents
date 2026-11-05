@@ -97,7 +97,7 @@ pub const MAX_ITEMS_PER_CALL: u32 = 1000;
 pub const MAX_PAGE_SIZE: u32 = 100;
 
 /// A count in `1..=MAX`, as the RFC bounds the counts a call takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CountUpTo<const MAX: u32>(NonZeroU32);
 
 impl<const MAX: u32> CountUpTo<MAX> {

@@ -99,7 +99,7 @@ pub trait ScarcityChain: Send + Sync {
 /// where the tracker sees holdings, so a transfer is never judged on a finalized
 /// block that does not hold its NFT yet. Its era is born at the finalized
 /// head, which no reorg removes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct TransferContext {
 	/// The finalized head, where each transfer's era is born.
 	pub birth: HashAndNumber,

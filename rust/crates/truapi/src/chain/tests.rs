@@ -278,7 +278,7 @@ impl Node {
 }
 
 /// What `TaggedTransactionQueue_validate_transaction` answers.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Validation {
 	Valid,
 	Invalid,

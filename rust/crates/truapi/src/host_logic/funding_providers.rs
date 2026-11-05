@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// A provider the host offers, as the host supplies it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
@@ -34,7 +34,7 @@ pub const LEARNED_SUPPORT_TTL_MS: u64 = 12 * 60 * 60 * 1_000;
 
 /// What a provider's answer to a quote ask showed about what it serves now,
 /// which may differ from what its manifest declares.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct LearnedSupport {
 	/// The provider.
 	pub provider_id: ProductId,

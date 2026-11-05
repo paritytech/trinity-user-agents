@@ -42,7 +42,7 @@ pub fn test_manifest_json(trusted: &str) -> String {
 }
 
 /// The product-wide manifest published at a base name's `manifest` text record.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct RootManifest {
 	/// Schema version. A version this core does not know makes the product
 	/// undiscoverable rather than malformed.

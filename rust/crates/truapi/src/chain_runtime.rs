@@ -93,7 +93,7 @@ impl RpcConfig for TruapiRpcConfig {
 	type AccountId = ();
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct RawHeader(Vec<u8>);
 
 impl Decode for RawHeader {
@@ -399,7 +399,7 @@ type EndedFollows = Arc<Mutex<HashMap<ConnectionScope, VecDeque<(String, FollowL
 /// Why a follow this runtime issued stopped answering. Every reason means the
 /// same thing to a caller, that the id is spent and a new follow is needed,
 /// and they are distinguished because they are not diagnosed the same way.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy)]
 enum FollowLoss {
 	/// The connection carrying the subscription closed under it.
 	ConnectionClosed,

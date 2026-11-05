@@ -53,7 +53,7 @@ use crate::{
 pub mod v1;
 
 /// Transport-level acknowledgement code for an SSO session statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+#[derive(Clone, Encode, Decode, derive_more::Display)]
 pub enum SsoResponseCode {
 	/// The request statement was decrypted and decoded.
 	#[codec(index = 0)]
@@ -110,7 +110,7 @@ pub struct Response<P> {
 }
 
 /// Result of answering an SSO message for a caller-owned session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum SsoRequestOutcome {
 	/// Encoded response to post on the session.
@@ -482,7 +482,7 @@ pub struct IncomingSsoRequest {
 /// `request_id` is present when the encrypted envelope decoded far enough for
 /// the responder to acknowledge the statement with
 /// [`SsoResponseCode::DecodingFailed`].
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display)]
 #[display("{reason}")]
 pub struct SsoRequestDecodeError {
 	/// Statement-level request id, when recoverable.

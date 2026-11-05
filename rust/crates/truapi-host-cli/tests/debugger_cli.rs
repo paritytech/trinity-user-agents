@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 /// Which headless host role to start. `dev` reaches the report through
 /// `signing-host`, so it is covered by the signing-host case.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Copy)]
 enum Role {
 	PairingHost,
 	SigningHost,

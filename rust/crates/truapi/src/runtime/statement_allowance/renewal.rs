@@ -59,7 +59,7 @@ const PERIOD_BOUNDARY_MARGIN: Duration = Duration::from_secs(120);
 ///
 /// The distinction drives the rest of the pass, so it is read off the typed
 /// error rather than its rendered text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct RenewalFailure {
 	reason: String,
 	slots_exhausted: bool,

@@ -10,7 +10,7 @@ use crate::{
 use truapi::latest::HostPlatform;
 
 /// Process-owned native host configuration shared by every product execution.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
 	/// Host name shown by the wallet during SSO pairing.
 	pub host_name: String,
@@ -62,7 +62,7 @@ pub struct HostRuntimeConfig {
 }
 
 /// Trusted identity attached by a native host to one executable connection.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
 	pub product_id: ProductId,

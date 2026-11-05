@@ -23,7 +23,7 @@ pub const VERIFY_MULTI_SIGNATURE: &str = "VerifyMultiSignature";
 pub const CHECK_MORTALITY: &str = "CheckMortality";
 
 /// What the build knows when it fills well-known extensions.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct ChainValues {
 	/// The genesis hash the caller configured, never one a node reports.
 	pub genesis: H256,
@@ -38,7 +38,7 @@ pub struct ChainValues {
 }
 
 /// One extension's encoded values.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct EncodedExtensionValues {
 	/// What the extrinsic carries.
 	pub explicit: Vec<u8>,
@@ -47,7 +47,7 @@ pub struct EncodedExtensionValues {
 }
 
 /// An extension whose values are known before the build starts.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ConstantExtension<I, E> {
 	name: &'static str,
 	implicit: I,
@@ -93,7 +93,7 @@ fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
 
 /// `CheckMortality`'s value: the runtime wraps the era in a one-field struct,
 /// which `Era`'s own encoder does not look through.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct MortalityEra(pub Era);
 
@@ -110,7 +110,7 @@ fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
 }
 
 /// `ChargeAssetTxPayment`'s value.
-#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct AssetTxPayment {
 	/// The tip to the block author.
@@ -131,7 +131,7 @@ fn charge_transaction_payment() -> ConstantExtension<(), u128> {
 }
 
 /// `CheckMetadataHash`'s mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub enum MetadataHashMode {
 	/// The extrinsic does not commit to a metadata hash.

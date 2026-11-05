@@ -28,14 +28,14 @@ use crate::{
 };
 
 /// Host topology serving the product script.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum ScriptHostRole {
 	PairingHost,
 	SigningHost,
 }
 
 impl ScriptHostRole {
-	fn as_env_value(self) -> &'static str {
+	fn as_env_value(&self) -> &'static str {
 		match self {
 			Self::PairingHost => "pairing-host",
 			Self::SigningHost => "signing-host",

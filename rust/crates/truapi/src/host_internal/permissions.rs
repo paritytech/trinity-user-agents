@@ -52,7 +52,7 @@ use truapi::latest::{
 /// Persisted answer for a single permission request. Keep `Authorized` at
 /// discriminant 0 and `Denied` at 1 to preserve the existing two-variant cache
 /// encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 enum StoredAuthorizationStatus {
 	/// User authorized the permission.
 	Authorized,

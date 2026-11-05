@@ -117,7 +117,7 @@ pub async fn lookup_session_identity(
 /// timeout therefore usually resolves immediately.
 const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 enum LookupOutcome {
 	/// A username record was found.
 	Found(DotnsIdentity),

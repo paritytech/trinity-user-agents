@@ -188,7 +188,7 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
 /// reads today, so a later consumer needs no cache migration.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
@@ -233,7 +233,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// a user's explicit denial, an unreadable keychain and a manifest that failed
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
@@ -250,7 +250,7 @@ enum RefusedBecause {
 }
 
 impl RefusedBecause {
-	fn as_str(self) -> &'static str {
+	fn as_str(&self) -> &'static str {
 		match self {
 			Self::NotGranted => "not granted",
 			Self::UserDenied => "user denied",
@@ -721,7 +721,7 @@ pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
 }
 
 /// Where [`cached_dotns_json`] read its answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum DotnsRead {
 	/// From the cache on this device, written `age_secs` ago.
 	Cached { age_secs: u64 },

@@ -43,7 +43,7 @@ uniffi::custom_type!(OptionBool, Option<bool>, {
 /// Edge dimensions. `bottom` defaults to `top` and `start` to `end` when absent.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Dimensions {
 	/// Top edge.
@@ -198,7 +198,7 @@ pub enum Shape {
 /// Border styling. Drawn inside the node, so it never covers a neighbour.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BorderStyle {
 	/// Border width.
@@ -212,7 +212,7 @@ pub struct BorderStyle {
 /// Background styling. A shaped background also clips the node's content to its shape.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Background {
 	/// Background color.
@@ -224,7 +224,7 @@ pub struct Background {
 /// How a node composites with what is behind it. The values are those common
 /// to CSS `mix-blend-mode`, SwiftUI `BlendMode` and Compose `BlendMode`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum BlendingMode {
 	/// Source over destination.
@@ -264,7 +264,7 @@ pub enum BlendingMode {
 /// Layout and styling applied to one node.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Modifier {
 	/// Outer spacing.
@@ -297,7 +297,7 @@ pub enum Modifier {
 /// Properties of a `Box`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BoxProps {
 	/// Placement of content within the box. Top start when absent.
@@ -307,7 +307,7 @@ pub struct BoxProps {
 /// Properties of a `Column`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ColumnProps {
 	/// Cross-axis alignment of children.
@@ -320,7 +320,7 @@ pub struct ColumnProps {
 /// Properties of a `Row`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct RowProps {
 	/// Cross-axis alignment of children.
@@ -333,7 +333,7 @@ pub struct RowProps {
 /// Properties of a `Text`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct TextProps {
 	/// Typography preset.
@@ -421,7 +421,7 @@ pub struct ImageProps {
 
 /// A visual effect. Each variant names one effect and carries its parameters.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Effect {
 	/// Animated rainbow tint over the children.
@@ -431,7 +431,7 @@ pub enum Effect {
 /// Properties of an `Effect`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct EffectProps {
 	/// The effect applied to the children.

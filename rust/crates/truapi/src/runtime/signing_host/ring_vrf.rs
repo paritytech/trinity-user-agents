@@ -18,12 +18,12 @@ use truapi::v01::{ProductProofContext, RingLocation, RingLocationJunction};
 
 const MEMBERS_PALLET: &str = "Members";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct MemberCandidate {
 	pub member: [u8; 32],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ResolvedRing {
 	pub selected: MemberCandidate,
 	pub ring_index: u32,
@@ -281,7 +281,7 @@ enum RingPosition {
 	Suspended,
 }
 
-#[derive(Debug, PartialEq, Eq, DecodeAsType)]
+#[derive(DecodeAsType)]
 struct RingStatus {
 	included: u32,
 }

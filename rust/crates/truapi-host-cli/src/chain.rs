@@ -39,7 +39,7 @@ impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 }
 
 /// How the CLI reaches the chains.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, ValueEnum, PartialEq, Debug, Copy)]
 pub enum ChainBackend {
 	/// WebSocket JSON-RPC to the network's nodes.
 	Rpc,

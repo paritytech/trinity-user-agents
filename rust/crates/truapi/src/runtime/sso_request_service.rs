@@ -105,7 +105,7 @@ impl SessionLifecycle {
 	}
 }
 
-#[derive(Debug, derive_more::Display)]
+#[derive(derive_more::Display)]
 enum StoredSessionActivationError {
 	#[display("stored auth session is absent")]
 	Missing,

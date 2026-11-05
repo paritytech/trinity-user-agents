@@ -85,7 +85,7 @@ pub enum PgasError {
 
 /// One `MembersSubscriber.RingRoots` record, projected to the field that decides
 /// whether a proof can be verified.
-#[derive(Debug, DecodeAsType)]
+#[derive(DecodeAsType)]
 struct RingCommitmentRecord {
 	revision: u32,
 }
@@ -284,7 +284,7 @@ pub async fn claim_pgas(
 
 /// What Asset Hub's held ring roots say about the revision a proof was built
 /// against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RevisionStatus {
 	/// Asset Hub holds it, so the proof can be verified.
 	Imported,

@@ -53,7 +53,7 @@ struct SessionDisconnectsInner {
 }
 
 /// Identifies one SSO session by its own and peer session ids.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SsoSessionKey {
 	own: [u8; 32],
 	peer: [u8; 32],

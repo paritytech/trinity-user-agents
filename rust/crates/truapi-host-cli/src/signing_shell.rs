@@ -11,7 +11,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::{InvalidLogLevel, LogLevel, sessions};
 
 /// Operation selected through `/product`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
@@ -20,7 +20,7 @@ pub enum ProductCommand {
 }
 
 /// Operation selected through `/devices`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeviceCommand {
 	/// List paired devices for the active managed session.
 	List,
@@ -29,7 +29,7 @@ pub enum DeviceCommand {
 }
 
 /// Operation selected through `/approval`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ApprovalCommand {
 	/// Print the current approval mode.
 	Current,
@@ -40,7 +40,7 @@ pub enum ApprovalCommand {
 }
 
 /// Operation selected through `/session`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SessionCommand {
 	/// Print the current session.
 	Current,
@@ -55,7 +55,7 @@ pub enum SessionCommand {
 }
 
 /// Pairing input selected through `/pair`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PairCommand {
 	/// Acquire a pairing deeplink from a copied QR image.
 	Scan,
@@ -67,7 +67,7 @@ pub enum PairCommand {
 
 /// A mnemonic accepted by the command parser without exposing it through
 /// derived debug output or retaining it after the command is dropped.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop, derive_more::Debug)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop, derive_more::Debug, PartialEq)]
 #[debug("<redacted>")]
 pub struct SecretMnemonic(String);
 
@@ -121,7 +121,7 @@ pub fn mask_mnemonic(command: &str) -> Option<String> {
 }
 
 /// Select, edit, or run a product script.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ScriptCommand {
 	/// Edit the remembered script, creating a project if needed, then run it.
 	Edit,
@@ -146,7 +146,7 @@ impl ScriptCommand {
 }
 
 /// A command accepted by the signing-host command bar or `exec` mode.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ShellCommand {
 	/// Scan or answer a Polkadot Mobile pairing request.
 	Pair(PairCommand),
@@ -180,7 +180,7 @@ pub enum ShellCommand {
 }
 
 /// Rejection of a command or one of its validated arguments.
-#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug, PartialEq)]
 pub enum CommandParseError {
 	/// Command syntax does not match its usage.
 	#[display("{reason}")]
@@ -369,7 +369,7 @@ fn no_argument(
 }
 
 /// One selectable completion shown above the command bar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Completion {
 	/// Complete input inserted into the command bar.
 	pub value: String,
@@ -417,7 +417,7 @@ const APPROVAL_ARGUMENTS: &[(&str, &str)] = &[
 	("automatic", "approve confirmations automatically"),
 ];
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Copy)]
 enum CommandScope {
 	PairingHost,
 	#[default]

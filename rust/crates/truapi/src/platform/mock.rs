@@ -53,7 +53,7 @@ use crate::platform::{
 };
 
 /// How the mock answers a permission prompt for one capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Default)]
 pub enum PermissionPolicy {
 	/// Grant without prompting.
 	#[default]
@@ -71,7 +71,7 @@ impl PermissionPolicy {
 /// The kind of action the core asked the host to confirm. Recorded on every
 /// `confirm_user_action` so tests can assert what the core tried to do
 /// (e.g. that a sign-payload review fired) even when the chain parks afterward.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmKind {
 	/// [`UserConfirmationReview::SignPayload`].
 	SignPayload,
@@ -121,7 +121,7 @@ impl ConfirmKind {
 }
 
 /// Which prompt surface a permission decision came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionKind {
 	/// An OS capability prompt ([`Permissions::device_permission`]).
 	Device,
@@ -165,7 +165,7 @@ pub enum ChainStatus {
 }
 
 /// One chat message the product posted through the mock.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ChatMessageRecord {
 	/// Id the mock assigned and returned to the product.
 	pub message_id: String,
@@ -178,7 +178,7 @@ pub struct ChatMessageRecord {
 }
 
 /// How the mock's chain connection behaves.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub enum ChainBehavior {
 	/// Record outbound requests without replying. Local transaction creation
 	/// needs chain metadata; login and statement-store operations also wait
@@ -199,7 +199,7 @@ pub enum ChainBehavior {
 /// Optional error injection. When a field is `Some`, the matching host call
 /// returns that error instead of succeeding, exercising the core's
 /// error-handling paths.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct MockFaults {
 	/// Product and core storage reads/writes/clears fail with this reason.
 	pub storage_error: Option<String>,
@@ -221,7 +221,7 @@ pub struct MockFaults {
 }
 
 /// Behavior knobs for [`MockPlatform`], read on every call.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MockConfig {
 	/// Answer for `device_permission`.
 	pub device_permissions: PermissionPolicy,

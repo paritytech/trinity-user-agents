@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Where an item key that holds an NFT in a purse stands for that purse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum KeyStanding {
 	/// It holds an NFT but is handed off or the input of a live transaction.
 	Spent,

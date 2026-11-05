@@ -25,7 +25,7 @@ const ACCOUNT_STORE_LOCK_FILE: &str = "accounts.json.lock";
 const DEFAULT_USERNAME_PREFIX: &str = "headless";
 
 /// The account's uid key could not be derived from its entropy.
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("uid identity derivation failed")]
 pub struct IdentityDerivationError(ProductAccountError);
 
@@ -138,7 +138,7 @@ pub struct AccountRecord {
 	exhausted_statement_periods: BTreeSet<u32>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum AccountOrigin {
 	#[default]
@@ -146,7 +146,7 @@ enum AccountOrigin {
 	Imported,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 struct AccountStoreData {
 	version: u32,
 	accounts: Vec<AccountRecord>,

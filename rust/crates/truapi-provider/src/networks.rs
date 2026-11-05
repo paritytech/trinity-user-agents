@@ -34,7 +34,7 @@ struct NetworkDef {
 /// Genesis hashes of a registered network's chains, returned by
 /// [`EmbeddedChainProviderBuilder::add_network`] so the host knows what to
 /// [`connect`](crate::EmbeddedChainProvider) to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct NetworkChains {
 	/// Relay-chain genesis hash.
 	pub relay: [u8; 32],

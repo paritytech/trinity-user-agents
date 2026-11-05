@@ -5,7 +5,7 @@ use smoldot_light::platform::ConnectionType;
 
 /// Which kinds of connection the browser light client opens to a peer. All
 /// are allowed by default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct ConnectionTypes {
 	/// Secure `wss://` WebSocket.
 	pub secure: bool,

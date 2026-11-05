@@ -48,7 +48,7 @@ static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
 
 /// A persistence failure with its filesystem operation or serialization cause.
-#[derive(Debug, derive_more::Display, derive_more::From)]
+#[derive(derive_more::Display, derive_more::From, Debug)]
 pub enum StorageError {
 	/// The destination cannot identify a parent directory.
 	#[display("storage path has no parent: {}", path.display())]
@@ -121,7 +121,7 @@ impl From<StorageError> for api::GenericError {
 }
 
 /// How the host answers confirmation prompts (the web/iOS "sign?" modals).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub enum ApprovalPolicy {
 	/// Approve every sensitive action without prompting (`--auto-accept`).
 	AutoAccept,

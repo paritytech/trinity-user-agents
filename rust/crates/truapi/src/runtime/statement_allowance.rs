@@ -362,7 +362,7 @@ fn json_u32(value: &Value, field: &'static str) -> Result<u32, StatementAllowanc
 /// The distinction is not cosmetic: claiming a free slot revokes nothing, while a
 /// takeover revokes somebody's allowance. Registration limits itself to one
 /// revocation per call, so it has to know which kind it was handed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum Preselected {
 	/// A slot observed free; claiming it revokes nothing.
 	Free(u32),
@@ -461,7 +461,7 @@ pub struct BulletinAllowanceInfo {
 	pub fetched_at: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 enum BulletinAuthorizationScope {
 	Account([u8; 32]),
 }
@@ -500,7 +500,7 @@ impl BulletinAllowanceInfo {
 }
 
 /// A fixed collection key supplied by standalone CLI operations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct CollectionCandidate {
 	/// Collection to look for membership in.
 	pub collection: PersonhoodCollection,

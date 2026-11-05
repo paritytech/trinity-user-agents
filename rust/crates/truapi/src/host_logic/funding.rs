@@ -277,7 +277,7 @@ pub struct StartedFunds {
 }
 
 /// What recording funds a provider starts for a session found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartRecord {
 	/// Recorded now.
 	New,
@@ -347,7 +347,7 @@ pub enum CancelOutcome {
 }
 
 /// What the user's answer to a cancel offer did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum CancelConfirmation {
 	/// The offer was accepted and passed to the provider to settle.
@@ -365,7 +365,7 @@ pub enum CancelConfirmation {
 }
 
 /// The terms of a cancel offer the user accepts, as the host showed them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct CancelTerms {
 	/// What the provider keeps, in payment balance units.

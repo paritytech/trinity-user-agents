@@ -34,7 +34,7 @@ pub struct DurableRequest<E = DbError> {
 /// One presigned extrinsic, and the plan that builds it again after a
 /// failure its policy accepts to retry. `None` makes every proven failure
 /// final.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct DurableSubmission {
 	/// Signed and ready to broadcast.
 	pub extrinsic: MortalExtrinsic,
@@ -63,7 +63,7 @@ enum RequestedTransactions<E> {
 }
 
 /// A request named no transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("a durable request needs at least one transaction, got none")]
 pub struct EmptyRequest;
 

@@ -28,7 +28,7 @@ use crate::{
 const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One attempt of a transaction, as a watch follows it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Attempt {
 	claim: OwnershipClaim,
 	genesis: H256,

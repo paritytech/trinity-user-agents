@@ -12,7 +12,7 @@ use crate::runtime::sso_remote::DEFAULT_SSO_STATEMENT_EXPIRY_SECS;
 
 pub const MAX_REQUEST_LEDGER_ENTRIES: usize = 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SsoReplayScope {
 	pub root_public_key: [u8; 32],
 	pub peer_statement_account_id: [u8; 32],
@@ -112,7 +112,7 @@ struct RequestLedgerEntry {
 	state: RequestLedgerState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 enum RequestLedgerState {
 	#[codec(index = 0)]
 	Started,
@@ -120,7 +120,7 @@ enum RequestLedgerState {
 	Completed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 enum VersionedRequestLedger {
 	#[codec(index = 0)]
 	V1(RequestLedger),

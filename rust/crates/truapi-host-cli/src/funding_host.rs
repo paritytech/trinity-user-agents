@@ -33,7 +33,7 @@ use crate::transcript::Transcript;
 const SETTLE_AFTER: Duration = Duration::from_millis(500);
 
 /// What the scripted provider does with one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Outcome {
 	/// The user starts and the funds arrive.
 	Deliver(u128),

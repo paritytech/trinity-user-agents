@@ -23,7 +23,7 @@ pub use observe::ObservedStatement;
 use observe::{Invalidation, authorize_for_change_tracking, track_changes};
 
 /// Where a database lives.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DbLocation {
 	/// A file. Its directory must exist.
 	File(PathBuf),
@@ -32,7 +32,7 @@ pub enum DbLocation {
 }
 
 /// Options for [`Db::open`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DbConfig {
 	/// Where the database lives.
 	pub location: DbLocation,

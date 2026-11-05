@@ -1370,7 +1370,7 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Funds a provider's worker asks the host to move for a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct FundsAsked {
 	/// Which way they move.
 	pub direction: FundingDirection,

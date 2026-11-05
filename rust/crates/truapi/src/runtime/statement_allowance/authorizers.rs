@@ -55,7 +55,7 @@ pub enum AsResourcesInfo {
 }
 
 /// Which resource an `AsResources` proof claims.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 enum ResourcesClaim {
 	StatementStoreAllowance,
 	LongTermStorage,

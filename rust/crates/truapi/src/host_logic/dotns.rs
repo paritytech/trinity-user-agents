@@ -28,7 +28,7 @@ const HTTPS_SCHEME: &str = "https";
 const POCKET_HOST: &str = "pocket";
 
 /// What a `polkadotapp://pocket/<action>` deeplink asks the host to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum PocketDeeplinkAction {
 	/// Offer to add a published card, behind the host's approval dialog.

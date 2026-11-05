@@ -95,7 +95,7 @@ pub enum MetadataError {
 /// Chain state filling every extension at its resting value: a fixture for
 /// tests that need a complete extension list for a pipeline.
 #[cfg(test)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct ChainState {
 	/// Runtime `specVersion` (CheckSpecVersion implicit).
 	pub spec_version: u32,

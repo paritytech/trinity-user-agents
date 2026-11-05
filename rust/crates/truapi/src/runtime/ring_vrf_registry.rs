@@ -11,13 +11,13 @@ use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingV
 
 use crate::host_internal::sso_messages::RingVrfError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
 struct SelectedProvider {
 	ring: RingLocation,
 	handle: ProductAccountId,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Default, PartialEq, Eq, Encode, Decode)]
 struct RegistrySnapshot {
 	entries: Vec<RegisteredRingVrfKey>,
 	/// Owners for which `entries` is a complete Account Holder snapshot.

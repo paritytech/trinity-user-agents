@@ -60,7 +60,7 @@ impl PinnedPocketCard {
 }
 
 /// One card in the Pocket, as the host lists it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct PocketEntry {
 	/// Product that backs the card.
 	pub product_id: ProductId,
@@ -73,7 +73,7 @@ pub struct PocketEntry {
 }
 
 /// What a removal did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum PocketCardRemoval {
 	/// The card was in the Pocket and is gone.
 	Removed,

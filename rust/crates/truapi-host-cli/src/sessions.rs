@@ -27,7 +27,7 @@ const PAIRED_HOST_STORE_VERSION: u32 = 1;
 /// longer exists, so the provisioned session directories are consulted in that
 /// case rather than falling straight back to the bootstrap profile, which would
 /// provision a second identity beside the one already on disk.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CurrentSession {
 	/// The pointer file named a session that exists.
 	Pointed(String),
@@ -45,7 +45,7 @@ pub enum CurrentSession {
 }
 
 /// Safe display metadata retained from a paired host's proposal.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq)]
 pub struct PairedHostMetadata {
 	/// Human-readable host name.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,7 +65,7 @@ pub struct PairedHostMetadata {
 }
 
 /// Versioned public data for a host paired with one managed session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct PairedHost {
 	version: u32,
 	statement_account_id: [u8; 32],
@@ -100,7 +100,7 @@ impl PairedHost {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct PairedHostStore {
 	version: u32,
 	#[serde(default)]
@@ -142,7 +142,7 @@ impl Drop for PairedHostStoreLock {
 }
 
 /// Persistent signing-host session data selected for permanent removal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum SessionClearTarget {
 	/// Clear one durable session name shown by `/session --list`.
 	Named(String),
@@ -150,7 +150,7 @@ pub enum SessionClearTarget {
 	All,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct SessionInfo {
 	version: u32,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -172,7 +172,7 @@ impl Default for SessionInfo {
 }
 
 /// Filesystem locations owned by one managed signing-host session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionProfile {
 	pub name: String,
 	/// Core/session state directory shown by `/session`.
@@ -257,7 +257,7 @@ impl Drop for SessionPromotion {
 }
 
 /// Persistent session catalog for one network.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionCatalog {
 	base_path: PathBuf,
 	network_id: String,
@@ -841,7 +841,7 @@ fn write_paired_host_store(session_path: &Path, store: &PairedHostStore) -> Resu
 }
 
 /// A session name cannot safely identify a user-owned profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Clone, derive_more::Display, derive_more::Error, Debug, PartialEq)]
 pub enum SessionNameError {
 	/// Names must fit a portable path component.
 	#[display("session name must contain between 1 and 64 characters")]

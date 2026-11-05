@@ -128,7 +128,7 @@ pub enum SlotError {
 }
 
 /// A `StatementStore` allowance slot value as the chain stores it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct StatementStoreAllowanceEntry {
 	/// Account the slot allows.
 	pub account_id: [u8; 32],
@@ -139,7 +139,7 @@ pub struct StatementStoreAllowanceEntry {
 }
 
 /// A slot that is occupied, as observed by a scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccupiedSlot {
 	/// Slot index within the period.
 	pub seq: u32,

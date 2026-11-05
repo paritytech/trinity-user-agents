@@ -71,7 +71,7 @@ pub fn build_reservation_message(
 
 /// The `Link` argument of `register_name`: how the new full-person username
 /// relates to the account's previous lite identity.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, EncodeAsType)]
+#[derive(Clone, PartialEq, Eq, Encode, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub enum Link {
 	/// Links the full username to an existing lite username, in dotted form
@@ -89,7 +89,7 @@ pub fn build_register_proof_message(who: &[u8; 32], label: &[u8], link: &Link) -
 }
 
 /// `DotnsGateway.register_name` arguments.
-#[derive(Debug, Clone, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct RegisterNameCallArgs {
 	/// Account the username is registered for.

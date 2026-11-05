@@ -60,7 +60,7 @@ pub fn personhood_product_id(network_suffix: &str) -> ProductId {
 pub const SR25519_SIGNING_CONTEXT: &[u8] = b"substrate";
 
 /// Error deriving product accounts or keys.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum ProductAccountError {
 	/// Root public key bytes are not a valid sr25519 point.
 	#[error("invalid sr25519 root public key")]

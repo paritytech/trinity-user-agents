@@ -24,7 +24,7 @@ use crate::platform::CliPlatform;
 
 /// One contact as this host stores it: the name it draws, and the account the
 /// core is told about when the user picks it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct HostContact {
 	account: [u8; 32],
 	display_name: Option<String>,

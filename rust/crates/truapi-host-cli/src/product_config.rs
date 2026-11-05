@@ -39,7 +39,7 @@ use truapi::{
 /// the publisher, and an unknown field is not an error: this file is
 /// source-controlled by the developer and shared with tooling that will grow
 /// fields the host has no use for.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
 	/// its storage are resolved under. A name that is not a product id fails
@@ -96,7 +96,7 @@ impl LocalProductConfig {
 }
 
 /// What [`apply`] seeded, so a caller can report it before serving anything.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AppliedGrants {
 	/// One line per config, naming the product and what it grants.
 	pub lines: Vec<String>,

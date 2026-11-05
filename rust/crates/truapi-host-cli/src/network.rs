@@ -13,7 +13,7 @@ use crate::chain::ChainBackend;
 /// [`NetworkConfig::disposable_identities`] may use that store; any other
 /// preset only signs with a mnemonic supplied per process, never writes one,
 /// and never approves a confirmation without a prompt.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Default, ValueEnum, Copy)]
 pub enum Network {
 	#[value(name = "paseo-next-v2")]
 	#[default]
@@ -41,7 +41,7 @@ pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
 pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
 
 /// Chain URL overrides; `None` keeps the preset's URL.
-#[derive(Debug, Default)]
+#[derive(Default, Debug)]
 struct ChainOverrides {
 	people_ws: Option<String>,
 	asset_hub_ws: Option<String>,
@@ -401,7 +401,7 @@ const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
 
 /// Resolved RPC/backend/genesis values for one network preset.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug, Copy)]
 pub struct NetworkConfig {
 	pub id: &'static str,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
@@ -440,7 +440,7 @@ pub struct NetworkConfig {
 	pub chain_backend: ChainBackend,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug, Copy)]
 pub struct ChainEndpoint {
 	pub genesis: [u8; 32],
 	pub ws: &'static str,

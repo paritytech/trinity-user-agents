@@ -40,7 +40,7 @@ pub enum Severity {
 }
 
 /// One marker, and what its detail is allowed to carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Marker {
 	/// The dotted target, as raised by the core.
 	pub target: &'static str,

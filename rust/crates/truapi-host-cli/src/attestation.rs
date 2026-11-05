@@ -44,11 +44,11 @@ use crate::{
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
 
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("backend auth identity derivation failed")]
 struct BackendIdentityDerivationError(ProductAccountError);
 
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("invalid entropy")]
 struct RootKeyDerivationError(ProductAccountError);
 
@@ -57,20 +57,20 @@ struct RootKeyDerivationError(ProductAccountError);
 /// to be the JWT subject, so a token must never cross candidate identities.
 static BACKEND_TOKENS: Mutex<Vec<CachedBackendToken>> = Mutex::new(Vec::new());
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct CachedBackendToken {
 	backend_base: String,
 	auth_client_id: [u8; 32],
 	value: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 enum BackendTokenSource {
 	Environment,
 	Cache,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct BackendToken {
 	value: String,
 	source: BackendTokenSource,

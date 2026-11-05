@@ -110,7 +110,7 @@ type BulletinAtBlock = OnlineClientAtBlockImpl<SubstrateConfig>;
 /// dry-run and submission steps.
 type SignedStore = SubmittableTransaction<SubstrateConfig, BulletinAtBlock>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum DryRunStatus {
 	Valid,
 	AllowanceRejected,
@@ -187,7 +187,7 @@ impl From<RuntimeFailure> for BulletinSubmitError {
 }
 
 /// Which stage rejected the allowance account.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum AllowanceRejectionPhase {
 	#[display("dry-run")]
 	DryRun,

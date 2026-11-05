@@ -168,7 +168,7 @@ mod orchestration {
 	const INCLUDED_HASH: &str =
 		"0x2222222222222222222222222222222222222222222222222222222222222222";
 
-	#[derive(Clone, Copy)]
+	#[derive(Clone)]
 	enum TransactionOutcome {
 		Included,
 		IncludedWithMissingBody,

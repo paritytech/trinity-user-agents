@@ -42,7 +42,6 @@ where
 /// to a cap.
 ///
 /// The pauses have no jitter, so clients that fail together retry together.
-#[derive(Debug)]
 pub struct Backoff {
 	first: Duration,
 	longest: Duration,
