@@ -13,7 +13,6 @@ use crate::{
 	host_logic::product_account::derivation_index_bytes,
 	runtime::vrf::{self, Vrf},
 };
-use async_trait::async_trait;
 use subxt::{dynamic, ext::scale_decode::DecodeAsType};
 use truapi::v01::{ProductProofContext, RingLocation, RingLocationJunction};
 
@@ -33,7 +32,7 @@ pub struct ResolvedRing {
 	pub members: Vec<[u8; 32]>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 pub trait RingResolver: Send + Sync {
 	/// Members pallet instance used in fully qualified ring locations.
 	async fn members_pallet_index(&self, chain_id: &[u8; 32]) -> Result<u8, RingVrfError>;
@@ -80,7 +79,7 @@ impl ChainRingResolver {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl RingResolver for ChainRingResolver {
 	async fn members_pallet_index(&self, chain_id: &[u8; 32]) -> Result<u8, RingVrfError> {
 		let at_block =
