@@ -71,6 +71,7 @@ Answers the visual question, with no worker, no manifest and no product.
 
 1. Open the app's debug menu and choose **Pocket face preview**.
 2. Enter your face's URL, for example `http://127.0.0.1:5173/faces/loyalty.json`, and press **Draw**.
+   For a card with a back, also enter the back's URL. The back is drawn below the front.
 3. Edit the file on your machine, press **Draw** again.
 
 What it proves: the face decodes, the tokens resolve, the text fits, and the layout holds at the real
@@ -137,6 +138,7 @@ published worker**:
 | Pocket card id | the id your worker answers `onRender` for, e.g. `loyalty` |
 | Pocket card title | what the approval sheet calls the card |
 | Pocket card face URL | `http://127.0.0.1:5173/faces/loyalty.json` |
+| Pocket card back face URL | optional, `http://127.0.0.1:5173/faces/loyalty-back.json`; gives the card a back the opened card turns over to |
 | App URL | optional, `http://127.0.0.1:<port>/...` only; the page the card opens over, in place of the product's published app |
 | Open with the face away | off by default; on, the card opens with its face out of the way |
 
@@ -215,6 +217,11 @@ while the user drags the face (and until it has settled) and `NotPresented` when
 
 The WebView keeps the last card's page loaded, so restart the app after changing the App URL.
 
+With a back URL set, a sideways drag on the opened card turns it over, and the page's
+`truapi.expandedCard.setBackShown({ shown })` turns it too. The back shows the kept back, else the
+back file, until the worker draws one under `PocketCardBack`. Archive images on a debug card's faces
+do not load, because a debug product has no published archive to read them from.
+
 ## When you are ready to publish
 
 Declare the card in the worker's manifest instead, and the debug fields stop being involved:
@@ -233,6 +240,9 @@ Declare the card in the worker's manifest instead, and the debug fields stop bei
 ```
 
 `faceShown` is optional and defaults to `true`; `false` opens the card with its face out of the way.
+
+`back` is optional: a path inside the worker archive to the card's back, like `preview`. Only a card
+that names one can be turned over.
 
 `preview` is now a path **inside the worker archive**, not a URL — a published manifest cannot name a
 URL, by design. Publish with `bulletin-deploy`, which writes this as the `executable` record on
