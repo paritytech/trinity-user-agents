@@ -212,6 +212,20 @@ class ProductMessageRendersTest {
     }
 
     @Test
+    fun `a failed message rendered again drops its first stream`() = runTest {
+        val renders = renders(streamingWorker)
+        val cell = shown(renders.render(room, "m1", content))
+        advanceTimeBy(window + 1.milliseconds)
+        cell.cancel()
+
+        val cellAgain = shown(renders.render(room, "m1", content))
+        runCurrent()
+
+        assertEquals(1, trees.subscriptionCount.value)
+        cellAgain.cancel()
+    }
+
+    @Test
     fun `a worker that throws reads as failed instead of taking the process down`() = runTest {
         val worker: ProductWorker = mockk {
             every { renderMessage(any(), any(), any(), any()) } throws IllegalStateException("no runtime")

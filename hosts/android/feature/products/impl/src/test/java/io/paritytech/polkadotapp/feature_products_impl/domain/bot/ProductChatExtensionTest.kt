@@ -243,15 +243,7 @@ class ProductChatExtensionTest {
         coEvery { context.createRoom(any()) } returns CreateRoomResult(chatId, status)
 
         try {
-            with(context) { ProductChatExtension(
-                    mockk<Context>(relaxed = true),
-                    product,
-                    refCounter,
-                    mockk(),
-                    mockk(),
-                    TestCoroutineDispatchers(Dispatchers.Unconfined),
-                    emptySet(),
-                ).startGlobalWork() }
+            with(context) { extension(refCounter).startGlobalWork() }
             advanceUntilIdle()
             val roomIcon = ProductChatIcon.fromString(icon).getOrThrow()
             requireNotNull(refCounter.chatSurface).createRoom(CreateProductRoomRequest(ProductChatIdParameter(ROOM), "Polkadot", roomIcon))

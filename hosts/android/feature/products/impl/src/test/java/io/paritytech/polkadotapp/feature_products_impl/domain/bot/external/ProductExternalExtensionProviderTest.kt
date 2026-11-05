@@ -133,13 +133,15 @@ class ProductExternalExtensionProviderTest {
     }
 
     @Test
-    fun `a product whose listing changed gets a new extension`() = runTest {
+    fun `a product whose listing changed gets a new extension, its unchanged neighbour keeps its own`() = runTest {
         val installed = MutableStateFlow(listOf(playground))
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns installed
-        every { hostPlacedProducts.observe() } returns flowOf(emptyList())
+        every { hostPlacedProducts.observe() } returns flowOf(listOf(jollity))
 
         val lists = listed { installed.value = listOf(Product(playground.id, "Playground", icon = null)) }
 
-        assertNotSame(lists[0].single(), lists[1].single())
+        assertSame(lists[0][0], lists[1][0])
+        assertNotSame(lists[0][1], lists[1][1])
+        assertEquals(listOf(jollity.id, playground.id), lists[1].map { (it as ProductChatExtension).product.id })
     }
 }

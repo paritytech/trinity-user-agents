@@ -11,9 +11,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.Integratio
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
-import uniffi.truapi.ProductId
 
 @Singleton
 class ProductExternalExtensionProvider @Inject constructor(
