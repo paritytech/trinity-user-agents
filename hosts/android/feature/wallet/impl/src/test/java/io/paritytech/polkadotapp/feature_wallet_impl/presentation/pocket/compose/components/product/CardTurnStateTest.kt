@@ -148,6 +148,25 @@ class CardTurnStateTest {
         advanceTimeBy(4 * FRAME_MILLIS)
         state.requestSide(PocketCardSide.FRONT, hasBack = true)
         advanceUntilIdle()
+        val front = state.angle
+        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        advanceTimeBy(4 * FRAME_MILLIS)
+        state.requestSide(PocketCardSide.FRONT, hasBack = true)
+        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf(0f, 180f), listOf(front.mod(360f), state.angle.mod(360f)))
+    }
+
+    // A screen-reader user asks for the other side of where the card is going, not of where it is mid-turn.
+    @Test
+    fun `turning over mid-turn reverses the turn`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+
+        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        advanceTimeBy(4 * FRAME_MILLIS)
+        launch { state.turnOver() }
+        advanceUntilIdle()
 
         assertEquals(0f, state.angle.mod(360f), 0f)
     }

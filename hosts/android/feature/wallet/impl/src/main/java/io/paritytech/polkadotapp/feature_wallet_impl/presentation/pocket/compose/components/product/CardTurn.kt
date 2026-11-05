@@ -67,7 +67,14 @@ internal class CardTurnState(initialAngle: Float = 0f) {
     }
 
     suspend fun turnTo(side: PocketCardSide) {
-        if (side != sideAt(heading)) settle(nearest(heading, HALF_TURN) + HALF_TURN, 0f, MutatePriority.Default)
+        if (side != sideAt(heading)) turnOver()
+    }
+
+    /** Turns to the other side of where the card is going, so it reverses a turn under way. */
+    suspend fun turnOver() {
+        // Set now, not once the lock is taken, so a request queued behind this one sees where it goes.
+        heading = nearest(heading, HALF_TURN) + HALF_TURN
+        settle(heading, 0f, MutatePriority.Default)
     }
 
     /**
