@@ -805,7 +805,7 @@ pub async fn attest_mnemonic(
 ) -> Result<AttestedIdentity> {
 	anyhow::ensure!(
 		network.disposable_identities,
-		"{} holds real identities, so attest is only available on test network presets",
+		"{} has real identities, so attest is only available on disposable-identity networks",
 		network.id
 	);
 	let username_base = lite_username_base(username_base)?;

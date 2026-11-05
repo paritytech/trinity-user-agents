@@ -407,7 +407,10 @@ export interface MockHostConfig {
   theme?: ThemeVariant;
   /** BCP 47 tag emitted by `subscribeLocale`. Default `"en"`. */
   languageTag?: string;
-  /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
+  /**
+   * Whether `confirmUserAction` confirms reviewed actions. Default `true`.
+   * {@link MockHost.setConfirmUserActions} changes it for one test.
+   */
   confirmUserActions?: boolean;
   /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
   scanner?: HostScan;
@@ -568,6 +571,12 @@ export interface MockHost {
   setTheme(variant: ThemeVariant): void;
   /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): void;
+  /**
+   * Answer reviews from now on with `confirm`, as `confirmUserActions` does at
+   * boot. A review already answered keeps its answer, and so does a
+   * permission the core has cached. `reset` restores the configured value.
+   */
+  setConfirmUserActions(confirm: boolean): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
   /** Mark the chain disconnected, as a dropped transport would. */
@@ -930,6 +939,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   let remotePermissions = remotePermissionsInitial;
   let enforcePermissions = false;
   let currentTheme = theme;
+  let confirming = confirmUserActions;
   // Live theme subscriptions, so `setTheme` reaches a subscribed product the way
   // the Rust mock's `theme_subscribers` does. A generator that ended after the
   // first value would make every `setTheme` in a migrating suite a no-op.
@@ -1323,14 +1333,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async confirmUserAction(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return confirmUserActions;
+        return confirming;
       },
       // The Rust trait answers this from `confirm_user_action` by default, so
       // a review is recorded here too and one knob still answers both.
       async confirmPermission(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return decision(confirmUserActions);
+        return decision(confirming);
       },
     },
 
@@ -1563,6 +1573,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       }
       scan.answer = answer;
     },
+    setConfirmUserActions: (confirm) => {
+      confirming = confirm;
+    },
     setTheme: (variant) => {
       currentTheme = variant;
       const item: HostThemeSubscribeItem = {
@@ -1681,6 +1694,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       remotePermissions = remotePermissionsInitial;
       chainStatus = "Idle";
       enforcePermissions = false;
+      confirming = confirmUserActions;
       nextNotificationId = 1;
       nextChatMessageId = 0;
       hostCallCount = 0;

@@ -1193,14 +1193,12 @@ mod tests {
 			// table `CliPlatform` resolves a genesis through. `asset_hub_ws`
 			// feeds the standalone `AssetHubReader` subcommands. Only Asset Hub
 			// is rerouted here.
-			static CLOSED_ASSET_HUB: &[crate::network::ChainEndpoint] =
-				&[crate::network::ChainEndpoint {
-					genesis: crate::network::PASEO_ASSET_HUB.genesis,
-					ws: "ws://127.0.0.1:1",
-					required_for_host: true,
-				}];
 			let mut network = crate::network::Network::default().config();
-			network.live_chain_endpoints = CLOSED_ASSET_HUB;
+			network.live_chain_endpoints = Box::leak(Box::new([crate::network::ChainEndpoint {
+				genesis: network.asset_hub_genesis,
+				ws: "ws://127.0.0.1:1",
+				required_for_host: true,
+			}]));
 			let asset_hub_genesis = network.asset_hub_genesis;
 			let platform = crate::platform::CliPlatform::new(
 				network,
