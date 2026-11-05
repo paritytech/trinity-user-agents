@@ -142,15 +142,13 @@ class FundingUiMapperTest {
         ),
     )
 
-    /** A fee under a cent still costs something, so it rounds up; a balance never reads as more than it is. */
+    /** A fee under a cent still costs something, so it rounds up. A balance rounding down is in FundingUnitsTest. */
     @Test
-    fun `a fee rounds up to the cent while a balance rounds down`() {
+    fun `a fee rounds up to the cent`() {
         val cash = FundingCash(symbol = "CASH", precision = 6)
 
         assertEquals("$0.01 CASH", cash.cost(cash.decimal("9000")))
-        assertEquals("$0.00 CASH", cash.label(cash.decimal("9000")))
         assertEquals("$1,000.26 CASH", cash.cost(cash.decimal("1000250001")))
-        assertEquals("$1,000.25 CASH", cash.label(cash.decimal("1000259999")))
     }
 
     @Test
@@ -159,6 +157,7 @@ class FundingUiMapperTest {
 
         assertEquals(9L, offer.secondsLeft(nowMs = 1_000))
         assertEquals(0L, offer.secondsLeft(nowMs = 12_000))
-        assertEquals(null, FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH").secondsLeft(nowMs = 0))
+        val open = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAtMs = null)
+        assertEquals(null, open.secondsLeft(nowMs = 0))
     }
 }

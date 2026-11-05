@@ -12,7 +12,7 @@ private const val JUST_NOW_SECONDS = 5L
 /** One piece of the line under the band, joined with " · ". */
 sealed interface FundingLivePart {
     /** A string resource; an argument may itself be a [FundingLivePart]. */
-    data class Res(@param:StringRes val id: Int, val args: List<Any> = emptyList()) : FundingLivePart
+    data class Res(@param:StringRes val id: Int, val args: List<Any>) : FundingLivePart
 
     /** The provider's own text, shown as given. */
     data class Verbatim(val text: String) : FundingLivePart
@@ -58,7 +58,7 @@ fun fundingLiveParts(detail: FundingDetail?, lastHeardAtMs: Long?, nowMs: Long):
 private fun lastHeard(atMs: Long, nowMs: Long): FundingLivePart.Res {
     val seconds = ((nowMs - atMs) / 1_000L).coerceAtLeast(0)
     return when {
-        seconds < JUST_NOW_SECONDS -> FundingLivePart.Res(RCommon.string.funding_last_heard_now)
+        seconds < JUST_NOW_SECONDS -> FundingLivePart.Res(RCommon.string.funding_last_heard_now, emptyList())
         else -> FundingLivePart.Res(RCommon.string.funding_last_heard, listOf(duration(seconds)))
     }
 }

@@ -60,10 +60,10 @@ data class FundingStartState(
     val isStarting: Boolean,
     val failed: Boolean,
     val started: Boolean,
-    val failure: FundingFailureReason? = null,
-    val isCancelling: Boolean = false,
+    val failure: FundingFailureReason?,
+    val isCancelling: Boolean,
     /** The user's cancel as the core holds it, once money has moved and the provider decides it. */
-    val cancel: FundingCancel? = null,
+    val cancel: FundingCancel?,
 )
 
 /** Built for the overlay [context] its sheet found when it opened, which the overlay may have dropped since. */
@@ -82,7 +82,16 @@ class FundingViewModel @AssistedInject constructor(
     private val intent = context.request.intent
     private val flow = MutableStateFlow<FundingFlowState?>(null)
     private val path = MutableStateFlow<List<FundingScreen>>(emptyList())
-    private val start = MutableStateFlow(FundingStartState(isStarting = false, failed = false, started = false))
+    private val start = MutableStateFlow(
+        FundingStartState(
+            isStarting = false,
+            failed = false,
+            started = false,
+            failure = null,
+            isCancelling = false,
+            cancel = null,
+        ),
+    )
     private val progress = MutableStateFlow<FundingProgress?>(null)
     private var quoteJob: Job? = null
     private var startsWhenQuoted = false
@@ -248,13 +257,27 @@ class FundingViewModel @AssistedInject constructor(
         val quoteId = current.rows[providerId]?.quote?.quoteId ?: return
         if (start.value.isStarting || start.value.started) return
 
-        start.value = FundingStartState(isStarting = true, failed = false, started = false)
+        start.value = FundingStartState(
+            isStarting = true,
+            failed = false,
+            started = false,
+            failure = null,
+            isCancelling = false,
+            cancel = null,
+        )
         launchUnit {
             val selected = interactor.selectProvider(intent, providerId, quoteId)
                 .logFailure("Funding provider selection failed")
                 .getOrDefault(false)
 
-            start.value = FundingStartState(isStarting = false, failed = !selected, started = selected)
+            start.value = FundingStartState(
+                isStarting = false,
+                failed = !selected,
+                started = selected,
+                failure = null,
+                isCancelling = false,
+                cancel = null,
+            )
             if (selected) didStart(current.rail) else refreshSession()
         }
     }
@@ -350,7 +373,14 @@ class FundingViewModel @AssistedInject constructor(
             state?.let { if (choice != null) it.withRail(choice.rail).withAsset(choice.asset) else it }
                 ?.let { updated -> session.providerId?.let(updated::withChosenProvider) ?: updated }
         }
-        start.value = FundingStartState(isStarting = false, failed = false, started = true)
+        start.value = FundingStartState(
+            isStarting = false,
+            failed = false,
+            started = true,
+            failure = null,
+            isCancelling = false,
+            cancel = null,
+        )
         path.value = listOf(FundingScreen.DEPOSIT)
         refreshSession()
     }

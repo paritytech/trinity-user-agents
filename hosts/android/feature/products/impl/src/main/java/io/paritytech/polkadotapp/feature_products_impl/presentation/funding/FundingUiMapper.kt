@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAmountIssue
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit

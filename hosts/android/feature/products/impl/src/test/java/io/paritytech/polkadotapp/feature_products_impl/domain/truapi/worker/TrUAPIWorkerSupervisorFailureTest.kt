@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import com.google.gson.Gson
 import dagger.Lazy
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -61,7 +63,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         scriptResolver = scriptResolver,
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,
-        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
+        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), ManifestParser(Gson()), enabled = true),
         refCounter = Lazy { refCounter },
         navigation = mock(),
         dispatchers = testDispatchers(),

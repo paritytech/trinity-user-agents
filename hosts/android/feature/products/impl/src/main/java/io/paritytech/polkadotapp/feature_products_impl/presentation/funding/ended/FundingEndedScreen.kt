@@ -31,7 +31,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.reasonText
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.reasonText
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
