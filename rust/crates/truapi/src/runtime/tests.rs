@@ -755,7 +755,7 @@ impl StubContactsPlatform {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for StubContactsPlatform {
 	async fn contacts(
 		&self,
@@ -844,7 +844,7 @@ fn pick(
 /// A host that implements only the required `contacts` method.
 struct LookupOnlyContactsPlatform;
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for LookupOnlyContactsPlatform {
 	async fn contacts(
 		&self,
@@ -858,7 +858,7 @@ impl crate::platform::ContactsPlatform for LookupOnlyContactsPlatform {
 /// buggy or hostile host would.
 struct MisanswerContactsPlatform;
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for MisanswerContactsPlatform {
 	async fn contacts(
 		&self,
@@ -1358,7 +1358,7 @@ struct RecordingChatPlatform {
 	bot_rooms: Vec<String>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ChatPlatform for RecordingChatPlatform {
 	async fn create_chat_room(
 		&self,
@@ -2262,7 +2262,7 @@ impl RecordingPocketPlatform {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PocketPlatform for RecordingPocketPlatform {
 	fn subscribe_pocket_cards(
 		&self,
@@ -2416,7 +2416,7 @@ impl RecordingExpandedCardHost {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 	async fn set_expanded_card_face_shown(
 		&self,
@@ -2672,7 +2672,7 @@ impl RecordingGamePlatform {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::GamePlatform for RecordingGamePlatform {
 	async fn schedule_game_reminder(
 		&self,
@@ -2933,7 +2933,7 @@ impl RecordingFundingPlatform {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 	async fn present_funding(
 		&self,
@@ -3143,7 +3143,7 @@ struct ObservingFundingPlatform {
 	stored_while_shown: Mutex<Option<usize>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 	async fn present_funding(
 		&self,
@@ -3195,7 +3195,7 @@ struct StorageFailingFundingPlatform {
 	outcome: crate::platform::FundingPresentOutcome,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 	async fn present_funding(
 		&self,
@@ -3441,7 +3441,7 @@ struct GatedFundingPlatform {
 		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for GatedFundingPlatform {
 	async fn present_funding(
 		&self,
@@ -8626,7 +8626,7 @@ impl Drop for SetOnDrop {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ScannerPlatform for StubScannerPlatform {
 	async fn scan_code(
 		&self,
@@ -8832,7 +8832,7 @@ struct ParkedContactsPlatform {
 	abandoned: Arc<AtomicBool>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
 	async fn contacts(
 		&self,
@@ -9942,7 +9942,7 @@ struct LateTopUpPlatform {
 	reads: std::sync::atomic::AtomicUsize,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for LateTopUpPlatform {
 	async fn top_up(
 		&self,
@@ -10185,7 +10185,7 @@ struct SelectThenCloseFundingPlatform {
 	stored_while_up: Mutex<Option<bool>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 	async fn present_funding(
 		&self,
@@ -10262,7 +10262,7 @@ struct RecordingTopUpPlatform {
 	followed: Mutex<Vec<(String, [u8; 32])>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 	async fn top_up(
 		&self,
@@ -10470,7 +10470,7 @@ struct RecordingPaymentPlatform {
 	followed: Mutex<Vec<(String, [u8; 32])>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 	async fn request_payment(
 		&self,
@@ -10845,7 +10845,7 @@ fn a_revoked_balance_access_ends_the_balance_stream() {
 /// A payment engine whose user never has enough.
 struct ShortPaymentPlatform;
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 	async fn request_payment(
 		&self,
@@ -10963,7 +10963,7 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 /// A top-up engine that answers every top-up with its error.
 struct RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError);
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
 	async fn top_up(
 		&self,
@@ -11167,7 +11167,7 @@ struct GatedTopUpPlatform {
 	started: Mutex<Vec<[u8; 32]>>,
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
 	async fn top_up(
 		&self,
@@ -11245,7 +11245,7 @@ fn a_settlement_whose_write_failed_is_written_again() {
 /// A top-up engine that reports every top-up claimed for good.
 struct ClaimedTopUpPlatform;
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for ClaimedTopUpPlatform {
 	async fn top_up(
 		&self,

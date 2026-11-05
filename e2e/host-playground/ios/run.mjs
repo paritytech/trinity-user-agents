@@ -181,7 +181,7 @@ function launch({ terminate }) {
     "xcrun",
     ["simctl", "launch", ...(terminate ? ["--terminate-running-process"] : []), device.udid, bundle],
     {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "inherit"],
       env: { ...process.env, SIMCTL_CHILD_TRUAPI_IOS_E2E_HOST_PLAYGROUND: "1" },
     },
   );

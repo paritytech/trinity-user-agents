@@ -29,8 +29,8 @@ use truapi::latest::{
 use crate::{
 	native::MAX_FACE_DEPTH,
 	platform::{
-		ChatFieldError, PocketPlatform, ProductContext, ProductId, async_trait,
-		normalize_chat_identifier, validate_chat_name,
+		ChatFieldError, PocketPlatform, ProductContext, ProductId, normalize_chat_identifier,
+		validate_chat_name,
 	},
 	store::{Db, DbError},
 	time::Timer,
@@ -324,7 +324,7 @@ impl PocketCards {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl PocketPlatform for PocketCards {
 	fn subscribe_pocket_cards(
 		&self,

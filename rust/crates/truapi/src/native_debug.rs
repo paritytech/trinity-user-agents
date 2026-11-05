@@ -735,7 +735,7 @@ mod tests {
 		/// Exercises only `System::handshake`'s default (host-side) codec check.
 		struct HandshakeOnly;
 
-		#[truapi::async_trait]
+		#[async_trait::async_trait]
 		impl System for HandshakeOnly {
 			async fn feature_supported(
 				&self,
