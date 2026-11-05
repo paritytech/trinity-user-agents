@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
@@ -25,7 +26,7 @@ interface PocketCardRepository {
     /** Removes a card unless the host pins it. */
     suspend fun remove(key: PocketCardKey)
 
-    suspend fun face(key: PocketCardKey): RendererNode?
+    suspend fun face(key: PocketCardKey, side: PocketCardSide): RendererNode?
 }
 
 @Singleton
@@ -48,8 +49,8 @@ class CorePocketCardRepository @Inject constructor(
         runtime().removePocketCard(key.productId, key.cardId.value)
     }
 
-    override suspend fun face(key: PocketCardKey): RendererNode? =
-        runtime().pocketCardFace(key.productId, key.cardId.value)
+    override suspend fun face(key: PocketCardKey, side: PocketCardSide): RendererNode? =
+        runtime().pocketCardFace(key.productId, key.cardId.value, side)
 
     private suspend fun runtime(): TrUAPIHostRuntime = runtimeProvider.runtime().getOrThrow()
 

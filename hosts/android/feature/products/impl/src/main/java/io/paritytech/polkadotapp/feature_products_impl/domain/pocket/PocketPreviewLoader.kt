@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import uniffi.truapi.ProductId
@@ -14,8 +13,8 @@ class PocketPreviewLoader @Inject constructor(
     private val archive: ProductWorkerArchive,
     private val remoteFaces: RemoteFaceSource,
 ) {
-    suspend fun load(productId: ProductId, definition: PocketCardDefinition): Result<RendererNode> =
-        when (val preview = definition.preview) {
+    suspend fun load(productId: ProductId, preview: PocketCardPreview): Result<RendererNode> =
+        when (preview) {
             is PocketCardPreview.Archive -> archive.file(productId, preview.path)
                 .mapCatching { it.readWithinBound() }
                 .flatMap(::readPocketFace)

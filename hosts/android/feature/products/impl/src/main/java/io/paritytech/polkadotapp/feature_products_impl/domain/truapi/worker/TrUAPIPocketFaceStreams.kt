@@ -2,11 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.isManifestAnswer
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -16,6 +15,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
@@ -32,11 +32,11 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun renderFaces(key: PocketCardKey): Flow<RendererNode> = flow {
+    override fun renderFaces(key: PocketCardKey, side: PocketCardSide): Flow<RendererNode> = flow {
         // A card whose product publishes no Pocket worker has nothing to stream, and the reference
         // below is what starts one: the pinned card is on the default tab, so taking it would boot a
         // worker for the personhood product every time the tab is opened.
-        if (!publishedCards.isStreamable(key)) return@flow
+        if (!publishedCards.isStreamable(key, side)) return@flow
 
         val runtime = runtimeProvider.runtime()
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
@@ -47,7 +47,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
             emitAll(
                 workers.execution(key.productId)
                     .filterNotNull()
-                    .flatMapLatest { execution -> execution.faces(key) }
+                    .flatMapLatest { execution -> execution.faces(key.renderContext(side)) }
                     .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
             )
         } finally {
@@ -55,27 +55,29 @@ class TrUAPIPocketFaceStreams @Inject constructor(
         }
     }
 
-    private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey): Boolean {
+    private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey, side: PocketCardSide): Boolean {
         var attempt = 0L
         while (true) {
-            val failure = find(key.productId, key.cardId)
+            val published = find(key.productId, key.cardId)
                 .logFailure("Pocket face ${key.cardId.value} has no published card; it keeps the face it has")
-                .exceptionOrNull() ?: return true
-            // Only the manifest's own answer is final; a read that did not land says nothing about the card.
-            if (failure is PocketPublishError || failure is ProductResolutionError.MalformedManifest) return false
+            published.getOrNull()?.let { return side == PocketCardSide.FRONT || it.definition.back != null }
+            if (published.exceptionOrNull()?.isManifestAnswer == true) return false
             delay(reopenBackoff(attempt++))
         }
     }
 
-    override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
+    override fun sendAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray) {
         val execution = workers.currentExecution(key.productId) ?: return
-        runCatching { execution.publishRendererAction(HostRendererActionSubscribeItem(key.renderContext(), actionId, payload)) }
+        runCatching { execution.publishRendererAction(HostRendererActionSubscribeItem(key.renderContext(side), actionId, payload)) }
             .logFailure("truapi.renderer.action '$actionId' for ${key.cardId.value}")
     }
 
-    private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<RendererNode> =
-        render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
+    private fun TrUAPIProductExecution.faces(context: RenderContext): Flow<RendererNode> =
+        render(ProductRendererRenderRequest(context, payload = ByteArray(0)))
             .retryWhileConnecting()
 
-    private fun PocketCardKey.renderContext() = RenderContext.PocketCard(cardId.value)
+    private fun PocketCardKey.renderContext(side: PocketCardSide) = when (side) {
+        PocketCardSide.FRONT -> RenderContext.PocketCard(cardId.value)
+        PocketCardSide.BACK -> RenderContext.PocketCardBack(cardId.value)
+    }
 }
