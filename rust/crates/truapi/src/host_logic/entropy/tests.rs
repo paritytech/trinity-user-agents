@@ -3,7 +3,7 @@ use super::*;
 fn secret() -> [u8; 32] {
 	let mut secret = [0u8; 32];
 	for (i, byte) in secret.iter_mut().enumerate() {
-		*byte = i as u8;
+		*byte = u8::try_from(i).expect("index fits in u8");
 	}
 	secret
 }

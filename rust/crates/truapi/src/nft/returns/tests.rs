@@ -112,7 +112,7 @@ fn a_return_moves_each_landed_item_back_to_its_cheque_key() {
 			signer: TransferSigner::Derived(ItemSlot {
 				purse: PURSE,
 				installation: TEST_INSTALLATION,
-				index: ItemIndex(index as u32),
+				index: ItemIndex(u32::try_from(index).expect("index fits in u32")),
 			}),
 			destination: deposited.cheque_keys[index],
 			submitted_attempt: None,

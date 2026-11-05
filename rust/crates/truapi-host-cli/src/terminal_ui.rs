@@ -54,7 +54,7 @@ const STREAM_CHUNK_LINE_LIMIT: usize = 256;
 const STREAM_CHUNK_BYTE_LIMIT: usize = 64 * 1024;
 const STREAM_LINE_BYTE_LIMIT: usize = 16 * 1024;
 const EVENT_BATCH_LIMIT: usize = 256;
-const MAX_VISIBLE_COMPLETIONS: usize = 8;
+const MAX_VISIBLE_COMPLETIONS: u16 = 8;
 const MOUSE_SCROLL_LINES: usize = 3;
 const COMPOSER_HORIZONTAL_PADDING: u16 = 1;
 const QR_INDENT: usize = 2;
@@ -2161,14 +2161,15 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 			.saturating_sub(1)
 			.saturating_sub(1)
 			.saturating_sub(base_composer_height)
-			.min(MAX_VISIBLE_COMPLETIONS as u16)
+			.min(MAX_VISIBLE_COMPLETIONS)
 	};
 	let completion_range = completion_window(
 		completions.len(),
 		app.editor.completion_index(),
 		usize::from(available_completion_height),
 	);
-	let completion_height = completion_range.len() as u16;
+	let completion_height =
+		u16::try_from(completion_range.len()).expect("completion window fits in u16");
 	let composer_height = base_composer_height.saturating_add(completion_height);
 	let areas = Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)])
 		.split(frame.area());
@@ -2211,7 +2212,8 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 	let top = app
 		.max_scroll_from_bottom
 		.saturating_sub(app.scroll_from_bottom)
-		.min(u16::MAX as usize) as u16;
+		.min(usize::from(u16::MAX));
+	let top = u16::try_from(top).expect("clamped to u16::MAX");
 	frame.render_widget(transcript.scroll((top, 0)), areas[0]);
 
 	let surface_area = areas[1];
@@ -2350,7 +2352,10 @@ fn composer_status_line(
 	if hint_width.saturating_add(3) > available_width {
 		return header_line(app, width);
 	}
-	let mut status = header_line(app, (available_width - hint_width - 3) as u16);
+	let mut status = header_line(
+		app,
+		u16::try_from(available_width - hint_width - 3).expect("header width fits in u16"),
+	);
 	let status_width = status
 		.spans
 		.iter()
@@ -2433,7 +2438,8 @@ fn blended_surface((red, green, blue): (u8, u8, u8)) -> (u8, u8, u8) {
 		(u32::from(red) * 2126 + u32::from(green) * 7152 + u32::from(blue) * 722) / 10_000;
 	let (target, percent) = if luminance < 128 { (255_u8, 12_u16) } else { (0_u8, 4_u16) };
 	let blend = |value: u8| {
-		((u16::from(value) * (100 - percent) + u16::from(target) * percent) / 100) as u8
+		u8::try_from((u16::from(value) * (100 - percent) + u16::from(target) * percent) / 100)
+			.expect("a blend of two u8 values stays in u8")
 	};
 	(blend(red), blend(green), blend(blue))
 }
@@ -2478,7 +2484,10 @@ fn ansi256_to_rgb(index: u8) -> Option<(u8, u8, u8)> {
 }
 
 fn rgb_to_ansi256(red: u8, green: u8, blue: u8) -> u8 {
-	let component = |value: u8| ((u16::from(value) * 5 + 127) / 255) as u8;
+	let component = |value: u8| {
+		u8::try_from((u16::from(value) * 5 + 127) / 255)
+			.expect("a component of at most 5 stays in u8")
+	};
 	16 + 36 * component(red) + 6 * component(green) + component(blue)
 }
 
@@ -2866,7 +2875,11 @@ fn input_viewport(input: &str, cursor: usize, max_width: u16) -> InputViewport {
 		text.push(*character);
 		width += character_width;
 	}
-	InputViewport { text, cursor_x: cursor_x.min(max_width) as u16 }
+	InputViewport {
+		text,
+		cursor_x: u16::try_from(cursor_x.min(max_width))
+			.expect("cursor stays within the viewport width"),
+	}
 }
 
 fn display_width(characters: &[char]) -> usize {

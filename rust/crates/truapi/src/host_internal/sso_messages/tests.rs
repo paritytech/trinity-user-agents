@@ -226,7 +226,7 @@ fn rfc_0024_requests_match_android_scale_fixtures() {
 }
 
 fn sequential_bytes<const N: usize>(start: u8) -> [u8; N] {
-	std::array::from_fn(|index| start.wrapping_add(index as u8))
+	std::array::from_fn(|index| start.wrapping_add(u8::try_from(index).expect("index fits in u8")))
 }
 
 #[test]

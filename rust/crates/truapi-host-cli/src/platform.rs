@@ -629,8 +629,10 @@ impl Navigation for CliPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), api::HostNavigateToError> {
 		tracing::debug!(%url, "navigate_to");
 		if let Some(path) = &self.navigations_log {
-			let at =
-				SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+			let at = u64::try_from(
+				SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+			)
+			.expect("milliseconds since the epoch fit in u64");
 			record_navigation(path, &url, at).map_err(|error| {
 				api::HostNavigateToError::Unknown {
 					reason: format!("{:#}", anyhow::Error::new(error)),
@@ -664,8 +666,10 @@ impl Notifications for CliPlatform {
 		notification: api::HostPushNotificationRequest,
 	) -> Result<api::HostPushNotificationResponse, api::GenericError> {
 		let id = self.next_notification_id.fetch_add(1, Ordering::Relaxed);
-		let now =
-			SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+		let now = u64::try_from(
+			SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+		)
+		.expect("milliseconds since the epoch fit in u64");
 		if let Some(scheduled_at) = notification.scheduled_at.filter(|at| *at > now) {
 			{
 				let mut pending =

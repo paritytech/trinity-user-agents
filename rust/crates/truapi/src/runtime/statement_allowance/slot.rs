@@ -151,7 +151,8 @@ pub struct OccupiedSlot {
 
 /// The current allowance period for `now_seconds`.
 pub fn current_period(now_seconds: u64) -> u32 {
-	(now_seconds / STATEMENT_STORE_PERIOD_SECONDS) as u32
+	u32::try_from(now_seconds / STATEMENT_STORE_PERIOD_SECONDS)
+		.expect("allowance periods fit in u32")
 }
 
 /// The current long-term-storage period for `now_seconds`.
@@ -162,7 +163,7 @@ pub fn current_long_term_storage_period(
 	if period_duration == 0 {
 		return Err(SlotError::LongTermStoragePeriodDurationZero.into());
 	}
-	Ok((now_seconds / u64::from(period_duration)) as u32)
+	Ok(u32::try_from(now_seconds / u64::from(period_duration)).expect("storage periods fit in u32"))
 }
 
 fn derive_product_context(network_suffix: &[u8], family: u32, first: u32, second: u32) -> [u8; 32] {
@@ -654,7 +655,7 @@ pub mod testing {
 					PersonhoodCollection::LitePeople,
 					network_suffix,
 					period,
-					seq as u32,
+					u32::try_from(seq).expect("slot sequence fits in u32"),
 				)
 				.unwrap();
 				let key = hex::encode(statement_store_allowance_key(period, &alias));

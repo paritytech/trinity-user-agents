@@ -88,7 +88,7 @@ fn a_reclaim_moves_each_handed_off_key_into_a_fresh_key_of_its_purse() {
 	let expected: Vec<_> = (0..2)
 		.map(|index| TransferParams {
 			source: handed_off.keys[index],
-			signer: TransferSigner::Derived(slot(index as u32)),
+			signer: TransferSigner::Derived(slot(u32::try_from(index).expect("index fits in u32"))),
 			destination: fresh[index],
 			submitted_attempt: None,
 			give_up_after: stored[index].give_up_after,

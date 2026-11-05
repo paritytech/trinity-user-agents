@@ -396,9 +396,9 @@ fn autocomplete_shows_all_current_commands_and_scrolls_larger_menus() {
 	let visible = completion_window(
 		completions.len(),
 		app.editor.completion_index(),
-		MAX_VISIBLE_COMPLETIONS,
+		usize::from(MAX_VISIBLE_COMPLETIONS),
 	);
-	assert!(visible.len() <= MAX_VISIBLE_COMPLETIONS);
+	assert!(visible.len() <= usize::from(MAX_VISIBLE_COMPLETIONS));
 	assert!(completions.iter().any(|completion| completion.value == "/copy"));
 	assert!(completions.iter().any(|completion| completion.value == "/renew"));
 

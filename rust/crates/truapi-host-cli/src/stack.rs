@@ -235,8 +235,13 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 	let bytes = fetched
 		.as_deref()
 		.map_err(|cause| anyhow!("{} is unreachable: {cause}", pointer.url()))?;
-	let accepted =
-		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;
+	let accepted = accept(
+		&pointer,
+		None,
+		Fetched::Document(bytes),
+		i64::try_from(unix_now()).expect("unix seconds fit in i64"),
+	)
+	.map_err(refused)?;
 	// `signed` means a signature was checked against a key; `envelope` says the file carries one,
 	// so a signed stack read without `--key` is not mistaken for an unsigned one.
 	let envelope = matches!(Document::parse(bytes), Ok(Document::Envelope { .. }));
@@ -266,9 +271,13 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 	let fetched = fetch(pointer.url().as_str())
 		.await
 		.map_err(|cause| anyhow!("not bundled: {} is unreachable: {cause}", pointer.url()))?;
-	let accepted =
-		accept(&pointer, previous.as_deref(), Fetched::Document(&fetched), unix_now() as i64)
-			.map_err(refused)?;
+	let accepted = accept(
+		&pointer,
+		previous.as_deref(),
+		Fetched::Document(&fetched),
+		i64::try_from(unix_now()).expect("unix seconds fit in i64"),
+	)
+	.map_err(refused)?;
 	match &accepted.status {
 		Status::Updated | Status::Unchanged => {},
 		Status::Refused(error) => {

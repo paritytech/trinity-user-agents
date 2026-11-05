@@ -778,7 +778,7 @@ async fn serve_request(
 					%response_message_id,
 					outcome = outcome.outcome,
 					reason = outcome.reason.as_deref().unwrap_or_default(),
-					elapsed_ms = elapsed_ms as u64,
+					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
 			},
 			Err(reason) => {
@@ -804,7 +804,7 @@ async fn serve_request(
 					%response_message_id,
 					outcome = failure.outcome,
 					reason = %reason,
-					elapsed_ms = elapsed_ms as u64,
+					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
 				return Err(reason);
 			},

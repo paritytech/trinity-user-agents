@@ -1543,12 +1543,15 @@ pub mod tests {
 				implicit: extension.additional_signed,
 			})
 			.collect();
-		let every_extension = (0..transaction_extensions.len() as u32).map(Compact).collect();
+		let every_extension = (0..u32::try_from(transaction_extensions.len())
+			.expect("extension count fits in u32"))
+			.map(Compact)
+			.collect();
 		let encoding_version_extensions = transaction_extensions
 			.iter()
 			.enumerate()
 			.filter(|(_, extension)| !omitted.contains(&extension.identifier.as_str()))
-			.map(|(index, _)| Compact(index as u32))
+			.map(|(index, _)| Compact(u32::try_from(index).expect("extension index fits in u32")))
 			.collect();
 
 		let pallets = v14

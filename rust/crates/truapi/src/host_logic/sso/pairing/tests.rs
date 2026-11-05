@@ -142,7 +142,8 @@ fn rfc0022_entropy_domains_produce_stable_distinct_keys() {
 	assert_eq!(sso, derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso"));
 	assert_ne!(sso, chat);
 	assert_eq!(PublicKey::from(&StaticSecret::from(sso.0)).to_bytes(), sso.1);
-	let cross_platform_entropy: [u8; 32] = std::array::from_fn(|index| (index + 1) as u8);
+	let cross_platform_entropy: [u8; 32] =
+		std::array::from_fn(|index| u8::try_from(index + 1).expect("index fits in u8"));
 	let (sso_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"sso");
 	let (chat_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"chat");
 	assert_eq!(

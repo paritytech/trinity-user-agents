@@ -64,7 +64,7 @@ fn device_permission_discriminants_are_append_only() {
 	{
 		assert_eq!(
 			permission.encode(),
-			vec![index as u8],
+			vec![u8::try_from(index).expect("discriminant fits in u8")],
 			"{permission} must keep discriminant {index}"
 		);
 	}

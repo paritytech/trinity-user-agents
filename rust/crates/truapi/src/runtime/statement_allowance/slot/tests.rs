@@ -114,7 +114,9 @@ fn the_slot_scan_reads_its_row_in_one_round_trip() {
 	assert_eq!(
 		(selection, methods),
 		(
-			SlotSelection::AlreadyAllocated(SLOTS as u32 - 1),
+			SlotSelection::AlreadyAllocated(
+				u32::try_from(SLOTS).expect("slot count fits in u32") - 1
+			),
 			vec!["state_queryStorageAt".to_string()],
 		),
 	);
@@ -126,7 +128,7 @@ fn a_table_filled_by_other_accounts_reports_full_rather_than_erroring() {
 		panic!("a full table should report Full");
 	};
 
-	assert_eq!(max, SLOTS as u32);
+	assert_eq!(max, u32::try_from(SLOTS).expect("slot count fits in u32"));
 	// Every slot is reported, with the age the replacement rule needs.
 	assert_eq!(occupied.len(), SLOTS);
 	assert_eq!(occupied[0].seq, 0);
@@ -279,7 +281,7 @@ fn an_excluded_free_slot_is_not_reported_as_a_full_period() {
 			network_suffix: NETWORK_SUFFIX,
 			period: 7,
 			target: &[0x22; 32],
-			excluded: &[(SLOTS - 1) as u32],
+			excluded: &[u32::try_from(SLOTS - 1).expect("slot index fits in u32")],
 			reuse_existing: true,
 		},
 	))

@@ -119,7 +119,7 @@ fn clearing_the_cache_forgets_every_handle() {
 #[test]
 fn a_full_cache_empties_rather_than_grows() {
 	let cache = ContactHandleCache::default();
-	for byte in 0..=HANDLE_CACHE_MAX_ENTRIES as u16 {
+	for byte in 0..=u16::try_from(HANDLE_CACHE_MAX_ENTRIES).expect("cache size fits in u16") {
 		let account = {
 			let mut account = [0u8; 32];
 			account[..2].copy_from_slice(&byte.to_le_bytes());

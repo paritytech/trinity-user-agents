@@ -285,7 +285,7 @@ pub fn upsert_holding(tx: &Transaction<'_>, key: &ItemKey, held: &HeldItem) -> R
 		":key": key.0,
 		":collection": held.collection,
 		":item": held.item,
-		":instance": held.instance as i64,
+		":instance": i64::try_from(held.instance).expect("instance ids fit in i64"),
 	})?;
 	Ok(())
 }
@@ -305,7 +305,13 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 	}
 	let instance: i64 = row.get("instance")?;
 	let (_, slot) = keyed_slot_from_row(row)?;
-	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+	Ok((
+		key,
+		KeyStanding::Idle {
+			instance: u64::try_from(instance).expect("stored instance ids are non-negative"),
+			slot,
+		},
+	))
 }
 
 /// `keys` as the value of an `rarray` parameter.

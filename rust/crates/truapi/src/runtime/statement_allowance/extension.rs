@@ -484,7 +484,7 @@ impl Metadata {
 			// extra = { tip: compact(0), asset_id: None } = 0x00 0x00.
 			"ChargeAssetTxPayment" => (vec![0x00, 0x00], Vec::new()),
 			// extra = bool. See `ChainState::restrict_origins`.
-			"RestrictOrigins" => (vec![state.restrict_origins as u8], Vec::new()),
+			"RestrictOrigins" => (vec![u8::from(state.restrict_origins)], Vec::new()),
 			_ => (
 				self.encode_default(ext.extra_type),
 				self.encode_default(ext.additional_signed_type),

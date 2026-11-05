@@ -189,7 +189,7 @@ fn observed_at_millis() -> Option<u64> {
 	std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.ok()
-		.map(|since| since.as_millis() as u64)
+		.map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Validate a debug URL and resolve it to the addresses to dial, in resolver

@@ -91,8 +91,8 @@ fn reads_a_png_image_path_and_rejects_oversized_files() {
 	image::save_buffer_with_format(
 		&image_path,
 		&frame.pixels,
-		frame.width as u32,
-		frame.height as u32,
+		u32::try_from(frame.width).expect("fixture width fits in u32"),
+		u32::try_from(frame.height).expect("fixture height fits in u32"),
 		image::ColorType::Rgba8,
 		image::ImageFormat::Png,
 	)
@@ -110,21 +110,28 @@ fn reads_a_png_image_path_and_rejects_oversized_files() {
 	);
 }
 
+fn pixel_f64(value: usize) -> f64 {
+	f64::from(u32::try_from(value).expect("pixel coordinates fit in u32"))
+}
+
 fn pairing_deeplink_for(account_byte: u8) -> String {
 	pairing_deeplink_with_metadata(account_byte, 0)
 }
 
 fn pairing_deeplink_with_metadata(account_byte: u8, metadata_len: usize) -> String {
 	let metadata = (0..metadata_len)
-		.map(|index| char::from(b'!' + ((index * 47 + 11) % 90) as u8))
+		.map(|index| char::from(b'!' + u8::try_from((index * 47 + 11) % 90).expect("below 90")))
 		.collect();
 	let proposal = VersionedHandshakeProposal::V2(Proposal {
 		device: Device {
 			statement_account_id: std::array::from_fn(|index| {
-				account_byte.wrapping_add((index * 17) as u8)
+				account_byte
+					.wrapping_add(u8::try_from(index).expect("index fits in u8").wrapping_mul(17))
 			}),
 			encryption_public_key: std::array::from_fn(|index| {
-				account_byte.wrapping_add((index * 29 + 1) as u8)
+				account_byte.wrapping_add(
+					u8::try_from(index).expect("index fits in u8").wrapping_mul(29).wrapping_add(1),
+				)
 			}),
 		},
 		metadata: (metadata_len > 0)
@@ -179,13 +186,13 @@ fn circular_finder_frame(payload: &str) -> RgbaFrame {
 		(QUIET_ZONE + module_width - 7, QUIET_ZONE),
 		(QUIET_ZONE, QUIET_ZONE + module_width - 7),
 	] {
-		let center_x = (finder_column * SCALE) as f64 + 3.5 * SCALE as f64;
-		let center_y = (finder_row * SCALE) as f64 + 3.5 * SCALE as f64;
+		let center_x = pixel_f64(finder_column * SCALE) + 3.5 * pixel_f64(SCALE);
+		let center_y = pixel_f64(finder_row * SCALE) + 3.5 * pixel_f64(SCALE);
 		for row in finder_row * SCALE..(finder_row + 7) * SCALE {
 			for column in finder_column * SCALE..(finder_column + 7) * SCALE {
-				let distance = ((column as f64 + 0.5 - center_x).powi(2) +
-					(row as f64 + 0.5 - center_y).powi(2))
-				.sqrt() / SCALE as f64;
+				let distance = ((pixel_f64(column) + 0.5 - center_x).powi(2) +
+					(pixel_f64(row) + 0.5 - center_y).powi(2))
+				.sqrt() / pixel_f64(SCALE);
 				let value = if distance < 1.5 || (2.5..3.5).contains(&distance) { 245 } else { 24 };
 				let offset = (row * frame.width + column) * 4;
 				frame.pixels[offset..offset + 3].fill(value);

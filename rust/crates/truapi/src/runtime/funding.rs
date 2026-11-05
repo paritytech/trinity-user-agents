@@ -922,7 +922,9 @@ impl FundingRegistry {
 					if self.loaded.load(Ordering::Acquire) {
 						self.reconcile_work(services, now_ms);
 					}
-					return Some(SWEEP_RETRY.as_millis() as u64);
+					return Some(
+						u64::try_from(SWEEP_RETRY.as_millis()).expect("retry delay fits in u64"),
+					);
 				},
 			}
 		}
@@ -1083,7 +1085,9 @@ impl FundingRegistry {
 	/// went: done when every call was answered, due again shortly otherwise.
 	/// A link replaced meanwhile is left as it is.
 	fn caught_up(&self, provider_id: &ProductId, generation: u64, answered: bool) {
-		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		let retry_ms = current_unix_millis().saturating_add(
+			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let due = {
 			let mut links = self.lock_links();
 			let held = links.get_mut(provider_id).filter(|held| held.generation == generation);
@@ -1105,7 +1109,9 @@ impl FundingRegistry {
 	/// call. A link still connecting or already due is caught up anyway, and
 	/// one being caught up is due again once that ends.
 	fn call_unanswered(&self, provider_id: &ProductId, generation: u64) {
-		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		let retry_ms = current_unix_millis().saturating_add(
+			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let mut links = self.lock_links();
 		let Some(held) = links.get_mut(provider_id).filter(|held| held.generation == generation)
 		else {
@@ -1760,7 +1766,9 @@ impl RuntimeServices {
 		let held = engine_holds(&self, &provider, direction, funds.host_id).await;
 		let now_ms = current_unix_millis();
 		let lapse_ms = funds.recorded_at_ms.saturating_add(UNKNOWN_FUNDS_GRACE_MS);
-		let retry_ms = now_ms.saturating_add(RESOLVE_RETRY.as_millis() as u64);
+		let retry_ms = now_ms.saturating_add(
+			u64::try_from(RESOLVE_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let (taken, next_ms) = match held {
 			Ok(true) => (Some(true), None),
 			Ok(false) if now_ms >= lapse_ms => (Some(false), None),

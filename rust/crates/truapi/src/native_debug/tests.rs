@@ -126,7 +126,8 @@ async fn observed_at_is_stamped_when_the_frame_is_taken_not_when_it_flushes() {
 	// The flush really did happen later, so the previous assertion is not
 	// vacuous: an arrival stamp would have landed here instead.
 	assert!(
-		arrived - observed >= ACCEPT_DELAY.as_millis() as u64 / 2,
+		arrived - observed >=
+			u64::try_from(ACCEPT_DELAY.as_millis()).expect("delay fits in u64") / 2,
 		"expected a gap between the stamp and the flush; stamped {observed}, arrived {arrived}"
 	);
 }

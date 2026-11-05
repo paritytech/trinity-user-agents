@@ -60,9 +60,17 @@ enum FrameError {
 	Length { expected: usize, actual: usize },
 }
 
+fn to_f64(value: usize) -> f64 {
+	f64::from(u32::try_from(value).expect("image coordinates are bounded by MAX_IMAGE_EDGE"))
+}
+
+fn count_to_f64(count: u64) -> f64 {
+	f64::from(u32::try_from(count).expect("pixel counts are bounded by MAX_IMAGE_PIXELS"))
+}
+
 #[derive(Clone)]
 struct LineFinder {
-	line: f64,
+	line: usize,
 	center: f64,
 	module: f64,
 	foreground: bool,
@@ -88,8 +96,9 @@ pub fn decode_path(path: &Path) -> AnyResult<String> {
 		.with_guessed_format()
 		.with_context(|| format!("detect image format for {}", path.display()))?;
 	let mut limits = Limits::default();
-	limits.max_image_width = Some(MAX_IMAGE_EDGE as u32);
-	limits.max_image_height = Some(MAX_IMAGE_EDGE as u32);
+	let max_edge = u32::try_from(MAX_IMAGE_EDGE).expect("MAX_IMAGE_EDGE fits in u32");
+	limits.max_image_width = Some(max_edge);
+	limits.max_image_height = Some(max_edge);
 	limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
 	reader.limits(limits);
 	let image = reader
@@ -135,8 +144,12 @@ fn decode_rgba_frame(
 			let luminance =
 				(u32::from(pixel[0]) * 54 + u32::from(pixel[1]) * 183 + u32::from(pixel[2]) * 19) /
 					256;
-			((luminance * u32::from(pixel[3]) + 255 * u32::from(255_u8.saturating_sub(pixel[3]))) /
-				255) as u8
+			u8::try_from(
+				(luminance * u32::from(pixel[3]) +
+					255 * u32::from(255_u8.saturating_sub(pixel[3]))) /
+					255,
+			)
+			.expect("an alpha-weighted luminance stays in u8")
 		})
 		.collect::<Vec<_>>();
 	let mut payloads = detected_payloads(width, height, &grayscale, false);
@@ -205,7 +218,7 @@ fn finder_points(width: usize, height: usize, pixels: &[u8], threshold: u8) -> O
 		finder_lines(width, height, |column, row| pixels[row * width + column] > threshold)?;
 	let mut vertical_by_column = vec![Vec::new(); width];
 	for finder in vertical {
-		vertical_by_column[finder.line as usize].push(finder);
+		vertical_by_column[finder.line].push(finder);
 	}
 	let mut finders: Vec<Finder> = Vec::new();
 	let mut intersections = 0;
@@ -218,8 +231,8 @@ fn finder_points(width: usize, height: usize, pixels: &[u8], threshold: u8) -> O
 			let module = (horizontal.module + vertical.module) / 2.0;
 			if horizontal.foreground != vertical.foreground ||
 				(horizontal.module - vertical.module).abs() > module * 0.35 ||
-				(horizontal.center - vertical.line).abs() > module ||
-				(horizontal.line - vertical.center).abs() > module
+				(horizontal.center - to_f64(vertical.line)).abs() > module ||
+				(to_f64(horizontal.line) - vertical.center).abs() > module
 			{
 				continue;
 			}
@@ -227,14 +240,14 @@ fn finder_points(width: usize, height: usize, pixels: &[u8], threshold: u8) -> O
 			if intersections > MAX_FINDER_INTERSECTIONS {
 				return None;
 			}
-			let x = (horizontal.center + vertical.line) / 2.0;
-			let y = (horizontal.line + vertical.center) / 2.0;
+			let x = (horizontal.center + to_f64(vertical.line)) / 2.0;
+			let y = (to_f64(horizontal.line) + vertical.center) / 2.0;
 			if let Some(existing) = finders.iter_mut().find(|existing| {
 				existing.foreground == horizontal.foreground &&
 					(existing.x - x).abs() < module * 2.0 &&
 					(existing.y - y).abs() < module * 2.0
 			}) {
-				let matches = existing.matches as f64;
+				let matches = to_f64(existing.matches);
 				existing.x = (existing.x * matches + x) / (matches + 1.0);
 				existing.y = (existing.y * matches + y) / (matches + 1.0);
 				existing.module = (existing.module * matches + module) / (matches + 1.0);
@@ -275,18 +288,18 @@ where
 				continue;
 			}
 			let total = runs.iter().map(|(_, length, _)| *length).sum::<usize>();
-			let module = total as f64 / 7.0;
+			let module = to_f64(total) / 7.0;
 			let units = [1.0, 1.0, 3.0, 1.0, 1.0];
 			if module >= 2.0 &&
 				runs.iter().zip(units).all(|((_, length, _), units)| {
-					(*length as f64 - module * units).abs() <= module * 0.65
+					(to_f64(*length) - module * units).abs() <= module * 0.65
 				}) {
 				if finders.len() == MAX_LINE_FINDERS {
 					return None;
 				}
 				finders.push(LineFinder {
-					line: line as f64,
-					center: runs[0].0 as f64 + total as f64 / 2.0,
+					line,
+					center: to_f64(runs[0].0) + to_f64(total) / 2.0,
 					module,
 					foreground: runs[0].2,
 				});
@@ -324,18 +337,18 @@ fn sample_grid(
 		return None;
 	}
 	let size = version as usize * 4 + 17;
-	if (horizontal_size - size as f64).abs() > 1.0 || (vertical_size - size as f64).abs() > 1.0 {
+	if (horizontal_size - to_f64(size)).abs() > 1.0 || (vertical_size - to_f64(size)).abs() > 1.0 {
 		return None;
 	}
 
-	let scale_x = (top_right.x - top_left.x) / (size - 7) as f64;
-	let scale_y = (bottom_left.y - top_left.y) / (size - 7) as f64;
+	let scale_x = (top_right.x - top_left.x) / to_f64(size - 7);
+	let scale_y = (bottom_left.y - top_left.y) / to_f64(size - 7);
 	let origin_x = top_left.x - scale_x * 3.5;
 	let origin_y = top_left.y - scale_y * 3.5;
 	if origin_x < 0.0 ||
 		origin_y < 0.0 ||
-		origin_x + size as f64 * scale_x >= width as f64 ||
-		origin_y + size as f64 * scale_y >= height as f64
+		origin_x + to_f64(size) * scale_x >= to_f64(width) ||
+		origin_y + to_f64(size) * scale_y >= to_f64(height)
 	{
 		return None;
 	}
@@ -370,14 +383,14 @@ fn otsu_threshold(pixels: &[u8]) -> u8 {
 		}
 		background_sum += value as u64 * count;
 		let foreground_count = total - background_count;
-		let background_mean = background_sum as f64 / background_count as f64;
-		let foreground_mean = (sum - background_sum) as f64 / foreground_count as f64;
-		let variance = background_count as f64 *
-			foreground_count as f64 *
+		let background_mean = count_to_f64(background_sum) / count_to_f64(background_count);
+		let foreground_mean = count_to_f64(sum - background_sum) / count_to_f64(foreground_count);
+		let variance = count_to_f64(background_count) *
+			count_to_f64(foreground_count) *
 			(background_mean - foreground_mean).powi(2);
 		if variance > best_variance {
 			best_variance = variance;
-			threshold = value as u8;
+			threshold = u8::try_from(value).expect("the histogram has 256 buckets");
 		}
 	}
 	threshold
