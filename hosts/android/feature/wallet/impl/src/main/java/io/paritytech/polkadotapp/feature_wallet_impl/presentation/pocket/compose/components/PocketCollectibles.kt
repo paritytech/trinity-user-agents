@@ -5,8 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseIn
 import androidx.compose.animation.core.EaseOut
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -30,30 +28,22 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
-import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
@@ -70,7 +60,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -81,26 +73,12 @@ private const val COVER_CAMERA_DISTANCE = 32f
 
 private const val PAGE_EXPAND_DURATION_MS = 250
 private const val STEADY_FRAMES_BEFORE_EXPANDING = 3
-private const val SKELETON_SWEEP_LOOP_MS = 1350
-private const val SKELETON_SWEEP_BAND_WIDTH = 0.5f
-private const val SKELETON_SWEEP_ALPHA = 0.12f
-private const val SKELETON_DOT_ALPHA = 0.25f
-private const val SKELETON_DOT_COLUMNS = 12
+private const val STEADY_FRAME_SLACK = 1.5
 
 private val PageCornerRadius = 20.dp
-private val SkeletonTitleSize = DpSize(136.dp, 16.dp)
-private val SkeletonSubtitleSize = DpSize(180.dp, 10.dp)
-private val SkeletonButtonSize = 40.dp
-private val SkeletonFirstCardHeight = 260.dp
-private val SkeletonFirstLabelWidth = 80.dp
-private val SkeletonSecondLabelWidth = 116.dp
-private val SkeletonLabelHeight = 14.dp
-private val SkeletonDotPitch = 24.dp
-private val SkeletonDotRadius = 2.5.dp
 private val CoverSpine = TransformOrigin(0f, 0.5f)
 private val PageTop = TransformOrigin(0.5f, 0f)
 private val ReadyTimeout = 10.seconds
-private val SteadyFrameInterval = 34.milliseconds
 private val SettleTimeout = 1.seconds
 
 @Composable
@@ -126,13 +104,17 @@ fun PocketCollectibles(
         delay(COLLECTIBLES_LIFT_DURATION_MS.milliseconds)
         stage = BookStage.Opened
         book.openCover()
+        val frameInterval = shortestFrameInterval()
 
-        withTimeoutOrNull(ReadyTimeout) {
-            snapshotFlow { pageRevealed || loadProgress is DotNsLoadProgress.Failed }.first { it }
+        val loaded = withTimeoutOrNull(ReadyTimeout) {
+            snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
         }
-        if (pageRevealed) {
-            awaitSteadyFrames()
+        val revealed = loaded is DotNsLoadProgress.Completed &&
+            withTimeoutOrNull(ReadyTimeout) { snapshotFlow { pageRevealed }.first { it } } != null
+        if (revealed) {
+            awaitSteadyFrames(frameInterval)
             book.handOff()
+            stage = BookStage.Shown
         } else {
             stage = BookStage.Failed
         }
@@ -162,11 +144,12 @@ fun PocketCollectibles(
                 stage = stage
             )
 
-            // A scaled or rounded-clipped WebView re-rasters or draws offscreen, which stalls the UI thread.
-            if (stage != BookStage.Failed) {
+            // Kept out of the page layer, where scaling and the rounded clip stall its paints; the mask frames and fades it instead.
+            if (stage == BookStage.Opened || stage == BookStage.Shown) {
                 ProductWebViewHost(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .graphicsLayer { translationY = book.pageMargin(pageInset.toPx()) },
                     webView = webView
                 )
@@ -175,7 +158,14 @@ fun PocketCollectibles(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pageFrameMask(book, inset = pageInset, color = PolkadotTheme.colors.bg.surface.main)
+                    .pageFrameMask(
+                        book = book,
+                        inset = pageInset,
+                        color = PolkadotTheme.colors.bg.surface.main,
+                        veilsPage = { stage == BookStage.Opened && pageRevealed }
+                    )
+                    // Until the page fills the box, the masked margins sit over live page content.
+                    .then(if (stage == BookStage.Shown) Modifier else Modifier.pointerInput(Unit) {})
             )
 
             CollectiblesSketchbook(
@@ -221,106 +211,6 @@ private fun CollectiblesPage(
     }
 }
 
-@Composable
-private fun CollectiblesSkeleton(modifier: Modifier, sweeping: Boolean) {
-    Column(
-        modifier = modifier
-            .skeletonSweep(sweeping)
-            .padding(PolkadotTheme.spacings.mediumIncreased)
-    ) {
-        VerticalSpacer { small }
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                SkeletonBlock(modifier = Modifier.size(SkeletonTitleSize), shape = PolkadotTheme.shapes.small)
-                VerticalSpacer { small }
-                SkeletonBlock(modifier = Modifier.size(SkeletonSubtitleSize), shape = PolkadotTheme.shapes.full)
-            }
-            SkeletonBlock(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .size(SkeletonButtonSize),
-                shape = PolkadotTheme.shapes.full
-            )
-        }
-        VerticalSpacer { small }
-        SkeletonCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(SkeletonFirstCardHeight),
-            labelWidth = SkeletonFirstLabelWidth
-        )
-        VerticalSpacer { large }
-        SkeletonCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            labelWidth = SkeletonSecondLabelWidth
-        )
-    }
-}
-
-@Composable
-private fun SkeletonCard(modifier: Modifier, labelWidth: Dp) {
-    val dotColor = PolkadotTheme.colors.fg.tertiary.copy(alpha = SKELETON_DOT_ALPHA)
-
-    Column(
-        modifier = modifier
-            .background(PolkadotTheme.colors.bg.surface.container, PolkadotTheme.shapes.extraLarge)
-            .padding(PolkadotTheme.spacings.mediumIncreased)
-    ) {
-        SkeletonBlock(
-            modifier = Modifier.size(width = labelWidth, height = SkeletonLabelHeight),
-            shape = PolkadotTheme.shapes.small
-        )
-        VerticalSpacer { mediumIncreased }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clipToBounds()
-                .drawBehind { drawDotGrid(dotColor) }
-        )
-    }
-}
-
-@Composable
-private fun SkeletonBlock(modifier: Modifier, shape: Shape) {
-    Box(modifier = modifier.background(PolkadotTheme.colors.bg.surface.nested, shape))
-}
-
-private fun DrawScope.drawDotGrid(color: Color) {
-    val pitch = SkeletonDotPitch.toPx()
-    val radius = SkeletonDotRadius.toPx()
-    val left = (size.width - pitch * (SKELETON_DOT_COLUMNS - 1)) / 2
-    var y = radius
-    while (y + radius <= size.height) {
-        repeat(SKELETON_DOT_COLUMNS) { column -> drawCircle(color, radius, Offset(left + column * pitch, y)) }
-        y += pitch
-    }
-}
-
-@Composable
-private fun Modifier.skeletonSweep(running: Boolean): Modifier {
-    val highlight = PolkadotTheme.colors.fg.primary.copy(alpha = SKELETON_SWEEP_ALPHA)
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(running) {
-        if (running) progress.animateTo(1f, infiniteRepeatable(tween(SKELETON_SWEEP_LOOP_MS, easing = LinearEasing)))
-    }
-
-    return drawWithCache {
-        val band = size.width * SKELETON_SWEEP_BAND_WIDTH
-        val brush = Brush.horizontalGradient(listOf(Color.Transparent, highlight, Color.Transparent), endX = band)
-        val bandSize = Size(band, size.height)
-
-        onDrawWithContent {
-            drawContent()
-            translate(left = -band + (size.width + band) * progress.value) { drawRect(brush, size = bandSize) }
-        }
-    }
-}
-
 private fun Modifier.collectiblesPageLayer(book: CollectiblesBookMotion, inset: Dp): Modifier = graphicsLayer {
     val scale = book.pageScale(size.width, inset.toPx())
 
@@ -332,33 +222,54 @@ private fun Modifier.collectiblesPageLayer(book: CollectiblesBookMotion, inset: 
     clip = true
 }
 
-private fun Modifier.pageFrameMask(book: CollectiblesBookMotion, inset: Dp, color: Color): Modifier = drawWithCache {
+private fun Modifier.pageFrameMask(
+    book: CollectiblesBookMotion,
+    inset: Dp,
+    color: Color,
+    veilsPage: () -> Boolean,
+): Modifier = drawWithCache {
+    val bounds = size.toRect()
     val outsideFrame = Path().apply { fillType = PathFillType.EvenOdd }
     onDrawBehind {
+        val veiling = veilsPage()
         val margin = book.pageMargin(inset.toPx())
-        val frameBottom = margin + size.height * book.pageScale(size.width, inset.toPx())
-        val radius = book.pageMargin(PageCornerRadius.toPx())
-        outsideFrame.rewind()
-        outsideFrame.addRect(size.toRect())
-        outsideFrame.addRoundRect(RoundRect(margin, margin, size.width - margin, frameBottom, CornerRadius(radius)))
-        drawPath(outsideFrame, color, alpha = book.pageAlpha.value)
+        if (margin > 0f) {
+            val frameBottom = margin + size.height * book.pageScale(size.width, inset.toPx())
+            val radius = book.pageMargin(PageCornerRadius.toPx())
+            outsideFrame.rewind()
+            outsideFrame.addRect(bounds)
+            outsideFrame.addRoundRect(RoundRect(margin, margin, size.width - margin, frameBottom, CornerRadius(radius)))
+            drawPath(outsideFrame, color, alpha = if (veiling) 1f else book.pageAlpha.value)
+        }
+        if (veiling) drawRect(color, alpha = 1f - book.pageAlpha.value)
     }
 }
 
+private suspend fun shortestFrameInterval(): Duration {
+    var previous = withFrameNanos { it }
+    var shortest = Duration.INFINITE
+    repeat(STEADY_FRAMES_BEFORE_EXPANDING) {
+        val now = withFrameNanos { it }
+        shortest = minOf(shortest, (now - previous).nanoseconds)
+        previous = now
+    }
+    return shortest
+}
+
 // The page's first visible paint holds the UI thread for a few frames, and expanding over them would stutter.
-private suspend fun awaitSteadyFrames() {
+private suspend fun awaitSteadyFrames(frameInterval: Duration) {
     withTimeoutOrNull(SettleTimeout) {
         var previous = withFrameNanos { it }
         var steadyFrames = 0
         while (steadyFrames < STEADY_FRAMES_BEFORE_EXPANDING) {
             val now = withFrameNanos { it }
-            steadyFrames = if (now - previous <= SteadyFrameInterval.inWholeNanoseconds) steadyFrames + 1 else 0
+            steadyFrames = if ((now - previous).nanoseconds <= frameInterval * STEADY_FRAME_SLACK) steadyFrames + 1 else 0
             previous = now
         }
     }
 }
 
-private enum class BookStage { Closed, Opened, Failed }
+private enum class BookStage { Closed, Opened, Shown, Failed }
 
 @Stable
 private class CollectiblesBookMotion {
