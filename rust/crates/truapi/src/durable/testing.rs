@@ -159,7 +159,7 @@ impl PinnedView for FakeView {
 
 	async fn search(&self, from: u64, to: u64, _tx_hash: H256) -> SearchResult {
 		self.ranges.lock().push((from, to));
-		self.result
+		self.result.clone()
 	}
 }
 
@@ -344,7 +344,7 @@ impl BlockBackend for FakeChain {
 		if state.unreadable_outcomes.contains(&at.hash) {
 			return Err(unavailable("dispatch_outcome"));
 		}
-		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).copied())
+		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).cloned())
 	}
 }
 
