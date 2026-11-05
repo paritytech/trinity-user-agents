@@ -25,6 +25,12 @@ const setFaceShown = async (shown: boolean): Promise<void> => {
   logLine(`setFaceShown(${shown}): ${answer}`);
 };
 
+const setBackShown = async (shown: boolean): Promise<void> => {
+  const outcome = await client.expandedCard.setBackShown({ shown });
+  const answer = outcome.isOk() ? "ok" : errorTag(outcome.error);
+  logLine(`setBackShown(${shown}): ${answer}`);
+};
+
 // A domain error nests the versioned error one level down; the other kinds are the tag itself.
 function errorTag(error: { tag: string; value?: unknown }): string {
   if (error.tag !== "Domain") return error.tag;
@@ -41,6 +47,12 @@ document.getElementById("show")!.addEventListener("click", () => void setFaceSho
 document.getElementById("hide-later")!.addEventListener("click", () => {
   logLine(`hiding in ${HIDE_DELAY_MS / 1000} s`);
   setTimeout(() => void setFaceShown(false), HIDE_DELAY_MS);
+});
+document.getElementById("show-back")!.addEventListener("click", () => void setBackShown(true));
+document.getElementById("show-front")!.addEventListener("click", () => void setBackShown(false));
+document.getElementById("show-back-later")!.addEventListener("click", () => {
+  logLine(`showing the back in ${HIDE_DELAY_MS / 1000} s`);
+  setTimeout(() => void setBackShown(true), HIDE_DELAY_MS);
 });
 window.addEventListener("resize", () => {
   showHeight();

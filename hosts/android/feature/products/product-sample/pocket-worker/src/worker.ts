@@ -1,9 +1,11 @@
 // A Pocket demo worker built on the core's own client, so it needs no product SDK.
 //
-// It publishes one card, `loyalty`, draws a live face for it through the unified
-// renderer, counts stamps pressed on that face, reports its card collection, and
-// gives the card up when its own Remove button is pressed.
+// It publishes one card, `loyalty`, draws a live front and back for it through the
+// unified renderer, counts stamps pressed on each side, reports its card collection,
+// and gives the card up when its own Remove button is pressed.
+import { scale } from "@parity/truapi";
 import { getClientSync } from "@parity/truapi/sandbox";
+import code from "../faces/code.png";
 import type {
   HostPocketListSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -14,6 +16,8 @@ import type {
 const CARD_ID = "loyalty";
 const STAMP_ACTION = "stamp";
 const REMOVE_ACTION = "remove";
+const STAMP_BACK_ACTION = "stamp-back";
+const CODE = scale.bytesToHex(code);
 
 const client = getClientSync();
 if (!client) {
@@ -21,7 +25,9 @@ if (!client) {
 }
 
 let stamps = 0;
-const openFaces = new Set<(node: RendererNode) => void>();
+let backStamps = 0;
+const openFronts = new Set<(node: RendererNode) => void>();
+const openBacks = new Set<(node: RendererNode) => void>();
 
 function text(value: string, style: "TitleMediumRegular" | "BodyMediumRegular", color: "FgPrimary" | "FgSecondary"): RendererNode {
   return {
@@ -47,8 +53,9 @@ function face(): RendererNode {
       ],
       props: { verticalArrangement: "SpaceBetween" },
       children: [
+        text("FRONT", "BodyMediumRegular", "FgSecondary"),
         text("Loyalty", "TitleMediumRegular", "FgPrimary"),
-        text(`Stamps: ${stamps}`, "BodyMediumRegular", "FgSecondary"),
+        text(`Stamps: ${stamps} · back stamps: ${backStamps}`, "BodyMediumRegular", "FgSecondary"),
         {
           tag: "Row",
           value: {
@@ -62,25 +69,80 @@ function face(): RendererNode {
   };
 }
 
+// The back carries the same code as faces/loyalty-back.json, sent as an inline image so the
+// static back shows an archive image and the live back an inline one.
+function back(): RendererNode {
+  return {
+    tag: "Row",
+    value: {
+      modifiers: [
+        { tag: "FillWidth", value: true },
+        { tag: "Padding", value: { top: 16, end: 16 } },
+      ],
+      props: {},
+      children: [
+        {
+          tag: "Image",
+          value: {
+            modifiers: [
+              { tag: "Width", value: 120 },
+              { tag: "Height", value: 120 },
+            ],
+            props: { source: { tag: "Inline", value: CODE }, fit: "Contain" },
+          },
+        },
+        {
+          tag: "Column",
+          value: {
+            modifiers: [{ tag: "Padding", value: { top: 0, end: 0, start: 16 } }],
+            props: {},
+            children: [
+              text("BACK · live", "TitleMediumRegular", "FgPrimary"),
+              text(`Back stamps: ${backStamps}`, "BodyMediumRegular", "FgSecondary"),
+              button("Stamp back", STAMP_BACK_ACTION, "Primary"),
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
 function redraw(): void {
-  const tree = face();
-  for (const send of openFaces) send(tree);
+  const front = face();
+  for (const send of openFronts) send(front);
+  const tree = back();
+  for (const send of openBacks) send(tree);
 }
 
 // The host opens one render per face on screen and closes it when the face leaves.
 client.renderer.onRender((request: ProductRendererRenderRequest, send: (node: RendererNode) => void) => {
-  if (request.context.tag !== "PocketCard" || request.context.value.cardId !== CARD_ID) {
-    throw new Error(`unsupported render context: ${JSON.stringify(request.context)}`);
+  const { context } = request;
+  const side =
+    context.tag === "PocketCard" && context.value.cardId === CARD_ID
+      ? openFronts
+      : context.tag === "PocketCardBack" && context.value.cardId === CARD_ID
+        ? openBacks
+        : undefined;
+  if (side === undefined) {
+    throw new Error(`unsupported render context: ${JSON.stringify(context)}`);
   }
-  openFaces.add(send);
-  send(face());
+  side.add(send);
+  send(side === openFronts ? face() : back());
   return () => {
-    openFaces.delete(send);
+    side.delete(send);
   };
 });
 
 client.renderer.actionSubscribe().subscribe({
   next(action: HostRendererActionSubscribeItem) {
+    if (action.context.tag === "PocketCardBack") {
+      if (action.actionId === STAMP_BACK_ACTION) {
+        backStamps += 1;
+        redraw();
+      }
+      return;
+    }
     if (action.context.tag !== "PocketCard") return;
     if (action.actionId === STAMP_ACTION) {
       stamps += 1;

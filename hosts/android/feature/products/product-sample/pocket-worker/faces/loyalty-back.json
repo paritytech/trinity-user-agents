@@ -1,0 +1,27 @@
+{
+  "tag": "Row",
+  "value": {
+    "modifiers": [
+      { "tag": "FillWidth", "value": true },
+      { "tag": "Padding", "value": { "top": 16, "end": 16 } }
+    ],
+    "props": {},
+    "children": [
+      {
+        "tag": "Image",
+        "value": {
+          "modifiers": [ { "tag": "Width", "value": 120 }, { "tag": "Height", "value": 120 } ],
+          "props": { "source": { "tag": "Archive", "value": "faces/code.png" }, "fit": "Contain" }
+        }
+      },
+      {
+        "tag": "Text",
+        "value": {
+          "modifiers": [ { "tag": "Padding", "value": { "top": 0, "end": 0, "start": 16 } } ],
+          "props": { "style": "TitleMediumRegular", "color": "FgPrimary" },
+          "children": [ { "tag": "String", "value": { "text": "BACK · static" } } ]
+        }
+      }
+    ]
+  }
+}

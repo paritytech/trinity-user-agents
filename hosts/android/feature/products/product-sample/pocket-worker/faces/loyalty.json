@@ -11,6 +11,14 @@
         "tag": "Text",
         "value": {
           "modifiers": [],
+          "props": { "style": "BodyMediumRegular", "color": "FgSecondary" },
+          "children": [ { "tag": "String", "value": { "text": "FRONT" } } ]
+        }
+      },
+      {
+        "tag": "Text",
+        "value": {
+          "modifiers": [],
           "props": { "style": "TitleMediumRegular", "color": "FgPrimary" },
           "children": [ { "tag": "String", "value": { "text": "Loyalty" } } ]
         }
