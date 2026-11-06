@@ -27,20 +27,22 @@ The package exposes tree-shakeable subpath exports — import only what your env
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
-`ProductRuntimeConfig` configures the pairing host and requires no network
-suffix. The signing constructor's configuration requires
-`runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
-`testnet`) matching the People chain and the wallet's onboarding
-configuration.
+`ProductRuntimeConfig` configures both host roles. Its `stack` is the Trinity
+stack the host build runs: `pointer`, the stack's link
+(`polkadotapp://stack?key=0x…&url=…`), and `descriptor`, the bytes of the
+signed copy the build bundles, which the core verifies against the pointer's
+key. Every chain the core uses, the network `getChainInfo` reports, and the TLD
+a signing host derives its reserved identities under come from that
+descriptor. The core refuses a pointer without a key, a descriptor without a
+People or Bulletin chain, and a stack that uses Polkadot's genesis hashes or
+the `dot` TLD unless `allowsReservedValues` is set, which only a Polkadot build
+does. A stack without an Asset Hub resolves no product manifest from dotNS, so
+every cross-product grant not already cached is refused.
 
-`runtimeConfig.assetHub` is required by both configurations, pairing and
-signing. It is the Asset Hub genesis hash, in the same shape as
-`runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read
-from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. A config
-omitting it is rejected.
+The test host has no descriptor to bundle, so it passes `testStack` in place of
+`stack`: the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
+`MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
 
 ## Bundler requirements
 

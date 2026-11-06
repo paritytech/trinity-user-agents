@@ -98,8 +98,8 @@ export interface TestHostFixtureOptions {
   /**
    * Chains to serve, in `@parity/host-api-test-sdk`'s `NetworkConfig` shape.
    *
-   * A convenience over spelling out `mock.chainProxies`, `mock.supportedChains`
-   * and `runtimeConfig` separately, which have to agree. The chain's role is
+   * A convenience over spelling out `mock.chainProxies`, `mock.servedChains`
+   * and `runtimeConfig.testStack` separately, which have to agree. The chain's role is
    * read from the `id` suffix (`-asset-hub`, `-people`, `-bulletin`, else the
    * relay) and the rest of the id is the network name.
    *

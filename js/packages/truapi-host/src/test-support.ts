@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import type { BundledStack } from "./runtime.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -27,7 +30,6 @@ export function makeHostCallbacks(
     },
     features: {
       featureSupported: async () => ({ supported: false }),
-      supportedChains: async () => ({ network: "paseo", chains: [] }),
     },
     extrinsicVersion: {
       transactionExtensionVersions: async () => ({ chains: [] }),
@@ -164,4 +166,21 @@ export function makeHostCallbacks(
 /** Resolve after the current microtask/immediate queue, letting pending async work run. */
 export function settle(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/**
+ * The previewnet stack as a host build bundles it: the signed copy and link
+ * the CLI ships, read from `rust/crates/truapi-host-cli/stacks`.
+ */
+export function bundledTestStack(): BundledStack {
+  const stacks = new URL(
+    "../../../../rust/crates/truapi-host-cli/stacks/",
+    import.meta.url,
+  );
+  return {
+    pointer: readFileSync(new URL("previewnet.link", stacks), "utf8").trim(),
+    descriptor: new Uint8Array(
+      readFileSync(new URL("previewnet.json", stacks)),
+    ),
+  };
 }
