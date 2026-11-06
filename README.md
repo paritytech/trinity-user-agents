@@ -316,7 +316,7 @@ runtime's type by name.
 ### Contract calls
 
 `chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
-`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`RuntimeApiCaller` transports support individual and batched reads of ABI data. For writes,
 `dry_run` simulates as the signer and returns a prepared transaction;
 `execute_until_finalized` submits it and waits for successful finalized dispatch.
 

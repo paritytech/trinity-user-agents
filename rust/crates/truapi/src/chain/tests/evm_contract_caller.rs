@@ -560,13 +560,12 @@ fn a_contract_read_batch_keeps_successes_and_each_failure_in_request_order() {
 		Ok(simulation_result(Ok(ExecReturnValue { flags: 0, data: vec![6] }))),
 	]);
 	let inputs = vec![INPUT.to_vec(); answers.len()];
-	let results = block_on(crate::evm_contract::read_batch(
-		&mut ScriptedRuntimeApi(answers),
-		&CONTRACT,
-		inputs,
-	));
+	let results = {
+		let mut runtime = ScriptedRuntimeApi(answers);
+		let contract = CONTRACT;
+		block_on(crate::evm_contract::read_batch(&mut runtime, &contract, inputs))
+	};
 	let outcomes: Vec<_> = results
-		.into_iter()
 		.map(|result| {
 			result.map_err(|error| match error {
 				EvmContractError::Reverted { .. } => "reverted",
