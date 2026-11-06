@@ -13,6 +13,7 @@ use crate::{
 			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
 			derive_root_keypair_from_entropy,
 		},
+		sso::pairing::{SsoStatementData, decrypt_session_statement_data},
 	},
 	platform::ProductId,
 };
@@ -788,6 +789,15 @@ fn subtree_request() -> IncomingSsoRequest {
 
 /// Serve one product subtree request from [`paired_peer`] over `platform`.
 fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<ResponderExit>, String> {
+	deliver_subtree_request(platform, 1).remove(0)
+}
+
+/// Deliver one product subtree request from [`paired_peer`] `deliveries`
+/// times to one responder over `platform`.
+fn deliver_subtree_request(
+	platform: Arc<StubPlatform>,
+	deliveries: usize,
+) -> Vec<Result<Option<ResponderExit>, String>> {
 	let peer = paired_peer();
 	let replay_scope =
 		peer.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
@@ -795,13 +805,36 @@ fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<Responder
 	let service = SigningHostSsoService::new(signing_host.clone());
 	let responder = SsoResponderService::new(services, signing_host);
 	let session = responder_session(&ENTROPY, NETWORK_SUFFIX, peer).unwrap();
-	futures::executor::block_on(serve_statement(
-		&responder,
-		&service,
-		&session,
-		replay_scope,
-		subtree_request(),
-	))
+	(0..deliveries)
+		.map(|_| {
+			futures::executor::block_on(serve_statement(
+				&responder,
+				&service,
+				&session,
+				replay_scope,
+				subtree_request(),
+			))
+		})
+		.collect()
+}
+
+/// The statement data the responder published on `platform`, oldest first.
+fn published_statement_data(platform: &StubPlatform) -> Vec<SsoStatementData> {
+	let session = responder_session(&ENTROPY, NETWORK_SUFFIX, paired_peer()).unwrap();
+	platform
+		.sent_rpc
+		.lock()
+		.unwrap()
+		.iter()
+		.map(|request| serde_json::from_str::<serde_json::Value>(request).unwrap())
+		.filter(|request| request["method"] == SUBMIT_STATEMENT_METHOD)
+		.map(|request| {
+			let statement_hex = request["params"][0].as_str().unwrap();
+			let statement = hex::decode(statement_hex.trim_start_matches("0x")).unwrap();
+			let verified = decode_verified_statement_data(&statement, None).unwrap();
+			decrypt_session_statement_data(&session, &verified.data).unwrap()
+		})
+		.collect()
 }
 
 fn submit_answers(status: &str, count: usize) -> Vec<(&'static str, String)> {
@@ -846,6 +879,7 @@ fn an_answer_is_sent_until_the_people_chain_takes_it() {
 		&service,
 		&session,
 		subtree_request(),
+		&mut Vec::new(),
 	));
 
 	assert_eq!(
@@ -868,6 +902,31 @@ fn a_rejected_ack_is_not_sent_again() {
 		(served.is_err(), recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
 		(true, 1)
 	);
+}
+
+/// A request that ran is not run again, so an answer the People chain
+/// refused has to be published when the request is delivered again.
+#[test]
+fn a_refused_answer_is_published_when_the_request_is_delivered_again() {
+	let platform = Arc::new(StubPlatform {
+		// Ack, refused answer, then the ack and answer for the redelivery.
+		rpc_method_responses: ["new", "ignored", "new", "new"]
+			.into_iter()
+			.flat_map(|status| submit_answers(status, 1))
+			.collect(),
+		..StubPlatform::default()
+	});
+
+	let [refused, redelivered] = deliver_subtree_request(platform.clone(), 2).try_into().unwrap();
+
+	let answers = published_statement_data(&platform)
+		.into_iter()
+		.filter(|data| matches!(data, SsoStatementData::Request { .. }))
+		.collect::<Vec<_>>();
+	let [refused_answer, published_answer] = answers.as_slice() else {
+		panic!("expected the answer and its republication, got {answers:?}");
+	};
+	assert_eq!((refused.is_err(), redelivered, published_answer), (true, Ok(None), refused_answer));
 }
 
 /// A request whose ack failed must run when it is delivered again, not be

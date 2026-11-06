@@ -1178,11 +1178,16 @@ request is acknowledged, then recorded as started before its messages execute
 and as completed afterward. A request whose acknowledgement fails is not
 recorded, so it runs when it is delivered again. Either state suppresses
 execution of an unexpired duplicate while still publishing the statement-level
-success acknowledgement. A duplicate `Disconnected` request still terminates and
-removes that peer. Expired entries are pruned. Missing or overly distant peer
-expiry is retained for at most the seven-day SSO statement lifetime. At 1,024
-live entries the ledger rejects a new request before acknowledging or executing
-it instead of evicting an unexpired replay marker.
+success acknowledgement. When the People chain refuses an answer to a request
+that ran, the responder keeps the answer in memory and publishes it again, with
+a fresh expiry, when the request is delivered again. A peer's request channel
+holds only its newest statement, so only the newest such request per peer is
+kept, and kept answers do not survive a process restart. A duplicate
+`Disconnected` request still terminates and removes that peer. Expired entries
+are pruned. Missing or overly distant peer expiry is retained for at most the
+seven-day SSO statement lifetime. At 1,024 live entries the ledger rejects a new
+request before acknowledging or executing it instead of evicting an unexpired
+replay marker.
 
 In `exec`, `/pair` waits for the responder to finish. It restarts the responder
 after a failure, like a background responder, and finishes when the paired host

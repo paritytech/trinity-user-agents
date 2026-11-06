@@ -14,8 +14,8 @@
 mod replay;
 
 use std::{
-	collections::{HashSet, VecDeque},
-	sync::Arc,
+	collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+	sync::{Arc, Mutex},
 	time::Instant,
 };
 
@@ -319,12 +319,56 @@ pub struct SsoResponderService {
 	signing_host: Arc<SigningHost>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
+	unpublished_answers: UnpublishedAnswers,
+}
+
+/// Answers to a request that ran, kept while the People chain refuses them
+/// so that delivering the request again publishes them instead of running it
+/// again.
+///
+/// A peer's request channel holds only its newest statement, so only the
+/// newest request can be delivered again and one request per peer is kept.
+/// They are kept in memory, so a process restart loses them.
+#[derive(Default)]
+struct UnpublishedAnswers {
+	by_peer: Mutex<HashMap<SsoReplayScope, (String, Vec<RemoteMessage>)>>,
+}
+
+impl UnpublishedAnswers {
+	/// Keep `answers` to `request_id`, replacing those kept for an older request.
+	fn keep(&self, scope: SsoReplayScope, request_id: &str, answers: Vec<RemoteMessage>) {
+		if answers.is_empty() {
+			return;
+		}
+		self.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.insert(scope, (request_id.to_string(), answers));
+	}
+
+	/// Take the answers kept for `request_id`.
+	fn take(&self, scope: SsoReplayScope, request_id: &str) -> Vec<RemoteMessage> {
+		match self
+			.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.entry(scope)
+		{
+			Entry::Occupied(kept) if kept.get().0 == request_id => kept.remove().1,
+			_ => Vec::new(),
+		}
+	}
 }
 
 impl SsoResponderService {
 	/// Answer peers of `signing_host` over the runtime's statement store.
 	pub fn new(services: Arc<RuntimeServices>, signing_host: Arc<SigningHost>) -> Arc<Self> {
-		Arc::new(Self { services, signing_host, replay_locks: SsoReplayLocks::default() })
+		Arc::new(Self {
+			services,
+			signing_host,
+			replay_locks: SsoReplayLocks::default(),
+			unpublished_answers: UnpublishedAnswers::default(),
+		})
 	}
 
 	/// Answer `deeplink` and serve the resulting SSO session until it ends.
@@ -747,6 +791,7 @@ async fn serve_statement(
 	let request =
 		ReplayRequest { id: &request_id, expires_at_unix_secs: incoming.expires_at_unix_secs };
 	let duplicate_exit = duplicate_request_exit(&incoming);
+	let mut unpublished = Vec::new();
 	let execution = execute_once(
 		services.platform.as_ref(),
 		&responder.replay_locks,
@@ -760,22 +805,52 @@ async fn serve_statement(
 			SsoResponseCode::Success,
 			"sso-responder ack",
 		),
-		|| serve_request(services, service, session, incoming),
+		|| serve_request(services, service, session, incoming, &mut unpublished),
 	)
-	.await?;
-	Ok(match execution {
-		ReplayExecution::Duplicate => duplicate_exit,
+	.await;
+	responder.unpublished_answers.keep(replay_scope, &request_id, unpublished);
+	Ok(match execution? {
+		ReplayExecution::Duplicate => {
+			publish_kept_answers(responder, session, replay_scope, &request_id).await?;
+			duplicate_exit
+		},
 		ReplayExecution::Executed(exit) => exit,
 	})
 }
 
+/// Publish the answers kept for `request_id` when it is delivered again,
+/// keeping those the People chain still refuses.
+async fn publish_kept_answers(
+	responder: &SsoResponderService,
+	session: &SsoSessionInfo,
+	replay_scope: SsoReplayScope,
+	request_id: &str,
+) -> Result<(), String> {
+	let mut refused = Vec::new();
+	let mut refusal = None;
+	for answer in responder.unpublished_answers.take(replay_scope, request_id) {
+		if let Err(reason) = publish_answer(&responder.services, session, &answer).await {
+			refused.push(answer);
+			refusal.get_or_insert(reason);
+		}
+	}
+	responder.unpublished_answers.keep(replay_scope, request_id, refused);
+	refusal.map_or(Ok(()), Err)
+}
+
 /// Answer the batched messages of one acked request statement.
+///
+/// An answer the People chain refuses is added to `unpublished` and the
+/// remaining messages are still answered, since the request will not run
+/// again. The first refusal is returned.
 async fn serve_request(
 	services: &RuntimeServices,
 	service: &SigningHostSsoService,
 	session: &SsoSessionInfo,
 	incoming: IncomingSsoRequest,
+	unpublished: &mut Vec<RemoteMessage>,
 ) -> Result<Option<ResponderExit>, String> {
+	let mut refusal = None;
 	for message in incoming.messages {
 		let request_name = message.name();
 		let responding_to = message.message_id.clone();
@@ -797,15 +872,7 @@ async fn serve_request(
 			},
 		};
 		let response_message_id = response.message_id.clone();
-		let statement_request_id = format!("resp:{response_message_id}");
-		let statement = build_outgoing_request_statement(
-			session,
-			statement_request_id,
-			vec![response],
-			fresh_statement_expiry(),
-		)?;
-		let publish_result =
-			publish(services, &statement, "sso-responder response", Resend::UntilAnswered).await;
+		let publish_result = publish_answer(services, session, &response).await;
 		let elapsed_ms = started.elapsed().as_millis();
 		match publish_result {
 			Ok(()) => {
@@ -857,11 +924,28 @@ async fn serve_request(
 					reason = %reason,
 					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
-				return Err(reason);
+				unpublished.push(response);
+				refusal.get_or_insert(reason);
 			},
 		}
 	}
-	Ok(None)
+	refusal.map_or(Ok(None), Err)
+}
+
+/// Publish `answer` on the session's request channel, sending it again until
+/// the People chain takes or refuses it.
+async fn publish_answer(
+	services: &RuntimeServices,
+	session: &SsoSessionInfo,
+	answer: &RemoteMessage,
+) -> Result<(), String> {
+	let statement = build_outgoing_request_statement(
+		session,
+		format!("resp:{}", answer.message_id),
+		vec![answer.clone()],
+		fresh_statement_expiry(),
+	)?;
+	publish(services, &statement, "sso-responder response", Resend::UntilAnswered).await
 }
 
 async fn acknowledge_request(
