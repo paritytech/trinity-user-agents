@@ -8,6 +8,7 @@ actor MockPublicProfileAvatarResolver {
     }
 
     private var profile: PublicProfile
+    private var profileError: ImageError?
     private var result: Result<Data, ImageError>
     private(set) var requests: [Request] = []
     private(set) var imageRequests: [ProfileAvatar] = []
@@ -19,9 +20,14 @@ actor MockPublicProfileAvatarResolver {
         profile = PublicProfile(avatar: avatar)
     }
 
-    func resolve(username: String, force: Bool) -> PublicProfile {
+    func resolve(username: String, force: Bool) throws -> PublicProfile {
         requests.append(Request(username: username, force: force))
+        if let profileError { throw profileError }
         return profile
+    }
+
+    func failProfileLookup(_ error: ImageError) {
+        profileError = error
     }
 
     func loadAvatar(_ avatar: ProfileAvatar) throws -> Data {

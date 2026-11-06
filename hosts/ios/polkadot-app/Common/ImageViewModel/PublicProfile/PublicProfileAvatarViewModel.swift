@@ -50,47 +50,38 @@ extension PublicProfileAvatarViewModel: ImageViewModelProtocol {
         completion: ((Bool) -> Void)?
     ) {
         if let current = request(on: imageView), current.owner === self, current.task != nil { return }
-        let force = refresh
+        let shouldRefresh = refresh
         refresh = false
-        if request(on: imageView)?.owner !== self {
-            imageView.kf.cancelDownloadTask()
-            imageView.kf.setImage(with: nil as Source?)
-        }
-        let current = Request(owner: self)
+        let current = prepareRequest(on: imageView)
         let identifier = current.id
-        objc_setAssociatedObject(imageView, &avatarRequestKey, current, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         current.task = Task { [weak imageView] in
             defer {
                 if let imageView, request(on: imageView)?.id == identifier { request(on: imageView)?.task = nil }
             }
-            do {
-                let profile = try await resolveProfile(username, force)
-                try Task.checkCancellation()
-                guard let imageView, request(on: imageView)?.id == identifier else { return }
-                guard let avatar = profile.avatar else {
-                    imageView.image = nil
-                    completion?(false)
-                    return
+            var displayedAvatar: ProfileAvatar?
+            for force in shouldRefresh ? [false, true] : [false] {
+                guard !Task.isCancelled,
+                      imageView.flatMap({ request(on: $0)?.id }) == identifier else { return }
+                do {
+                    let profile = try await resolveProfile(username, force)
+                    try Task.checkCancellation()
+                    guard let imageView, request(on: imageView)?.id == identifier else { return }
+                    if let avatar = profile.avatar, avatar == displayedAvatar, imageView.image != nil { continue }
+                    try await display(
+                        profile.avatar,
+                        on: imageView,
+                        identifier: identifier,
+                        settings: settings,
+                        animated: animated && (!shouldRefresh || force)
+                    )
+                    displayedAvatar = profile.avatar
+                } catch {
+                    guard !Task.isCancelled, let imageView, request(on: imageView)?.id == identifier else { return }
+                    if !force { imageView.image = nil }
                 }
-                let provider = PublicProfileAvatarImageDataProvider(avatar: avatar, loadAvatar: loadAvatar)
-                let options = PublicProfileAvatarImageOptionsFactory().options(for: settings, animated: animated)
-                let image = try await KingfisherManager.shared
-                    .retrieveImage(with: .provider(provider), options: options).image
-                try Task.checkCancellation()
-                guard request(on: imageView)?.id == identifier else { return }
-                if animated {
-                    UIView.transition(with: imageView, duration: 0.25, options: .transitionCrossDissolve) {
-                        imageView.image = image
-                    }
-                } else {
-                    imageView.image = image
-                }
-                completion?(true)
-            } catch {
-                guard let imageView, request(on: imageView)?.id == identifier else { return }
-                imageView.image = nil
-                completion?(false)
             }
+            guard let imageView, request(on: imageView)?.id == identifier else { return }
+            completion?(imageView.image != nil)
         }
     }
 
@@ -99,5 +90,47 @@ extension PublicProfileAvatarViewModel: ImageViewModelProtocol {
         guard request(on: imageView)?.owner === self else { return }
         objc_setAssociatedObject(imageView, &avatarRequestKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         imageView.image = nil
+    }
+}
+
+@MainActor
+private extension PublicProfileAvatarViewModel {
+    private func prepareRequest(on imageView: UIImageView) -> Request {
+        if request(on: imageView)?.owner !== self {
+            imageView.kf.cancelDownloadTask()
+            imageView.kf.setImage(with: nil as Source?)
+        }
+        let current = Request(owner: self)
+        objc_setAssociatedObject(imageView, &avatarRequestKey, current, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return current
+    }
+
+    func display(
+        _ avatar: ProfileAvatar?,
+        on imageView: UIImageView,
+        identifier: UUID,
+        settings: ImageViewModelSettings,
+        animated: Bool
+    ) async throws {
+        guard let avatar else {
+            imageView.image = nil
+            return
+        }
+        let provider = PublicProfileAvatarImageDataProvider(avatar: avatar, loadAvatar: loadAvatar)
+        let options = PublicProfileAvatarImageOptionsFactory(format: avatar.format).options(
+            for: settings,
+            animated: animated
+        )
+        let image = try await KingfisherManager.shared
+            .retrieveImage(with: .provider(provider), options: options).image
+        try Task.checkCancellation()
+        guard request(on: imageView)?.id == identifier else { return }
+        if animated {
+            UIView.transition(with: imageView, duration: 0.25, options: .transitionCrossDissolve) {
+                imageView.image = image
+            }
+        } else {
+            imageView.image = image
+        }
     }
 }
