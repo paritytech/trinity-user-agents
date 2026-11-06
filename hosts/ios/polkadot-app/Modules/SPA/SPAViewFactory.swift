@@ -108,7 +108,8 @@ enum SPAViewFactory {
             productRepository: ProductRepositoryFactory().createRepository(),
             chatProviderFactory: ChatContactDataProviderFactory(),
             workerManager: workerFacade.manager,
-            workerProductId: configuration.productDomain
+            workerProductId: configuration.productDomain,
+            chainStatusProvider: chainStatusProvider(for: configuration)
         )
 
         let presenter = SPAPresenter(
@@ -217,7 +218,8 @@ extension SPAViewFactory {
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),
-            chatProviderFactory: ChatContactDataProviderFactory()
+            chatProviderFactory: ChatContactDataProviderFactory(),
+            chainStatusProvider: chainStatusProvider(for: configuration)
         )
 
         let presenter = SPAPresenter(
@@ -257,8 +259,21 @@ private extension SPAViewFactory {
         schemeHandlerProxy: SchemeHandlerProxy,
         hostProvider: ProductHostProviding
     ) -> SPAViewProtocol {
-        if configuration.presentation == .sheet {
-            return SPASimplifiedViewController(
+        switch configuration.presentation {
+        case .sheet,
+             .fullScreen:
+            let controller = SPASimplifiedViewController(
+                presenter: presenter,
+                configuration: configuration,
+                schemeHandlerProxy: schemeHandlerProxy,
+                logger: Logger.shared,
+                hostProvider: hostProvider
+            )
+            controller.modalPresentationStyle = configuration.presentation == .fullScreen ? .fullScreen : .pageSheet
+            return controller
+        case .pushed,
+             .browserTab:
+            return SPAViewController(
                 presenter: presenter,
                 configuration: configuration,
                 schemeHandlerProxy: schemeHandlerProxy,
@@ -266,12 +281,18 @@ private extension SPAViewFactory {
                 hostProvider: hostProvider
             )
         }
-        return SPAViewController(
-            presenter: presenter,
-            configuration: configuration,
-            schemeHandlerProxy: schemeHandlerProxy,
-            logger: Logger.shared,
-            hostProvider: hostProvider
-        )
+    }
+
+    /// Only the full-screen product shows the chain status strip, so only it gets the provider.
+    @MainActor
+    static func chainStatusProvider(for configuration: SPAConfiguration) -> ChainStatusProviding? {
+        guard
+            configuration.presentation == .fullScreen,
+            let chainStatusProvider: ChainStatusProviding = RootDependencyLocator.getDependency()
+        else {
+            return nil
+        }
+
+        return chainStatusProvider
     }
 }

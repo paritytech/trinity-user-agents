@@ -163,7 +163,6 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 
 - **Payments.** Every payment call answers `Unsupported`, and the fixture's payment methods throw straight away. Drop or
   skip those specs.
-- **Login flows.** `setLoginBehavior` becomes the boot option `loginBehavior: "auto" | "manual"`.
 - **Chat actions.** `injectChatAction` is always refused with `operation denied for this execution`, because the test
   host runs the product in an iframe and chat is served only to workers. Skip specs that rely on it.
 - **Several hosts sharing statements.** Each page keeps its own statement store, so two signers in one test don't see
@@ -171,8 +170,9 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   People chain refuses them under the default `allowances: "granted"`, so that store has to be your own.
 - **Full-page navigation.** A product that sets `location.href` reconnects only when both `@parity/truapi-host` and the
   product's own `@parity/truapi` are 0.30 or later. Until your product SDK brings truapi 0.30, skip those specs.
-- **Other gaps.** Approving a login is tracked in
-  [#1388](https://github.com/paritytech/trinity-user-agents/issues/1388). Skip affected specs and link the issue.
+- **Approving a login.** Up to 0.29 there is no way to answer a product's login request. From 0.30 boot with
+  `loginBehavior: "manual"` and call `testHost.setLoginBehavior("success")`, or `"reject"`. The old host approved by
+  default; this one rejects until told otherwise. The old custom function form has no equivalent.
 
 ## 7. Keep the rest the same
 

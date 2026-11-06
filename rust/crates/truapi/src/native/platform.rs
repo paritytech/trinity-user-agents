@@ -477,8 +477,10 @@ impl ChainProvider for CallbackPlatform {
 			response_rx: Mutex::new(response_rx),
 			closed: AtomicBool::new(false),
 		};
+		// The socket closed before the connection was set up, so a later
+		// attempt can still open it.
 		if !registered {
-			return Err(ProviderError::Host {
+			return Err(ProviderError::Transport {
 				reason: "chain connection closed during setup".to_string(),
 			});
 		}

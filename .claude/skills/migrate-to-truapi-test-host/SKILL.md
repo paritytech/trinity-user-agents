@@ -101,13 +101,19 @@ not assume a funder seed signs. Unfunded, the first submit fails with
 **5. No spec depends on a refused capability.** Grep first:
 
 ```bash
-grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus|setLoginBehavior|injectChatAction" e2e/
+grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus|injectChatAction" e2e/
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-`setLoginBehavior` is the sharpest: suites pass `"success"`/`"reject"` to drive
-an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
-because this is a signing host and that flow belongs to a pairing host.
+From 0.30 (#1956) `setLoginBehavior("success" | "reject")` is served: it answers a product's
+login request while the host is signed out, so a suite booting with
+`loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
+the first account, or the one named as a second argument. The old custom
+function form has no equivalent, because the answer is given in the page.
+The default differs: the old host approved login requests unless told
+otherwise, and this one answers `Rejected`, as a real signing host does, until
+a suite calls `setLoginBehavior("success")`. A suite that relied on the old
+default adds that call.
 
 The statement-store controls are served, so they are not in this grep.
 `injectChatAction` is not: the core serves chat only to a product running as a
@@ -130,7 +136,9 @@ subpath, so a file importing `PASEO_ASSET_HUB`, `DEV_ACCOUNTS`,
 `DEV_ACCOUNT_NAMES`, `SigningLogEntry`, `PermissionLogEntry`,
 `ChatMessageLogEntry`, `LoginBehavior`, `DevAccountName` or `fromNetworks` needs
 no second import path. `createTestHostServer` is the exception: it comes from
-`@parity/truapi-host/testing/server`.
+`@parity/truapi-host/testing/server`. `LoginBehavior` here is the
+`"auto" | "manual"` boot option. The type `setLoginBehavior` takes, which the
+old package called `LoginBehavior`, is `LoginRequestBehavior` (0.30 and later).
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
 `HexString` is on that subpath as well, for a file annotating a `genesisHash`.
@@ -640,9 +648,10 @@ covers every index, and `AutoSigning`.
 
 ## 4. What refuses, and why
 
-Six of `TestHostAPI`'s members throw with an explanation rather than returning
-something plausible. The rest, including the statement-store controls, are
-served. `injectChatAction` is the exception noted in precondition 5.
+Five of `TestHostAPI`'s members, the payment ones, throw with an explanation
+rather than returning something plausible. The rest, including the
+statement-store controls, are served. `injectChatAction` is the exception noted
+in precondition 5.
 
 - payments (`getPaymentLog`, `setPaymentBalance`, `simulatePaymentStatus`,
   `setPaymentTopUpBehavior`, `clearPaymentLog`) -- only native and Rust hosts
@@ -650,8 +659,6 @@ served. `injectChatAction` is the exception noted in precondition 5.
   payment platforms yet. This host answers every payment call `Unsupported`,
   so there is no payment engine to drive. A suite with payment specs cannot
   migrate them; it can only drop or rewrite them.
-- `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
-  to the fixture instead, which is where this host takes it.
 
 A test reaching one of these gets a reason, not `is not a function`. They throw
 synchronously rather than returning a rejected promise, so assert with
