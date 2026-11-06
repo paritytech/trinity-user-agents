@@ -4,6 +4,10 @@ import UIKitExt
 
 protocol HiddableBarWhenPushed: AnyObject {}
 
+protocol NavigationBarHiding: AnyObject {
+    var hidesNavigationBar: Bool { get }
+}
+
 protocol NavigationDependable: AnyObject {
     var navigationControlling: NavigationControlling? { get set }
 }
@@ -147,7 +151,8 @@ private extension AppNavigationController {
     }
 
     func updateNavigationBarState(in viewController: UIViewController) {
-        let isHidden = (viewController is HiddableBarWhenPushed)
+        let isHidden = viewController is HiddableBarWhenPushed
+            || (viewController as? NavigationBarHiding)?.hidesNavigationBar == true
         setNavigationBarHidden(isHidden, animated: true)
 
         guard

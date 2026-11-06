@@ -11,6 +11,11 @@ import Products
 struct ProductsRouterTests {
     private final class StubView: UIViewController, ControllerBackedProtocol {}
 
+    @MainActor
+    private final class Counter {
+        var value = 0
+    }
+
     @Test
     func notReadyUntilPresentationViewAttached() {
         let anchor = StubView()
@@ -37,6 +42,37 @@ struct ProductsRouterTests {
         router.setPresentationView(anchor)
 
         #expect(router.present(view: StubView()))
+    }
+
+    /// A worker running headless has no screen of its own, so its prompts
+    /// present from the fallback until a view is anchored.
+    @Test
+    func presentsFromTheFallbackUntilAViewIsAnchored() {
+        let fallback = StubView()
+        let anchor = StubView()
+        let fallbackReads = Counter()
+        let router = ProductsRouter(fallback: {
+            fallbackReads.value += 1
+            return fallback
+        })
+
+        #expect(router.isReady)
+        #expect(router.present(view: StubView()))
+        #expect(fallbackReads.value == 2)
+
+        router.setPresentationView(anchor)
+
+        #expect(router.isReady)
+        #expect(router.present(view: StubView()))
+        #expect(fallbackReads.value == 2)
+    }
+
+    @Test
+    func notReadyWhenTheFallbackHasNoView() {
+        let router = ProductsRouter(fallback: { nil })
+
+        #expect(!router.isReady)
+        #expect(!router.present(view: StubView()))
     }
 
     @Test

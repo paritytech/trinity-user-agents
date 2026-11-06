@@ -43,7 +43,7 @@ struct ChatCardImagesTests {
         gateway: URL
     ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
-            productFileProvider: NoScripts(),
+            productFileProvider: NoChatProductFiles(),
             runtimeProvider: NoRuntime(),
             workers: { nil },
             workerManager: NoWorkers(),
@@ -58,14 +58,10 @@ struct ChatCardImagesTests {
 
 private struct Unavailable: Error {}
 
-private struct NoScripts: ChatProductFileProviding {
-    func load(for _: ProductId, relativePath _: String) -> Data? { nil }
-    func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
-}
-
 private final class NoRuntime: TrUAPIHostRuntimeProviding {
     func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
+    @MainActor var presentationView: ControllerBackedProtocol? { nil }
     func attach(workerManager _: any TrUAPIWorkerManaging) {}
 }
 
