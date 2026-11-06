@@ -2209,21 +2209,27 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 	assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// Records the visibility the host is asked for and answers a configured result.
+/// Records the face visibility and card sides the host is asked for and
+/// answers both with a configured result.
 struct RecordingExpandedCardHost {
 	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
 	requested: Mutex<Vec<bool>>,
+	turned: Mutex<Vec<bool>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
 		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
-		Arc::new(Self { answer, requested: Mutex::new(Vec::new()) })
+		Arc::new(Self { answer, requested: Mutex::new(Vec::new()), turned: Mutex::new(Vec::new()) })
 	}
 
 	fn requested(&self) -> Vec<bool> {
 		self.requested.lock().expect("requested mutex poisoned").clone()
+	}
+
+	fn turned(&self) -> Vec<bool> {
+		self.turned.lock().expect("turned mutex poisoned").clone()
 	}
 }
 
@@ -2234,6 +2240,14 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
 		self.requested.lock().expect("requested mutex poisoned").push(shown);
+		self.answer.clone()
+	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
+		self.turned.lock().expect("turned mutex poisoned").push(shown);
 		self.answer.clone()
 	}
 }
@@ -2274,7 +2288,8 @@ fn set_back_shown(
 }
 
 /// The host must see exactly what the Widget asked for, in order, so a hide
-/// followed by a show never collapses into one state change.
+/// followed by a show, or a turn and a turn back, never collapses into one
+/// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
 	let card =
@@ -2288,7 +2303,14 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 		));
 	}
 
-	assert_eq!(card.requested(), [false, true, false]);
+	for shown in [true, false] {
+		assert!(matches!(
+			set_back_shown(&host, shown),
+			Ok(HostExpandedCardSetBackShownResponse::V1)
+		));
+	}
+
+	assert_eq!((card.requested(), card.turned()), (vec![false, true, false], vec![true, false]));
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
@@ -2304,7 +2326,7 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
 		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
-		assert!(card.requested().is_empty());
+		assert!(card.requested().is_empty() && card.turned().is_empty());
 	}
 }
 
@@ -2316,18 +2338,7 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
-}
-
-/// This runtime cannot turn a card, so a Widget must read "not supported"
-/// rather than a failure, even under a card whose host moves its face.
-#[test]
-fn expanded_card_back_is_unsupported() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
-	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
-
 	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
-	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
@@ -2355,6 +2366,12 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
 		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::UserMoving)))
 	));
+	assert!(matches!(
+		answer(Ok(ExpandedCardFaceOutcome::NoBack)),
+		Err(CallError::Domain(WireError::V1(
+			v01::HostExpandedCardSetFaceShownError::Unknown { .. }
+		)))
+	));
 	let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
 		reason,
 	}))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
@@ -2362,6 +2379,42 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		panic!("a host failure is reported as an unknown domain error");
 	};
 	assert_eq!(reason, "drawer crashed");
+}
+
+/// A turn answers what the host did, so a Widget can tell a card without a
+/// back from one the user is holding, and retry only the latter.
+#[test]
+fn expanded_card_back_outcomes_map_to_wire_answers() {
+	use crate::platform::ExpandedCardFaceOutcome;
+	use v01::HostExpandedCardSetBackShownError as Answer;
+
+	let answer = |outcome| {
+		let card = RecordingExpandedCardHost::answering(outcome);
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
+		set_back_shown(&host, true)
+	};
+	let domain = |outcome| match answer(Ok(outcome)) {
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(error))) => Some(error),
+		_ => None,
+	};
+
+	assert_eq!(
+		[
+			domain(ExpandedCardFaceOutcome::NotPresented),
+			domain(ExpandedCardFaceOutcome::UserMoving),
+			domain(ExpandedCardFaceOutcome::NoBack),
+		],
+		[Some(Answer::NotPresented), Some(Answer::UserMoving), Some(Answer::NoBack)]
+	);
+	assert!(matches!(
+		answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(Answer::Unknown { reason })))
+			if reason == "drawer crashed"
+	));
 }
 
 #[test]

@@ -353,6 +353,11 @@ pub struct ProductConnection {
 	/// Control of the card face above this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
 	open_operations: Mutex<HashSet<u32>>,
+	/// Cards whose back this connection has drawn. A press on a back reaches
+	/// the product only for these: a product whose SDK predates
+	/// `PocketCardBack` cannot decode one and would lose its whole action
+	/// stream, and one that drew a back has shown it can.
+	drawn_backs: Mutex<HashSet<String>>,
 }
 
 /// How long after a tap a Worker may still open the scanner, as browsers bound
@@ -652,6 +657,23 @@ impl ProductConnection {
 		self.renderer.publish(item)
 	}
 
+	/// Records that this connection's product drew the back of `card_id`, so
+	/// presses on that back may reach it.
+	pub fn mark_back_drawn(&self, card_id: String) {
+		self.drawn_backs.lock().expect("drawn backs mutex poisoned").insert(card_id);
+	}
+
+	/// Whether `item` may reach this connection's product: anything but a
+	/// press on a back it has not drawn.
+	fn delivers(&self, item: &truapi::latest::HostRendererActionSubscribeItem) -> bool {
+		match &item.context {
+			truapi::latest::RenderContext::PocketCardBack { card_id } => {
+				self.drawn_backs.lock().expect("drawn backs mutex poisoned").contains(card_id)
+			},
+			_ => true,
+		}
+	}
+
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
 		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
@@ -705,6 +727,7 @@ impl ProductRuntimeHost {
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
 			open_operations: Mutex::new(HashSet::new()),
+			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		Self { connection, accounts, host_session }
 	}
@@ -832,6 +855,7 @@ impl ProductRuntimeHost {
 			game_platform: None,
 			expanded_card: None,
 			open_operations: Mutex::new(HashSet::new()),
+			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		let host = Self {
 			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
@@ -1635,11 +1659,17 @@ impl Renderer for ProductRuntimeHost {
 				if self.connection.renderer_access().is_err() {
 					return Subscription::interrupted(CallError::Denied);
 				}
+				let connection = self.connection.clone();
 				Subscription::new(
 					self.connection
 						.renderer
 						.subscribe()
-						.map(|item| item.map(IntoLatest::into_latest)),
+						.map(|item| item.map(IntoLatest::into_latest))
+						.filter(move |item| {
+							core::future::ready(
+								item.as_ref().map_or(true, |item| connection.delivers(item)),
+							)
+						}),
 				)
 			})
 			.await

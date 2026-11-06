@@ -35,7 +35,9 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
-	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
+	pocket_cards::{
+		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
+	},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -341,6 +343,20 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 #[uniffi::export]
 pub fn screen_pocket_card_id(id: String) -> Result<String, NativeChatFieldError> {
 	crate::platform::normalize_chat_identifier("cardId", &id).map_err(Into::into)
+}
+
+/// Whether the bytes of an `ImageSource::Inline` image may be drawn: PNG,
+/// JPEG or WebP, recognised by their first bytes, and at most 64 KiB.
+///
+/// Hosts call this before decoding, so every host refuses the same images. SVG
+/// is refused because it can load outside addresses.
+#[uniffi::export]
+pub fn inline_image_allowed(bytes: Vec<u8>) -> bool {
+	const MAX_INLINE_IMAGE_BYTES: usize = 64 * 1024;
+	let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+	let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
+	let webp = bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP");
+	bytes.len() <= MAX_INLINE_IMAGE_BYTES && (png || jpeg || webp)
 }
 
 /// Screen the display title a product gives one of its cards.

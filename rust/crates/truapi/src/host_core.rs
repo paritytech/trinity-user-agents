@@ -1942,6 +1942,12 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = WorkerReference::acquire(self.connection.clone());
+		let back = match &request.context {
+			v01::RenderContext::PocketCardBack { card_id } => {
+				Some((self.connection.clone(), card_id.clone()))
+			},
+			_ => None,
+		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -1954,15 +1960,18 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference)),
-			|(mut stream, reference)| async move {
+			(stream, Some(reference), back),
+			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
+						if let Some((connection, card_id)) = back.take() {
+							connection.mark_back_drawn(card_id);
+						}
+						Some((Ok(node), (stream, reference, back)))
 					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None),
+						(stream, None, None),
 					)),
 				}
 			},

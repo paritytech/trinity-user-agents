@@ -18,7 +18,7 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
-	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
@@ -32,7 +32,7 @@ use crate::{
 			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
 		},
 	},
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 	subscription::Spawner,
@@ -819,13 +819,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.pocket.remove(product_id, card_id).await?)
 	}
 
-	/// The newest face kept for a card, if one is.
+	/// The newest face kept for one side of a card, if one is.
 	pub async fn pocket_card_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
-		Ok(self.pocket.face(product_id, card_id).await?)
+		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}
 
 	/// Decides durable transactions from the chain until none is live, then
@@ -1147,16 +1148,14 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card_id = match &request.context {
-			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
-			_ => None,
-		};
+		let card = card_side(&request.context);
 		let stream = control.render(request)?;
-		let observer: Arc<dyn NativeRendererObserver> = match card_id {
-			Some(card_id) => keeping_faces(
+		let observer: Arc<dyn NativeRendererObserver> = match card {
+			Some((card_id, side)) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
+				side,
 				observer.into(),
 				&self.spawner,
 			),

@@ -1066,6 +1066,61 @@ fn poll_render(
 }
 
 #[test]
+fn a_back_press_reaches_only_a_connection_that_drew_that_back() {
+	// A product whose SDK cannot decode a back press would lose every later
+	// press, so a connection gets one only for a back it has drawn.
+	let (runtime, sink) = render_runtime();
+	let host = runtime.admin.product_runtime().clone();
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		host.as_ref(),
+		&CallContext::with_request_id("renderer:1".to_string()),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+	));
+	let press = |card_id: &str| v01::HostRendererActionSubscribeItem {
+		context: v01::RenderContext::PocketCardBack { card_id: card_id.to_string() },
+		action_id: "stamp".into(),
+		payload: vec![],
+	};
+	let publish = |card_id: &str| {
+		runtime
+			.control()
+			.publish_renderer_action(press(card_id))
+			.expect("a Worker may publish");
+	};
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+
+	publish("stamps");
+	assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back not yet drawn takes no press");
+
+	let mut back = runtime
+		.control()
+		.render(v01::ProductRendererRenderRequest {
+			context: v01::RenderContext::PocketCardBack { card_id: "stamps".into() },
+			payload: vec![],
+		})
+		.expect("a Worker connection may render");
+	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(v01::RendererNode::Nil);
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_RECEIVE,
+		item.encode(),
+	);
+	assert!(matches!(poll_render(&mut back), core::task::Poll::Ready(Some(Ok(_)))));
+	publish("other");
+	publish("stamps");
+
+	let delivered = match actions.poll_next_unpin(&mut cx) {
+		core::task::Poll::Ready(Some(Ok(
+			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
+		))) => item,
+		other => panic!("the press on the drawn back must be ready, got {other:?}"),
+	};
+	assert_eq!(delivered, press("stamps"));
+	assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back never drawn takes no press");
+}
+
+#[test]
 fn a_render_the_product_ends_releases_its_worker_reference() {
 	let (runtime, sink) = render_runtime();
 	let services = runtime.admin.product_runtime().connection().services().clone();

@@ -72,6 +72,7 @@ import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
 import uniffi.truapi.PocketAddException
 import uniffi.truapi.PocketCardRemoval
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
@@ -236,6 +237,18 @@ interface HostBridge {
      * says so instead of pretending it moved one.
      */
     suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
+
+    /**
+     * Turn this execution's expanded card so its back (`true`) or its front
+     * (`false`) is up. Answers [ExpandedCardFaceOutcome.NO_BACK] when the card
+     * has no back to show, and the face call's outcomes otherwise. Returns
+     * without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app that cannot
+     * turn cards says so.
+     */
+    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
         ExpandedCardFaceOutcome.UNSUPPORTED
 
     /**
@@ -584,6 +597,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+
+    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardBackShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -1204,10 +1220,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
-    /** The newest face kept for a card, if one is. */
+    /** The newest face kept for one side of a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
-        inner.pocketCardFace(productId, cardId)
+    suspend fun pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = PocketCardSide.FRONT,
+    ): RendererNode? = inner.pocketCardFace(productId, cardId, side)
 
     /**
      * Decide durable transactions from the chain until none is live, then
