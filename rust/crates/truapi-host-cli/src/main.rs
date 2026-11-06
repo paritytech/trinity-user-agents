@@ -723,7 +723,7 @@ async fn dispatch(
 
 /// Prints `config`'s routing as the one JSON line `network-check` writes.
 fn print_network(config: &NetworkConfig) {
-	let chain = |ws: &str, genesis: [u8; 32]| serde_json::json!({ "ws": ws, "genesis": format!("0x{}", hex::encode(genesis)) });
+	let chain = |endpoint: &network::ChainEndpoint| serde_json::json!({ "ws": endpoint.ws, "genesis": format!("0x{}", hex::encode(endpoint.genesis)) });
 	println!(
 		"{}",
 		serde_json::json!({
@@ -731,9 +731,9 @@ fn print_network(config: &NetworkConfig) {
 			"network": config.id,
 			"namespace": config.network_suffix,
 			"identity_backend_base": config.identity_backend_base,
-			"people": chain(&config.chains.people.ws, config.chains.people.genesis),
-			"asset_hub": chain(&config.chains.asset_hub.ws, config.chains.asset_hub.genesis),
-			"bulletin": chain(&config.chains.bulletin.ws, config.chains.bulletin.genesis),
+			"people": chain(&config.chains.people),
+			"asset_hub": chain(&config.chains.asset_hub),
+			"bulletin": chain(&config.chains.bulletin),
 		})
 	);
 }

@@ -114,11 +114,6 @@ impl<T> Roles<T> {
 	pub fn iter(&self) -> impl Iterator<Item = &T> {
 		[&self.people, &self.asset_hub, &self.bulletin].into_iter()
 	}
-
-	/// Each role's value, borrowed.
-	pub fn as_ref(&self) -> Roles<&T> {
-		Roles { people: &self.people, asset_hub: &self.asset_hub, bulletin: &self.bulletin }
-	}
 }
 
 /// The descriptor fields a stack-derived network is built from, and

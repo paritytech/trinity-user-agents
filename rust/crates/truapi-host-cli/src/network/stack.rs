@@ -10,8 +10,8 @@ use crate::{
 	stack_descriptor::{ROLE_NAMES, StackProjection},
 };
 
-/// A `--stack` descriptor's network, reached over `chain_backend`, under the
-/// product namespace of the descriptor's `id` without a trailing `-fork`.
+/// A `--stack` descriptor's network, connected to over `chain_backend`, under
+/// the product namespace of the descriptor's `id` without a trailing `-fork`.
 pub fn stack_network_config(
 	descriptor: &Descriptor,
 	chain_backend: ChainBackend,

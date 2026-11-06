@@ -57,8 +57,8 @@ impl ChainOverrides {
 	/// The env vars behind the overrides that are set.
 	pub fn env_names_in_use(&self) -> Vec<&'static str> {
 		ENV_NAMES
-			.zip(self.urls.as_ref())
 			.iter()
+			.zip(self.urls.iter())
 			.filter_map(|(name, url)| url.is_some().then_some(*name))
 			.collect()
 	}

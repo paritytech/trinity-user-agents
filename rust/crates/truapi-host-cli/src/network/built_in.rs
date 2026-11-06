@@ -49,9 +49,9 @@ impl Network {
 		}
 	}
 
-	/// The values compiled into this build, reached over `chain_backend`,
-	/// without fetching anything: a built-in stack's bundled copy, or
-	/// Polkadot's pinned values.
+	/// The values compiled into this build, connected to over
+	/// `chain_backend`, without fetching anything: a built-in stack's bundled
+	/// copy, or Polkadot's pinned values.
 	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
 		let Some(built_in) = self.built_in_stack() else { return polkadot::config(chain_backend) };
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
@@ -113,19 +113,14 @@ pub enum BuiltInCopy {
 
 /// The descriptor a built-in stack runs on.
 pub struct BuiltInOrigin {
-	id: &'static str,
-	url: String,
-	/// Which copy of the descriptor is in use.
+	/// The built-in network's product namespace.
+	pub id: &'static str,
+	/// Where the published descriptor is fetched from.
+	pub url: String,
 	pub copy: BuiltInCopy,
 }
 
 impl BuiltInOrigin {
-	/// The descriptor of `id` at `url`, with `copy` in use.
-	#[cfg(test)]
-	pub fn new(id: &'static str, url: &str, copy: BuiltInCopy) -> Self {
-		Self { id, url: url.to_owned(), copy }
-	}
-
 	/// What a genesis mismatch on the stack's endpoints adds to its error.
 	pub fn restart_hint(&self) -> String {
 		let Self { id, url, copy } = self;

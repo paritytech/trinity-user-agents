@@ -150,8 +150,11 @@ async fn test_stack_endpoint_genesis_mismatch() {
 #[tokio::test]
 async fn test_built_in_genesis_mismatch_hint() {
 	let config = stack_with_people_at(&serve_chain([0x5a; 32], None).await);
-	let origin =
-		BuiltInOrigin::new("paseo-next-v2", "https://stack.example/s.json", BuiltInCopy::Published);
+	let origin = BuiltInOrigin {
+		id: "paseo-next-v2",
+		url: "https://stack.example/s.json".to_owned(),
+		copy: BuiltInCopy::Published,
+	};
 	let error = verify_stack_endpoints(&config, Unanswered::Warn, Some(&origin))
 		.await
 		.expect_err("wrong genesis accepted");
@@ -197,23 +200,23 @@ async fn test_network_suffix_absent_or_unreachable() {
 #[test]
 fn test_chain_checks_by_source() {
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let built_in = ChainChecks::plan(&paseo, &paseo, false, None);
+	let built_in = ChainChecks::plan(&paseo, &paseo.chains, false, None);
 	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
 	assert_eq!(built_in.expected_suffix, Some("paseo"));
 
 	let polkadot = Network::Polkadot.config(ChainBackend::Rpc);
-	let polkadot_checks = ChainChecks::plan(&polkadot, &polkadot, false, None);
+	let polkadot_checks = ChainChecks::plan(&polkadot, &polkadot.chains, false, None);
 	assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
 	assert_eq!(polkadot_checks.expected_suffix, None);
 
 	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
-	let light_client = ChainChecks::plan(&light_client, &paseo, false, None);
+	let light_client = ChainChecks::plan(&light_client, &paseo.chains, false, None);
 	assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
 	assert_eq!(light_client.expected_suffix, None);
 
 	let overrides =
 		ChainOverrides::parse([Some("ws://127.0.0.1:9".to_string()), None, None]).unwrap();
-	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo, true, None);
+	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo.chains, true, None);
 	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
 	assert_eq!(local.expected_suffix, None);
 }
@@ -221,19 +224,24 @@ fn test_chain_checks_by_source() {
 /// Only the endpoints an override reroutes are checked as such, even one
 /// set to another role's URL, which only its genesis tells apart.
 #[test]
-fn test_split_rerouted() {
+fn test_rerouted_endpoint_by_genesis() {
 	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let overrides =
 		ChainOverrides::parse([Some(base.chains.bulletin.ws.clone()), None, None]).unwrap();
 	let config = overrides.apply(base.clone());
-	let (rerouted, untouched) = split_rerouted(&config, &base);
-	assert_eq!(rerouted.len(), 1);
+	let checks = ChainChecks::plan(&config, &base.chains, false, None);
+	assert_eq!(checks.rerouted.len(), 1);
 	assert_eq!(
-		(rerouted[0].genesis, &rerouted[0].ws),
+		(checks.rerouted[0].genesis, &checks.rerouted[0].ws),
 		(base.chains.people.genesis, &base.chains.bulletin.ws)
 	);
-	assert_eq!(untouched.len(), 2);
-	assert!(untouched.iter().all(|endpoint| endpoint.genesis != base.chains.people.genesis));
+	assert_eq!(checks.from_stack.len(), 2);
+	assert!(
+		checks
+			.from_stack
+			.iter()
+			.all(|endpoint| endpoint.genesis != base.chains.people.genesis)
+	);
 }
 
 /// A built-in stack that restarted from genesis after this build has chains

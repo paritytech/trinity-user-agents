@@ -7,7 +7,7 @@ use super::{
 };
 
 /// A source with a stack from `stack_source`, when set.
-fn source(
+fn build_source(
 	stack_source: Option<&'static str>,
 	network: Option<Network>,
 	chain_backend: ChainBackend,
@@ -22,7 +22,7 @@ fn source(
 #[test]
 fn test_network_with_stack_error() {
 	for stack_source in ["--stack", STACK_ENV] {
-		let error = source(Some(stack_source), Some(Network::Previewnet), ChainBackend::Rpc)
+		let error = build_source(Some(stack_source), Some(Network::Previewnet), ChainBackend::Rpc)
 			.ensure_compatible(&[], false)
 			.expect_err("--network accepted with a stack");
 		assert!(error.to_string().contains(stack_source));
@@ -34,12 +34,12 @@ fn test_network_with_stack_error() {
 /// starts rather than on every connect.
 #[test]
 fn test_light_client_with_stack_error() {
-	let error = source(Some(STACK_ENV), None, ChainBackend::LightClient)
+	let error = build_source(Some(STACK_ENV), None, ChainBackend::LightClient)
 		.ensure_compatible(&[], false)
 		.expect_err("light client accepted with a stack");
 	assert!(error.to_string().contains(STACK_ENV));
 	assert!(
-		source(Some(STACK_ENV), None, ChainBackend::Rpc)
+		build_source(Some(STACK_ENV), None, ChainBackend::Rpc)
 			.ensure_compatible(&[], false)
 			.is_ok()
 	);
@@ -50,12 +50,12 @@ fn test_light_client_with_stack_error() {
 #[test]
 fn test_light_client_with_overrides_error() {
 	let overrides = [PEOPLE_WS_ENV];
-	let error = source(None, None, ChainBackend::LightClient)
+	let error = build_source(None, None, ChainBackend::LightClient)
 		.ensure_compatible(&overrides, false)
 		.expect_err("light client accepted with a chain URL override");
 	assert!(error.to_string().contains(PEOPLE_WS_ENV));
 	assert!(
-		source(None, None, ChainBackend::Rpc)
+		build_source(None, None, ChainBackend::Rpc)
 			.ensure_compatible(&overrides, false)
 			.is_ok()
 	);
@@ -63,7 +63,7 @@ fn test_light_client_with_overrides_error() {
 
 #[test]
 fn test_light_client_with_local_network_error() {
-	let error = source(None, None, ChainBackend::LightClient)
+	let error = build_source(None, None, ChainBackend::LightClient)
 		.ensure_compatible(&[], true)
 		.expect_err("light client accepted with a local network");
 	let message = error.to_string();
@@ -77,14 +77,14 @@ fn test_light_client_with_local_network_error() {
 #[test]
 fn test_chain_overrides_with_local_network_error() {
 	let overrides = [PEOPLE_WS_ENV, BULLETIN_WS_ENV];
-	let error = source(None, None, ChainBackend::Rpc)
+	let error = build_source(None, None, ChainBackend::Rpc)
 		.ensure_compatible(&overrides, true)
 		.expect_err("chain URL override accepted with a local network");
 	let message = error.to_string();
 	assert!(message.contains(local_network::CONFIG_ENV));
 	assert!(message.contains(PEOPLE_WS_ENV) && message.contains(BULLETIN_WS_ENV));
 
-	let error = source(Some("--stack"), None, ChainBackend::Rpc)
+	let error = build_source(Some("--stack"), None, ChainBackend::Rpc)
 		.ensure_compatible(&[], true)
 		.expect_err("stack accepted with a local network");
 	assert!(error.to_string().contains("--stack"));

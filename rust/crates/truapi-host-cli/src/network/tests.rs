@@ -84,7 +84,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 		for entry in config.host_chain_set().chains {
 			let ws = &config
 				.endpoint_for_role(entry.identifier)
-				.expect("every served role has an endpoint")
+				.expect("served role has no endpoint")
 				.ws;
 			let probe = async {
 				let rpc = alloc::rpc::RpcClient::connect(ws)

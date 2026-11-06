@@ -1,8 +1,5 @@
 //! Polkadot mainnet's values, pinned per build, and the check that rejects
 //! them on a disposable-identity network.
-//!
-//! Every route is host-required: session identity (dotNS usernames) resolves
-//! through Asset Hub, SSO through People, preimages through Bulletin.
 
 use anyhow::{Result, ensure};
 
@@ -20,29 +17,26 @@ struct PinnedChain {
 	ws: &'static str,
 }
 
-const ASSET_HUB: PinnedChain = PinnedChain {
-	genesis: hex_literal_genesis(
-		"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
-	),
-	ws: "wss://polkadot-asset-hub-rpc.polkadot.io",
+const CHAINS: Roles<PinnedChain> = Roles {
+	people: PinnedChain {
+		genesis: hex_literal_genesis(
+			"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
+		),
+		ws: "wss://polkadot-people-rpc.polkadot.io",
+	},
+	asset_hub: PinnedChain {
+		genesis: hex_literal_genesis(
+			"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
+		),
+		ws: "wss://polkadot-asset-hub-rpc.polkadot.io",
+	},
+	bulletin: PinnedChain {
+		genesis: hex_literal_genesis(
+			"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
+		),
+		ws: "wss://bulletin-rpc.polkadot.io",
+	},
 };
-
-const PEOPLE: PinnedChain = PinnedChain {
-	genesis: hex_literal_genesis(
-		"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
-	),
-	ws: "wss://polkadot-people-rpc.polkadot.io",
-};
-
-const BULLETIN: PinnedChain = PinnedChain {
-	genesis: hex_literal_genesis(
-		"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
-	),
-	ws: "wss://bulletin-rpc.polkadot.io",
-};
-
-const CHAINS: Roles<PinnedChain> =
-	Roles { people: PEOPLE, asset_hub: ASSET_HUB, bulletin: BULLETIN };
 
 /// The dotNS deployment on Polkadot Asset Hub, copied verbatim from
 /// `deployments/polkadot/420420419.json` in paritytech/dotns at
@@ -55,7 +49,7 @@ const DOTNS_DEPLOYMENT: &str = include_str!("../../deployments/polkadot-42042041
 /// `DotnsGateway.DispatcherAddress` unset, and discovery then finds nothing.
 const DOTNS_POP_CONTROLLER: [u8; 20] = manifest_address(DOTNS_DEPLOYMENT, "DotnsPopController");
 
-/// Polkadot's pinned values, reached over `chain_backend`.
+/// Polkadot's pinned values, connected to over `chain_backend`.
 pub fn config(chain_backend: ChainBackend) -> NetworkConfig {
 	NetworkConfig {
 		id: ID.to_owned(),

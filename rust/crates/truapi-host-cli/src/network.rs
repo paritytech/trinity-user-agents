@@ -54,7 +54,7 @@ pub const STACK_ENV: &str = "HOST_CLI_STACK";
 /// `--stack`.
 #[derive(Clone)]
 pub struct NetworkSource {
-	/// How the command reaches the chains.
+	/// How the command connects to the chains.
 	pub chain_backend: ChainBackend,
 	/// paseo-next-v2 when neither this nor `stack` is set.
 	pub network: Option<Network>,
@@ -118,12 +118,10 @@ pub struct NetworkConfig {
 	pub chain_backend: ChainBackend,
 }
 
-/// A chain's genesis hash and the WebSocket RPC URL it is reached at.
+/// A chain's genesis hash and the WebSocket RPC URL to connect to it at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainEndpoint {
-	/// The genesis hash the chain is routed by.
 	pub genesis: [u8; 32],
-	/// The chain's WebSocket RPC URL.
 	pub ws: String,
 }
 

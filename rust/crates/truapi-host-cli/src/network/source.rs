@@ -80,16 +80,15 @@ impl NetworkSource {
 					.await?
 			},
 		};
-		let mut config = overrides.apply(apply_backend_override(
-			base.clone(),
-			std::env::var(IDENTITY_BACKEND_BASE_ENV).ok(),
-		));
+		let base_chains = base.chains.clone();
+		let mut config = overrides
+			.apply(apply_backend_override(base, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()));
 		if let Some(path) = &local_path {
 			config = local_network::resolve(config, path)?;
 		}
 		refuse_light_client(&config)?;
 		polkadot::ensure_no_real_identity_values(&config)?;
-		let checks = ChainChecks::plan(&config, &base, local_path.is_some(), built_in);
+		let checks = ChainChecks::plan(&config, &base_chains, local_path.is_some(), built_in);
 		Ok((config, checks))
 	}
 

@@ -62,7 +62,7 @@ fn test_stack_polkadot_values_error() {
 	);
 	assert!(ensure_no_real_identity_values(&Network::Polkadot.config(ChainBackend::Rpc)).is_ok());
 
-	let polkadot_people = format!("0x{}", hex::encode(PEOPLE.genesis));
+	let polkadot_people = format!("0x{}", hex::encode(CHAINS.people.genesis));
 	let forked = edit_chain("People", |chain| chain["genesisHash"] = polkadot_people.into());
 	let error =
 		ensure_no_real_identity_values(&stack_network_config(&forked, ChainBackend::Rpc).unwrap())

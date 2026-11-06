@@ -9,7 +9,7 @@ use super::{
 	ChainEndpoint, NetworkConfig,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
 };
-use crate::chain::ChainBackend;
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 /// What the CLI checks against the chains before a command runs.
 pub struct ChainChecks {
@@ -25,18 +25,22 @@ pub struct ChainChecks {
 }
 
 impl ChainChecks {
-	/// The checks for `config`, resolved from `base`: endpoints `config` routes
-	/// differently from `base` are rerouted. A stack network reached over RPC
-	/// without a local network also has its other endpoints and People's
-	/// `NetworkSuffix` checked.
+	/// The checks for `config`, resolved from `base_chains`: endpoints `config`
+	/// routes differently from `base_chains`, by genesis and URL, are
+	/// rerouted. A stack network reached over RPC without a local network also
+	/// has its other endpoints and People's `NetworkSuffix` checked.
 	pub fn plan(
 		config: &NetworkConfig,
-		base: &NetworkConfig,
+		base_chains: &Roles<ChainEndpoint>,
 		local_network: bool,
 		built_in: Option<BuiltInOrigin>,
 	) -> Self {
-		let (rerouted, untouched) = split_rerouted(config, base);
-		let is_stack_network = base.disposable_identities &&
+		let (rerouted, untouched): (Vec<_>, Vec<_>) = config
+			.chains
+			.iter()
+			.cloned()
+			.partition(|endpoint| !base_chains.iter().any(|chain| chain == endpoint));
+		let is_stack_network = config.disposable_identities &&
 			!local_network &&
 			config.chain_backend == ChainBackend::Rpc;
 		Self {
@@ -70,19 +74,6 @@ impl ChainChecks {
 	pub fn copy_in_use(&self) -> Option<BuiltInCopy> {
 		self.built_in.as_ref().map(|origin| origin.copy)
 	}
-}
-
-/// `config`'s endpoints split into those that `base` does not route the same
-/// way, by genesis and URL, and those it does.
-fn split_rerouted(
-	config: &NetworkConfig,
-	base: &NetworkConfig,
-) -> (Vec<ChainEndpoint>, Vec<ChainEndpoint>) {
-	config
-		.chains
-		.iter()
-		.cloned()
-		.partition(|endpoint| !base.chains.iter().any(|chain| chain == endpoint))
 }
 
 /// The light client knows only the networks `truapi-provider` bundles, by

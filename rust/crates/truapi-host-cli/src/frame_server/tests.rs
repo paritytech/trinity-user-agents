@@ -466,15 +466,12 @@ mod cross_product_storage {
 	}
 
 	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
-		// Every chain routes to a closed port, so nothing reaches live Paseo.
+		// Every chain routes to a closed port, so nothing connects to live Paseo.
 		let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
-		for chain in [
-			&mut network.chains.people,
-			&mut network.chains.asset_hub,
-			&mut network.chains.bulletin,
-		] {
-			chain.ws = "ws://127.0.0.1:1".to_owned();
-		}
+		network.chains = network.chains.map(|chain| crate::network::ChainEndpoint {
+			ws: "ws://127.0.0.1:1".to_owned(),
+			..chain
+		});
 		let asset_hub_genesis = network.chains.asset_hub.genesis;
 		let platform = crate::platform::CliPlatform::new(
 			&network,

@@ -58,7 +58,6 @@ pub enum ChainBackend {
 /// sentinel and any other genesis are answered by People.
 pub struct CliChainProvider {
 	people_genesis: [u8; 32],
-	/// The endpoints routed to their own chain.
 	routed_endpoints: Vec<ChainEndpoint>,
 	backend: Backend,
 }

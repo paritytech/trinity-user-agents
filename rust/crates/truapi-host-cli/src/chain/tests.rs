@@ -5,7 +5,7 @@ use super::*;
 use crate::network::Network;
 
 /// The default network with People at `people_ws`.
-fn people_at(people_ws: String) -> NetworkConfig {
+fn build_network_with_people_at(people_ws: String) -> NetworkConfig {
 	let mut network = Network::default().config(ChainBackend::Rpc);
 	network.chains.people.ws = people_ws;
 	network
@@ -35,7 +35,7 @@ async fn serve_one_frame_per_connection() -> String {
 /// would leave every later request on that chain waiting forever.
 #[tokio::test]
 async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
-	let network = people_at(serve_one_frame_per_connection().await);
+	let network = build_network_with_people_at(serve_one_frame_per_connection().await);
 	let provider = CliChainProvider::new(&network);
 
 	let closed = provider.connect([0; 32]).await.expect("connect to the loopback server");
@@ -54,7 +54,7 @@ async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
 /// must reach People's RPC node rather than start the light client.
 #[tokio::test]
 async fn an_unrouted_catalog_chain_stays_on_rpc() {
-	let network = people_at(serve_one_frame_per_connection().await);
+	let network = build_network_with_people_at(serve_one_frame_per_connection().await);
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
 		.add_network(&network.id)
 		.expect("the default network is bundled");
@@ -69,9 +69,9 @@ async fn an_unrouted_catalog_chain_stays_on_rpc() {
 }
 
 /// Without a People route there is nothing to fall back to: a provider for
-/// one other endpoint refuses the sentinel.
+/// one other endpoint rejects the sentinel.
 #[tokio::test]
-async fn a_provider_without_a_people_route_refuses_the_sentinel() {
+async fn test_sentinel_without_people_route_error() {
 	let network = Network::default().config(ChainBackend::Rpc);
 	let provider = CliChainProvider::for_endpoint(&network, &network.chains.bulletin);
 
@@ -171,7 +171,7 @@ async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 /// network's routing would do with the hash, and nothing else.
 #[test]
 fn an_endpoint_provider_reaches_only_its_endpoint() {
-	let network = people_at("wss://people.invalid".to_owned());
+	let network = build_network_with_people_at("wss://people.invalid".to_owned());
 	let optional = ChainEndpoint { genesis: [0x5a; 32], ws: "wss://optional.invalid".to_owned() };
 
 	let alone = CliChainProvider::for_endpoint(&network, &optional);
