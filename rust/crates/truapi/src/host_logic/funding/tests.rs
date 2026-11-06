@@ -2347,7 +2347,7 @@ fn a_summary_reads_as_the_session_ended() {
 		stage: FundingStage::Delivered { credited: 90, settled_at_ms: NOW + 1 },
 		..session(FundingDirection::In)
 	};
-	let summary = FundingSessionSummary::from(delivered.clone());
+	let summary = delivered.summary();
 
 	assert_eq!(
 		(summary.wire_item(), summary.settled_at_ms()),

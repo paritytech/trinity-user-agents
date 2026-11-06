@@ -8,6 +8,8 @@
 //! provider's quote answers show about what it serves now takes precedence
 //! for a while, since a manifest can lag behind the provider.
 
+use std::collections::BTreeMap;
+
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{FundingDirection, FundingRail};
 
@@ -89,9 +91,12 @@ pub struct LearnedLimit {
 impl LearnedLimit {
 	/// The limit, while it is still trusted at `now_ms`.
 	fn fresh(limit: Option<Self>, now_ms: u64) -> Option<u128> {
-		limit
-			.filter(|limit| now_ms.saturating_sub(limit.learned_at_ms) < LEARNED_SUPPORT_TTL_MS)
-			.map(|limit| limit.amount)
+		limit.filter(|limit| limit.is_fresh(now_ms)).map(|limit| limit.amount)
+	}
+
+	/// Whether this is still trusted at `now_ms`.
+	fn is_fresh(&self, now_ms: u64) -> bool {
+		now_ms.saturating_sub(self.learned_at_ms) < LEARNED_SUPPORT_TTL_MS
 	}
 }
 
@@ -114,27 +119,31 @@ impl LearnedSupport {
 		let quoted = self.is_quoted();
 		let now_ms = self.learned_at_ms;
 		if self.min.is_none() {
-			self.min = known.min.filter(|min| {
-				LearnedLimit::fresh(Some(*min), now_ms).is_some() &&
-					!(quoted && self.asked < min.amount)
-			});
+			self.min = known
+				.min
+				.filter(|min| min.is_fresh(now_ms) && !(quoted && self.asked < min.amount));
 		}
 		if self.max.is_none() {
-			self.max = known.max.filter(|max| {
-				LearnedLimit::fresh(Some(*max), now_ms).is_some() &&
-					!(quoted && self.asked > max.amount)
-			});
+			self.max = known
+				.max
+				.filter(|max| max.is_fresh(now_ms) && !(quoted && self.asked > max.amount));
 		}
 	}
 
 	/// Whether `other` is about the same provider and ask.
 	pub fn same_ask(&self, other: &Self) -> bool {
-		self.provider_id == other.provider_id &&
-			self.direction == other.direction &&
-			self.rail == other.rail &&
-			self.asset == other.asset &&
-			self.network == other.network &&
-			self.country == other.country
+		self.provider_id == other.provider_id && self.scope() == other.scope()
+	}
+
+	/// The rail, asset, network and country of the ask, with its direction.
+	fn scope(&self) -> LimitScope<'_> {
+		LimitScope {
+			direction: self.direction,
+			rail: self.rail,
+			asset: &self.asset,
+			network: self.network.as_deref(),
+			country: self.country.as_deref(),
+		}
 	}
 }
 
@@ -310,6 +319,10 @@ pub struct FundingAmountLimits {
 }
 
 impl FundingAmountLimits {
+	/// Any amount from [`FUNDING_MIN_AMOUNT`] up: what is known before any
+	/// provider showed a bound.
+	pub const ANY: Self = Self { min: Some(FUNDING_MIN_AMOUNT), max: None };
+
 	/// The range that admits an amount either this or `other` admits: the
 	/// smaller bound on each side, or none when either has none.
 	pub fn widest(self, other: Self) -> Self {
@@ -343,19 +356,12 @@ pub fn amount_limits(
 	scope: LimitScope<'_>,
 	now_ms: u64,
 ) -> FundingAmountLimits {
-	if provider_ids.is_empty() {
-		return FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None };
-	}
 	let mut mins = Vec::new();
 	let mut maxes = Vec::new();
 	for provider_id in provider_ids {
 		let record = learned.iter().find(|support| {
 			&support.provider_id == provider_id &&
-				support.direction == scope.direction &&
-				support.rail == scope.rail &&
-				support.asset == scope.asset &&
-				support.network.as_deref() == scope.network &&
-				support.country.as_deref() == scope.country &&
+				support.scope() == scope &&
 				support.is_fresh(now_ms)
 		});
 		// A provider that refused the scope outright cannot fund it, so it
@@ -459,29 +465,20 @@ pub fn country_support(
 	asset: &str,
 	now_ms: u64,
 ) -> Vec<FundingCountry> {
-	let mut countries: Vec<FundingCountry> = Vec::new();
+	let mut countries: BTreeMap<String, FundingCountrySupport> = BTreeMap::new();
 	let mut note = |country: &str, supported: bool, min: Option<u128>| {
-		let index = match countries.iter().position(|known| known.country == country) {
-			Some(index) => index,
-			None => {
-				countries.push(FundingCountry {
-					country: country.to_string(),
-					support: FundingCountrySupport::Unsupported,
-				});
-				countries.len() - 1
-			},
-		};
+		let support = countries
+			.entry(country.to_string())
+			.or_insert(FundingCountrySupport::Unsupported);
 		// A refusal only records the country; one provider serving it is
 		// enough to make it supported, at the lowest minimum any declares.
-		if !supported {
-			return;
+		if supported {
+			let known = match *support {
+				FundingCountrySupport::Supported { min: known } => known,
+				FundingCountrySupport::Unsupported => None,
+			};
+			*support = FundingCountrySupport::Supported { min: known.into_iter().chain(min).min() };
 		}
-		let support = &mut countries[index].support;
-		let min = match support {
-			FundingCountrySupport::Supported { min: known } => lowest(*known, min),
-			FundingCountrySupport::Unsupported => min,
-		};
-		*support = FundingCountrySupport::Supported { min };
 	};
 	for (provider_id, manifest) in providers {
 		let routes = manifest
@@ -509,15 +506,10 @@ pub fn country_support(
 			}
 		}
 	}
-	countries.sort_by(|a, b| a.country.cmp(&b.country));
 	countries
-}
-
-fn lowest(a: Option<u128>, b: Option<u128>) -> Option<u128> {
-	match (a, b) {
-		(Some(a), Some(b)) => Some(a.min(b)),
-		(a, b) => a.or(b),
-	}
+		.into_iter()
+		.map(|(country, support)| FundingCountry { country, support })
+		.collect()
 }
 
 #[cfg(test)]

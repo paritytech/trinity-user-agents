@@ -13,26 +13,23 @@ use std::sync::{Arc, Mutex};
 
 use truapi::latest::{FundingDirection, FundingRail};
 
-use futures::{channel::oneshot, lock::Mutex as AsyncMutex};
+use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
 
-use super::{
-	funding::{Signal, lock},
-	product_manifest::worker_manifest,
-	services::RuntimeServices,
-};
+use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
 use crate::{
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
-			FUNDING_MIN_AMOUNT, FundingAmountLimits, FundingCandidate, FundingCountry,
-			FundingNetworkLimits, FundingOptions, FundingProviderEntry, FundingProviderOrigin,
-			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
+			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
+			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
+			LearnedSupport, LimitScope, amount_limits, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductId},
 	unix_time::current_unix_millis,
+	wake::WakeSignal,
 };
 
 /// A provider the host offers, with the Worker manifest it shipped already
@@ -75,14 +72,14 @@ pub struct FundingProviders {
 	learned_store: AsyncMutex<bool>,
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
-	changed: Mutex<Signal>,
+	changed: WakeSignal,
 }
 
 impl FundingProviders {
 	/// Resolves once the providers the core goes by next change: the host
 	/// lists others, or dotNS answers for one with what it serves.
-	pub fn on_change(&self) -> oneshot::Receiver<()> {
-		lock(&self.changed).wait()
+	pub fn on_change(&self) -> mpsc::Receiver<()> {
+		self.changed.subscribe()
 	}
 
 	/// Every provider serving `direction`, in the host's order. What their
@@ -265,21 +262,17 @@ impl RuntimeServices {
 		let providers = self.funding_providers();
 		let selection = self.funding().selection(intent);
 		let candidates = providers.candidates(session.direction);
-		let limits_on = |selection: &FundingSelection, network: Option<&str>| {
+		let limits_on = |selection: &FundingSelection, asset: &str, network: Option<&str>| {
 			providers.amount_limits(LimitScope {
 				direction: session.direction,
 				rail: selection.rail,
-				asset: selection.asset.as_deref().unwrap_or_default(),
+				asset,
 				network,
 				country: selection.country.as_deref(),
 			})
 		};
 		let (countries, limits, networks) = match &selection {
-			None => (
-				Vec::new(),
-				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
-				Vec::new(),
-			),
+			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
 				let countries = selection
 					.asset
@@ -296,26 +289,16 @@ impl RuntimeServices {
 					.map(|(network, assets)| {
 						let limits = assets
 							.iter()
-							.map(|asset| {
-								providers.amount_limits(LimitScope {
-									direction: session.direction,
-									rail: FundingRail::Crypto,
-									asset,
-									network: Some(&network),
-									country: selection.country.as_deref(),
-								})
-							})
+							.map(|asset| limits_on(selection, asset, Some(&network)))
 							.reduce(FundingAmountLimits::widest)
-							.unwrap_or(FundingAmountLimits {
-								min: Some(FUNDING_MIN_AMOUNT),
-								max: None,
-							});
+							.unwrap_or(FundingAmountLimits::ANY);
 						FundingNetworkLimits { network, limits }
 					})
 					.collect(),
 					_ => Vec::new(),
 				};
-				(countries, limits_on(selection, selection.network.as_deref()), networks)
+				let asset = selection.asset.as_deref().unwrap_or_default();
+				(countries, limits_on(selection, asset, selection.network.as_deref()), networks)
 			},
 		};
 		feed.funding_options_changed(
@@ -412,7 +395,7 @@ impl RuntimeServices {
 	/// its options again, and every watched quote list asks again at once,
 	/// so a provider read after the overlay opened still shows and quotes.
 	fn funding_providers_changed(&self) {
-		lock(&self.funding_providers().changed).fire();
+		self.funding_providers().changed.wake();
 		for intent in self.funding().presenting() {
 			self.send_funding_options(&intent);
 		}
