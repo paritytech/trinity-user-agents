@@ -100,7 +100,11 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
 
     @MainActor
     private static func createProductLabels(flowStateProvider: SPAFlowStateProviding) async -> [String] {
-        let staticProducts = [AppConfig.DotNs.dotNsBrowse]
+        #if FEATURE_PRODUCTS
+            let staticProducts = [AppConfig.DotNs.dotNsBrowse]
+        #else
+            let staticProducts: [String] = []
+        #endif
 
         let fundingProvider = FundingDomainProvider(
             hostProvider: flowStateProvider.flowState().hostProvider

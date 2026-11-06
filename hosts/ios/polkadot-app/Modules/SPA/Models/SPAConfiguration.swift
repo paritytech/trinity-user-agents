@@ -39,6 +39,8 @@ enum SPAPresentation {
     case browserTab
     /// A one-shot sheet over the tabs, without browser chrome.
     case sheet
+    /// A full-screen product over the app, with its own status strip; closing dismisses it.
+    case fullScreen
 }
 
 struct SPAConfiguration {
