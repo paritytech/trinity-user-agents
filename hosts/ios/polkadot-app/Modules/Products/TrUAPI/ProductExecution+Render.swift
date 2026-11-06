@@ -2,25 +2,25 @@ import Foundation
 import TrUAPIHost
 
 extension TrUAPIProductExecutionProtocol {
-    /// Open a render stream, waiting out the window in which the product's
-    /// worker is up but has not registered its renderer yet.
+    /// Open a render stream once the product is attached, giving up at
+    /// `deadline`.
     ///
-    /// That window is the only transient answer: a worker connects and only
-    /// then subscribes, so the first renders are refused as `NotConnected` and
-    /// are worth asking again for. Anything else is the product's own answer,
-    /// and is raised at once because asking again cannot change it.
+    /// A worker connects and only then answers renders, so the execution is
+    /// asked to say when its product is attached, and the product is asked
+    /// once after that. Whatever that render answers is the product's own
+    /// answer, `NotConnected` included once the deadline has passed.
     func renderWhenConnected(
         _ request: ProductRendererRenderRequest,
-        until deadline: ContinuousClock.Instant,
-        retryEvery interval: Duration
+        until deadline: ContinuousClock.Instant
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
-        while true {
-            do {
-                return try render(request)
-            } catch let error where (error as? ProductRuntimeError) == .NotConnected {
-                guard ContinuousClock.now < deadline else { throw error }
-                try await Task.sleep(for: interval)
-            }
-        }
+        let timeLeft = max(deadline - .now, .zero)
+        await waitUntilConnected(timeoutMs: UInt32(clamping: timeLeft.wholeMilliseconds))
+        return try render(request)
+    }
+}
+
+private extension Duration {
+    var wholeMilliseconds: Int64 {
+        components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000
     }
 }

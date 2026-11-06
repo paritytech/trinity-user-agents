@@ -269,12 +269,11 @@ struct ChatRuntimeTests {
         #expect(execution.publishedChatActions.isEmpty)
     }
 
-    @Test func rustRuntimeRetriesRenderUntilTheProductAttaches() async throws {
+    /// The worker is up before its product attaches, so a cell asks the
+    /// execution to say when it has, and asks the product once after that.
+    @Test func rustRuntimeWaitsForTheProductBeforeRendering() async throws {
         let execution = MockProductExecution()
-        execution.renderErrors = [
-            ProductRuntimeError.NotConnected,
-            ProductRuntimeError.NotConnected
-        ]
+        execution.refusesRendersUntilWaited = true
         let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await disposing(runtime) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
@@ -284,7 +283,7 @@ struct ChatRuntimeTests {
             )
             for try await _ in stream {}
 
-            #expect(execution.renderRequests.count == 3)
+            #expect(execution.renderRequests.count == 1)
         }
     }
 
@@ -355,10 +354,10 @@ struct ChatRuntimeTests {
         }
     }
 
-    /// A cell can decode before the product's worker is up. Without `.notStarted`
-    /// in the transient set the render fails once and the cell is dead for the
-    /// session, because `ProductMessageDecoder` never evicts.
-    @Test func rustRuntimeRetriesRenderIssuedBeforeTheWorkerIsUp() async throws {
+    /// A cell can decode before the product's worker is up. Failing it then
+    /// would leave the cell dead for the session, because
+    /// `ProductMessageDecoder` never evicts, so the render waits for the worker.
+    @Test func rustRuntimeHoldsARenderIssuedBeforeTheWorkerIsUp() async throws {
         let workers = StubWorkerManager()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
@@ -371,8 +370,7 @@ struct ChatRuntimeTests {
                 )
             }
             try await withTimeout(.hangGuard) {
-                var lookups = workers.executionLookups.makeAsyncIterator()
-                _ = await lookups.next()
+                await workers.awaitExecutionsDelivered()
             }
 
             workers.publish([chatProduct: execution])
@@ -385,6 +383,22 @@ struct ChatRuntimeTests {
 
             #expect(outputs.count == 1)
             #expect(execution.renderRequests.count == 1)
+        }
+    }
+
+    /// A worker that never comes up ends the wait at the deadline, and the
+    /// cell learns it was the host that gave up, not the product that refused.
+    @Test func rustRuntimeGivesUpOnARenderWhenNoWorkerComes() async throws {
+        let runtime = makeRustRuntime(workers: StubWorkerManager(), renderStartupWindow: .milliseconds(50))
+
+        try await disposing(runtime) {
+            let stream = await runtime.renderMessage(
+                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
+            )
+
+            await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
+                for try await _ in stream {}
+            }
         }
     }
 

@@ -3158,3 +3158,163 @@ mod bridge_lines {
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
 }
+
+/// A Worker execution with its bridge up, and the url its product dials.
+fn worker_bridge() -> (Arc<NativeProductExecution>, String) {
+	let host = native_host_runtime_no_session();
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = host
+		.open_product_execution(
+			callbacks.clone(),
+			Some(callbacks),
+			None,
+			native_execution_config("draw.dot", ExecutableKind::Worker),
+		)
+		.expect("open worker execution");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	(execution, format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token))
+}
+
+/// Whether the execution opens a render stream right now; the stream itself
+/// is dropped unread.
+fn render_outcome(execution: &NativeProductExecution) -> Result<(), crate::ProductRuntimeError> {
+	struct Unread;
+	impl NativeRendererObserver for Unread {
+		fn on_update(&self, _node: truapi::latest::ProductRendererRenderItem) {}
+		fn on_complete(&self) {}
+		fn on_error(&self, _reason: String) {}
+	}
+	let request = v01::ProductRendererRenderRequest {
+		context: v01::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		payload: Vec::new(),
+	};
+	execution.render(request, Box::new(Unread)).map(drop)
+}
+
+/// A host that asked before the product dialled in used to poll `render`
+/// until it stopped answering `NotConnected`; the wait resolves exactly when
+/// that first render would succeed.
+#[test]
+fn wait_until_connected_resolves_once_a_product_dials_in() {
+	let (execution, url) = worker_bridge();
+	assert!(
+		matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::NotConnected)),
+		"nothing has dialled in yet"
+	);
+
+	bridge_test_runtime().block_on(async {
+		let waiting = {
+			let execution = execution.clone();
+			tokio::spawn(async move { execution.wait_until_connected(5_000).await })
+		};
+		let (_ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+			.await
+			.expect("the dial must resolve the wait")
+			.expect("waiter task");
+		assert!(render_outcome(&execution).is_ok(), "render must succeed once the wait resolves");
+	});
+}
+
+/// The host cannot cancel the generated async call, so the core bounds it:
+/// a product that never comes hands control back at the timeout, and the
+/// wait does not return early either, or every caller would be polling again.
+#[test]
+fn wait_until_connected_gives_up_at_its_timeout() {
+	let (execution, _url) = worker_bridge();
+
+	bridge_test_runtime().block_on(async {
+		let started = std::time::Instant::now();
+		tokio::time::timeout(std::time::Duration::from_secs(2), execution.wait_until_connected(50))
+			.await
+			.expect("the wait must end at its own timeout");
+		assert!(started.elapsed() >= std::time::Duration::from_millis(50), "must not return early");
+		assert!(matches!(
+			render_outcome(&execution),
+			Err(crate::ProductRuntimeError::NotConnected)
+		));
+	});
+}
+
+/// An execution that stops without a product must not hold its host for the
+/// whole timeout; `render` names the reason afterwards.
+#[test]
+fn wait_until_connected_returns_when_the_execution_shuts_down() {
+	let (execution, _url) = worker_bridge();
+
+	bridge_test_runtime().block_on(async {
+		let waiting = {
+			let execution = execution.clone();
+			tokio::spawn(async move { execution.wait_until_connected(10_000).await })
+		};
+		tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+		execution.shutdown();
+		tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+			.await
+			.expect("shutdown must wake the waiter")
+			.expect("waiter task");
+		assert!(matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::Closed)));
+	});
+}
+
+/// Several chat cells decode at once and each asks for the same worker, so
+/// one dial must release all of them.
+#[test]
+fn wait_until_connected_wakes_every_waiter() {
+	let (execution, url) = worker_bridge();
+
+	bridge_test_runtime().block_on(async {
+		let waiters: Vec<_> = (0..2)
+			.map(|_| {
+				let execution = execution.clone();
+				tokio::spawn(async move { execution.wait_until_connected(5_000).await })
+			})
+			.collect();
+		tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+		let (_ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		for waiting in waiters {
+			tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+				.await
+				.expect("one dial must release every waiter")
+				.expect("waiter task");
+		}
+	});
+}
+
+/// A product that hung up leaves its stale control behind. Reading that as
+/// connected would hand the host a `Closed` it never retries, while the
+/// execution itself is still open and the next worker can dial in.
+#[test]
+fn a_product_that_hung_up_no_longer_counts_as_connected() {
+	let (execution, url) = worker_bridge();
+
+	bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		execution.wait_until_connected(5_000).await;
+		assert!(render_outcome(&execution).is_ok());
+
+		ws.close(None).await.expect("hang up");
+		drop(ws);
+		tokio::time::timeout(std::time::Duration::from_secs(2), async {
+			while !matches!(
+				render_outcome(&execution),
+				Err(crate::ProductRuntimeError::NotConnected)
+			) {
+				tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+			}
+		})
+		.await
+		.expect("a hung-up product must read as not connected, not as closed");
+
+		let started = std::time::Instant::now();
+		execution.wait_until_connected(50).await;
+		assert!(
+			started.elapsed() >= std::time::Duration::from_millis(50),
+			"the stale control must not satisfy a new wait"
+		);
+	});
+}

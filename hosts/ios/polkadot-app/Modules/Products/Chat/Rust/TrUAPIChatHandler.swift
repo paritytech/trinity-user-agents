@@ -38,14 +38,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
 
-    /// How often a cell asks again while the product is still coming up. The
-    /// worker's own refusals are waited out by ``renderWhenConnected``; this
-    /// one covers the window before there is a worker to ask at all.
-    private static let renderRetryInterval = Duration.milliseconds(25)
-
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
     private var request = WorkerRequest.none
+    /// Renders waiting for a worker to come up, ended by dispose.
+    private var startupWaits: [UUID: Task<TrUAPIProductExecutionProtocol, Error>] = [:]
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
@@ -176,6 +173,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
+        startupWaits.values.forEach { $0.cancel() }
 
         // The core keeps the bridge, and the bridge keeps the surface: unbinding
         // is what releases the chat context. Only this runtime's own binding,
@@ -254,21 +252,34 @@ private extension TrUAPIChatHandler {
             payload: messageData
         )
 
-        while true {
-            try checkNotDisposed()
-            do {
-                return try await requireExecution().renderWhenConnected(
-                    request,
-                    until: deadline,
-                    retryEvery: Self.renderRetryInterval
-                )
-            } catch let error where (error as? ChatSeamError) == .notStarted {
-                guard ContinuousClock.now < deadline else {
-                    logger.error("Custom render gave up waiting for the product: \(messageId)")
-                    throw error
+        let execution = try await executionWhenStarted(by: deadline)
+        return try await execution.renderWhenConnected(request, until: deadline)
+    }
+
+    /// The product's execution, waiting until `deadline` for one to come up.
+    /// Followed rather than looked up, so a worker restarting under the
+    /// session is picked up too. Dispose ends every wait, because the cells
+    /// they answer are being torn down with it.
+    func executionWhenStarted(
+        by deadline: ContinuousClock.Instant
+    ) async throws -> TrUAPIProductExecutionProtocol {
+        try checkNotDisposed()
+        let wait = Task { [workers, productId] in
+            try await withTimeout(max(deadline - .now, .zero)) {
+                for try await execution in workers.executions(of: productId) {
+                    if let execution { return execution }
                 }
-                try await Task.sleep(for: Self.renderRetryInterval)
+                throw ChatSeamError.notStarted
             }
+        }
+        let id = UUID()
+        startupWaits[id] = wait
+        defer { startupWaits[id] = nil }
+        do {
+            return try await withTaskCancellationHandler { try await wait.value } onCancel: { wait.cancel() }
+        } catch is TimeoutError {
+            logger.error("Custom render gave up waiting for the product: \(productId)")
+            throw ChatSeamError.notStarted
         }
     }
 
