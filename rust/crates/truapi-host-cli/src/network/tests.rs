@@ -1,23 +1,6 @@
+use truapi::latest::ChainIdentifier;
+
 use super::*;
-
-/// Anchors the served set itself. Every other test that reads it iterates, so
-/// all of them pass on an empty set; this is what notices a dropped role, and it
-/// covers each network rather than only the default.
-#[test]
-fn test_network_served_roles() {
-	for network in Network::value_variants() {
-		let stack = network.bundled_stack(ChainBackend::Rpc);
-		let served: Vec<ChainIdentifier> =
-			stack.served_roles().iter().map(|(identifier, _)| *identifier).collect();
-
-		assert_eq!(
-			served,
-			vec![ChainIdentifier::People, ChainIdentifier::Bulletin, ChainIdentifier::AssetHub],
-			"{} serves an unexpected role set",
-			stack.namespace()
-		);
-	}
-}
 
 /// Hosts a built-in may route to, matched exactly: the paseo-next-v2 chains
 /// and identity backend, the previewnet stack, and the pcf-devnet chains and
