@@ -59,6 +59,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBar
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -301,12 +302,18 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
         // Reading extras unparcels an intent any app can send this exported activity.
         runCatching {
-            if (intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) {
-                intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)?.let { productId ->
-                    hostEventCapture.capture {
-                        hostEventOriginProvider.current().productNotificationTapped(productId)
-                    }
-                }
+            if (!intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) return@runCatching
+
+            // One tap is one event, whatever later hands this intent back to the activity.
+            intent.removeExtra(PRODUCT_NOTIFICATION_INTENT_MARKER)
+
+            // The extras are reachable from any app, so only a name the core accepts is reported.
+            val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
+                ?.let { ProductId.parse(it).getOrNull() }
+                ?: return@runCatching
+
+            hostEventCapture.capture {
+                hostEventOriginProvider.current().productNotificationTapped(productId.value)
             }
         }.logFailure("Failed to capture product notification tapped event")
     }
