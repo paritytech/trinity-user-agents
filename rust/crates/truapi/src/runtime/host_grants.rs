@@ -109,11 +109,51 @@ pub struct HostGrantStore {
 	keeping: GrantKeeping,
 	state: Mutex<GrantState>,
 	persistence: futures::lock::Mutex<()>,
+	caches: Mutex<GrantCaches>,
+}
+
+#[derive(Default)]
+struct GrantCaches {
 	statement_store_allowances:
-		Mutex<HashMap<AllowanceCacheKey, (Option<u32>, StatementStoreAllowanceKey)>>,
-	bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
-	product_subtrees: Mutex<HashMap<(GrantScope, ProductId), [u8; 32]>>,
-	auto_signing_keys: Mutex<HashMap<AutoSigningCacheKey, AutoSigningKey>>,
+		HashMap<AllowanceCacheKey, (Option<u32>, StatementStoreAllowanceKey)>,
+	bulletin_allowances: HashMap<AllowanceCacheKey, BulletinAllowanceKey>,
+	product_subtrees: HashMap<(GrantScope, ProductId), [u8; 32]>,
+	auto_signing_keys: HashMap<AutoSigningCacheKey, AutoSigningKey>,
+}
+
+impl GrantCaches {
+	fn forget_product(&mut self, product_id: &ProductId) {
+		self.statement_store_allowances.retain(|key, _| !key.is_for_product(product_id));
+		self.bulletin_allowances.retain(|key, _| !key.is_for_product(product_id));
+		self.product_subtrees.retain(|(_, owner), _| owner != product_id);
+		self.auto_signing_keys.retain(|(_, owner), _| owner != product_id);
+	}
+
+	/// Drop the allowance keys cached for `session`, or for every session.
+	fn forget_allowances(&mut self, session: Option<&SessionInfo>) {
+		let Some(session) = session else {
+			self.statement_store_allowances.clear();
+			self.bulletin_allowances.clear();
+			return;
+		};
+		let scope = GrantScope::from_session(session);
+		self.statement_store_allowances.retain(|key, _| !key.is_for_session(scope));
+		self.bulletin_allowances.retain(|key, _| !key.is_for_session(scope));
+	}
+
+	/// Drop the product subtrees cached for `session`, or for every session.
+	fn forget_subtrees(&mut self, session: Option<&SessionInfo>) {
+		let Some(session) = session else {
+			self.product_subtrees.clear();
+			return;
+		};
+		let scope = GrantScope::from_session(session);
+		self.product_subtrees.retain(|(key, _), _| *key != scope);
+	}
+
+	fn clear(&mut self) {
+		*self = Self::default();
+	}
 }
 
 /// Holds the grant revision steady while a check and its cache update run.
@@ -141,10 +181,7 @@ impl HostGrantStore {
 			keeping,
 			state: Mutex::new(GrantState::default()),
 			persistence: futures::lock::Mutex::new(()),
-			statement_store_allowances: Mutex::new(HashMap::new()),
-			bulletin_allowances: Mutex::new(HashMap::new()),
-			product_subtrees: Mutex::new(HashMap::new()),
-			auto_signing_keys: Mutex::new(HashMap::new()),
+			caches: Mutex::new(GrantCaches::default()),
 		}
 	}
 
@@ -173,9 +210,9 @@ impl HostGrantStore {
 			lifecycle.advance();
 		}
 		drop(lifecycle);
-		self.clear_statement_store_allowance_keys(previous);
-		self.clear_bulletin_allowance_keys(previous);
-		self.clear_product_subtrees(previous);
+		let mut caches = self.caches();
+		caches.forget_allowances(previous);
+		caches.forget_subtrees(previous);
 	}
 
 	fn session_secret_allocation_is_current(
@@ -199,10 +236,7 @@ impl HostGrantStore {
 		if !lifecycle.is_current(session_state, session, grant_revision) {
 			return false;
 		}
-		self.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.insert(cache_key, key);
+		self.caches().auto_signing_keys.insert(cache_key, key);
 		true
 	}
 
@@ -214,13 +248,7 @@ impl HostGrantStore {
 		cache_key: (GrantScope, ProductId),
 	) -> Option<[u8; 32]> {
 		let grant_revision = self.lifecycle().revision();
-		if let Some(public_key) = self
-			.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.get(&cache_key)
-			.copied()
-		{
+		if let Some(public_key) = self.caches().product_subtrees.get(&cache_key).copied() {
 			return Some(public_key);
 		}
 		self.stored_product_subtree(session_state, session, grant_revision, cache_key)
@@ -328,10 +356,7 @@ impl HostGrantStore {
 		if !lifecycle.is_current(session_state, session, grant_revision) {
 			return false;
 		}
-		self.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.insert(cache_key, public_key);
+		self.caches().product_subtrees.insert(cache_key, public_key);
 		true
 	}
 
@@ -397,26 +422,16 @@ impl HostGrantStore {
 		}
 		match allowance {
 			AccountGrant::StatementStore { key, period } => {
-				self.statement_store_allowances
-					.lock()
-					.expect("statement-store allowance cache mutex poisoned")
-					.insert(
-						AllowanceCacheKey::new(
-							session,
-							product_id,
-							AllowanceResource::StatementStore,
-						),
-						(*period, key.clone()),
-					);
+				self.caches().statement_store_allowances.insert(
+					AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore),
+					(*period, key.clone()),
+				);
 			},
 			AccountGrant::Bulletin(key) => {
-				self.bulletin_allowances
-					.lock()
-					.expect("bulletin allowance cache mutex poisoned")
-					.insert(
-						AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin),
-						key.clone(),
-					);
+				self.caches().bulletin_allowances.insert(
+					AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin),
+					key.clone(),
+				);
 			},
 			_ => return Err(AuthorityError::Rejected),
 		}
@@ -443,16 +458,14 @@ impl HostGrantStore {
 		}
 		let cached = match resource {
 			AllowanceResource::StatementStore => self
+				.caches()
 				.statement_store_allowances
-				.lock()
-				.expect("statement-store allowance cache mutex poisoned")
 				.get(&cache_key)
 				.cloned()
 				.map(|(period, key)| AccountGrant::StatementStore { key, period }),
 			AllowanceResource::Bulletin => self
+				.caches()
 				.bulletin_allowances
-				.lock()
-				.expect("bulletin allowance cache mutex poisoned")
 				.get(&cache_key)
 				.cloned()
 				.map(AccountGrant::Bulletin),
@@ -484,34 +497,6 @@ impl HostGrantStore {
 		Ok(Some(allowance))
 	}
 
-	/// Drop cached Statement Store allowance keys for `session`, or all of them.
-	fn clear_statement_store_allowance_keys(&self, session: Option<&SessionInfo>) {
-		let mut allowances = self
-			.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned");
-		let Some(session) = session else {
-			allowances.clear();
-			return;
-		};
-		let session_key = GrantScope::from_session(session);
-		allowances.retain(|key, _| !key.is_for_session(session_key));
-	}
-
-	/// Drop cached Bulletin allowance keys for `session`, or all of them.
-	fn clear_bulletin_allowance_keys(&self, session: Option<&SessionInfo>) {
-		let mut allowances = self
-			.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned");
-		let Some(session) = session else {
-			allowances.clear();
-			return;
-		};
-		let session_key = GrantScope::from_session(session);
-		allowances.retain(|key, _| !key.is_for_session(session_key));
-	}
-
 	/// Forget a product's Statement Store key while it is still `public_key`.
 	///
 	/// A key the product was given again since is kept.
@@ -520,12 +505,9 @@ impl HostGrantStore {
 		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
-		self.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|cache_key, (_, key)| {
-				!(cache_key.is_for_product(product_id) && key.public_key == public_key)
-			});
+		self.caches().statement_store_allowances.retain(|cache_key, (_, key)| {
+			!(cache_key.is_for_product(product_id) && key.public_key == public_key)
+		});
 	}
 
 	/// Drop a product's Bulletin key from memory and storage before it is replaced.
@@ -540,10 +522,11 @@ impl HostGrantStore {
 		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
-		self.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned")
-			.remove(&AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin));
+		self.caches().bulletin_allowances.remove(&AllowanceCacheKey::new(
+			session,
+			product_id,
+			AllowanceResource::Bulletin,
+		));
 		if self.keeping == GrantKeeping::Paired {
 			allowances::remove_allowance_key(
 				&*self.storage,
@@ -647,13 +630,7 @@ impl HostGrantStore {
 	) -> Result<Option<AutoSigningKey>, AuthorityError> {
 		let owner = AutoSigningOwner::from_session(session);
 		let cache_key = (owner.clone(), product_id.clone());
-		if let Some(key) = self
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.get(&cache_key)
-			.cloned()
-		{
+		if let Some(key) = self.caches().auto_signing_keys.get(&cache_key).cloned() {
 			return Ok(Some(key));
 		}
 		if self.keeping == GrantKeeping::Wallet {
@@ -661,13 +638,7 @@ impl HostGrantStore {
 		}
 
 		let persistence = self.persistence().await;
-		if let Some(key) = self
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.get(&cache_key)
-			.cloned()
-		{
+		if let Some(key) = self.caches().auto_signing_keys.get(&cache_key).cloned() {
 			return Ok(Some(key));
 		}
 		let legacy_present = persistence.clear_legacy_auto_signing_key(product_id).await?;
@@ -710,9 +681,8 @@ impl HostGrantStore {
 			};
 		};
 		let current_expected_subtree = self
+			.caches()
 			.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
 			.get(&(GrantScope::from_session(session), product_id.clone()))
 			.copied();
 		if current_expected_subtree
@@ -730,55 +700,23 @@ impl HostGrantStore {
 			let _ = persistence.clear_auto_signing_keys().await;
 			return Err(err);
 		}
-		self.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.insert(cache_key, key.clone());
+		self.caches().auto_signing_keys.insert(cache_key, key.clone());
 		Ok(Some(key))
 	}
 
-	/// Evict public subtrees for one session, or all sessions.
-	fn clear_product_subtrees(&self, session: Option<&SessionInfo>) {
-		let mut subtrees =
-			self.product_subtrees.lock().expect("product subtree cache mutex poisoned");
-		let Some(session) = session else {
-			subtrees.clear();
-			return;
-		};
-		let session_key = GrantScope::from_session(session);
-		subtrees.retain(|(key, _), _| *key != session_key);
-	}
-
-	fn clear_caches(&self) {
-		self.clear_statement_store_allowance_keys(None);
-		self.clear_bulletin_allowance_keys(None);
-		self.clear_product_subtrees(None);
-		self.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.clear();
+	fn caches(&self) -> MutexGuard<'_, GrantCaches> {
+		self.caches.lock().expect("grant cache mutex poisoned")
 	}
 
 	/// Cache sizes for lifecycle regression checks.
 	#[cfg(test)]
 	pub fn capability_cache_sizes_for_tests(&self) -> (usize, usize, usize, usize) {
+		let caches = self.caches();
 		(
-			self.statement_store_allowances
-				.lock()
-				.expect("statement-store allowance cache mutex poisoned")
-				.len(),
-			self.bulletin_allowances
-				.lock()
-				.expect("bulletin allowance cache mutex poisoned")
-				.len(),
-			self.product_subtrees
-				.lock()
-				.expect("product subtree cache mutex poisoned")
-				.len(),
-			self.auto_signing_keys
-				.lock()
-				.expect("AutoSigning key cache mutex poisoned")
-				.len(),
+			caches.statement_store_allowances.len(),
+			caches.bulletin_allowances.len(),
+			caches.product_subtrees.len(),
+			caches.auto_signing_keys.len(),
 		)
 	}
 
@@ -790,9 +728,8 @@ impl HostGrantStore {
 		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
-		self.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
+		self.caches()
+			.product_subtrees
 			.insert((GrantScope::from_session(session), product_id.clone()), public_key);
 	}
 }
@@ -801,32 +738,13 @@ impl HostGrantGuard<'_> {
 	/// Revoke transient grants before replacing or locking the local wallet.
 	pub fn clear_memory(&mut self) {
 		self.advance();
-		self.store.clear_caches();
+		self.store.caches().clear();
 	}
 
 	/// Invalidate one product without touching another product's wallet permission.
 	pub fn revoke_product(&mut self, product_id: &ProductId) {
 		self.advance();
-		self.store
-			.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(product_id));
-		self.store
-			.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(product_id));
-		self.store
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.retain(|(_, owner), _| owner != product_id);
-		self.store
-			.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.retain(|(_, owner), _| owner != product_id);
+		self.store.caches().forget_product(product_id);
 	}
 
 	/// Revision selected by the held guard.
@@ -869,13 +787,7 @@ impl HostGrantGuard<'_> {
 			self.state
 				.queue_deletion(CoreStorageKey::AllowanceKeys { session_id: session_id.clone() });
 			let session_key = GrantScope::from_session(previous.expect("paired session exists"));
-			for (key, product_id) in self
-				.store
-				.product_subtrees
-				.lock()
-				.expect("product subtree cache mutex poisoned")
-				.keys()
-			{
+			for (key, product_id) in self.store.caches().product_subtrees.keys() {
 				if *key == session_key {
 					self.state.queue_deletion(CoreStorageKey::ProductSubtree {
 						session_id: session_id.clone(),
@@ -897,7 +809,7 @@ impl HostGrantPersistence<'_> {
 		if self.store.lifecycle().state.pending_deletions.is_empty() {
 			return false;
 		}
-		self.store.clear_caches();
+		self.store.caches().clear();
 		true
 	}
 
@@ -948,8 +860,7 @@ impl HostGrantPersistence<'_> {
 			warn!(%reason, "AutoSigning capability owner reconciliation failed");
 		}
 		if let Some(previous) = previous.filter(|previous| *previous != session) {
-			self.store.clear_statement_store_allowance_keys(Some(previous));
-			self.store.clear_bulletin_allowance_keys(Some(previous));
+			self.store.caches().forget_allowances(Some(previous));
 			if let Err(reason) =
 				allowances::clear_session_allowance_keys(&*self.store.storage, previous).await
 			{
@@ -964,27 +875,7 @@ impl HostGrantPersistence<'_> {
 		session: Option<&SessionInfo>,
 		product_id: &ProductId,
 	) -> Result<(), String> {
-		self.store
-			.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(product_id));
-		self.store
-			.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(product_id));
-		self.store
-			.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
-		self.store
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
-
+		self.store.caches().forget_product(product_id);
 		let mut first_error = self.clear_auto_signing_product(product_id).await.err();
 		if let Some(session) = session &&
 			self.store.keeping == GrantKeeping::Paired &&
@@ -1005,11 +896,7 @@ impl HostGrantPersistence<'_> {
 
 	/// Erase all retained signing authority.
 	pub async fn clear_auto_signing_keys(&self) -> Result<(), String> {
-		self.store
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.clear();
+		self.store.caches().auto_signing_keys.clear();
 		self.store
 			.storage
 			.clear_core_storage(CoreStorageKey::AutoSigningKeys)
@@ -1089,11 +976,7 @@ impl HostGrantPersistence<'_> {
 		if !should_clear {
 			return Ok(());
 		}
-		self.store
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.clear();
+		self.store.caches().auto_signing_keys.clear();
 		self.store
 			.storage
 			.clear_core_storage(CoreStorageKey::AutoSigningKeys)
