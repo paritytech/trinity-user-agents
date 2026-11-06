@@ -853,7 +853,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 	platform.auth_state_changed(crate::platform::AuthState::Pairing {
 		deeplink: "polkadotapp://pair?handshake=00".to_string(),
 	});
-	platform.auth_state_changed(crate::platform::AuthState::Connected(
+	platform.auth_state_changed(crate::platform::AuthState::Connected(Box::new(
 		crate::platform::SessionUiInfo {
 			public_key: [7; 32],
 			identity_account_id: None,
@@ -864,14 +864,14 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
-	));
+	)));
 	platform.auth_state_changed(crate::platform::AuthState::Disconnected);
 
 	assert_eq!(
 		callbacks.auth_states.lock().expect("auth state mutex poisoned").as_slice(),
 		&[
 			AuthState::Pairing { deeplink: "polkadotapp://pair?handshake=00".to_string() },
-			AuthState::Connected(crate::platform::SessionUiInfo {
+			AuthState::Connected(Box::new(crate::platform::SessionUiInfo {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
@@ -880,7 +880,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				device_statement_account_id: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
-			}),
+			})),
 			AuthState::Disconnected,
 		]
 	);
