@@ -1026,7 +1026,7 @@ impl ChainRuntime {
 					Ok(at_block) => Ok((client, at_block)),
 					Err(error) => Err(CurrentBlockError::Block {
 						lost_connection: connection.is_closed() || follow_dropped(&error),
-						error,
+						error: Box::new(error),
 					}),
 				}
 			},
@@ -2446,7 +2446,7 @@ pub enum CurrentBlockError {
 	#[display("cannot select a metadata block: {error}")]
 	Block {
 		/// What Subxt reported.
-		error: subxt::error::OnlineClientAtBlockError,
+		error: Box<subxt::error::OnlineClientAtBlockError>,
 		/// Whether the connection the attempt read over had closed, or its
 		/// follow had ended, by the time the attempt failed.
 		lost_connection: bool,
@@ -5315,11 +5315,11 @@ mod current_block_tests {
 			reason: "Error calling Metadata_metadata: json-rpc connection closed".into(),
 		};
 		assert!(
-			CurrentBlockError::Block { error: metadata_cut(), lost_connection: true }
+			CurrentBlockError::Block { error: Box::new(metadata_cut()), lost_connection: true }
 				.is_transient()
 		);
 		assert!(
-			!CurrentBlockError::Block { error: metadata_cut(), lost_connection: false }
+			!CurrentBlockError::Block { error: Box::new(metadata_cut()), lost_connection: false }
 				.is_transient()
 		);
 	}
