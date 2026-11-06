@@ -74,7 +74,7 @@ impl From<v01::GenericError> for HostRejection {
 
 /// Rejection of a card face, read from its declared JSON or from the bytes a
 /// host kept.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeRendererError {
 	/// The text is not a renderer tree in the shape the protocol describes.
 	#[error("{reason}")]
@@ -101,7 +101,7 @@ pub enum NativeRendererError {
 ///
 /// [`ChatFieldError`] names its field with a `&'static str`, which has no
 /// UniFFI representation, so the field name travels inside the message.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeChatFieldError {
 	/// The field was refused; `reason` names the field and why.
 	#[error("{reason}")]

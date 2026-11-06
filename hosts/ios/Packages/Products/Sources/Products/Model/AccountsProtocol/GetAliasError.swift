@@ -6,6 +6,8 @@ import Foundation
 public enum GetAliasError: Error, Hashable {
     case ringNotFound
     case notMember
+    case keyNotRegistered
+    case keyNotInRing
     case rejected
     case unknown(String)
 
@@ -13,6 +15,8 @@ public enum GetAliasError: Error, Hashable {
         switch self {
         case .ringNotFound: "RingNotFound"
         case .notMember: "NotMember"
+        case .keyNotRegistered: "KeyNotRegistered"
+        case .keyNotInRing: "KeyNotInRing"
         case .rejected: "Rejected"
         case .unknown: "Unknown"
         }
@@ -22,6 +26,8 @@ public enum GetAliasError: Error, Hashable {
         switch self {
         case .ringNotFound: "Ring not found for the requested location"
         case .notMember: "Selected member key is not a member of the requested ring"
+        case .keyNotRegistered: "Key handle has no registry entry"
+        case .keyNotInRing: "Key handle is registered, but not for the requested ring"
         case .rejected: "Alias derivation was rejected"
         case let .unknown(reason): reason
         }

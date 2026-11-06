@@ -194,15 +194,26 @@ impl ProductAccounts {
 		self.authority.ring_vrf_sign(cx, session, self.request(request)).await
 	}
 
+	/// Revision of the kept grants.
+	///
+	/// Read it before a review whose result must not outlive a reset.
+	pub fn grant_revision(&self) -> u64 {
+		self.authority.grant_revision()
+	}
+
 	/// Allocate resources for this product.
+	///
+	/// The grants are kept only while this host's grants are still at
+	/// `grant_revision`.
 	pub async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError> {
 		self.authority
-			.allocate_resources(cx, session, &self.product.product_id, request)
+			.allocate_resources(cx, session, grant_revision, &self.product.product_id, request)
 			.await
 	}
 
