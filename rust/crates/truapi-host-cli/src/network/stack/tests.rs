@@ -35,7 +35,6 @@ fn test_stack_config_from_descriptor() {
 	assert_eq!(config.network_suffix, "testnet");
 	assert_eq!(config.identity_backend_base.as_deref(), Some("https://dub.example/api/v1"));
 	assert_eq!(config.dotns_pop_controller, Some([0xab; 20]));
-	assert!(config.disposable_identities);
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let people = ChainEndpoint { genesis: [0x11; 32], ws: "ws://127.0.0.1:9944".to_owned() };
 	assert_eq!(config.chains, Roles { people, ..paseo.chains });

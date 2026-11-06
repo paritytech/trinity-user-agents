@@ -1,3 +1,5 @@
+use clap::ValueEnum;
+
 use super::*;
 use crate::{chain::ChainBackend, network::Network};
 
@@ -13,7 +15,7 @@ fn config(network: &str) -> serde_json::Value {
 
 #[test]
 fn test_local_routes_presets() {
-	for network in [Network::Previewnet, Network::PaseoNextV2] {
+	for network in Network::value_variants() {
 		let base = network.config(ChainBackend::Rpc);
 		let resolved = parse(base.clone(), &config(&base.id).to_string()).unwrap();
 		assert_eq!(resolved.id, base.id);
@@ -70,18 +72,4 @@ fn test_endpoint_loopback_scheme() {
 	let mut document = config("previewnet");
 	document["identity_backend_base"] = "https://identity.example/api/v1".into();
 	assert!(parse(Network::Previewnet.config(ChainBackend::Rpc), &document.to_string()).is_err());
-}
-
-/// A local copy runs on disposable identities, so a network whose
-/// identities are real cannot be routed to one.
-#[test]
-fn test_real_identity_network_error() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("local-network.json");
-	std::fs::write(&path, config("pcf-devnet").to_string()).unwrap();
-	let error = resolve(Network::PcfDevnet.config(ChainBackend::Rpc), path.as_os_str())
-		.expect_err("local network accepted on pcf-devnet");
-	assert!(error.to_string().contains("real identities"));
-	std::fs::write(&path, config("previewnet").to_string()).unwrap();
-	assert!(resolve(Network::Previewnet.config(ChainBackend::Rpc), path.as_os_str()).is_ok());
 }

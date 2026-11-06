@@ -1,8 +1,7 @@
 //! The reserved values, Polkadot's genesis hashes and its `dot` TLD, and the
-//! check that rejects them where they do not belong.
+//! checks that reject them where they do not belong.
 
 use anyhow::{Result, ensure};
-use clap::ValueEnum;
 
 use super::{Network, NetworkConfig};
 
@@ -16,42 +15,44 @@ const POLKADOT_GENESIS: [&str; 3] = [
 const POLKADOT_TLD: &str = "dot";
 
 /// The namespace of `--network polkadot`, which earlier releases stored
-/// real-identity sessions under.
+/// mainnet sessions under.
 const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
 
-/// Fails for any network that routes to one of Polkadot's chains, and for a
-/// disposable-identity network that uses the `dot` TLD, the namespace of a
-/// built-in network whose identities are real, or the retired `polkadot`
-/// namespace. A fork of mainnet has mainnet's genesis, and a signature made
-/// against it is valid on mainnet itself; a `dot` identity derives the same
-/// keys as on mainnet; a real-identity namespace contains real-identity
-/// sessions.
+/// Fails for a network that routes to one of Polkadot's chains or runs under
+/// the retired `polkadot` namespace. A fork of mainnet has mainnet's genesis,
+/// and a signature made against it is valid on mainnet itself.
 pub fn ensure_no_reserved_values(config: &NetworkConfig) -> Result<()> {
 	for endpoint in config.chains.iter() {
 		ensure!(
 			!POLKADOT_GENESIS.contains(&hex::encode(endpoint.genesis).as_str()),
-			"{} would route to Polkadot's chain at {}, whose identities are real; point it at a \
-			 test network",
+			"{} would route to Polkadot's chain at {}; point it at a test network",
 			config.id,
 			endpoint.ws
 		);
 	}
-	if !config.disposable_identities {
-		return Ok(());
-	}
-	let is_real_identity_namespace = config.id == RETIRED_POLKADOT_NAMESPACE ||
-		Network::value_variants()
-			.iter()
-			.any(|network| !network.has_disposable_identities() && network.id() == config.id);
 	ensure!(
-		!is_real_identity_namespace,
-		"a stack cannot run under the {} namespace, whose identities are real; use a stack with \
-		 another id",
-		config.id
+		config.id != RETIRED_POLKADOT_NAMESPACE,
+		"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
+		 releases used for Polkadot mainnet; use a stack with another id"
+	);
+	Ok(())
+}
+
+/// Fails for a `--stack` network that uses the `dot` TLD, which only the
+/// bundled pcf-devnet copy may use, or that runs under pcf-devnet's
+/// namespace, so a stack cannot pose as that built-in network. A `dot`
+/// identity derives the same keys as on Polkadot.
+pub fn ensure_stack_not_reserved(config: &NetworkConfig) -> Result<()> {
+	let pcf_devnet = Network::PcfDevnet.id();
+	ensure!(
+		config.id != pcf_devnet,
+		"a stack cannot run under the {pcf_devnet} namespace of the built-in network; use a \
+		 stack with another id"
 	);
 	ensure!(
 		config.network_suffix != POLKADOT_TLD,
-		"{} uses Polkadot's TLD .{}, whose identities are real; point it at a test network",
+		"{} uses Polkadot's TLD .{}, which only the built-in {pcf_devnet} network may use; \
+		 point it at a test network",
 		config.id,
 		config.network_suffix
 	);

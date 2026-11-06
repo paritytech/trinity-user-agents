@@ -355,7 +355,6 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 		});
 	}
 
-	config.network.ensure_disposable_identities()?;
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
 	let mut store = AccountStore::load(config.base_path)?;
 	if let Some(name) = config.account {
@@ -456,7 +455,6 @@ pub fn persist_imported_signer(
 	network: &NetworkConfig,
 	imported: &ImportedSigner,
 ) -> Result<ResolvedSigner> {
-	network.ensure_disposable_identities()?;
 	let network_id = network.id.as_str();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
@@ -499,7 +497,6 @@ pub fn resolve_cached_signer(
 	network: &NetworkConfig,
 	account: Option<&str>,
 ) -> Result<Option<ResolvedSigner>> {
-	network.ensure_disposable_identities()?;
 	let network_id = network.id.as_str();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let store = AccountStore::load(base_path)?;
@@ -803,11 +800,6 @@ pub async fn attest_mnemonic(
 	mnemonic: &str,
 	username_base: &str,
 ) -> Result<AttestedIdentity> {
-	anyhow::ensure!(
-		network.disposable_identities,
-		"{} has real identities, so attest is only available on disposable-identity networks",
-		network.id
-	);
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
 	let lite_username =

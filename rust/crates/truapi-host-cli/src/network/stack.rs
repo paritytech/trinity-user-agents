@@ -11,8 +11,7 @@ use crate::{
 };
 
 /// A `--stack` descriptor's network, connected to over `chain_backend`, under
-/// the product namespace of the descriptor's `id` without a trailing `-fork`,
-/// with disposable identities.
+/// the product namespace of the descriptor's `id` without a trailing `-fork`.
 pub fn stack_network_config(
 	descriptor: &Descriptor,
 	chain_backend: ChainBackend,
@@ -23,7 +22,7 @@ pub fn stack_network_config(
 		"the stack id {:?} is not a lowercase label to use as the product namespace",
 		descriptor.id
 	);
-	stack_config(descriptor, id.to_owned(), chain_backend, true)
+	stack_config(descriptor, id.to_owned(), chain_backend)
 }
 
 /// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
@@ -34,7 +33,6 @@ pub fn stack_config(
 	descriptor: &Descriptor,
 	id: String,
 	chain_backend: ChainBackend,
-	disposable_identities: bool,
 ) -> Result<NetworkConfig> {
 	let projection = StackProjection::of(descriptor);
 	let chains = ROLE_NAMES.zip(projection.roles).try_map(|(role, chain)| {
@@ -69,7 +67,6 @@ pub fn stack_config(
 		identity_backend_base,
 		chains,
 		dotns_pop_controller,
-		disposable_identities,
 		chain_backend,
 	})
 }

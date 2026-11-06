@@ -1140,21 +1140,8 @@ async fn report_slot_scan(
 
 /// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
 /// each confirmation on the CLI.
-///
-/// Auto-accept is refused on a network whose identities are real, so a local
-/// page can never get a real identity's signature without a prompt.
-fn approval_policy(auto_accept: bool, network: &NetworkConfig) -> Result<ApprovalPolicy> {
-	if !auto_accept {
-		return Ok(ApprovalPolicy::Prompt);
-	}
-	anyhow::ensure!(
-		network.disposable_identities,
-		"{} has real identities, so every confirmation must be approved by hand; \
-		 automatic approval, which `dev` always uses, is only available on disposable-identity \
-		 networks",
-		network.id
-	);
-	Ok(ApprovalPolicy::AutoAccept)
+fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
+	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
 }
 
 /// Builds the CLI's own extrinsics over `network`'s chains, with the
@@ -1344,7 +1331,7 @@ async fn run_pairing_host(
 	let platform = CliPlatform::new(
 		&network,
 		Some(storage_paths),
-		approval_policy(args.auto_accept, &network)?,
+		approval_policy(args.auto_accept),
 		ui_handle,
 	);
 	// SSO runs over the real People chain. Usernames resolve from the dotNS
@@ -1735,7 +1722,7 @@ async fn start_signing_host(
 	network: NetworkConfig,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
-	let approval = approval_policy(args.auto_accept, &network)?;
+	let approval = approval_policy(args.auto_accept);
 	let mnemonic = normalized(args.mnemonic.clone());
 	let mut profile =
 		if mnemonic.is_some() { None } else { Some(catalog.ensure_profile(&session_name)?) };
@@ -1804,7 +1791,7 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &network, &args.product_config).await?;
+	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2192,21 +2179,10 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(
-	platform: &CliPlatform,
-	network: &NetworkConfig,
-	paths: &[PathBuf],
-) -> Result<()> {
+async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
-	// Seeded grants persist in the core database and are never prompted for.
-	anyhow::ensure!(
-		network.disposable_identities,
-		"{} has real identities, so --product-config grants are only available on \
-		 disposable-identity networks",
-		network.id
-	);
 	let configs = product_config::read_all(paths)?;
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
@@ -2245,7 +2221,7 @@ async fn run_dev(
 		product_config: args.product_config,
 		frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
 		// A process with no terminal cannot prompt, so `dev` approves every
-		// confirmation and refuses to start on a preset whose identities are real.
+		// confirmation.
 		serve: true,
 		auto_accept: true,
 		..Default::default()
@@ -3600,19 +3576,13 @@ async fn signing_interactive_loop(
 				);
 			},
 			ShellCommand::Approval(ApprovalCommand::Automatic) => {
-				match approval_policy(true, &session.network) {
-					Ok(policy) => {
-						session.platform.set_approval_policy(policy);
-						ui.success(
-							"Approval mode set to automatic",
-							Some(
-								"Future product confirmations will be approved automatically."
-									.to_string(),
-							),
-						);
-					},
-					Err(error) => ui.error(error.to_string()),
-				}
+				session.platform.set_approval_policy(ApprovalPolicy::AutoAccept);
+				ui.success(
+					"Approval mode set to automatic",
+					Some(
+						"Future product confirmations will be approved automatically.".to_string(),
+					),
+				);
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
@@ -4941,38 +4911,6 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 				.unwrap_err()
 				.to_string()
 				.contains("--serve cannot be combined with the exec subcommand")
-		);
-	}
-
-	/// `dev` always auto-accepts, so this is what stops it signing for a real
-	/// identity without a prompt.
-	/// A seeded grant is never prompted for and outlives the run, so a preset
-	/// whose identities are real refuses it before reading any config.
-	#[tokio::test]
-	async fn a_real_identity_network_refuses_local_product_grants() {
-		let production = crate::network::Network::PcfDevnet.config(ChainBackend::Rpc);
-		let platform = CliPlatform::new(&production, None, ApprovalPolicy::Prompt, None);
-		let error = apply_local_product_grants(
-			&platform,
-			&production,
-			&[PathBuf::from("/nonexistent/product.json")],
-		)
-		.await
-		.expect_err("grants are refused on a real-identity preset");
-		assert!(error.to_string().contains("--product-config"), "{error}");
-	}
-
-	#[test]
-	fn a_real_identity_network_never_approves_without_a_prompt() {
-		let testnet = crate::network::Network::PaseoNextV2.config(ChainBackend::Rpc);
-		let production = NetworkConfig { disposable_identities: false, ..testnet.clone() };
-		assert_eq!(
-			[
-				approval_policy(true, &testnet).ok(),
-				approval_policy(false, &production).ok(),
-				approval_policy(true, &production).ok(),
-			],
-			[Some(ApprovalPolicy::AutoAccept), Some(ApprovalPolicy::Prompt), None,]
 		);
 	}
 

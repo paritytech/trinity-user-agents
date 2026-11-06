@@ -434,8 +434,8 @@ fn test_network_check_url_and_link() {
 	assert!(stderr(&wrong_key).contains("bad-signature"));
 }
 
-/// A stack's identities are disposable, so it never runs on Polkadot's chains or TLD, nor under
-/// the namespace of a network whose identities are real.
+/// A stack never runs on Polkadot's chains or TLD, nor under the retired `polkadot` namespace or
+/// the namespace of the built-in pcf-devnet network.
 #[test]
 fn test_network_check_polkadot_values() {
 	let dir = tempfile::tempdir().unwrap();
@@ -444,8 +444,9 @@ fn test_network_check_polkadot_values() {
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
 	let dot = local_descriptor(|descriptor| descriptor["tld"] = "dot".into());
-	let namespaced = local_descriptor(|descriptor| descriptor["id"] = "pcf-devnet".into());
-	for descriptor in [polkadot_people, dot, namespaced] {
+	let pcf_devnet = local_descriptor(|descriptor| descriptor["id"] = "pcf-devnet".into());
+	let polkadot = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
+	for descriptor in [polkadot_people, dot, pcf_devnet, polkadot] {
 		let output = network_check(&write_descriptor(dir.path(), &descriptor), &[]);
 		assert!(!output.status.success());
 	}

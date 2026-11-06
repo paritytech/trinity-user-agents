@@ -970,9 +970,7 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
 stack, and one whose `tld` differs from the copy at `--out`, also when that copy
 was signed with another key (every derived account would change; remove the copy to
-bundle a new TLD on purpose). For the link of `pcf-devnet`, whose identities are real,
-it also refuses a copy that changes a chain's genesis hash, `assets`, `contracts`,
-`dotns` or `coinage` from the copy at `--out`. With `--skip-same-projection`, which
+bundle a new TLD on purpose). With `--skip-same-projection`, which
 `scripts/update-stacks.sh` passes, a fetched copy that differs from the one at
 `--out` only in fields truapi-host does not read leaves it in place and reports it
 as current. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
@@ -1040,10 +1038,8 @@ truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
 Every command takes the global `--network`: `paseo-next-v2` (default), `previewnet`, or
-`pcf-devnet` (PCF's devnet on Paseo). `pcf-devnet` uses Polkadot's `dot` TLD, which
-derives the same keys as Polkadot, so its identities are real: it signs only with
-`--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
-auto-approves, and refuses `--product-config` and `attest` (SPEC.md §14.1).
+`pcf-devnet` (PCF's devnet on Paseo, on the `dot` TLD). All three are test networks
+(SPEC.md §14.1).
 The network owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
@@ -1064,9 +1060,7 @@ A command reaches its chains in one of three ways:
   in use and that a later release ships it; when the stack restarted from genesis the
   line reports that too. A newer copy that changes nothing the CLI reads is used
   without a line. A published descriptor that changes the stack's `tld` is not used,
-  since every account derives under it, and neither is one that changes a genesis
-  hash of `pcf-devnet`, whose genesis hashes this build pins. A stack past its
-  `expiresAt` is an error.
+  since every account derives under it. A stack past its `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork or a staging instance. It replaces
   `--network`, and the two cannot be combined; details below.
@@ -1074,9 +1068,8 @@ A command reaches its chains in one of three ways:
   (`HOST_CLI_LOCAL_NETWORK_CONFIG`, a JSON file with every chain's loopback URL and
   genesis hash and the identity backend; see
   [`docs/local-network.md`](../../../docs/local-network.md)). It runs under the
-  product namespace of `--network`, which must be a disposable-identity network,
-  reads that network's bundled copy without fetching its descriptor, and cannot be
-  combined with `--stack`.
+  product namespace of `--network`, reads that network's bundled copy without
+  fetching its descriptor, and cannot be combined with `--stack`.
 
 On top of a built-in network or a stack, `HOST_CLI_PEOPLE_WS`,
 `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one chain's URL for a fork
@@ -1094,9 +1087,9 @@ use, after fetching the published descriptor once more when it could not be fetc
 before. A `NetworkSuffix` other than the `tld` is an error. An endpoint an override or the
 local file reroutes must answer; any other that does not answer within 3 seconds is
 logged and left to fail on first use.
-No network routes to Polkadot's chains. Identities on a stack or a local copy are
-disposable, so one whose `tld` is `dot` or whose namespace is `pcf-devnet` or
-`polkadot` (where earlier releases stored `--network polkadot` sessions) is refused.
+No network routes to Polkadot's chains. Only the built-in `pcf-devnet` uses Polkadot's
+`dot` TLD: a stack whose `tld` is `dot` or whose namespace is `pcf-devnet` or `polkadot`
+(where earlier releases stored `--network polkadot` sessions) is refused.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \

@@ -288,7 +288,7 @@ Commands:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name`. |
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
-| `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. Disposable-identity networks only. |
+| `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
 | `network-check` | Resolve the network, with any override, and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
@@ -520,7 +520,6 @@ truapi-host dev [options] [-- <development-command>...]
 `dev` is the plain-browser development topology built on the signing host. It
 needs no TTY, ensures and activates a signer, auto-accepts confirmations, binds
 the loopback frame server and browser bridge, then starts the wrapped command.
-Because it auto-accepts, it refuses a network whose identities are real (§14.1).
 When no command follows `--`, it serves the host until stopped.
 
 | Option | Default | Behavior |
@@ -581,7 +580,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. For the link of a built-in stack whose identities are real (§14.1), a fetched copy that changes a chain's genesis hash (a chain added or dropped included), `assets`, `contracts`, `dotns` or `coinage` from `<file>` is refused the same way. With `--skip-same-projection`, a fetched copy whose projection (§14.1), `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. With `--skip-same-projection`, a fetched copy whose projection (§14.1), `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1670,19 +1669,10 @@ core, product, and current selection files.
 
 ### 14.1 Networks and stacks
 
-`--network` selects one of three networks, each a built-in stack (below).
-`paseo-next-v2` is the default. `paseo-next-v2` and `previewnet` are test
-networks whose identities are disposable, so the account store may keep their
-BIP-39 entropy. `pcf-devnet` is PCF's devnet on Paseo; its `dot` TLD derives the
-same keys as Polkadot, so its identities are real.
-
-A network whose identities are real never writes to the account store: it signs
-only with `--mnemonic` or `HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts,
-stored accounts and mnemonic imports. It refuses automatic approval
-(`--auto-accept`, `/approval automatic` and `dev`), so a local page cannot get a
-real identity's signature without a prompt. It also refuses `--product-config`,
-whose seeded grants are never prompted for and persist in the core database, and
-`attest`.
+`--network` selects one of three test networks, each a built-in stack (below).
+`paseo-next-v2` is the default. Their identities are disposable, so the account
+store may keep their BIP-39 entropy. `pcf-devnet` is PCF's devnet on Paseo and
+uses the `dot` TLD (below).
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. A stack names it as its `dub` service, and
@@ -1721,12 +1711,13 @@ The reserved values are Polkadot's genesis hashes and its `dot` TLD:
 
 No network may route to a chain with one of these genesis hashes: a fork has its
 source's genesis, and a signature made against it is valid on the source network.
-Only a built-in stack whose identities are real may use the `dot` TLD, since a
-`dot` identity derives the same keys as on Polkadot. Any other network has
-disposable identities, so a `--stack`, an override or a local-network file whose
-`tld` is `dot` is refused, and so is a stack whose product namespace is
-`pcf-devnet` or `polkadot` (where earlier releases stored `--network polkadot`
-sessions): a real-identity namespace contains real-identity sessions.
+Only a built-in stack may use the `dot` TLD, since a `dot` identity derives the
+same keys as on Polkadot; `pcf-devnet` is the one that does. A `--stack` whose
+`tld` is `dot` is refused, and so is one whose product namespace is `pcf-devnet`,
+so a stack cannot pose as that built-in. No stack runs under the `polkadot`
+namespace, where earlier releases stored `--network polkadot` sessions. An override
+or a local-network file cannot change the TLD; their genesis hashes are checked
+as above.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
 ships a signed copy of each in `stacks/<name>.json`, with the link that carries
@@ -1740,10 +1731,7 @@ stderr with both sequences, saying it is in use and that a later release ships
 it; the line says the stack restarted from genesis when its `generation`
 changed. A newer copy with the same projection is used without a line. A
 published copy that changes the `tld` is not used, with a warning, since every
-account derives under it. For a built-in stack whose identities are real, a
-published copy that changes a chain's genesis hash (a chain added or dropped
-included), `assets`, `contracts`, `dotns` or `coinage` is not used either, with a
-warning: the build pins them from its shipped copy. A refused, rolled-back or
+account derives under it. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
 unreachable one does so without a message. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
@@ -1753,8 +1741,7 @@ after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundl
 no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
 shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
-`tld` of the copy at `--out`, and, for the link of a built-in stack whose
-identities are real, one that changes a field the build pins.
+`tld` of the copy at `--out`.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
@@ -1762,8 +1749,7 @@ the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis is an error; for a built-in it reports that
 the stack restarted from genesis and which descriptor is in use: the published
 one and its URL, or the bundled one because the published copy at its URL could
-not be fetched or was rejected (refused, a rollback, a conflict or a TLD or
-pinned genesis change).
+not be fetched or was rejected (refused, a rollback, a conflict or a TLD change).
 When the bundled copy is in use because the published one could not be fetched,
 a failed check first fetches the published descriptor again (10-second timeout);
 the checks repeat only when that fetch puts the published copy in use, and
@@ -1796,7 +1782,7 @@ genesis hashes. Each must be a `ws://` or `wss://` URL; blank is unset.
 identity backend of the built-in network `--network` selects (paseo-next-v2 by
 default) to loopback endpoints with their own genesis hashes, under that
 network's product namespace (`docs/local-network.md`). Its `network` must match
-`--network`, which must be a disposable-identity network, every field is required,
+`--network`, every field is required,
 and an invalid file is an error; blank is unset. It cannot be combined with
 `--stack` or with a `HOST_CLI_*_WS` override: the command fails with an error
 naming both. In this mode the built-in network comes from its bundled copy
@@ -1808,7 +1794,7 @@ command runs, every endpoint an override reroutes is asked for its genesis and
 must answer with the genesis it is routed as; an endpoint that does not answer or
 reports another genesis stops the command. (A `--stack` endpoint that does not
 answer is only logged, as above.) An error about a stack names where it came
-from, `--stack` or `HOST_CLI_STACK`. The disposable-identity checks above apply to
+from, `--stack` or `HOST_CLI_STACK`. The reserved-value checks above apply to
 the result.
 
 `network-check` resolves the network as any command does, overrides included,
@@ -1822,9 +1808,9 @@ same JSON.
 #### `pcf-devnet`
 
 PCF's devnet: Paseo's relay and Asset Hub with PCF's own People and Bulletin
-chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Its
-identities are real (above) and reserved identities derive under `.dot`. The
-identity backend is the descriptor's `dub` service.
+chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Reserved
+identities derive under `.dot`. The identity backend is the descriptor's `dub`
+service.
 
 Sessions are per network (`SessionCatalog::new` keys on the network id), so a
 signer provisioned on one network is not visible from another. Each network means
@@ -2134,8 +2120,7 @@ only product and message length.
   <redacted summary>
 ```
 
-It does not bypass product-id validation or core authorization rules. It is
-refused on a network whose identities are real (§14.1).
+It does not bypass product-id validation or core authorization rules.
 
 ### 17.3 Sensitive state and output
 
@@ -2145,7 +2130,7 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody, so only disposable-identity networks (§14.1) write it.
+not production custody; every network the CLI serves is a test network (§14.1).
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts
@@ -2392,7 +2377,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies to a built-in network or a `--stack`; `HOST_CLI_LOCAL_NETWORK_CONFIG` takes precedence. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
 | `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` supplies the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

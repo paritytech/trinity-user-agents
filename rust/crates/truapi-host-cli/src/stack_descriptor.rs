@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
-use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
+use trinity_stack::{Descriptor, Fetched, Pointer, accept};
 
 /// A local file has no URL of its own; the pointer only carries the key to check.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
@@ -114,35 +114,6 @@ impl<T> Roles<T> {
 	pub fn iter(&self) -> impl Iterator<Item = &T> {
 		[&self.people, &self.asset_hub, &self.bulletin].into_iter()
 	}
-}
-
-/// The fields `fetched` changes from `stored` among those a build pins for a
-/// stack allowed reserved values: each chain's genesis hash, as
-/// `<role> genesis hash` and counting a chain only one of them has, then
-/// `assets`, `contracts`, `dotns` and `coinage`.
-pub fn changed_pinned_fields(stored: &Descriptor, fetched: &Descriptor) -> Vec<String> {
-	let genesis_differs = |chain: &Chain, other: &Descriptor| {
-		other
-			.chain(&chain.role)
-			.is_none_or(|same| same.genesis_hash != chain.genesis_hash)
-	};
-	let dropped_or_moved = stored.chains.iter().filter(|chain| genesis_differs(chain, fetched));
-	let added = fetched.chains.iter().filter(|chain| stored.chain(&chain.role).is_none());
-	let mut fields: Vec<String> = dropped_or_moved
-		.chain(added)
-		.map(|chain| format!("{} genesis hash", chain.role))
-		.collect();
-	for (name, is_changed) in [
-		("assets", stored.assets != fetched.assets),
-		("contracts", stored.contracts != fetched.contracts),
-		("dotns", stored.dotns != fetched.dotns),
-		("coinage", stored.coinage != fetched.coinage),
-	] {
-		if is_changed {
-			fields.push(name.to_owned());
-		}
-	}
-	fields
 }
 
 /// The descriptor fields a stack-derived network is built from, and

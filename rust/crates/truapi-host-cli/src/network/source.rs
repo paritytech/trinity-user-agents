@@ -23,9 +23,9 @@ impl NetworkSource {
 	///
 	/// Fails when the routing sources cannot be combined, when a `--stack`
 	/// descriptor is unreachable, when the descriptor in use is expired or
-	/// lacks a role, when a disposable-identity network carries a reserved
-	/// value (Polkadot's genesis hashes or TLD) or the namespace of a network
-	/// with real identities, when the light client cannot serve the
+	/// lacks a role, when a network carries one of Polkadot's genesis hashes
+	/// or the retired `polkadot` namespace, when a `--stack` uses the `dot`
+	/// TLD or pcf-devnet's namespace, when the light client cannot serve the
 	/// network, when an endpoint reports a genesis other than the one it is
 	/// routed as, when an endpoint an override reroutes does not answer, and
 	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
@@ -69,6 +69,7 @@ impl NetworkSource {
 					.and_then(|descriptor| {
 						stack::stack_network_config(&descriptor, self.chain_backend)
 					})
+					.and_then(|base| reserved::ensure_stack_not_reserved(&base).map(|()| base))
 					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
 				(base, None)
 			},

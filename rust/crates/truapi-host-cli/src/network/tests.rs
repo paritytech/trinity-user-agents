@@ -19,27 +19,29 @@ fn test_network_served_roles() {
 	}
 }
 
-/// Hosts a disposable-identity built-in may route to, matched exactly: the
-/// paseo-next-v2 chains and identity backend, and the previewnet stack.
-/// A refreshed bundled copy that routes elsewhere fails here on purpose.
+/// Hosts a built-in may route to, matched exactly: the paseo-next-v2 chains
+/// and identity backend, the previewnet stack, and the pcf-devnet chains and
+/// identity backend. A refreshed bundled copy that routes elsewhere fails here
+/// on purpose.
 const TEST_NETWORK_HOSTS: &[&str] = &[
 	"paseo-asset-hub-next-rpc.polkadot.io",
 	"paseo-people-next-system-rpc.polkadot.io",
 	"paseo-bulletin-next-rpc.polkadot.io",
 	"previewnet.substrate.dev",
 	"identity.dotspark.app",
+	"asset-hub-paseo-rpc.n.dwellir.com",
+	"people-devnet-rpc.api.polkadotcommunity.foundation",
+	"bullet.sik.rocks",
+	"polkadot-app.api.polkadotcommunity.foundation",
 ];
 
-/// Guards the invariant documented on [`Network`]: a network that lets the
-/// plaintext account store save its identities must route only to test
+/// Guards the invariant documented on [`Network`]: the plaintext account store
+/// saves every network's identities, so a built-in must route only to test
 /// networks.
 #[test]
-fn test_disposable_network_hosts() {
+fn test_built_in_network_hosts() {
 	for network in Network::value_variants() {
 		let config = network.config(ChainBackend::Rpc);
-		if !config.disposable_identities {
-			continue;
-		}
 		let mut routes: Vec<&str> = config.identity_backend_base.as_deref().into_iter().collect();
 		routes.extend(config.chains.iter().map(|chain| chain.ws.as_str()));
 

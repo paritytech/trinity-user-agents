@@ -17,14 +17,10 @@ mod stack;
 #[cfg(test)]
 mod testing;
 
-/// Networks the headless hosts know by name, each a stack this build ships a
-/// signed copy of.
-///
-/// The CLI account store saves BIP-39 mnemonics in plaintext (`accounts.rs`),
-/// which is only acceptable for disposable test identities. A network that sets
-/// [`NetworkConfig::disposable_identities`] may use that store; any other
-/// network only signs with a mnemonic supplied per process, never writes one,
-/// and never approves a confirmation without a prompt.
+/// Networks the headless hosts know by name, each a test network this build
+/// ships a signed stack copy of. The CLI account store saves BIP-39 mnemonics
+/// in plaintext (`accounts.rs`), which is only acceptable because every
+/// network it serves has disposable test identities.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Network {
 	/// Read from the descriptor its operator publishes.
@@ -37,9 +33,8 @@ pub enum Network {
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
 	Previewnet,
-	/// PCF's devnet on Paseo, read from the descriptor PCF publishes. Its `dot`
-	/// TLD derives the same keys as Polkadot, so its identities are real: pass
-	/// the signer with --mnemonic; no stored accounts, no auto-accept
+	/// PCF's devnet on Paseo, read from the descriptor PCF publishes. Its TLD
+	/// is `dot`, which no other network may use.
 	#[value(name = "pcf-devnet")]
 	PcfDevnet,
 }
@@ -112,10 +107,6 @@ pub struct NetworkConfig {
 	/// network whose gateway dispatcher is not set yet. Discovery wins when it
 	/// answers.
 	pub dotns_pop_controller: Option<[u8; 20]>,
-	/// Whether identities on this network are disposable test identities the
-	/// plaintext account store may save and auto-accept may sign for. Only
-	/// test networks set it.
-	pub disposable_identities: bool,
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub chain_backend: ChainBackend,
 }
@@ -154,18 +145,6 @@ impl NetworkConfig {
 				self.id
 			)
 		})
-	}
-
-	/// Refuses to write a mnemonic for this network to the plaintext account
-	/// store unless its identities are disposable.
-	pub fn ensure_disposable_identities(&self) -> anyhow::Result<()> {
-		anyhow::ensure!(
-			self.disposable_identities,
-			"{} has real identities, which the plaintext account store must not save; \
-			 pass the signer with --mnemonic or HOST_CLI_SIGNER_MNEMONIC",
-			self.id
-		);
-		Ok(())
 	}
 
 	/// The chain set this network serves, for `Features::supported_chains`.

@@ -193,10 +193,9 @@ async fn test_network_suffix_absent_or_unreachable() {
 		.expect("unreachable People rejected");
 }
 
-/// Every built-in stack, real-identity ones included, has every endpoint and
-/// the suffix checked, as a `--stack` does; a local network and the light
-/// client, which does not use the RPC endpoints, do not, beyond what an
-/// override reroutes.
+/// Every built-in stack has every endpoint and the suffix checked, as a
+/// `--stack` does; a local network and the light client, which does not use
+/// the RPC endpoints, do not, beyond what an override reroutes.
 #[test]
 fn test_chain_checks_by_source() {
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);

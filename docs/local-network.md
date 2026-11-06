@@ -2,9 +2,9 @@
 
 `HOST_CLI_LOCAL_NETWORK_CONFIG` points the CLI host at a disposable local copy of a
 built-in test network. It runs under the product namespace of `--network paseo-next-v2`
-(the default) or `--network previewnet`, and replaces all chain endpoints, genesis routing
-keys and the identity backend together. With the variable unset, the built-in network is
-unchanged. `--network pcf-devnet`, whose identities are real, is refused. The built-in network's
+(the default), `--network previewnet` or `--network pcf-devnet`, and replaces all chain
+endpoints, genesis routing keys and the identity backend together. With the variable unset,
+the built-in network is unchanged. The built-in network's
 other values (its TLD and dotNS controller) come from the copy bundled in the binary; the
 published descriptor is not fetched, so the mode works offline. For a local network
 described by a Trinity stack descriptor, pass the descriptor with `--stack` instead (see the

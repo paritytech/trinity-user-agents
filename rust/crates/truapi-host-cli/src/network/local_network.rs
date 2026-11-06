@@ -35,16 +35,9 @@ pub fn config_path() -> Option<OsString> {
 	std::env::var_os(CONFIG_ENV).filter(|path| !path.to_string_lossy().trim().is_empty())
 }
 
-/// `base` routed by the local-network file at `path`. Fails when `base` has
-/// real identities, when the file cannot be read or breaks a rule; it never
-/// falls back to a live chain.
+/// `base` routed by the local-network file at `path`. Fails when the file
+/// cannot be read or breaks a rule; it never falls back to a live chain.
 pub fn resolve(base: NetworkConfig, path: &OsStr) -> Result<NetworkConfig> {
-	ensure!(
-		base.disposable_identities,
-		"{CONFIG_ENV} routes a disposable local network, but {} has real identities; pass \
-		 --network paseo-next-v2 or previewnet",
-		base.id
-	);
 	let json = std::fs::read_to_string(path)
 		.with_context(|| format!("cannot read {CONFIG_ENV} file {path:?}"))?;
 	parse(base, &json)
