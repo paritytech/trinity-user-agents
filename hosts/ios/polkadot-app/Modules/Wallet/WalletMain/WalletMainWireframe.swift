@@ -25,8 +25,9 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
             return
         }
 
-        let screen = CollectiblesViewController(product: product)
         moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? CollectiblesOrigin
+            let screen = CollectiblesViewController(product: product, origin: origin)
             wallet.pushViewController(screen, animated: wasOnScreen)
         }
     }
