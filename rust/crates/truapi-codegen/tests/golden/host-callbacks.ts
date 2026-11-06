@@ -291,7 +291,10 @@ export type CreateTransactionReview =
   /**
    * Legacy-account transaction request.
    */
-  | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
+  | {
+      tag: "LegacyAccount";
+      value: { account: LegacySigningAccount; payload: LegacyAccountTxPayload };
+    };
 
 /**
  * A kind of signature a product makes with another product's account.
@@ -548,6 +551,20 @@ export interface IdentityDisclosureReview {
 }
 
 /**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export type LegacySigningAccount =
+  /**
+   * The wallet's identity account.
+   */
+  | { tag: "Identity"; value?: undefined }
+  /**
+   * The requesting product's account at derivation index 0.
+   */
+  | { tag: "Product"; value: ProductAccountId };
+
+/**
  * Why a login attempt failed, for hosts that need to act on the cause rather
  * than only display it.
  */
@@ -768,9 +785,16 @@ export type SignPayloadReview =
       value: { callingProductId?: ProductId; request: HostSignPayloadRequest };
     }
   /**
-   * Legacy-account signing request.
+   * Legacy-account signing request, which only the product's account at
+   * index 0 may sign.
    */
-  | { tag: "LegacyAccount"; value: HostSignPayloadWithLegacyAccountRequest };
+  | {
+      tag: "LegacyAccount";
+      value: {
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      };
+    };
 
 /**
  * Review shown before a sign-raw request is sent to the paired wallet.
@@ -795,6 +819,7 @@ export type SignRawReview =
   | {
       tag: "LegacyAccount";
       value: {
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       };
@@ -1068,7 +1093,13 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
         callingProductId?: ProductId;
         payload: ProductAccountTxPayload;
       }>,
-      LegacyAccount: LegacyAccountTxPayload,
+      LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
+        payload: LegacyAccountTxPayload,
+      }) as S.Codec<{
+        account: LegacySigningAccount;
+        payload: LegacyAccountTxPayload;
+      }>,
     }),
 );
 
@@ -1279,6 +1310,15 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
   );
 
 /**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
+  (): S.Codec<LegacySigningAccount> =>
+    S.TaggedUnion({ Identity: S._void, Product: ProductAccountId }),
+);
+
+/**
  * Why a login attempt failed, for hosts that need to act on the cause rather
  * than only display it.
  */
@@ -1427,7 +1467,13 @@ export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
         callingProductId?: ProductId;
         request: HostSignPayloadRequest;
       }>,
-      LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
+      LegacyAccount: S.Struct({
+        account: ProductAccountId,
+        request: HostSignPayloadWithLegacyAccountRequest,
+      }) as S.Codec<{
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      }>,
     }),
 );
 
@@ -1449,9 +1495,11 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
         watermarked: boolean;
       }>,
       LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
       }) as S.Codec<{
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       }>,

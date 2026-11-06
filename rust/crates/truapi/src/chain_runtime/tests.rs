@@ -2624,3 +2624,47 @@ fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_u
 		"open 600 s, last event 6 s ago, 3 calls, last call 540 s ago, receiver dropped"
 	);
 }
+
+/// A node that cannot be reached may be reachable later, so the read waits on
+/// it. A provider that refuses, whatever reason it gives, answers the same way
+/// every time, so the read reports it at once.
+#[test]
+fn only_an_unreachable_node_is_a_transient_connect_failure() {
+	struct Refusing(fn() -> ProviderError);
+
+	#[async_trait::async_trait]
+	impl ChainProvider for Refusing {
+		async fn connect(
+			&self,
+			_genesis_hash: [u8; 32],
+		) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+			Err((self.0)())
+		}
+	}
+
+	let kind_for = |error: fn() -> ProviderError| {
+		let provider = HostChainProvider::new(Arc::new(Refusing(error)));
+		match futures::executor::block_on(RuntimeChainProvider::connect(&provider, vec![0xab; 32]))
+		{
+			Ok(_) => panic!("the refusing provider connected"),
+			Err(failure) => failure.kind(),
+		}
+	};
+	let transient = [
+		(|| ProviderError::Handshake { url: "wss://node".into(), reason: "dns".into() })
+			as fn() -> ProviderError,
+		|| ProviderError::Transport { reason: "socket".into() },
+	];
+	for error in transient {
+		assert_eq!(kind_for(error), RuntimeFailureKind::Unavailable, "{}", error());
+	}
+	let refused = [
+		(|| ProviderError::UnknownGenesis { genesis: [0xab; 32] }) as fn() -> ProviderError,
+		|| ProviderError::UnknownRelay { relay: [0xcd; 32] },
+		|| ProviderError::Host { reason: "chain provider unavailable".into() },
+		|| ProviderError::MissingRuntime,
+	];
+	for error in refused {
+		assert_eq!(kind_for(error), RuntimeFailureKind::HostFailure, "{}", error());
+	}
+}
