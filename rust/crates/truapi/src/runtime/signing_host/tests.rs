@@ -205,6 +205,16 @@ fn product_runtime_for(
 	)
 }
 
+/// Whether this host keeps an AutoSigning key for `product_id` in this activation.
+fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+	let session = authority.session_state().current().expect("an active wallet");
+	futures::executor::block_on(
+		authority.grants.auto_signing_key(&session, &ProductId::for_test(product_id)),
+	)
+	.expect("kept keys are readable")
+	.is_some()
+}
+
 fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
 	v01::HostAccountSignVrfRequest {
 		account: v01::ProductAccountId {
@@ -2023,36 +2033,42 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	let (_services, authority) = signing_runtime_with_platform(platform);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
-	let stale_session = authority.current_session().expect("active session");
-	authority
-		.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot"))
-		.expect("first product grant succeeds");
-	authority
-		.grant_auto_signing(&stale_session, &ProductId::for_test("other.dot"))
-		.expect("other product grant succeeds");
+	let session = authority.current_session().expect("active session");
+	let stale_revision = authority.grant_revision();
+	for product_id in ["myapp.dot", "other.dot"] {
+		futures::executor::block_on(authority.grant_auto_signing(
+			&session,
+			stale_revision,
+			&ProductId::for_test(product_id),
+		))
+		.expect("product grant succeeds");
+	}
 
 	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 
-	let current_session = authority.current_session().expect("session remains active");
-	let (_, current_generation) = authority
-		.require_current_session(&current_session)
-		.expect("current session validates");
-	assert!(!authority.has_auto_signing_grant(
-		current_generation,
-		current_session.public_key,
-		&ProductId::for_test("myapp.dot"),
-		&ProductId::for_test("myapp.dot"),
-	));
-	assert!(authority.has_auto_signing_grant(
-		current_generation,
-		current_session.public_key,
-		&ProductId::for_test("other.dot"),
-		&ProductId::for_test("other.dot"),
-	));
-	assert!(matches!(
-		authority.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot")),
-		Err(AuthorityError::Disconnected)
-	));
+	let current = authority.session_state().current().expect("session remains active");
+	assert_eq!(
+		(
+			futures::executor::block_on(authority.keeps_auto_signing_key(
+				&current,
+				&ProductId::for_test("myapp.dot"),
+				&ProductId::for_test("myapp.dot"),
+			)),
+			futures::executor::block_on(authority.keeps_auto_signing_key(
+				&current,
+				&ProductId::for_test("other.dot"),
+				&ProductId::for_test("other.dot"),
+			)),
+			authority.require_current_session(&session).is_ok(),
+			futures::executor::block_on(authority.grant_auto_signing(
+				&session,
+				stale_revision,
+				&ProductId::for_test("myapp.dot"),
+			)),
+		),
+		(false, true, true, Err(AuthorityError::Disconnected)),
+		"a reset revokes one product's grant, keeps the wallet session and fences grants begun before it",
+	);
 }
 
 #[test]
@@ -2154,6 +2170,7 @@ fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
 	let error = futures::executor::block_on(authority.allocate_resources(
 		&CallContext::default(),
 		&stale,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::AutoSigning],
@@ -2612,6 +2629,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 	let mut allocation = Box::pin(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&product_id,
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::SmartContractAllowance(
@@ -2645,6 +2663,7 @@ fn a_withdrawn_allocation_starts_no_further_resource() {
 	let result = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::AutoSigning],
@@ -2678,6 +2697,7 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 	let empty = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest { resources: vec![] },
 	))
@@ -2687,6 +2707,7 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 	let optional = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![
