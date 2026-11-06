@@ -26,8 +26,7 @@ use crate::{chain::CliChainProvider, network::NetworkConfig};
 /// Discovery reads `DotnsGateway.DispatcherAddress`, which holds either a
 /// dispatcher or the controller itself, and resolves whichever it is; the
 /// override is for networks where that fails. A stack's descriptor carries its
-/// controller as `dotns.popController`, and the polkadot network carries its own
-/// from its deployment manifest. `DEPLOYMENTS.md` in paritytech/dotns is the
+/// controller as `dotns.popController`. `DEPLOYMENTS.md` in paritytech/dotns is the
 /// authority per network.
 pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
 

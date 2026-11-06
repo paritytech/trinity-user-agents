@@ -193,8 +193,8 @@ async fn test_network_suffix_absent_or_unreachable() {
 		.expect("unreachable People rejected");
 }
 
-/// Built-in stacks have every endpoint and the suffix checked, as a
-/// `--stack` does; Polkadot's pinned values, a local network and the light
+/// Every built-in stack, real-identity ones included, has every endpoint and
+/// the suffix checked, as a `--stack` does; a local network and the light
 /// client, which does not use the RPC endpoints, do not, beyond what an
 /// override reroutes.
 #[test]
@@ -204,10 +204,10 @@ fn test_chain_checks_by_source() {
 	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
 	assert_eq!(built_in.expected_suffix, Some("paseo"));
 
-	let polkadot = Network::Polkadot.config(ChainBackend::Rpc);
-	let polkadot_checks = ChainChecks::plan(&polkadot, &polkadot.chains, false, None);
-	assert_eq!((polkadot_checks.rerouted.len(), polkadot_checks.from_stack.len()), (0, 0));
-	assert_eq!(polkadot_checks.expected_suffix, None);
+	let pcf_devnet = Network::PcfDevnet.config(ChainBackend::Rpc);
+	let pcf_devnet_checks = ChainChecks::plan(&pcf_devnet, &pcf_devnet.chains, false, None);
+	assert_eq!((pcf_devnet_checks.rerouted.len(), pcf_devnet_checks.from_stack.len()), (0, 3));
+	assert_eq!(pcf_devnet_checks.expected_suffix, Some("dot"));
 
 	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
 	let light_client = ChainChecks::plan(&light_client, &paseo.chains, false, None);
@@ -256,9 +256,9 @@ fn test_light_client_after_restart_error() {
 
 #[test]
 fn test_light_client_unknown_network_error() {
-	let polkadot = Network::Polkadot.config(ChainBackend::LightClient);
-	let error = refuse_light_client(&polkadot).unwrap_err();
-	assert!(error.to_string().contains("no chain specs for polkadot"));
+	let pcf_devnet = Network::PcfDevnet.config(ChainBackend::LightClient);
+	let error = refuse_light_client(&pcf_devnet).unwrap_err();
+	assert!(error.to_string().contains("no chain specs for pcf-devnet"));
 }
 
 /// The light client finds each chain in `truapi-provider`'s bundled catalog

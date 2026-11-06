@@ -144,8 +144,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 	let mut failures = Vec::new();
 	if !drifted.is_empty() {
 		failures.push(format!(
-			"drifted, so refresh the bundled stacks (scripts/update-stacks.sh) or Polkadot's \
-			 pinned values:\n{}",
+			"drifted, so refresh the bundled stacks (scripts/update-stacks.sh):\n{}",
 			drifted.join("\n")
 		));
 	}

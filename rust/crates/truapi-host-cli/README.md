@@ -106,7 +106,7 @@ updates it. Nothing contacts GitHub.
 
 Reserved identities derive under `uid.paseo` / `peopl.paseo` on
 `paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
-`uid.dot` / `peopl.dot` on `polkadot`.
+`uid.dot` / `peopl.dot` on `pcf-devnet`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -970,7 +970,9 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
 stack, and one whose `tld` differs from the copy at `--out`, also when that copy
 was signed with another key (every derived account would change; remove the copy to
-bundle a new TLD on purpose). With `--skip-same-projection`, which
+bundle a new TLD on purpose). For the link of `pcf-devnet`, whose identities are real,
+it also refuses a copy that changes a chain's genesis hash, `assets`, `contracts`,
+`dotns` or `coinage` from the copy at `--out`. With `--skip-same-projection`, which
 `scripts/update-stacks.sh` passes, a fetched copy that differs from the one at
 `--out` only in fields truapi-host does not read leaves it in place and reports it
 as current. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
@@ -1038,10 +1040,10 @@ truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
 Every command takes the global `--network`: `paseo-next-v2` (default), `previewnet`, or
-`polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
+`pcf-devnet` (PCF's devnet on Paseo). `pcf-devnet` uses Polkadot's `dot` TLD, which
+derives the same keys as Polkadot, so its identities are real: it signs only with
 `--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
-auto-approves, refuses `--product-config` and `attest`, and has no identity backend unless
-`HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
+auto-approves, and refuses `--product-config` and `attest` (SPEC.md §14.1).
 The network owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
@@ -1053,7 +1055,7 @@ gets its own signer identity on the same machine.
 A command reaches its chains in one of three ways:
 
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
-  `paseo-next-v2` and `previewnet` are built-in Trinity stacks. Each command that
+  All three are built-in Trinity stacks. Each command that
   resolves one fetches the descriptor its operator publishes, verifies it against
   the stack's key, and uses it when it is newer than the signed copy this release
   ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
@@ -1062,8 +1064,9 @@ A command reaches its chains in one of three ways:
   in use and that a later release ships it; when the stack restarted from genesis the
   line reports that too. A newer copy that changes nothing the CLI reads is used
   without a line. A published descriptor that changes the stack's `tld` is not used,
-  since every account derives under it. A stack past its `expiresAt` is an error.
-  `polkadot` stays pinned in the binary.
+  since every account derives under it, and neither is one that changes a genesis
+  hash of `pcf-devnet`, whose genesis hashes this build pins. A stack past its
+  `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork or a staging instance. It replaces
   `--network`, and the two cannot be combined; details below.
@@ -1091,9 +1094,9 @@ use, after fetching the published descriptor once more when it could not be fetc
 before. A `NetworkSuffix` other than the `tld` is an error. An endpoint an override or the
 local file reroutes must answer; any other that does not answer within 3 seconds is
 logged and left to fail on first use.
-Identities on a stack or a local copy are disposable, so one whose chains carry
-Polkadot's genesis hashes, whose `tld` is `dot` or whose namespace is `polkadot` is
-refused.
+No network routes to Polkadot's chains. Identities on a stack or a local copy are
+disposable, so one whose `tld` is `dot` or whose namespace is `pcf-devnet` or
+`polkadot` (where earlier releases stored `--network polkadot` sessions) is refused.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \

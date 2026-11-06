@@ -78,9 +78,9 @@ fn test_endpoint_loopback_scheme() {
 fn test_real_identity_network_error() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("local-network.json");
-	std::fs::write(&path, config("polkadot").to_string()).unwrap();
-	let error = resolve(Network::Polkadot.config(ChainBackend::Rpc), path.as_os_str())
-		.expect_err("local network accepted on polkadot");
+	std::fs::write(&path, config("pcf-devnet").to_string()).unwrap();
+	let error = resolve(Network::PcfDevnet.config(ChainBackend::Rpc), path.as_os_str())
+		.expect_err("local network accepted on pcf-devnet");
 	assert!(error.to_string().contains("real identities"));
 	std::fs::write(&path, config("previewnet").to_string()).unwrap();
 	assert!(resolve(Network::Previewnet.config(ChainBackend::Rpc), path.as_os_str()).is_ok());

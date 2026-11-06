@@ -6,12 +6,15 @@ use crate::chain::ChainBackend;
 
 #[test]
 fn test_backend_override_hint() {
-	let polkadot = Network::Polkadot.config(ChainBackend::Rpc);
-	let error = polkadot.identity_backend().expect_err("polkadot ships no backend");
+	let no_backend = NetworkConfig {
+		identity_backend_base: None,
+		..Network::PaseoNextV2.config(ChainBackend::Rpc)
+	};
+	let error = no_backend.identity_backend().expect_err("backend accepted where none is set");
 	assert!(error.to_string().contains(IDENTITY_BACKEND_BASE_ENV));
 
 	let overridden =
-		apply_backend_override(polkadot, Some("http://localhost:8080/api/v1".to_string()));
+		apply_backend_override(no_backend, Some("http://localhost:8080/api/v1".to_string()));
 	assert_eq!(overridden.identity_backend().ok(), Some("http://localhost:8080/api/v1"));
 }
 

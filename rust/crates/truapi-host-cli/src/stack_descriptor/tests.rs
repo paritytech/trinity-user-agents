@@ -60,3 +60,29 @@ async fn test_fetch_http_status_error() {
 		.expect_err("closed port accepted");
 	assert!(matches!(closed_port_error, FetchError::Transport(_)));
 }
+
+/// A pinned stack is compared role by role, so a moved, dropped or added chain
+/// each count as a genesis change, as does a change to `dotns`; a new RPC URL
+/// does not.
+#[test]
+fn test_changed_pinned_fields() {
+	let stored = trinity_stack::Document::parse(include_bytes!("../../stacks/paseo-next-v2.json"))
+		.expect("invalid bundled stack")
+		.descriptor()
+		.clone();
+	let mut fetched = stored.clone();
+	fetched.chains[0].rpc = vec!["wss://elsewhere.example".to_owned()];
+	assert!(changed_pinned_fields(&stored, &fetched).is_empty());
+
+	let people = fetched.chains.iter().position(|chain| chain.role == "People").unwrap();
+	fetched.chains[people].genesis_hash = format!("0x{}", "5a".repeat(32));
+	let bulletin = fetched.chains.iter().position(|chain| chain.role == "Bulletin").unwrap();
+	let mut extra = fetched.chains.remove(bulletin);
+	extra.role = "Coretime".to_owned();
+	fetched.chains.push(extra);
+	fetched.dotns = None;
+	assert_eq!(
+		changed_pinned_fields(&stored, &fetched),
+		["People genesis hash", "Bulletin genesis hash", "Coretime genesis hash", "dotns"]
+	);
+}

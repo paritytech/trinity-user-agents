@@ -15,20 +15,21 @@ use crate::{chain::ChainBackend, stack_descriptor::Roles};
 pub struct ChainChecks {
 	/// Endpoints an override reroutes; one that does not answer is an error.
 	rerouted: Vec<ChainEndpoint>,
-	/// The other endpoints of a stack network; one that does not answer within
+	/// The other endpoints of the stack; one that does not answer within
 	/// [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
 	from_stack: Vec<ChainEndpoint>,
 	/// For a built-in stack, the descriptor in use.
 	built_in: Option<BuiltInOrigin>,
-	/// For a stack network, the TLD People's `NetworkSuffix` must equal.
+	/// The TLD People's `NetworkSuffix` must equal, when the stack's own
+	/// endpoints are checked.
 	expected_suffix: Option<&'static str>,
 }
 
 impl ChainChecks {
 	/// The checks for `config`, resolved from `base_chains`: endpoints `config`
 	/// routes differently from `base_chains`, by genesis and URL, are
-	/// rerouted. A stack network reached over RPC without a local network also
-	/// has its other endpoints and People's `NetworkSuffix` checked.
+	/// rerouted. A network reached over RPC without a local network also has
+	/// its other endpoints and People's `NetworkSuffix` checked.
 	pub fn plan(
 		config: &NetworkConfig,
 		base_chains: &Roles<ChainEndpoint>,
@@ -40,14 +41,12 @@ impl ChainChecks {
 			.iter()
 			.cloned()
 			.partition(|endpoint| !base_chains.iter().any(|chain| chain == endpoint));
-		let is_stack_network = config.disposable_identities &&
-			!local_network &&
-			config.chain_backend == ChainBackend::Rpc;
+		let checks_stack = !local_network && config.chain_backend == ChainBackend::Rpc;
 		Self {
 			rerouted,
-			from_stack: if is_stack_network { untouched } else { Vec::new() },
+			from_stack: if checks_stack { untouched } else { Vec::new() },
 			built_in,
-			expected_suffix: is_stack_network.then_some(config.network_suffix),
+			expected_suffix: checks_stack.then_some(config.network_suffix),
 		}
 	}
 

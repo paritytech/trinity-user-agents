@@ -4,12 +4,13 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, ensure};
+use clap::ValueEnum;
 use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
-use super::{Network, NetworkConfig, polkadot, stack::stack_config};
+use super::{Network, NetworkConfig, stack::stack_config};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FetchError, StackProjection, fetch, unix_now},
+	stack_descriptor::{FetchError, StackProjection, changed_pinned_fields, fetch, unix_now},
 };
 
 /// How long a built-in stack's published descriptor may take before the
@@ -22,6 +23,9 @@ pub const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
 struct BuiltInStack {
 	link: &'static str,
 	bundle: &'static [u8],
+	/// False for a stack allowed reserved values: its identities are real,
+	/// and a refresh may not change the fields this build pins.
+	disposable_identities: bool,
 }
 
 impl BuiltInStack {
@@ -33,46 +37,70 @@ impl BuiltInStack {
 const PASEO_NEXT_V2_STACK: BuiltInStack = BuiltInStack {
 	link: include_str!("../../stacks/paseo-next-v2.link"),
 	bundle: include_bytes!("../../stacks/paseo-next-v2.json"),
+	disposable_identities: true,
 };
 
 const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
 	link: include_str!("../../stacks/previewnet.link"),
 	bundle: include_bytes!("../../stacks/previewnet.json"),
+	disposable_identities: true,
+};
+
+const PCF_DEVNET_STACK: BuiltInStack = BuiltInStack {
+	link: include_str!("../../stacks/pcf-devnet.link"),
+	bundle: include_bytes!("../../stacks/pcf-devnet.json"),
+	disposable_identities: false,
 };
 
 impl Network {
-	fn built_in_stack(self) -> Option<BuiltInStack> {
+	fn built_in_stack(self) -> BuiltInStack {
 		match self {
-			Self::PaseoNextV2 => Some(PASEO_NEXT_V2_STACK),
-			Self::Previewnet => Some(PREVIEWNET_STACK),
-			Self::Polkadot => None,
+			Self::PaseoNextV2 => PASEO_NEXT_V2_STACK,
+			Self::Previewnet => PREVIEWNET_STACK,
+			Self::PcfDevnet => PCF_DEVNET_STACK,
 		}
 	}
 
-	/// The values compiled into this build, connected to over
-	/// `chain_backend`, without fetching anything: a built-in stack's bundled
-	/// copy, or Polkadot's pinned values.
-	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
-		let Some(built_in) = self.built_in_stack() else { return polkadot::config(chain_backend) };
-		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
-			.expect("invalid bundled stack");
-		stack_config(&bundled.descriptor, self.id().to_owned(), chain_backend)
-			.expect("invalid bundled stack")
+	/// Whether this network's identities are disposable; false for a stack
+	/// allowed reserved values.
+	pub fn has_disposable_identities(self) -> bool {
+		self.built_in_stack().disposable_identities
 	}
 
-	/// For a built-in stack, the published descriptor when it is newer than the
-	/// bundled copy, otherwise the bundled copy, with which of the two is in
-	/// use; Polkadot's pinned values otherwise. Logs a notice when the
-	/// published descriptor changes a field the CLI reads. Fails when the
-	/// descriptor in use is expired or lacks a role.
+	/// Whether `pointer` is the pointer of a built-in stack allowed reserved
+	/// values, whose genesis hashes, `assets`, `contracts`, `dotns` and
+	/// `coinage` this build pins.
+	pub fn has_pinned_fields_at(pointer: &Pointer) -> bool {
+		Self::value_variants().iter().any(|network| {
+			!network.has_disposable_identities() && network.built_in_stack().pointer() == *pointer
+		})
+	}
+
+	/// The bundled copy of this network's stack, connected to over
+	/// `chain_backend`, without fetching anything.
+	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
+		let built_in = self.built_in_stack();
+		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
+			.expect("invalid bundled stack");
+		stack_config(
+			&bundled.descriptor,
+			self.id().to_owned(),
+			chain_backend,
+			built_in.disposable_identities,
+		)
+		.expect("invalid bundled stack")
+	}
+
+	/// The published descriptor when it is newer than the bundled copy,
+	/// otherwise the bundled copy, with which of the two is in use. Logs a
+	/// notice when the published descriptor changes a field the CLI reads.
+	/// Fails when the descriptor in use is expired or lacks a role.
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
 		chain_backend: ChainBackend,
-	) -> Result<(NetworkConfig, Option<BuiltInOrigin>)> {
-		let Some(built_in) = self.built_in_stack() else {
-			return Ok((polkadot::config(chain_backend), None));
-		};
+	) -> Result<(NetworkConfig, BuiltInOrigin)> {
+		let built_in = self.built_in_stack();
 		let id = self.id();
 		let pointer = built_in.pointer();
 		let url = pointer.url().as_str();
@@ -86,14 +114,22 @@ impl Network {
 		}
 		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
 		let now = unix_now() as i64;
-		let refresh = refresh_stack(id, &pointer, built_in.bundle, fetched, now)?;
+		let has_pinned_fields = !built_in.disposable_identities;
+		let refresh =
+			refresh_stack(id, &pointer, built_in.bundle, fetched, has_pinned_fields, now)?;
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
 			Some(notice) => tracing::info!("{notice}"),
 			None => {},
 		}
 		let origin = BuiltInOrigin { id, url: url.to_owned(), copy: refresh.copy };
-		Ok((stack_config(&refresh.descriptor, id.to_owned(), chain_backend)?, Some(origin)))
+		let config = stack_config(
+			&refresh.descriptor,
+			id.to_owned(),
+			chain_backend,
+			built_in.disposable_identities,
+		)?;
+		Ok((config, origin))
 	}
 }
 
@@ -106,8 +142,8 @@ pub enum BuiltInCopy {
 	/// fetched; a later fetch may still return it.
 	Unreachable,
 	/// The bundled copy, because the published descriptor was refused, a
-	/// rollback, a conflict, or changed the TLD; fetching it again returns the
-	/// same.
+	/// rollback, a conflict, or changed the TLD or, on a stack allowed reserved
+	/// values, a pinned field; fetching it again returns the same.
 	Rejected,
 }
 
@@ -180,14 +216,17 @@ impl std::fmt::Display for StackNotice {
 }
 
 /// The descriptor a built-in stack runs on: `fetched` when [`accept`] takes it
-/// over `bundled` and it has the bundled copy's `tld`, otherwise `bundled`,
-/// with a notice when the descriptor in use changes a field the CLI reads.
-/// Fails when that descriptor is past `expiresAt`.
+/// over `bundled` and it has the bundled copy's `tld` and, with
+/// `has_pinned_fields`, the bundled copy's genesis hashes, `assets`,
+/// `contracts`, `dotns` and `coinage`; otherwise `bundled`. Carries a notice
+/// when the descriptor in use changes a field the CLI reads. Fails when that
+/// descriptor is past `expiresAt`.
 fn refresh_stack(
 	id: &str,
 	pointer: &Pointer,
 	bundled: &[u8],
 	fetched: Fetched,
+	has_pinned_fields: bool,
 	now_unix_seconds: i64,
 ) -> Result<StackRefresh> {
 	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
@@ -206,25 +245,38 @@ fn refresh_stack(
 		),
 	}
 	let bundled_descriptor = &bundled_copy.stack.descriptor;
-	let is_same_tld = accepted.stack.descriptor.tld == bundled_descriptor.tld;
-	if !is_same_tld {
-		tracing::warn!(
-			"the published {id} stack descriptor changes the TLD from {} to {}, which would \
-			 change every account derived under it; using the bundled copy",
-			bundled_descriptor.tld,
-			accepted.stack.descriptor.tld
-		);
+	let published = &accepted.stack.descriptor;
+	let changed_pinned = if has_pinned_fields {
+		changed_pinned_fields(bundled_descriptor, published)
+	} else {
+		Vec::new()
+	};
+	let pinned_change = if published.tld != bundled_descriptor.tld {
+		Some(format!(
+			"changes the TLD from {} to {}, which would change every account derived under it",
+			bundled_descriptor.tld, published.tld
+		))
+	} else if !changed_pinned.is_empty() {
+		Some(format!(
+			"changes the {}, which this build pins for a stack allowed reserved values",
+			changed_pinned.join(", ")
+		))
+	} else {
+		None
+	};
+	if let Some(change) = &pinned_change {
+		tracing::warn!("the published {id} stack descriptor {change}; using the bundled copy");
 	}
-	let is_projection_change = is_same_tld &&
-		StackProjection::of(&accepted.stack.descriptor) !=
-			StackProjection::of(bundled_descriptor);
+	let is_pinned_match = pinned_change.is_none();
+	let is_projection_change = is_pinned_match &&
+		StackProjection::of(published) != StackProjection::of(bundled_descriptor);
 	let notice = is_projection_change.then(|| StackNotice {
 		id: id.to_owned(),
 		bundle_sequence: bundled_descriptor.sequence,
-		remote_sequence: accepted.stack.descriptor.sequence,
+		remote_sequence: published.sequence,
 		new_generation: accepted.new_generation,
 	});
-	let (accepted, copy) = match (is_same_tld, &accepted.status) {
+	let (accepted, copy) = match (is_pinned_match, &accepted.status) {
 		(true, Status::Updated | Status::Unchanged) => (accepted, BuiltInCopy::Published),
 		(true, Status::Unreachable) => (accepted, BuiltInCopy::Unreachable),
 		(true, _) => (accepted, BuiltInCopy::Rejected),

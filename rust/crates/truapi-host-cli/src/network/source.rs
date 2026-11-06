@@ -10,7 +10,7 @@ use super::{
 	checks::{ChainChecks, refuse_light_client},
 	local_network,
 	overrides::{ChainOverrides, apply_backend_override},
-	polkadot, stack,
+	reserved, stack,
 };
 use crate::{
 	chain::ChainBackend,
@@ -23,8 +23,9 @@ impl NetworkSource {
 	///
 	/// Fails when the routing sources cannot be combined, when a `--stack`
 	/// descriptor is unreachable, when the descriptor in use is expired or
-	/// lacks a role, when a disposable-identity network carries Polkadot's
-	/// genesis hashes, TLD or namespace, when the light client cannot serve the
+	/// lacks a role, when a disposable-identity network carries a reserved
+	/// value (Polkadot's genesis hashes or TLD) or the namespace of a network
+	/// with real identities, when the light client cannot serve the
 	/// network, when an endpoint reports a genesis other than the one it is
 	/// routed as, when an endpoint an override reroutes does not answer, and
 	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
@@ -74,10 +75,12 @@ impl NetworkSource {
 			// A local copy replaces every route, so the bundled copy is enough.
 			(None, Some(_)) => (self.network.unwrap_or_default().config(self.chain_backend), None),
 			(None, None) => {
-				self.network
+				let (base, origin) = self
+					.network
 					.unwrap_or_default()
 					.resolve_built_in(fetch_timeout, self.chain_backend)
-					.await?
+					.await?;
+				(base, Some(origin))
 			},
 		};
 		let base_chains = base.chains.clone();
@@ -87,7 +90,7 @@ impl NetworkSource {
 			config = local_network::resolve(config, path)?;
 		}
 		refuse_light_client(&config)?;
-		polkadot::ensure_no_real_identity_values(&config)?;
+		reserved::ensure_no_reserved_values(&config)?;
 		let checks = ChainChecks::plan(&config, &base_chains, local_path.is_some(), built_in);
 		Ok((config, checks))
 	}

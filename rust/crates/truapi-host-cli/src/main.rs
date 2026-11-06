@@ -4950,10 +4950,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 	/// whose identities are real refuses it before reading any config.
 	#[tokio::test]
 	async fn a_real_identity_network_refuses_local_product_grants() {
-		let production = NetworkConfig {
-			disposable_identities: false,
-			..crate::network::Network::Polkadot.config(ChainBackend::Rpc)
-		};
+		let production = crate::network::Network::PcfDevnet.config(ChainBackend::Rpc);
 		let platform = CliPlatform::new(&production, None, ApprovalPolicy::Prompt, None);
 		let error = apply_local_product_grants(
 			&platform,

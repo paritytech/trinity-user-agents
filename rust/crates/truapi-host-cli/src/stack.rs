@@ -17,9 +17,11 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
+	network::Network,
 	platform,
 	stack_descriptor::{
-		FETCH_TIMEOUT, StackProjection, fetch, pointer_of, read_stack, refused, unix_now,
+		FETCH_TIMEOUT, StackProjection, changed_pinned_fields, fetch, pointer_of, read_stack,
+		refused, unix_now,
 	},
 	terminal_ui::qr_rows,
 };
@@ -71,7 +73,9 @@ pub enum StackCommand {
 	/// Fetch and verify a signed stack, and write the copy a host build ships.
 	///
 	/// The previous copy at `--out` counts as stored, so a rebundle never lowers
-	/// `sequence`, and pins the `tld`. Refuses an expired copy.
+	/// `sequence`, and pins the `tld`, and for a built-in stack allowed reserved
+	/// values its genesis hashes, `assets`, `contracts`, `dotns` and `coinage`.
+	/// Refuses an expired copy.
 	Bundle {
 		/// A link or a URL.
 		stack: String,
@@ -280,6 +284,16 @@ async fn bundle(
 				pointer.url(),
 				stored_descriptor.tld,
 				descriptor.tld,
+				out.display()
+			);
+		}
+		let changed_pinned = changed_pinned_fields(stored_descriptor, descriptor);
+		if Network::has_pinned_fields_at(&pointer) && !changed_pinned.is_empty() {
+			bail!(
+				"not bundled: {} changes the {}, which this build pins for a stack allowed reserved \
+				 values; remove {} to bundle the change on purpose",
+				pointer.url(),
+				changed_pinned.join(", "),
 				out.display()
 			);
 		}

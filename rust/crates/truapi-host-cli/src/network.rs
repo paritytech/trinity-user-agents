@@ -11,13 +11,14 @@ mod built_in;
 mod checks;
 pub mod local_network;
 mod overrides;
-mod polkadot;
+mod reserved;
 mod source;
 mod stack;
 #[cfg(test)]
 mod testing;
 
-/// Networks the headless hosts know by name.
+/// Networks the headless hosts know by name, each a stack this build ships a
+/// signed copy of.
 ///
 /// The CLI account store saves BIP-39 mnemonics in plaintext (`accounts.rs`),
 /// which is only acceptable for disposable test identities. A network that sets
@@ -26,20 +27,21 @@ mod testing;
 /// and never approves a confirmation without a prompt.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Network {
-	/// Built-in stack, read from the descriptor its operator publishes.
+	/// Read from the descriptor its operator publishes.
 	#[value(name = "paseo-next-v2")]
 	#[default]
 	PaseoNextV2,
-	/// Built-in stack, read from the descriptor its operator publishes. Its id is
-	/// the id the playground and dotli already use for this network
+	/// Read from the descriptor its operator publishes. Its id is the id the
+	/// playground and dotli already use for this network
 	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so `HostChainSet::network`
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
 	Previewnet,
-	/// Polkadot mainnet (People, Bulletin, Asset Hub). Identities are real:
-	/// pass the signer with --mnemonic; no stored accounts, no auto-accept
-	#[value(name = "polkadot")]
-	Polkadot,
+	/// PCF's devnet on Paseo, read from the descriptor PCF publishes. Its `dot`
+	/// TLD derives the same keys as Polkadot, so its identities are real: pass
+	/// the signer with --mnemonic; no stored accounts, no auto-accept
+	#[value(name = "pcf-devnet")]
+	PcfDevnet,
 }
 
 /// Env var overriding the identity backend base URL for every command. The URL
@@ -77,7 +79,7 @@ impl Network {
 		match self {
 			Self::PaseoNextV2 => "paseo-next-v2",
 			Self::Previewnet => "previewnet",
-			Self::Polkadot => polkadot::ID,
+			Self::PcfDevnet => "pcf-devnet",
 		}
 	}
 }

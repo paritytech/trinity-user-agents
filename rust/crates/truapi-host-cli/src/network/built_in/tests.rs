@@ -8,12 +8,27 @@ use super::{super::testing::edit_descriptor, *};
 #[test]
 fn test_bundled_stack_pointers() {
 	for network in Network::value_variants() {
-		let Some(built_in) = network.built_in_stack() else { continue };
+		let built_in = network.built_in_stack();
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
 			.unwrap_or_else(|error| panic!("{}: {error}", network.id()));
 		assert!(bundled.signed);
 		assert_eq!(bundled.descriptor.id, network.id());
 	}
+}
+
+/// pcf-devnet derives `dot` identities, the keys Polkadot uses, so it runs
+/// with real-identity rules and its reserved fields are pinned; the testnets
+/// are disposable and may restart.
+#[test]
+fn test_real_identity_built_ins() {
+	let real: Vec<_> = Network::value_variants()
+		.iter()
+		.filter(|network| !network.config(ChainBackend::Rpc).disposable_identities)
+		.collect();
+	assert_eq!(real, [&Network::PcfDevnet]);
+	let pcf_devnet = Network::PcfDevnet.built_in_stack().pointer();
+	assert!(Network::has_pinned_fields_at(&pcf_devnet));
+	assert!(!Network::has_pinned_fields_at(&Network::PaseoNextV2.built_in_stack().pointer()));
 }
 
 /// The hint tells the user which copy is in use and why, so a restart on
@@ -62,7 +77,83 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW)
+	refresh_stack("test", &test_pointer(), bundled, fetched, false, NOW)
+}
+
+/// A published copy that moves People to another genesis.
+fn sign_people_genesis_change() -> Vec<u8> {
+	sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g2".into();
+		let people = descriptor["chains"]
+			.as_array_mut()
+			.unwrap()
+			.iter_mut()
+			.find(|chain| chain["role"] == "People")
+			.unwrap();
+		people["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
+	})
+}
+
+/// A published copy that moves `dotns.popController`.
+fn sign_dotns_change() -> Vec<u8> {
+	sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g1".into();
+		descriptor["dotns"]["popController"] = format!("0x{}", "ab".repeat(20)).into();
+	})
+}
+
+fn refresh_pinned(fetched: &[u8]) -> StackRefresh {
+	refresh_stack(
+		"test",
+		&test_pointer(),
+		&sign_copy(10, "g1"),
+		Fetched::Document(fetched),
+		true,
+		NOW,
+	)
+	.unwrap()
+}
+
+/// The genesis hashes of a stack allowed reserved values are pinned by its
+/// build, so a published copy that changes one is rejected for the bundled
+/// copy.
+#[test]
+fn test_refresh_pinned_genesis_change_bundle() {
+	let refresh = refresh_pinned(&sign_people_genesis_change());
+	assert_eq!(refresh.descriptor.sequence, 10);
+	assert!(refresh.notice.is_none());
+	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
+}
+
+/// The dotNS contracts of a stack allowed reserved values are pinned too.
+#[test]
+fn test_refresh_pinned_dotns_change_bundle() {
+	let refresh = refresh_pinned(&sign_dotns_change());
+	assert_eq!(refresh.descriptor.sequence, 10);
+	assert!(refresh.notice.is_none());
+	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
+}
+
+/// A disposable stack follows its chains through a restart from genesis.
+#[test]
+fn test_refresh_unpinned_genesis_change_published() {
+	let changed = sign_people_genesis_change();
+	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&changed)).unwrap();
+	assert_eq!(refresh.descriptor.sequence, 11);
+	assert_eq!(refresh.copy, BuiltInCopy::Published);
+	assert!(refresh.notice.expect("restart not reported").new_generation);
+}
+
+/// A disposable stack follows a redeployment of its dotNS contracts.
+#[test]
+fn test_refresh_unpinned_dotns_change_published() {
+	let changed = sign_dotns_change();
+	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&changed)).unwrap();
+	assert_eq!(refresh.descriptor.sequence, 11);
+	assert_eq!(refresh.copy, BuiltInCopy::Published);
+	assert!(!refresh.notice.expect("dotns change not reported").new_generation);
 }
 
 const NOW: i64 = 1_800_000_000;

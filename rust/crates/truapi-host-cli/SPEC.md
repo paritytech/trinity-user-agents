@@ -114,7 +114,7 @@ as the paired path.
 `truapi-host-cli` owns:
 
 - argument and slash-command parsing;
-- the built-in networks (`paseo-next-v2`, `previewnet`, `polkadot`) and `--stack`;
+- the built-in networks (`paseo-next-v2`, `previewnet`, `pcf-devnet`) and `--stack`;
 - local signer selection and onboarding;
 - local persistence and account-store locking;
 - approvals and `--auto-accept`;
@@ -348,7 +348,7 @@ value when the flag is absent, and a blank value is unset. The option is global;
 
 ### 4.5 Global network option
 
-`--network <paseo-next-v2|previewnet|polkadot>` selects the built-in network
+`--network <paseo-next-v2|previewnet|pcf-devnet>` selects the built-in network
 every command that resolves one runs against, `paseo-next-v2` when neither it
 nor a stack is given (§14.1). It cannot be combined with `--stack` or a
 non-blank `HOST_CLI_STACK`. The option is global, so it is accepted before or
@@ -581,7 +581,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. With `--skip-same-projection`, a fetched copy whose projection (§14.1), `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. For the link of a built-in stack whose identities are real (§14.1), a fetched copy that changes a chain's genesis hash (a chain added or dropped included), `assets`, `contracts`, `dotns` or `coinage` from `<file>` is refused the same way. With `--skip-same-projection`, a fetched copy whose projection (§14.1), `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1670,10 +1670,11 @@ core, product, and current selection files.
 
 ### 14.1 Networks and stacks
 
-`--network` selects one of three networks. `paseo-next-v2` is the default.
-`paseo-next-v2` and `previewnet` are test networks whose identities are
-disposable, so the account store may keep their BIP-39 entropy. `polkadot` is
-mainnet, and its identities are real.
+`--network` selects one of three networks, each a built-in stack (below).
+`paseo-next-v2` is the default. `paseo-next-v2` and `previewnet` are test
+networks whose identities are disposable, so the account store may keep their
+BIP-39 entropy. `pcf-devnet` is PCF's devnet on Paseo; its `dot` TLD derives the
+same keys as Polkadot, so its identities are real.
 
 A network whose identities are real never writes to the account store: it signs
 only with `--mnemonic` or `HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts,
@@ -1685,13 +1686,13 @@ whose seeded grants are never prompted for and persist in the core database, and
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. A stack names it as its `dub` service, and
-the CLI reports the complete backend response when registration fails.
-`polkadot` ships no identity backend: a command that needs one fails with an
-error naming `HOST_CLI_IDENTITY_BACKEND_BASE` until that variable supplies it.
+the CLI reports the complete backend response when registration fails. A
+network without one fails a command that needs it with an error naming
+`HOST_CLI_IDENTITY_BACKEND_BASE` until that variable supplies it.
 
 #### Stacks
 
-A network other than `polkadot` comes from a Trinity stack descriptor
+Every network comes from a Trinity stack descriptor
 (`docs/rfcs/trinity-stack-descriptor.md`), which supplies:
 
 | Network field | Descriptor source |
@@ -1707,32 +1708,53 @@ projection equals the shipped copy's makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), or has a `tld` the core
-does not serve (`dot`, `paseo`, `testnet`) is an error. A stack's identities are
-disposable, so a stack whose chains carry one of Polkadot's genesis hashes, whose
-`tld` is `dot`, or whose product namespace is `polkadot` is refused: a fork has
-its source's genesis, a signature made against it is valid on the source
-network, and `polkadot`'s namespace contains its real-identity sessions.
+does not serve (`dot`, `paseo`, `testnet`) is an error.
 
-`paseo-next-v2` and `previewnet` are built-in stacks. The binary ships a signed
-copy of each in `stacks/<name>.json`, with the link that carries its pointer in
-`stacks/<name>.link`. A command that resolves a built-in fetches the published
-descriptor (3-second timeout) and runs the RFC's `accept` with the shipped copy
-as the stored one, then uses what it returns. A published descriptor that answers
-with a non-2xx HTTP status is logged as a warning with the status and URL; a
-timeout or a failed connection is not. A published descriptor whose projection
-differs from the shipped copy's is used and reported in one line on stderr with
-both sequences, saying it is in use and that a later release ships it; the line
-says the stack restarted from genesis when its `generation` changed. A newer copy
-with the same projection is used without a line. A published copy that changes
-the `tld` is not used, with a warning, since every account derives under it. A
-refused, rolled-back or conflicting published copy leaves the shipped copy in use
-with a warning; an unreachable one does so without a message. A result past
-`expiresAt` is an error, and one past `validUntil` is used with a warning.
-`--chain-backend light-client` on a built-in whose descriptor in use has genesis
-hashes other than this build's light-client chain specs fails at start, since the
-stack restarted after the specs were bundled. `scripts/update-stacks.sh` refreshes
-the shipped copies, and the weekly chain-spec workflow carries the refresh in one
-PR with its changeset.
+The reserved values are Polkadot's genesis hashes and its `dot` TLD:
+
+| Reserved value | Value |
+| --- | --- |
+| People genesis | `0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008` |
+| Asset Hub genesis | `0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f` |
+| Bulletin genesis | `0x2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4` |
+| TLD | `dot` |
+
+No network may route to a chain with one of these genesis hashes: a fork has its
+source's genesis, and a signature made against it is valid on the source network.
+Only a built-in stack whose identities are real may use the `dot` TLD, since a
+`dot` identity derives the same keys as on Polkadot. Any other network has
+disposable identities, so a `--stack`, an override or a local-network file whose
+`tld` is `dot` is refused, and so is a stack whose product namespace is
+`pcf-devnet` or `polkadot` (where earlier releases stored `--network polkadot`
+sessions): a real-identity namespace contains real-identity sessions.
+
+`paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
+ships a signed copy of each in `stacks/<name>.json`, with the link that carries
+its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
+the published descriptor (3-second timeout) and runs the RFC's `accept` with the
+shipped copy as the stored one, then uses what it returns. A published descriptor
+that answers with a non-2xx HTTP status is logged as a warning with the status
+and URL; a timeout or a failed connection is not. A published descriptor whose
+projection differs from the shipped copy's is used and reported in one line on
+stderr with both sequences, saying it is in use and that a later release ships
+it; the line says the stack restarted from genesis when its `generation`
+changed. A newer copy with the same projection is used without a line. A
+published copy that changes the `tld` is not used, with a warning, since every
+account derives under it. For a built-in stack whose identities are real, a
+published copy that changes a chain's genesis hash (a chain added or dropped
+included), `assets`, `contracts`, `dotns` or `coinage` is not used either, with a
+warning: the build pins them from its shipped copy. A refused, rolled-back or
+conflicting published copy leaves the shipped copy in use with a warning; an
+unreachable one does so without a message. A result past `expiresAt` is an
+error, and one past `validUntil` is used with a warning. `--chain-backend
+light-client` on a built-in whose descriptor in use has genesis hashes other than
+this build's light-client chain specs fails at start, since the stack restarted
+after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
+no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
+shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
+with its changeset. `truapi-host stack bundle` refuses a copy that changes the
+`tld` of the copy at `--out`, and, for the link of a built-in stack whose
+identities are real, one that changes a field the build pins.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
@@ -1740,14 +1762,15 @@ the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis is an error; for a built-in it reports that
 the stack restarted from genesis and which descriptor is in use: the published
 one and its URL, or the bundled one because the published copy at its URL could
-not be fetched or was rejected (refused, a rollback, a conflict or a TLD change).
+not be fetched or was rejected (refused, a rollback, a conflict or a TLD or
+pinned genesis change).
 When the bundled copy is in use because the published one could not be fetched,
 a failed check first fetches the published descriptor again (10-second timeout);
 the checks repeat only when that fetch puts the published copy in use, and
 otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
 that prints both. An endpoint that does not answer within 3 seconds, or a People
 chain without the storage item, is logged and left to fail on first use.
-Polkadot's pinned network and `--chain-backend light-client` are not checked.
+`--chain-backend light-client` is not checked.
 
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
@@ -1796,28 +1819,12 @@ product namespace), `namespace` (the network's TLD), `identity_backend_base`, an
 resolves the network and asks every node for its genesis before printing the
 same JSON.
 
-#### `polkadot`
+#### `pcf-devnet`
 
-Polkadot mainnet. Its identities are real (above). Reserved identities derive
-under `.dot`.
-
-| Purpose | Value |
-| --- | --- |
-| Identity backend | none; set `HOST_CLI_IDENTITY_BACKEND_BASE` |
-| People RPC | `wss://polkadot-people-rpc.polkadot.io` |
-| People genesis | `0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008` |
-| Bulletin RPC | `wss://bulletin-rpc.polkadot.io` |
-| Bulletin genesis | `0x2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4` |
-| Asset Hub RPC | `wss://polkadot-asset-hub-rpc.polkadot.io` |
-| Asset Hub genesis | `0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f` |
-| `DotnsPopController` | `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` |
-
-The dotNS addresses come from `deployments/polkadot/420420419.json` in
-paritytech/dotns, vendored as `deployments/polkadot-420420419.json`. Username
-reads discover the controller from `DotnsGateway.DispatcherAddress` as on the
-built-in stacks; while Polkadot Asset Hub leaves that unset (referendum 1955 sets
-it), the CLI's own reads fall back to the manifest's controller. The gateway
-cannot issue names until the dispatcher is set.
+PCF's devnet: Paseo's relay and Asset Hub with PCF's own People and Bulletin
+chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Its
+identities are real (above) and reserved identities derive under `.dot`. The
+identity backend is the descriptor's `dub` service.
 
 Sessions are per network (`SessionCatalog::new` keys on the network id), so a
 signer provisioned on one network is not visible from another. Each network means
@@ -2245,7 +2252,7 @@ The command derives and queries two accounts:
 - root; and
 - RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
   network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
-  `dot` for `polkadot`).
+  `dot` for `pcf-devnet`).
 
 For each it prints one of:
 
@@ -2387,7 +2394,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
 | `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
+| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` supplies the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |
@@ -2405,7 +2412,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 
 These are part of the as-built specification:
 
-- `--network` selects only `paseo-next-v2`, `previewnet` and `polkadot`; any other network runs through `--stack`;
+- `--network` selects only `paseo-next-v2`, `previewnet` and `pcf-devnet`; any other network runs through `--stack`;
 - product scripts require Bun; installed releases include a self-contained runner;
 - there is no structured/JSON output mode;
 - there is no `--version`;
