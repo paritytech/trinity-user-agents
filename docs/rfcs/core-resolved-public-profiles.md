@@ -27,8 +27,8 @@ Bulletin connection and applies one image policy across features.
 - **Avatar**: the image a profile record points at, by Bulletin CID and format.
 - **Bulletin**: where the avatar bytes live, for 14 days after upload.
 - **Core cache**: the native core's SQLite table of profile records, one row per username, kept for one hour.
-- **Host image cache**: Kingfisher on iOS, Coil on Android. Tracks username references with refresh behavior chosen by
-  each platform, and keys its disk byte cache by the CID returned by the core.
+- **Host image cache**: Kingfisher on iOS, Coil on Android. Stores username-keyed avatars in memory and on disk
+  for one hour, without extending their expiry on access.
 - **Letter tile**: the placeholder a host draws for a contact, the first letter of the username, with the avatar drawn
   over it once loaded.
 
@@ -136,12 +136,14 @@ CREATE TABLE public_profiles (
 
 The host draws a letter tile while its shared image-library adapter calls
 `load_image` with a username reference. A failed load leaves the tile visible
-and is not stored as an image. The disk byte cache uses the returned CID, so
-identical content has the same key regardless of the username naming it.
+and is not stored as an image. Successful loads are cached under
+`public-profile:<username>` with a persisted one-hour expiry. Memory and disk
+entries share that deadline; reading an entry or restarting the app does not
+extend it.
 
 Opening a chat refreshes the username reference with `force`, bypassing the
-host's reference cache and the core's record cache. Content already cached under
-the same CID remains valid. dotNS emits no event on a text change, so outside
+host's image cache and the core's record cache, and replaces the cached image
+on success. dotNS emits no event on a text change, so outside
 an opened chat a new avatar shows once the host refreshes its reference and
 the core's record has expired.
 
@@ -156,7 +158,7 @@ Native UI / image library         Core profile cache + image loader       dotNS 
   |                                      |<-- bytes ----------------------------|
   |                                      |-- verify CID and image policy        |
   |<-- LoadedImage { bytes, format, CID } -|                                      |
-  |-- decode; cache bytes by CID          |                                      |
+  |-- decode; cache by username (1h)      |                                      |
   |                                      |                                      |
   |-- load_image(Username without avatar)>|                                      |
   |                                      |-- resolve/cache record as above      |
@@ -167,6 +169,6 @@ Native UI / image library         Core profile cache + image loader       dotNS 
 ## Trade-offs
 
 - Profiles are read on refresh, not pushed. Fast-changing data does not belong in the record.
-- Nothing outlives Bulletin's retention: once the blob is dropped, the avatar disappears until the publisher uploads it
-  again.
+- After Bulletin drops a blob, a cached avatar remains available until its expiry. Further loads require the publisher
+  to upload it again.
 - When the chain is out of reach, an uncached load shows the letter tile. Native hosts can use a cached profile until it expires.
