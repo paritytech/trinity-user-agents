@@ -57,14 +57,14 @@ pub async fn within_check_timeout<T>(
 
 /// The namespace no stack runs under, since it may contain sessions of real
 /// Polkadot identities.
-const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
+const POLKADOT_NAMESPACE: &str = "polkadot";
 
 /// The product namespace of the stack `id`: `id` without a trailing `-fork`,
 /// except that the `polkadot-fork` namespace is its full `id` rather than the
 /// `polkadot` one.
 fn namespace_of(id: &str) -> &str {
 	id.strip_suffix("-fork")
-		.filter(|source| *source != RETIRED_POLKADOT_NAMESPACE)
+		.filter(|source| *source != POLKADOT_NAMESPACE)
 		.unwrap_or(id)
 }
 

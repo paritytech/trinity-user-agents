@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use trinity_stack::Descriptor;
 use truapi::platform::DOTNS_TLDS;
 
-use super::{ChainEndpoint, RETIRED_POLKADOT_NAMESPACE, Stack, namespace_of};
+use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{
 	chain::ChainBackend,
 	stack_descriptor::{ROLE_NAMES, Roles},
@@ -19,8 +19,8 @@ impl Stack {
 	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
-			id != RETIRED_POLKADOT_NAMESPACE,
-			"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which may \
+			id != POLKADOT_NAMESPACE,
+			"a stack cannot run under the {POLKADOT_NAMESPACE} namespace, which may \
 			 contain sessions of real Polkadot identities; use a stack with another id"
 		);
 		ensure!(
