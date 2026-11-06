@@ -14,6 +14,7 @@ import androidx.annotation.StyleRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
@@ -23,6 +24,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -31,8 +33,10 @@ import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugScreenshotObserver
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarTitle
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
@@ -44,6 +48,7 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAs
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.observe
@@ -75,6 +80,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
     @Inject
     lateinit var router: RootRouter
+
+    @Inject
+    lateinit var statusBarScrollHolder: StatusBarScrollHolder
 
     private val viewModel by viewModels<RootViewModel>()
 
@@ -184,22 +192,45 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     private fun setupChainHealthBar() {
+        val navHost = findViewById<View>(R.id.rootNavHost)
+
         findViewById<ComposeView>(R.id.connectionStatusBanner).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val model by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 val tooltipVisible by viewModel.isNetworkStatusTooltipVisible.collectAsStateWithLifecycle()
+                val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+                val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
+                val scroll by statusBarScrollHolder.state.collectAsStateWithLifecycle()
+                val titleModel = currentEntry?.let { statusBarTitleOf(it.destination.id, currentTab) } ?: StatusBarTitleModel.None
+
+                LaunchedEffect(currentEntry?.id, currentTab) { statusBarScrollHolder.reset() }
+
                 PolkadotTheme {
-                    ChainHealthBar(
-                        model = model,
-                        tooltipVisible = tooltipVisible,
-                        onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
-                    )
+                    IdBar(
+                        scroll = scroll,
+                        backdropSource = navHost,
+                        showsScrim = titleModel != StatusBarTitleModel.None,
+                        pinned = tooltipVisible,
+                    ) {
+                        ChainHealthBar(
+                            model = model,
+                            tooltipVisible = tooltipVisible,
+                            onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
+                            title = {
+                                currentEntry?.let { entry ->
+                                    // Scoped to the shown entry, so a pending Proceed in Chat is dropped once the browser is popped.
+                                    CompositionLocalProvider(LocalViewModelStoreOwner provides entry) {
+                                        StatusBarTitle(model = titleModel)
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
 
-        val navHost = findViewById<View>(R.id.rootNavHost)
         val barHeightPx = (ChainHealthBarDefaults.ContentHeight.value * resources.displayMetrics.density).roundToInt()
 
         // Keyboard animation frames reach the subtree through this callback and never through the apply

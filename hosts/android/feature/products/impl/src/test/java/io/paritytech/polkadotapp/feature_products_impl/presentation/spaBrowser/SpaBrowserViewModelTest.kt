@@ -41,23 +41,6 @@ class SpaBrowserViewModelTest {
         Dispatchers.resetMain()
     }
 
-    // Back steps through the page history first, which in a game runs many screens deep.
-    @Test
-    fun `minimize leaves at once and keeps the tab open, even when the page can go back`() {
-        // Given
-        every { webView.canGoBack() } returns true
-        val model = viewModel()
-
-        // When
-        model.onMinimizeClick()
-
-        // Then
-        verify { router.leaveBrowser() }
-        verify(exactly = 0) { webView.goBack() }
-        verify(exactly = 0) { productSessionController.closeActiveTab() }
-        verify(exactly = 0) { productSessionController.closeTab(any()) }
-    }
-
     @Test
     fun `back walks the page history before leaving`() {
         // Given
@@ -70,6 +53,22 @@ class SpaBrowserViewModelTest {
         // Then
         verify { webView.goBack() }
         verify(exactly = 0) { router.leaveBrowser() }
+    }
+
+    @Test
+    fun `back with nothing left to unwind leaves and keeps the tab open`() {
+        // Given
+        every { webView.canGoBack() } returns false
+        every { productSessionController.goToPreviousTab() } returns false
+        val model = viewModel()
+
+        // When
+        model.onBackPressed()
+
+        // Then
+        verify(exactly = 1) { router.leaveBrowser() }
+        verify(exactly = 0) { productSessionController.closeActiveTab() }
+        verify(exactly = 0) { productSessionController.closeTab(any()) }
     }
 
     private fun viewModel() = SpaBrowserViewModel(
