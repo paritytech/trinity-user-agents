@@ -268,6 +268,18 @@ impl WalletAccountHolder {
 		state.keys.take();
 		self.session_state.clear_session();
 	}
+
+	/// Check that `account` is this wallet's identity account.
+	///
+	/// Fails with `Unavailable` for any other account, so a paired host's legacy
+	/// request is refused before the user reviews it.
+	pub fn require_identity_account(
+		&self,
+		session: &AuthoritySession,
+		account: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		self.with_keys(session, |keys| keys.identity_keypair_for(account).map(drop))
+	}
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -315,18 +327,6 @@ impl WalletAccountHolder {
 	/// The identity chat key.
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
 		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))
-	}
-
-	/// Check that `account` is this wallet's identity account.
-	///
-	/// Fails with `Unavailable` for any other account, so a paired host's legacy
-	/// request is refused before the user reviews it.
-	pub fn require_identity_account(
-		&self,
-		session: &AuthoritySession,
-		account: [u8; 32],
-	) -> Result<(), AuthorityError> {
-		self.with_keys(session, |keys| keys.identity_keypair_for(account).map(drop))
 	}
 }
 
