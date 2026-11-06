@@ -204,20 +204,21 @@ impl DotnsTransport for DotnsLookup<'_> {
 		dest: &[u8; 20],
 		inputs: Vec<Vec<u8>>,
 	) -> Vec<Result<Vec<u8>, EvmContractError>> {
-		let results = read_batch(self, dest, inputs).await;
-		for result in &results {
-			debug!(
-				target: "truapi::dotns",
-				follow_id = %self.follow_id,
-				dest = %hex::encode(dest),
-				outcome = match result {
-					Ok(data) => format!("{} bytes", data.len()),
-					Err(reason) => format!("failed: {reason}"),
-				},
-				"dotNS contract view returned"
-			);
-		}
-		results
+		read_batch(self, dest, inputs)
+			.await
+			.inspect(|result| {
+				debug!(
+					target: "truapi::dotns",
+					follow_id = %self.follow_id,
+					dest = %hex::encode(dest),
+					outcome = match result {
+						Ok(data) => format!("{} bytes", data.len()),
+						Err(reason) => format!("failed: {reason}"),
+					},
+					"dotNS contract view returned"
+				);
+			})
+			.collect()
 	}
 }
 
