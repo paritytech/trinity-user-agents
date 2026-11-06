@@ -843,6 +843,8 @@ mod dotns_views;
 #[cfg(feature = "runtime")]
 mod dynamic_vrf;
 #[cfg(feature = "runtime")]
+mod evm_contract;
+#[cfg(feature = "runtime")]
 pub mod frame;
 #[cfg(feature = "runtime")]
 mod host_core;
@@ -863,6 +865,8 @@ pub mod markers;
 pub mod platform;
 #[cfg(feature = "runtime")]
 mod protocol_error;
+#[cfg(feature = "runtime")]
+mod public_profile;
 #[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(feature = "runtime")]
