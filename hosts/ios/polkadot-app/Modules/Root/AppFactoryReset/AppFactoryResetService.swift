@@ -147,6 +147,11 @@
         func clearSDKCaches() {
             KingfisherManager.shared.cache.clearMemoryCache()
             KingfisherManager.shared.cache.clearDiskCache()
+            do {
+                try PublicProfileAvatarImageCache.shared.clear()
+            } catch {
+                logger.error("Failed to wipe public profile images: \(error)")
+            }
         }
     }
 #endif

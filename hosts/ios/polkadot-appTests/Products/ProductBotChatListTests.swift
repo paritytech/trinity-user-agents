@@ -49,9 +49,11 @@ struct ProductBotChatListTests {
     @Test
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory { _, _ in
+        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            PublicProfile(avatar: nil)
+        }, loadAvatar: { _ in
             throw ImageError.Unavailable(reason: "no profile avatar")
-        }
+        })
 
         #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(
             using: iconFactory,
@@ -67,16 +69,18 @@ struct ProductBotChatListTests {
     @Test
     func aPersonLoadsTheirProfileWithoutLookingUpAProduct() {
         let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory { _, _ in
+        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            PublicProfile(avatar: nil)
+        }, loadAvatar: { _ in
             throw ImageError.Unavailable(reason: "no profile avatar")
-        }
+        })
 
         let image = Chat.PeerMetadata.Icon.publicProfile(username: "alice.01").imageViewModel(
             using: iconFactory,
             publicProfileFactory: publicProfileFactory
         )
 
-        #expect((image as? LocalImageViewModel)?.identifier == "public-profile:alice.01")
+        #expect(image is PublicProfileAvatarViewModel)
         #expect(iconFactory.requestedDomains.isEmpty)
     }
 }
@@ -126,9 +130,11 @@ private extension ProductBotChatListTests {
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
             productIconViewModelFactory: RecordingProductIconViewModelFactory(),
-            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory { _, _ in
+            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+                PublicProfile(avatar: nil)
+            }, loadAvatar: { _ in
                 throw ImageError.Unavailable(reason: "no profile avatar")
-            },
+            }),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())

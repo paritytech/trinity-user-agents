@@ -62,9 +62,14 @@ private extension SearchContactPresenterAvatarTests {
         SearchContactPresenter(
             interactor: StubSearchContactInteractor(),
             wireframe: SearchContactWireframe(),
-            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory { username, force in
-                try await resolver.loadAvatar(username: username, force: force)
-            }
+            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(
+                resolveProfile: { username, force in
+                    await resolver.resolve(username: username, force: force)
+                },
+                loadAvatar: { avatar in
+                    try await resolver.loadAvatar(avatar)
+                }
+            )
         )
     }
 

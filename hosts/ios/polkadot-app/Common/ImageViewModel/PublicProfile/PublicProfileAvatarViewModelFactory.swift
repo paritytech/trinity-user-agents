@@ -1,44 +1,40 @@
 import Foundation
 import PolkadotUI
+import TrUAPIHost
 
 protocol PublicProfileAvatarViewModelMaking {
-    /// With `refresh`, the view model's first load rereads the profile and replaces the cached avatar.
+    /// With `refresh`, the first load bypasses the core's profile metadata cache.
     func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol
 }
 
 final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
-    private let loadAvatar: @Sendable (String, Bool) async throws -> Data
+    private let resolveProfile: @Sendable (String, Bool) async throws -> PublicProfile
+    private let loadAvatar: @Sendable (ProfileAvatar) async throws -> Data
 
-    init(loadAvatar: @escaping @Sendable (String, Bool) async throws -> Data) {
+    init(
+        resolveProfile: @escaping @Sendable (String, Bool) async throws -> PublicProfile,
+        loadAvatar: @escaping @Sendable (ProfileAvatar) async throws -> Data
+    ) {
+        self.resolveProfile = resolveProfile
         self.loadAvatar = loadAvatar
     }
 
     convenience init(runtimeProvider: TrUAPIHostRuntimeProviding) {
-        self.init { username, force in
+        self.init(resolveProfile: { username, force in
+            try await runtimeProvider.sharedRuntime().resolvePublicProfile(username: username, force: force)
+        }, loadAvatar: { avatar in
             try await runtimeProvider.sharedRuntime().loadImage(
-                reference: .username(username: username, force: force)
+                reference: .bulletin(cid: avatar.cid, declaredFormat: avatar.format)
             ).bytes
-        }
+        })
     }
 
     func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol {
-        let cached = LocalImageViewModel(
-            provider: PublicProfileAvatarImageDataProvider(username: username, loadAvatar: loadAvatar),
-            optionsFactory: PublicProfileAvatarImageOptionsFactory(),
-            keepsCurrentImageWhileLoading: false
-        )
-        guard refresh else {
-            return cached
-        }
-
-        return PublicProfileAvatarRefreshViewModel(
-            provider: PublicProfileAvatarImageDataProvider(
-                username: username,
-                force: true,
-                loadAvatar: loadAvatar
-            ),
-            optionsFactory: PublicProfileAvatarImageOptionsFactory(),
-            cached: cached
+        PublicProfileAvatarViewModel(
+            username: username,
+            refresh: refresh,
+            resolveProfile: resolveProfile,
+            loadAvatar: loadAvatar
         )
     }
 }

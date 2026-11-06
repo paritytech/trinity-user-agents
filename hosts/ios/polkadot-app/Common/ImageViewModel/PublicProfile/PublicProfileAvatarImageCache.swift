@@ -1,39 +1,44 @@
 import Foundation
+import ImageIO
 import Kingfisher
+import TrUAPIHost
+import UniformTypeIdentifiers
 
-final class PublicProfileAvatarImageCache: ImageCache, @unchecked Sendable {
-    static let shared = PublicProfileAvatarImageCache(
-        memoryStorage: ImageCache.default.memoryStorage,
-        diskStorage: ImageCache.default.diskStorage
-    )
+final class PublicProfileAvatarImageCache: Sendable {
+    static let shared = PublicProfileAvatarImageCache()
+    private let storage: DiskStorage.Backend<Data>
 
-    override func retrieveImage(
-        forKey key: String,
-        options: KingfisherParsedOptionsInfo,
-        callbackQueue: CallbackQueue = .mainCurrentOrAsync,
-        completionHandler: (@Sendable (Result<ImageCacheResult, KingfisherError>) -> Void)?
-    ) {
-        guard let completionHandler else { return }
-        if let image = retrieveImageInMemoryCache(forKey: key, options: options) {
-            callbackQueue.execute { completionHandler(.success(.memory(image))) }
-            return
+    init(name: String = "public-profile-avatars") {
+        storage = ImageCache(name: name).diskStorage
+        storage.config.expiration = .never
+        storage.config.sizeLimit = 100 * 1_024 * 1_024
+    }
+
+    func data(for avatar: ProfileAvatar) throws -> Data? {
+        guard let bytes = try storage.value(
+            forKey: avatar.cid,
+            extendingExpiration: .expirationTime(.never)
+        ) else { return nil }
+        let expectedType: UTType =
+            switch avatar.format {
+            case .png: .png
+            case .jpeg: .jpeg
+            case .webp: .webP
+            case .gif: .gif
+            }
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let type = CGImageSourceGetType(source), type as String == expectedType.identifier else {
+            throw ImageError.Rejected(reason: "declared image format does not match cached bytes")
         }
-        DispatchQueue.global(qos: .utility).async {
-            // Kingfisher persists disk expiry as the file's modification date.
-            let file = URL(fileURLWithPath: self.cachePath(
-                forKey: key,
-                processorIdentifier: options.processor.identifier,
-                forcedExtension: options.forcedExtension
-            ))
-            let expiration = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            var options = options
-            options.memoryCacheExpiration = .date(expiration ?? .distantPast)
-            super.retrieveImage(
-                forKey: key,
-                options: options,
-                callbackQueue: callbackQueue,
-                completionHandler: completionHandler
-            )
-        }
+        return bytes
+    }
+
+    func store(_ bytes: Data, for cid: String) throws {
+        try storage.store(value: bytes, forKey: cid, writeOptions: .atomic)
+        _ = try storage.removeSizeExceededValues()
+    }
+
+    func clear() throws {
+        try storage.removeAll()
     }
 }
