@@ -289,7 +289,7 @@ Commands:
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
-| `network-check` | Resolve the network, with any override, and print its routing as JSON, without contacting a chain. |
+| `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
 ### 4.1 Global logging option
@@ -1895,7 +1895,7 @@ next call for that chain.
 
 With `light-client`, the embedded smoldot light client syncs the chains from the
 specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
-cannot be combined with `--stack` or an override, nor with a built-in stack that restarted after
+cannot be combined with `--stack`, nor with a built-in stack that restarted after
 those specs were bundled (§14.1). One light client per network serves the process
 and keeps each chain running after its last connection closes, so a chain syncs
 once per process.

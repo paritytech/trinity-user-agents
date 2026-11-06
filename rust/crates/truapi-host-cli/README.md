@@ -1124,7 +1124,7 @@ the CLI creates and cleans up a unique temporary Unix socket.
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
 command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack` or an override, and drops PGAS
+supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
 claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
