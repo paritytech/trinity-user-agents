@@ -40,6 +40,8 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 - [`contacts-pick.spec.ts`](../browser/contacts-pick.spec.ts): `contacts.pick` for demo users.
 - [`invitations.spec.ts`](../browser/invitations.spec.ts): demo users, test accounts, invitations.
 - [`contact-chat.spec.ts`](../browser/contact-chat.spec.ts): Contact Chat between two demo users.
+- [`rpc-socket-close.spec.ts`](../browser/rpc-socket-close.spec.ts): the provider's RPC socket, closed and released or
+  failing its handshake, throws nothing into the page.
 - [`inspector-dock.spec.ts`](../browser/inspector-dock.spec.ts): the tools' dock, resize and Focus.
 - [`workers-inspector.spec.ts`](../browser/workers-inspector.spec.ts): the Workers view and console.
 - [`products-inspector.spec.ts`](../browser/products-inspector.spec.ts): the Products view.

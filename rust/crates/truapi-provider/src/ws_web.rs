@@ -33,9 +33,31 @@ type SocketCallbacks = (
 	Closure<dyn FnMut(CloseEvent)>,
 );
 
-/// The socket and its live JS callbacks, wrapped so the connect future (which
-/// the trait requires to be `Send`) can hold them across the handshake await.
-type StagedSocket = SendWrapper<(WebSocket, SocketCallbacks)>;
+/// The socket and the JS callbacks its handlers call.
+///
+/// Dropping it takes the handlers off before the callbacks are freed, then
+/// closes the socket: the browser still dispatches events after `close()`,
+/// and a freed callback throws when it is called. So a connect that fails or
+/// is abandoned, and a connection that is released, leave nothing the browser
+/// can call.
+struct Socket {
+	socket: WebSocket,
+	_callbacks: SocketCallbacks,
+}
+
+impl Drop for Socket {
+	fn drop(&mut self) {
+		self.socket.set_onopen(None);
+		self.socket.set_onmessage(None);
+		self.socket.set_onerror(None);
+		self.socket.set_onclose(None);
+		let _ = self.socket.close();
+	}
+}
+
+/// The socket, wrapped so the connect future (which the trait requires to be
+/// `Send`) can hold it across the handshake await.
+type StagedSocket = SendWrapper<Socket>;
 
 /// Open a browser WebSocket connection to `url`.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
@@ -54,10 +76,8 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
 		},
 	}
 
-	let (socket, callbacks) = staged.take();
 	Ok(Box::new(WebWsConnection {
-		socket: SendWrapper::new(socket),
-		_callbacks: SendWrapper::new(callbacks),
+		socket: staged,
 		responses_close: responses_tx,
 		responses: Mutex::new(Some(responses_rx.boxed())),
 		closed: AtomicBool::new(false),
@@ -146,7 +166,10 @@ fn open_socket(url: &Url) -> Result<OpenedSocket, ProviderError> {
 	socket.set_onclose(Some(onclose.as_ref().unchecked_ref()));
 
 	Ok(OpenedSocket {
-		staged: SendWrapper::new((socket, (onmessage, onopen, onerror, onclose))),
+		staged: SendWrapper::new(Socket {
+			socket,
+			_callbacks: (onmessage, onopen, onerror, onclose),
+		}),
 		handshake_rx,
 		responses_tx,
 		responses_rx,
@@ -155,9 +178,7 @@ fn open_socket(url: &Url) -> Result<OpenedSocket, ProviderError> {
 
 /// A live browser WebSocket connection exposed as a raw JSON-RPC pipe.
 struct WebWsConnection {
-	socket: SendWrapper<WebSocket>,
-	/// Keeps the JS event callbacks alive for the socket's lifetime.
-	_callbacks: SendWrapper<SocketCallbacks>,
+	socket: StagedSocket,
 	/// Sender half of the responses channel, kept to end the stream on close.
 	responses_close: mpsc::UnboundedSender<String>,
 	responses: Mutex<Option<BoxStream<'static, String>>>,
@@ -169,7 +190,7 @@ impl JsonRpcConnection for WebWsConnection {
 		if self.closed.load(Ordering::SeqCst) {
 			return;
 		}
-		if let Err(err) = self.socket.send_with_str(&request) {
+		if let Err(err) = self.socket.socket.send_with_str(&request) {
 			// A send failure on a browser WebSocket means the socket is dead.
 			// End the responses stream so the consumer — which correlates by
 			// id — sees a disconnect instead of hanging on a request that will
@@ -191,7 +212,7 @@ impl JsonRpcConnection for WebWsConnection {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
-		let _ = self.socket.close();
+		let _ = self.socket.socket.close();
 		self.responses_close.close_channel();
 		self.responses.lock().expect("responses mutex poisoned").take();
 	}

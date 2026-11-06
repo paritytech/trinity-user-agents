@@ -15,8 +15,9 @@
 
 #![cfg(all(target_arch = "wasm32", feature = "ws"))]
 
-use futures::stream::StreamExt;
+use futures::{FutureExt, stream::StreamExt};
 use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -64,6 +65,53 @@ async fn handshake_failure_is_an_error() {
 		.err()
 		.expect("connecting to a closed port must fail");
 	assert!(error.to_string().contains("WebSocket"), "unexpected: {error}");
+}
+
+/// Starts collecting the page's uncaught errors; the function returned
+/// answers those seen so far. A socket handler that calls a freed callback
+/// throws one.
+fn page_errors() -> js_sys::Function {
+	js_sys::Function::new_no_args(
+		"const seen = []; globalThis.addEventListener('error', (event) => seen.push(String(event.message))); return () => seen.slice();",
+	)
+	.call0(&JsValue::NULL)
+	.expect("the error listener installs")
+	.unchecked_into()
+}
+
+fn seen(errors: &js_sys::Function) -> Vec<String> {
+	js_sys::Array::from(&errors.call0(&JsValue::NULL).expect("the errors read"))
+		.iter()
+		.filter_map(|error| error.as_string())
+		.collect()
+}
+
+/// Wait `ms` milliseconds, long enough for a refused socket's `error` and `close`.
+async fn sleep(ms: u32) {
+	let timeout = js_sys::Function::new_with_args("resolve, ms", "setTimeout(resolve, ms)");
+	let promise = js_sys::Promise::new(&mut |resolve, _| {
+		timeout.call2(&JsValue::NULL, &resolve, &ms.into()).expect("setTimeout");
+	});
+	wasm_bindgen_futures::JsFuture::from(promise).await.expect("the timer fires");
+}
+
+#[wasm_bindgen_test]
+async fn failed_handshake_throws_nothing_into_the_page() {
+	let errors = page_errors();
+	let result = provider("ws://127.0.0.1:1").connect(GENESIS).await;
+	assert!(result.is_err(), "connecting to a closed port must fail");
+	sleep(1_000).await;
+	assert_eq!(seen(&errors), Vec::<String>::new());
+}
+
+#[wasm_bindgen_test]
+async fn abandoned_connect_throws_nothing_into_the_page() {
+	let errors = page_errors();
+	// The first poll opens the socket and waits for its handshake; dropping
+	// the future then abandons the connect while the socket still dials.
+	assert!(provider("ws://127.0.0.1:1").connect(GENESIS).now_or_never().is_none());
+	sleep(1_000).await;
+	assert_eq!(seen(&errors), Vec::<String>::new());
 }
 
 #[wasm_bindgen_test]
