@@ -317,7 +317,6 @@ class CoinageRenderThread(
 
         field.retarget(
             targets = result.targets,
-            spawnEdge = width,
             // Spreading out, the last coins have furthest to travel; gathering back in, the first ones do.
             // Either way the long haul sets off first.
             stagger = if (expanded) CoinageCoinField.Stagger.FROM_BACK else CoinageCoinField.Stagger.FROM_FRONT
@@ -325,7 +324,7 @@ class CoinageRenderThread(
 
         coinsHeight = result.coinsHeight
         focusTop = result.focusTop
-        report(CoinageCoinsMetrics(blocks = result.blocks, runs = result.runs))
+        report(CoinageCoinsMetrics(blocks = result.blocks))
         lastFrame = 0L
     }
 
@@ -435,12 +434,11 @@ class CoinageRenderThread(
 private class Tap(val x: Float, val y: Float, val onResult: (String?) -> Unit)
 
 /**
- * Where the coins came out, so the card can rule their runs and label their blocks.
+ * Where the coins came out, so the card can label their blocks.
  *
  * Not the height: the card works that out for itself before the coins are asked to move, which is what keeps
  * the drawing surface from being resized under the flight.
  */
 data class CoinageCoinsMetrics(
-    val blocks: List<CoinageGridLayout.Block> = emptyList(),
-    val runs: List<CoinageStripLayout.Span> = emptyList()
+    val blocks: List<CoinageGridLayout.Block> = emptyList()
 )

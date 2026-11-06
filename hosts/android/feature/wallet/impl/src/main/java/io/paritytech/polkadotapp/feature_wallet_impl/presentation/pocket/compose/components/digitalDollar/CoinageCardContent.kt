@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 internal fun CoinageCardContent(
     state: CoinageUiState,
+    modifier: Modifier = Modifier,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
@@ -34,7 +35,7 @@ internal fun CoinageCardContent(
     onTestDataSelected: (CoinageTestDataMode) -> Unit,
     onCoinSetSelected: (CoinageScene.CoinSet) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
         CoinageStateCard(
             modifier = Modifier.fillMaxWidth(),
             state = state.tokensState,
