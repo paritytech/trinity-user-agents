@@ -54,13 +54,12 @@ struct SPAJSEnginePageLoadTests {
     ])
     func aMainFrameHTTPErrorFailsTheLoad(status: Int, mainFrame: Bool, loaded: Bool) throws {
         let page = PageUnderTest()
-        let response = try StubNavigationResponse(status: status, mainFrame: mainFrame)
-        var policy: WKNavigationResponsePolicy?
+        let url = try #require(URL(string: "http://localhost:3000"))
+        let response = try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
 
-        page.engine.webView(page.webView, decidePolicyFor: response) { policy = $0 }
+        page.engine.noteResponse(response, isForMainFrame: mainFrame)
         page.engine.webView(page.webView, didFinish: nil)
 
-        #expect(policy == .allow)
         #expect(page.ends == [loaded])
     }
 }
@@ -75,20 +74,4 @@ private final class PageUnderTest {
         engine = SPAJSEngine(webView: webView, logger: Logger.shared)
         engine.onPageLoadFinished = { [weak self] loaded in self?.ends.append(loaded) }
     }
-}
-
-private final class StubNavigationResponse: WKNavigationResponse {
-    private let stubbedResponse: URLResponse
-    private let mainFrame: Bool
-
-    init(status: Int, mainFrame: Bool) throws {
-        let url = try #require(URL(string: "http://localhost:3000"))
-        stubbedResponse = try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
-        self.mainFrame = mainFrame
-        super.init()
-    }
-
-    override var response: URLResponse { stubbedResponse }
-
-    override var isForMainFrame: Bool { mainFrame }
 }
