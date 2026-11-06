@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Transition
@@ -281,7 +280,7 @@ private fun PocketList(
     )
 
     // Reporting stops as the list starts to leave, so the ID bar comes back with the card rather than after the fade.
-    val leaving = LocalNavAnimatedVisibilityScope.current?.transition?.targetState == EnterExitState.PostExit
+    val leaving = isPocketScreenLeaving()
 
     Box {
         LazyColumn(
