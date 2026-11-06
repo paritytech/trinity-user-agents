@@ -84,6 +84,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
+    private val fundingBridge: AppFundingHostBridge,
     private val bundledProducts: BundledProducts,
     private val fundingProvidersConfig: FundingProvidersConfig,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
@@ -138,9 +139,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers payments Unsupported.
+        // window where the host lists no contacts or answers payments or funding unsupported.
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
+        runtime.setFunding(fundingBridge)
         listFundingProviders(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)

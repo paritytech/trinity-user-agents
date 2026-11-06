@@ -4,6 +4,8 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import kotlinx.collections.immutable.ImmutableList
 
 @Immutable
@@ -33,4 +35,6 @@ data class SendPaymentUiState(
     val input: String,
     val sendToYourselfVisible: Boolean,
     val results: PaymentSearchResults,
+    val funding: FundingActivityUiState,
+    val fundingSheet: FundingSheet?,
 )

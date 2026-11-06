@@ -8,6 +8,8 @@ import kotlinx.collections.immutable.ImmutableList
 data class FundingActivityUiState(
     val inFlight: ImmutableList<FundingActivityRowUi>,
     val completed: ImmutableList<FundingActivityRowUi>,
+    /** The card's balance, for the card details' docked bar; `null` where nothing shows it. */
+    val currentBalance: String? = null,
 ) {
     /** Top-ups in progress, for the Topping up sheet. */
     val toppingUp: List<FundingActivityRowUi>

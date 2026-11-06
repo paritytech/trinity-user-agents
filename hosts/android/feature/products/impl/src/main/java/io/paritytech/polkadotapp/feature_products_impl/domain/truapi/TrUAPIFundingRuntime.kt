@@ -17,14 +17,15 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
+import uniffi.truapi.U128
 import javax.inject.Inject
 
 class TrUAPIFundingRuntime @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val bridge: AppFundingHostBridge,
 ) : FundingRuntime {
-    override suspend fun openFunding(direction: FundingDirection): Result<String?> =
-        runtimeProvider.runtime().mapCatching { it.openFunding(direction, null) }
+    override suspend fun openFunding(direction: FundingDirection, amount: U128?): Result<String?> =
+        runtimeProvider.runtime().mapCatching { it.openFunding(direction, amount) }
 
     override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
 

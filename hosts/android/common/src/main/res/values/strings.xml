@@ -937,6 +937,7 @@
     <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
     <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
     <string name="pocket_coinage_balance_title">Total</string>
+    <string name="pocket_current_balance">Current balance</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
     <string name="pocket_coinage_split_label">%1$s %2$s</string>
