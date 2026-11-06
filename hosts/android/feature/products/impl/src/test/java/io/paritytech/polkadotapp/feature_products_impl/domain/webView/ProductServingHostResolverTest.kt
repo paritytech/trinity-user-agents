@@ -61,9 +61,10 @@ class ProductServingHostResolverTest {
         stubResolution(null)
 
         assertTrue(resolver.servingHostFor("coinflip.dot").isFailure)
+        assertTrue(resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).isFailure)
     }
 
-    // An expanded card runs the product's widget, so the page under a card must not be the app.
+    // An expanded card runs the product's widget when it publishes one, not its app.
     @Test
     fun `a card's page is served from the widget subname`() = runBlocking {
         stubResolution(appHost = "app.coinflip.dot", widgetHost = "widget.coinflip.dot")
@@ -71,13 +72,12 @@ class ProductServingHostResolverTest {
         assertEquals("widget.coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).getOrThrow())
     }
 
-    // A product with cards but no widget has faces that do not open; serving its app there instead
-    // would run app code as a Widget.
+    // A product can publish cards without a widget, and its card still has to open.
     @Test
-    fun `a card of a product with no widget is not served the app`() = runBlocking {
+    fun `a card of a product with no widget is served its app`() = runBlocking {
         stubResolution(appHost = "app.coinflip.dot")
 
-        assertTrue(resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).isFailure)
+        assertEquals("app.coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).getOrThrow())
     }
 
     @Test
