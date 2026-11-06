@@ -3312,8 +3312,8 @@ fn a_session_is_announced_once_per_commit() {
 		)
 	};
 
-	futures::executor::block_on(services.funding().commit(now, move |sessions| {
-		sessions.insert(overdue.intent.clone(), overdue);
+	futures::executor::block_on(services.funding().commit(now, move |draft| {
+		draft.sessions.insert(overdue.intent.clone(), overdue);
 		((), vec!["fs_overdue".to_string()])
 	}))
 	.expect("committed");
