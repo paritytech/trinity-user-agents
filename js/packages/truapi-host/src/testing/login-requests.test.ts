@@ -3,11 +3,9 @@ import {
   encodeWireMessage,
   MESSAGE_TYPE_CANCEL,
   MESSAGE_TYPE_REQUEST,
-  scale,
-  VersionedHostRequestLoginError,
   VersionedHostRequestLoginRequest,
-  VersionedHostRequestLoginResponse,
 } from "@parity/truapi";
+import { WIRE_DECODE_TABLE } from "@parity/truapi/wire-decode";
 import {
   ACCOUNT_REQUEST_LOGIN,
   ACCOUNT_GET_USER_ID,
@@ -48,6 +46,21 @@ const loginRequest = (requestId: string) =>
       value: { reason: "to save your notes" },
     }),
   );
+
+/** A reply's value, decoded by the generated table the product's client uses. */
+function decodeReply(reply: Uint8Array) {
+  const { requestId, payload } = decodeWireMessage(reply)._unsafeUnwrap();
+  const decode =
+    WIRE_DECODE_TABLE[payload.traitId * 256 + payload.methodId]?.[
+      payload.messageType
+    ];
+  if (!decode) throw new Error("no decoder for this reply");
+  return {
+    requestId,
+    address: [payload.traitId, payload.methodId],
+    value: decode(payload.value),
+  };
+}
 
 describe("login requests the test host answers", () => {
   it("recognises a product's login request by its id", () => {
@@ -98,22 +111,15 @@ describe("login requests the test host answers", () => {
       "AlreadyConnected",
       "Rejected",
     ] as const) {
-      const message = decodeWireMessage(
+      const { requestId, address, value } = decodeReply(
         loginResponse("p:7", response),
-      )._unsafeUnwrap();
-      expect(message.requestId).toBe("p:7");
-      expect([message.payload.traitId, message.payload.methodId]).toEqual([
+      );
+      expect(requestId).toBe("p:7");
+      expect(address).toEqual([
         ACCOUNT_REQUEST_LOGIN.trait,
         ACCOUNT_REQUEST_LOGIN.method,
       ]);
-      // The decoder the generated client applies to this method's response.
-      const decoded = scale
-        .Result(
-          VersionedHostRequestLoginResponse,
-          scale.CallError(VersionedHostRequestLoginError),
-        )
-        .dec(message.payload.value);
-      expect(decoded).toEqual({
+      expect(value).toEqual({
         success: true,
         value: { tag: "V1", value: response },
       });
@@ -123,14 +129,10 @@ describe("login requests the test host answers", () => {
 
 /** What a reply frame answers, as the product's client reads it. */
 function answerOf(reply: Uint8Array): string {
-  const message = decodeWireMessage(reply)._unsafeUnwrap();
-  const decoded = scale
-    .Result(
-      VersionedHostRequestLoginResponse,
-      scale.CallError(VersionedHostRequestLoginError),
-    )
-    .dec(message.payload.value);
-  return decoded.success ? decoded.value.value : decoded.value.tag;
+  const answer = decodeReply(reply).value as
+    | { success: true; value: { value: string } }
+    | { success: false; value: { tag: string } };
+  return answer.success ? answer.value.value : answer.value.tag;
 }
 
 const cancel = (requestId: string) =>
