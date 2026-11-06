@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.app.telemetry
 
+import io.paritytech.polkadotapp.app.monitoring.SentryMetricsCapture
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
@@ -18,7 +19,6 @@ import org.junit.Test
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
-import java.util.UUID
 
 class HostProcessTelemetryTest {
     private val origin = HostEventOrigin(
@@ -28,6 +28,7 @@ class HostProcessTelemetryTest {
         platform = "android",
         osVersion = "15",
         appBuild = 42L,
+        launchId = LAUNCH_ID,
     )
     private val sentryCapture: SentryEventCapture = mock(SentryEventCapture::class.java)
 
@@ -39,9 +40,6 @@ class HostProcessTelemetryTest {
         val result = with(computationalScope()) { initializer.initialize() }
 
         assertSuccess(result)
-        val event = checkNotNull(captured)
-        val launchId = event.extras["app.launch_id"] as String
-        assertEquals(launchId, UUID.fromString(launchId).toString())
         assertEquals(
             HostEvent(
                 name = "host.process.started",
@@ -53,12 +51,12 @@ class HostProcessTelemetryTest {
                     "host.os_version" to "15",
                 ),
                 extras = mapOf(
-                    "app.launch_id" to launchId,
+                    "app.launch_id" to LAUNCH_ID,
                     "event.monotonic_ms" to 1_234L,
                     "host.app_build" to 42L,
                 ),
             ),
-            event,
+            captured,
         )
     }
 
@@ -90,19 +88,23 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
+            metrics = metrics { _, _, _, _ -> error("no distribution while host telemetry is off") },
         )
 
         capture.capture { error("event metadata must stay lazy") }
 
         verifyNothingSentToSentry()
+        assertFalse(capture.enabled)
     }
 
     @Test
     fun `maps host event fields into one Sentry event when host telemetry is enabled`() {
         var sentryEvent: SentryEvent? = null
+        val distributions = mutableListOf<Any>()
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
+            metrics = metrics { name, value, unit, attributes -> distributions += listOf(name, value, unit, attributes) },
         )
 
         capture.capture {
@@ -116,6 +118,27 @@ class HostProcessTelemetryTest {
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
+        assertEquals(emptyList<Any>(), distributions)
+    }
+
+    // Sentry cannot chart a number an event carries, so a step's duration goes out a second time as
+    // a distribution, under the event's name and filterable by the same tags. A distribution is
+    // aggregated, so it leaves out the session, which is unique to each open.
+    @Test
+    fun `sends a step's duration as a distribution under the event's name and tags but the session`() {
+        val distributions = mutableListOf<Any>()
+        val capture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { },
+            metrics = metrics { name, value, unit, attributes -> distributions += listOf(name, value, unit, attributes) },
+        )
+        val tags = mapOf("outcome" to "ok", "host.session_id" to "session-1")
+
+        capture.capture {
+            HostEvent(name = "host.worker.boot", tags = tags, extras = emptyMap(), durationMs = 850L)
+        }
+
+        assertEquals(listOf(listOf("host.worker.boot", 850.0, "millisecond", mapOf("outcome" to "ok"))), distributions)
     }
 
     @Test
@@ -136,7 +159,19 @@ class HostProcessTelemetryTest {
         capture = capture,
     )
 
+    private fun metrics(distribution: (String, Double, String?, Map<String, String>) -> Unit) =
+        object : SentryMetricsCapture {
+            override fun gauge(key: String, value: Double, unit: String?) = error("host events send no gauges")
+
+            override fun distribution(key: String, value: Double, unit: String?, attributes: Map<String, String>) =
+                distribution(key, value, unit, attributes)
+        }
+
     private fun computationalScope() = ComputationalScope(CoroutineScope(Dispatchers.Unconfined))
+
+    private companion object {
+        const val LAUNCH_ID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+    }
 
     private fun verifyNothingSentToSentry() {
         verifyNoInteractions(sentryCapture)

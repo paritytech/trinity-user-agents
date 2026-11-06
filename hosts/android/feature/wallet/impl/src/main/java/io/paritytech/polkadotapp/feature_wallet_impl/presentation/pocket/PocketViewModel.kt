@@ -245,20 +245,30 @@ class PocketViewModel @Inject constructor(
             return
         }
 
-        if (selectedCardId.value != null) dismissCard()
+        // Not dismissCard: that would forget the link the card is about to be opened for.
+        if (selectedCardId.value != null) dismiss()
         hideCollectiblesSketchbook()
         removalCandidate.value = null
-        selectCard(card, request.pageQuery)
+        // A link, not a tap: its handler already marked when it was asked for.
+        select(card, request.pageQuery)
     }
 
+    /** The user tapped [card]. */
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+        // First, before anything moves, so the page's load can be timed from the tap itself.
+        if (card is PocketCardUiModel.ProductCard) interactor.cardTapped(card.key)
+        select(card, pageQuery)
+    }
+
+    private fun select(card: PocketCardUiModel, pageQuery: String) {
         if (collectiblesShown.value) return
 
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
-            warmUpProduct(card)
+            warmUpProduct(card, interactor.openingSession(card.key))
             lookUpOpeningFace(card)
         }
     }
@@ -279,8 +289,8 @@ class PocketViewModel @Inject constructor(
      * pages now spends that half second on the chain read and the download rather than in front of
      * them, and the load that follows joins this fetch instead of starting a second one.
      */
-    private fun warmUpProduct(card: PocketCardUiModel.ProductCard) = launchUnit {
-        interactor.warmUpProduct(card.key).logFailure("PocketViewModel: failed to warm up ${card.id}")
+    private fun warmUpProduct(card: PocketCardUiModel.ProductCard, openSessionId: String?) = launchUnit {
+        interactor.warmUpProduct(card.key, openSessionId).logFailure("PocketViewModel: failed to warm up ${card.id}")
     }
 
     /**
@@ -290,10 +300,15 @@ class PocketViewModel @Inject constructor(
      */
     private fun warmUpPrivilegedProducts(cards: List<PocketCardUiModel.ProductCard>) {
         cards.filter { it.pinned && warmedPrivilegedProducts.add(it.key.productId) }
-            .forEach(::warmUpProduct)
+            .forEach { warmUpProduct(it, openSessionId = null) }
     }
 
     fun dismissCard() {
+        interactor.cardClosed()
+        dismiss()
+    }
+
+    private fun dismiss() {
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null

@@ -86,6 +86,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
+    private val rpcConnectedTelemetry: HostRpcConnectedTelemetry,
+    private val runtimeBootTelemetry: HostRuntimeBootTelemetry,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -105,6 +107,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
+        // The runtime's own connections, for signing: no product execution dials them.
+        observer = rpcConnectedTelemetry.observer({ null }) { cachedChains.get().label(it) },
     )
 
     /**
@@ -115,7 +119,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
      */
     suspend fun runtime(): Result<TrUAPIHostRuntime> {
         val pending = bootMutex.withLock {
-            boot ?: scope.async { build().onSuccess(::wire) }.also { boot = it }
+            boot ?: run {
+                val startedAtMillis = runtimeBootTelemetry.nowMillis()
+                scope.async {
+                    build().onSuccess(::wire)
+                        .also { runtimeBootTelemetry.report(startedAtMillis, booted = it.isSuccess) }
+                }
+            }.also { boot = it }
         }
         return pending.await().onFailure {
             bootMutex.withLock { if (boot === pending) boot = null }
@@ -136,8 +146,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
-            onResponse = runtime::notifyChainResponse,
-            onClosed = runtime::notifyChainClosed,
+            onResponse = { connectionId, frame ->
+                runtime.notifyChainResponse(connectionId, frame)
+                rpcConnectedTelemetry.responded(connectionId)
+            },
+            onClosed = { connectionId ->
+                runtime.notifyChainClosed(connectionId)
+                rpcConnectedTelemetry.closedBeforeResponse(connectionId)
+            },
         )
         observeAppLifecycle()
         scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
@@ -293,7 +309,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override fun chainSend(connectionId: UInt, request: String) =
             chainProvider.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) {
+            chainProvider.close(connectionId)
+            rpcConnectedTelemetry.abandoned(connectionId)
+        }
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing

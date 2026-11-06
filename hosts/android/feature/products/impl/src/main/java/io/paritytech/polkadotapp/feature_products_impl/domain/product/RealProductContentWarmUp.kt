@@ -1,11 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
+import kotlinx.coroutines.withContext
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
@@ -20,10 +23,15 @@ class RealProductContentWarmUp @Inject constructor(
     private val servingHostResolver: ProductServingHostResolver,
     private val runtimeSettings: ProductRuntimeSettings,
 ) : ProductContentWarmUp {
-    override suspend fun warmUp(productId: ProductId): Result<Unit> =
-        runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()).getOrThrow() }
-            .flatMap { servingHost -> dotNsResolver.resolveToLocalUri(servingHost) }
-            .map {}
+    override suspend fun warmUp(productId: ProductId, openSessionId: String?): Result<Unit> =
+        withContext(openSessionId.loadContext()) {
+            runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()).getOrThrow() }
+                .flatMap { servingHost -> dotNsResolver.resolveToLocalUri(servingHost) }
+                .map {}
+        }
+
+    private fun String?.loadContext() =
+        HostLoadContext(if (this == null) HostLoadTrigger.PREWARM else HostLoadTrigger.OPEN, sessionId = this)
 
     // Only the TrUAPI runtime serves a card its widget; the native runtime still serves the app under it.
     private fun cardExecutable(): ExecutableKind =

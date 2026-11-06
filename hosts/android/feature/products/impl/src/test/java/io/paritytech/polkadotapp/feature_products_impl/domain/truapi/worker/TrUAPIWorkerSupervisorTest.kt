@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
+import android.webkit.WebView
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -9,6 +10,11 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -28,6 +34,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.ProductId
@@ -44,6 +51,10 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
+    private val bootEvents = mutableListOf<HostEvent>()
+    private val attachedSessionIds = mutableListOf<String?>()
+    private val configs = mutableListOf<ChatWebViewConfig>()
+    private val cacheHits = HostCacheHits()
 
     @Before
     fun parseScriptUrls() {
@@ -96,14 +107,57 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(1, chatBridges.filterNotNull().size)
     }
 
+    // The worker draws the Pocket face, so its spans have to join a host session of their own: the
+    // bootstrap hands the product the id its chain connects, archive lookups and boot report under.
     @Test
-    fun `a worker bootstrap does not install host WebView telemetry`() = runTest {
+    fun `a worker activation runs under a host session of its own`() = runTest {
         val supervisor = supervisor()
 
         supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
         advanceUntilIdle()
 
-        verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), null) }
+        val sessionId = checkNotNull(supervisor.sessionId(PRODUCT))
+        verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), sessionId) }
+        assertEquals(listOf<String?>(sessionId), attachedSessionIds)
+        assertEquals(sessionId, configs.single().hostLoad?.sessionId)
+        val boot = bootEvents.single()
+        assertEquals("ok" to sessionId, boot.tags["outcome"] to boot.tags["host.session_id"])
+        assertTrue(
+            boot.extras.keys.containsAll(
+                listOf(
+                    HostWorkerBootTelemetry.RESOLVE_MS,
+                    HostWorkerBootTelemetry.EXECUTION_OPEN_MS,
+                    HostWorkerBootTelemetry.WEBVIEW_CREATE_MS,
+                    HostWorkerBootTelemetry.BLANK_READY_MS,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a stopped worker forgets what its session reported`() = runTest {
+        val supervisor = supervisor()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+        val load = HostLoadContext(HostLoadTrigger.OPEN, checkNotNull(supervisor.sessionId(PRODUCT)))
+        cacheHits.isFirst("host.bulletin.fetch", "worker.paseo", load)
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP)
+        advanceUntilIdle()
+
+        assertTrue(cacheHits.isFirst("host.bulletin.fetch", "worker.paseo", load))
+    }
+
+    @Test
+    fun `each activation gets a new session`() = runTest {
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+        rendererGoneListeners.getValue(providers.single()).forEach { it() }
+        advanceUntilIdle()
+
+        assertEquals(2, attachedSessionIds.distinct().size)
     }
 
     // A chat card button navigates from the worker, so the worker's execution needs a policy that
@@ -136,19 +190,29 @@ class TrUAPIWorkerSupervisorTest {
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also {
+                workerScopes += scope
+                configs += config
+            }
         },
         bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
+        bootTelemetry = HostWorkerBootTelemetry(
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
+            timeProvider = { 0L },
+            capture = { bootEvents += it() },
+            cacheHits = cacheHits,
+        ),
         dispatchers = testDispatchers(),
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(5)
+            attachedSessionIds += arg<String?>(7)
             Result.success(execution)
         }
     }
@@ -157,11 +221,16 @@ class TrUAPIWorkerSupervisorTest {
     // loss reaches whoever listens for it.
     private fun provider(): ChatWebViewProvider = mockk<ChatWebViewProvider>(relaxed = true).also { provider ->
         val pageFinished = mutableListOf<() -> Unit>()
+        val setups = mutableListOf<(WebView) -> Unit>()
+        coEvery { provider.addWebViewSetup(any()) } answers { setups += firstArg<(WebView) -> Unit>() }
         every { provider.addOnPageFinishedListener(any()) } answers { pageFinished += firstArg<() -> Unit>() }
         every { provider.addOnWebViewDestroyedListener(any()) } answers {
             rendererGoneListeners.getOrPut(provider) { mutableListOf() } += firstArg<() -> Unit>()
         }
-        coEvery { provider.loadInitialContent() } answers { pageFinished.forEach { it() } }
+        coEvery { provider.loadInitialContent() } answers {
+            setups.forEach { it(mockk(relaxed = true)) }
+            pageFinished.forEach { it() }
+        }
         coEvery { provider.accessWebView<Any?>(any()) } returns Unit
         providers += provider
     }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.CopyOnWriteArrayList
 
 abstract class WebViewProvider(
     private val dispatchers: CoroutineDispatchers
@@ -22,9 +23,10 @@ abstract class WebViewProvider(
     private val cachedWebView = MutableStateFlow<WebView?>(null)
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
 
-    private val onPageFinishedListeners = mutableListOf<() -> Unit>()
-    private val onPageStartedListeners = mutableListOf<(String) -> Unit>()
-    private val onWebViewDestroyedListeners = mutableListOf<() -> Unit>()
+    private val onPageFinishedListeners = CopyOnWriteArrayList<() -> Unit>()
+    private val onPageStartedListeners = CopyOnWriteArrayList<(String) -> Unit>()
+    private val onMainFrameFailedListeners = CopyOnWriteArrayList<() -> Unit>()
+    private val onWebViewDestroyedListeners = CopyOnWriteArrayList<() -> Unit>()
 
     abstract val callingProductIdProvider: CallingProductIdProvider
 
@@ -86,6 +88,10 @@ abstract class WebViewProvider(
         onPageStartedListeners += listener
     }
 
+    fun addOnMainFrameFailedListener(listener: () -> Unit) {
+        onMainFrameFailedListeners += listener
+    }
+
     /** Detaches and destroys [dead] after its renderer is gone: Android never lets it render again. */
     protected fun discardDeadWebView(dead: WebView) {
         (dead.parent as? ViewGroup)?.removeView(dead)
@@ -110,6 +116,10 @@ abstract class WebViewProvider(
 
     protected fun notifyOnPageStarted(url: String) {
         onPageStartedListeners.forEach { it.invoke(url) }
+    }
+
+    protected fun notifyMainFrameFailed() {
+        onMainFrameFailedListeners.forEach { it.invoke() }
     }
 
     fun pauseConnections() {

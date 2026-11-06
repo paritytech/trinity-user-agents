@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor
 
 import android.net.Uri
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
 import io.paritytech.polkadotapp.common.utils.filterResultSuccess
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
@@ -33,6 +34,7 @@ class PocketInteractor @Inject constructor(
     private val pocketFaceSource: PocketFaceSource,
     private val pocketCardFaceOnOpen: PocketCardFaceOnOpen,
     private val productContentWarmUp: ProductContentWarmUp,
+    private val openMarks: HostOpenMarks,
 ) {
     fun observeBackupProgress(): Flow<BackupProgress> = coinageBackupService.subscribeProgress()
 
@@ -54,8 +56,20 @@ class PocketInteractor @Inject constructor(
 
     fun observeProductCards(): Flow<List<PocketCard>> = pocketCollection.observeCards()
 
-    /** Fetches the product's pages before its card is opened, so opening it does not wait on them. */
-    suspend fun warmUpProduct(key: PocketCardKey): Result<Unit> = productContentWarmUp.warmUp(key.productId)
+    /**
+     * Fetches the product's pages before its card is opened, so opening it does not wait on them.
+     * [openSessionId] is the session of the open the fetch is for, null for one ahead of any open.
+     */
+    suspend fun warmUpProduct(key: PocketCardKey, openSessionId: String?): Result<Unit> =
+        productContentWarmUp.warmUp(key.productId, openSessionId)
+
+    /** Marks when the card was tapped, so the page opened for it can report the time since. */
+    fun cardTapped(key: PocketCardKey) = openMarks.tapped(key.productId.value)
+
+    /** The session of the open asked for [key]'s product and not yet taken by its page. */
+    fun openingSession(key: PocketCardKey): String? = openMarks.pendingSession(key.productId.value)
+
+    fun cardClosed() = openMarks.closed()
 
     suspend fun faceShownOnOpen(key: PocketCardKey): Boolean = pocketCardFaceOnOpen.faceShownOnOpen(key)
 

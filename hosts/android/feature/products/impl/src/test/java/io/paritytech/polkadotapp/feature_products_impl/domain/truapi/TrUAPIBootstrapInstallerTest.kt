@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -131,6 +132,69 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.endsWith("} catch {}"))
     }
 
+    // Optional and additive, so the schema version stays: a page without them reads the same as before.
+    @Test
+    fun `host telemetry script carries the tap time only for a page a tap opened`() {
+        val packageInfo = mock(PackageInfo::class.java).apply { versionName = "1.2.3" }
+        val packageManager = mock(PackageManager::class.java)
+        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
+        whenever(context.packageManager).thenReturn(packageManager)
+        whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
+
+        val tapped = hostTelemetryScript(context, "session", HostPageOrigin(1_793_880_000_000L, "pocket_card"))
+        val plain = hostTelemetryScript(context, "session")
+
+        assertTrue(tapped.contains("\"openedAtEpochMs\":1793880000000"))
+        assertTrue(tapped.contains("\"openSource\":\"pocket_card\""))
+        assertTrue(tapped.contains("\"schemaVersion\":\"1\""))
+        assertFalse(plain.contains("openedAtEpochMs"))
+        assertFalse(plain.contains("openSource"))
+    }
+
+    // The page reads these fields by name; pinned whole, so a renamed or added field shows up here first.
+    @Test
+    fun `host telemetry serializes exactly these fields for a tapped page, a plain page and a worker`() {
+        assumeTrue(FeatureOption.HOST_TELEMETRY.isEnabled)
+        withContainerAsset()
+        withTelemetryMetadata()
+        mockStatic(WebViewFeature::class.java).use { features ->
+            features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
+            mockStatic(Uri::class.java).use {
+                mockStatic(WebViewCompat::class.java).use { compat ->
+                    val registered = mutableListOf<String>()
+                    compat.`when`<Any> { WebViewCompat.addDocumentStartJavaScript(eq(webView), any(), any()) }
+                        .thenAnswer { call ->
+                            registered += call.getArgument<String>(1)
+                            null
+                        }
+                    val installer = TrUAPIBootstrapInstaller(context)
+
+                    installer.installerFor(
+                        productOrigins,
+                        "page-session",
+                        HostPageOrigin(openedAtEpochMs = 1_793_880_000_000L, openSource = "pocket_card"),
+                    )("endpoint();")(webView)
+                    installer.installerFor(productOrigins, "page-session")("endpoint();")(webView)
+                    installer.installerFor(setOf("https://worker.paseo"), "worker-session")("endpoint();")(webView)
+
+                    val host = truapiHostVersion()
+                    val build = BuildConfig.BUILD_TYPE
+                    val shared = "\"appVersion\":\"1.2.3\",\"appBuild\":\"456\",\"appVariant\":\"$build\"," +
+                        "\"platform\":\"android\",\"truapiHostVersion\":\"$host\",\"schemaVersion\":\"1\""
+                    assertEquals(
+                        listOf(
+                            "{\"hostSessionId\":\"page-session\",$shared," +
+                                "\"openedAtEpochMs\":1793880000000,\"openSource\":\"pocket_card\"}",
+                            "{\"hostSessionId\":\"page-session\",$shared}",
+                            "{\"hostSessionId\":\"worker-session\",$shared}",
+                        ),
+                        registered.filter { it.startsWith("if (window === window.top)") }.map(::frozenTelemetry),
+                    )
+                }
+            }
+        }
+    }
+
     @Test
     fun `telemetry construction failure cannot prevent endpoint installation`() {
         withContainerAsset()
@@ -194,6 +258,9 @@ class TrUAPIBootstrapInstallerTest {
         whenever(context.packageManager).thenReturn(packageManager)
         whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
     }
+
+    private fun frozenTelemetry(script: String): String =
+        script.substringAfter("value: Object.freeze(").substringBefore("),\n")
 
     private data class Registration(val script: String, val origins: Set<String>)
 }

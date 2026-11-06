@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.utils.combineResults
 import io.paritytech.polkadotapp.common.utils.flatten
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -20,6 +21,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.toDefinitio
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -35,6 +37,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val telemetry: HostProductResolvedTelemetry,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -42,11 +45,21 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val resolveMutex = Mutex()
 
     override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> {
-        cache[productId]?.let { return Result.success(it) }
+        val askedAtMillis = telemetry.nowMillis()
+        val load = currentCoroutineContext()[HostLoadContext]
+        cache[productId]?.let { cached ->
+            load?.let { telemetry.reportMemoryHit(productId, it, askedAtMillis, queueMillis = null) }
+            return Result.success(cached)
+        }
 
         return resolveMutex.withLock {
+            val startedAtMillis = telemetry.nowMillis()
+            val queueMillis = startedAtMillis - askedAtMillis
             // Another caller may have resolved the same product while this one waited.
-            cache[productId]?.let { return@withLock Result.success(it) }
+            cache[productId]?.let { cached ->
+                load?.let { telemetry.reportMemoryHit(productId, it, askedAtMillis, queueMillis) }
+                return@withLock Result.success(cached)
+            }
 
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
             runCatching { resolveFromChain(productId) }
@@ -57,6 +70,9 @@ internal class RealResolveProductUseCase @Inject constructor(
                     ProductResolutionError.Unknown
                 }
                 .onSuccess { cache[productId] = it }
+                .also { result ->
+                    load?.let { telemetry.report(productId, it, startedAtMillis, queueMillis, resolved = result.isSuccess) }
+                }
         }
     }
 

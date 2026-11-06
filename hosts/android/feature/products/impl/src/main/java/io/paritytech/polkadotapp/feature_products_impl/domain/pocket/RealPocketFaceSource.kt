@@ -9,7 +9,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIma
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import timber.log.Timber
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
@@ -19,11 +21,16 @@ class RealPocketFaceSource @Inject constructor(
     private val store: PocketCardStore,
     private val streams: PocketFaceStreams,
     private val images: ProductImageResolver,
+    private val telemetry: HostPocketFaceLoadedTelemetry,
 ) : PocketFaceSource {
     // Shared into a ViewModel scope that has no handler for a throw, so a failure ends the stream quietly.
     override fun observeFace(key: PocketCardKey): Flow<JsWidget> = flow {
-        cachedFace(key)?.let { emit(it.toJsWidget()) }
-        streams.renderFaces(key).collect { face -> emit(face.toJsWidget()) }
+        val load = telemetry.start(key.productId)
+        cachedFace(key)?.let {
+            emit(it.toJsWidget())
+            load.cachedFace()
+        }
+        emitAll(load.track(streams.renderFaces(key, load).map { face -> face.toJsWidget() }))
     }
         .catch { Timber.e(it, "pocket: the face stream for %s ended", key.cardId.value) }
 

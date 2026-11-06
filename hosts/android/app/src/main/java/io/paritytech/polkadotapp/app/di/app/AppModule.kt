@@ -18,13 +18,17 @@ import io.paritytech.polkadotapp.app.telemetry.HostTelemetryEnabledProvider
 import io.paritytech.polkadotapp.app.telemetry.RealHostEventCapture
 import io.paritytech.polkadotapp.app.telemetry.RealHostEventOriginProvider
 import io.paritytech.polkadotapp.app.telemetry.RealHostMonotonicTimeProvider
+import io.paritytech.polkadotapp.app.telemetry.RealHostSessionIds
 import io.paritytech.polkadotapp.app.telemetry.RealHostTelemetryEnabledProvider
+import io.paritytech.polkadotapp.app.telemetry.RealHostWallClock
 import io.paritytech.polkadotapp.app.telemetry.RealSentryEventCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionIds
+import io.paritytech.polkadotapp.common.data.telemetry.HostWallClock
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
@@ -74,4 +78,10 @@ internal interface AppModule {
 
     @Binds
     fun bindHostMonotonicTimeProvider(impl: RealHostMonotonicTimeProvider): HostMonotonicTimeProvider
+
+    @Binds
+    fun bindHostWallClock(impl: RealHostWallClock): HostWallClock
+
+    @Binds
+    fun bindHostSessionIds(impl: RealHostSessionIds): HostSessionIds
 }

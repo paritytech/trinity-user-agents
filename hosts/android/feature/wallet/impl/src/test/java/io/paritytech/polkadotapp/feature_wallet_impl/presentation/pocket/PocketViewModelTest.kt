@@ -2,13 +2,16 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
 import android.net.Uri
 import androidx.lifecycle.viewModelScope
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
+import io.mockk.verifyOrder
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -58,8 +61,11 @@ class PocketViewModelTest {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
-        coEvery { warmUpProduct(any()) } returns Result.success(Unit)
+        coEvery { warmUpProduct(any(), any()) } returns Result.success(Unit)
+        every { openingSession(any()) } returns null
         coEvery { faceShownOnOpen(any()) } returns true
+        every { cardTapped(any()) } just Runs
+        every { cardClosed() } just Runs
     }
 
     private var collectiblesPage: Uri? = null
@@ -329,7 +335,24 @@ class PocketViewModelTest {
         val viewModel = createViewModel()
         settledCards(viewModel)
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, null) }
+    }
+
+    // The page's load reports the time since this tap, and a closed card must not lend its tap to
+    // whichever page loads next.
+    @Test
+    fun `selecting a card marks the tap and dismissing it forgets the tap`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(uiCard)
+        verify(exactly = 1) { interactor.cardTapped(card.key) }
+        verify(exactly = 0) { interactor.cardClosed() }
+
+        viewModel.dismissCard()
+        verify(exactly = 1) { interactor.cardClosed() }
     }
 
     // The cost of warming every card is what the privileged set exists to avoid: a user holding
@@ -341,12 +364,32 @@ class PocketViewModelTest {
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        coVerify(exactly = 0) { interactor.warmUpProduct(any()) }
+        coVerify(exactly = 0) { interactor.warmUpProduct(any(), any()) }
 
         viewModel.selectCard(uiCard)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, any()) }
+    }
+
+    // The tap's own fetch is the open's first load: run as a prewarm, the page's lookups would wait
+    // on it and report the wait as a cache hit, and the read itself would report under no session.
+    @Test
+    fun `a tapped card's fetch runs under the session the tap minted`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        every { interactor.openingSession(card.key) } returns "tap-session"
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(uiCard)
+        advanceUntilIdle()
+
+        verifyOrder {
+            interactor.cardTapped(card.key)
+            interactor.openingSession(card.key)
+        }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, "tap-session") }
     }
 
     // The collection re-emits whenever it changes, and a fetch answered from cache still costs a
@@ -363,7 +406,7 @@ class PocketViewModelTest {
         collection.value = listOf(privileged, productCard("loyalty"))
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(privileged.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(privileged.key, null) }
     }
 
     // Expanding a card draws a second copy of it, and that copy's first frame shows whatever face it
@@ -405,6 +448,36 @@ class PocketViewModelTest {
         val opened = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:loyalty", opened.selectedCard.id)
         assertNull(cardOpenRequests.requested.value)
+    }
+
+    // The link's handler marked the open already; a tap mark here would overwrite it.
+    @Test
+    fun `a card a link opens records no tap`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        cardOpenRequests.request(card.key)
+
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
+        verify(exactly = 0) { interactor.cardTapped(any()) }
+    }
+
+    // Closing the card on screen to open the linked one must not forget when the link was handled.
+    @Test
+    fun `a link that replaces the open card keeps the link's mark`() = runTest(testDispatcher) {
+        val shown = productCard("loyalty")
+        val linked = productCard("prizes")
+        every { interactor.observeProductCards() } returns flowOf(listOf(shown, linked))
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first { it.key == shown.key }
+        viewModel.selectCard(uiCard)
+
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { interactor.cardClosed() }
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist

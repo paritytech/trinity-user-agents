@@ -1,7 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductHasNoWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -16,6 +20,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -25,6 +31,7 @@ import uniffi.truapi.ProductId
 
 class TrUAPIWorkerSupervisorFailureTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
+    private val bootEvents = mutableListOf<HostEvent>()
 
     private class FailingScriptResolver(private val error: Throwable) : ProductScriptResolver {
         override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> =
@@ -61,8 +68,78 @@ class TrUAPIWorkerSupervisorFailureTest {
         bootstrapInstaller = bootstrapInstaller,
         refCounter = Lazy { refCounter },
         navigation = mock(),
+        bootTelemetry = HostWorkerBootTelemetry(
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
+            timeProvider = { 0L },
+            capture = { bootEvents += it() },
+            cacheHits = HostCacheHits(),
+        ),
         dispatchers = testDispatchers(),
     )
+
+    private class GatedScriptResolver(private val gate: CompletableDeferred<Unit>) : ProductScriptResolver {
+        override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> {
+            gate.await()
+            error("the gate never completes in this test")
+        }
+    }
+
+    @Test
+    fun `a boot that fails is reported as an error under the activation's session`() = runTest {
+        val supervisor = supervisorWith(FailingScriptResolver(IllegalStateException("boom")))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+
+        val event = bootEvents.single()
+        assertEquals("host.worker.boot" to "error", event.name to event.tags["outcome"])
+        assertNotNull(event.tags["host.session_id"])
+    }
+
+    // A face that times out or finds no worker joins the boot by this session, so it is known from the start.
+    @Test
+    fun `the activation's session is known while it boots, and kept once its boot failed`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val supervisor = supervisorWith(FailOnceThenGateScriptResolver(IllegalStateException("boom"), gate))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        val failedSession = supervisor.sessionId(productId)
+        val failedBootSession = bootEvents.single().tags["host.session_id"]
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        val bootingSession = supervisor.sessionId(productId)
+        supervisor.onDemandChanged(productId, WorkerDemand.STOP)
+        advanceUntilIdle()
+
+        assertEquals(failedBootSession, failedSession)
+        assertNotNull(bootingSession)
+        assertTrue(bootingSession != failedSession)
+        assertNull(supervisor.sessionId(productId))
+    }
+
+    @Test
+    fun `a product with no worker is reported as no worker`() = runTest {
+        val supervisor = supervisorWith(FailingScriptResolver(ProductHasNoWorker(productId)))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(listOf("no_worker"), bootEvents.map { it.tags["outcome"] })
+    }
+
+    // Without it, a boot the core gave up on is missing from the data rather than counted as cut short.
+    @Test
+    fun `a worker stopped mid-boot is reported as abandoned`() = runTest {
+        val supervisor = supervisorWith(GatedScriptResolver(CompletableDeferred()))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        supervisor.onDemandChanged(productId, WorkerDemand.STOP)
+        advanceUntilIdle()
+
+        assertEquals(listOf("abandoned"), bootEvents.map { it.tags["outcome"] })
+    }
 
     @Test
     fun `a boot that fails is reported as failed, not as still pending`() = runTest {

@@ -5,6 +5,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -18,6 +20,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -52,6 +55,22 @@ class ProductContentRoutingTest {
         coVerify(exactly = 1) { dotNs.resolveToLocalUri("app.coinflip.dot") }
     }
 
+    // The page or worker the WebView serves is what its archive lookups report under.
+    @Test
+    fun `an archive lookup runs under the load the WebView serves`() {
+        val load = HostLoadContext(HostLoadTrigger.OPEN, "page-session")
+        val seen = mutableListOf<HostLoadContext?>()
+        coEvery { dotNs.resolveToLocalUri(any()) } coAnswers {
+            seen += currentCoroutineContext()[HostLoadContext]
+            Result.success(archiveUri)
+        }
+        val url: Uri = mockk { every { host } returns "coinflip.dot.li" }
+
+        DotNsWebViewClient(dotNs, tldProvider, loadContext = { load }).resolveHostFile(url)
+
+        assertEquals(listOf<HostLoadContext?>(load), seen)
+    }
+
     @Test
     fun `the identity resolver still fetches canonical archive names`() {
         val url: Uri = mockk { every { host } returns "COINFLIP.DOT.LI." }
@@ -83,7 +102,7 @@ class ProductContentRoutingTest {
         val failure = IllegalStateException("manifest unavailable")
         coEvery { products.resolve(productId) } returns Result.failure(failure)
 
-        assertEquals(failure, warmUp.warmUp(productId).exceptionOrNull())
+        assertEquals(failure, warmUp.warmUp(productId, openSessionId = null).exceptionOrNull())
 
         coVerify(exactly = 0) { dotNs.resolveToLocalUri(any()) }
     }
@@ -92,7 +111,7 @@ class ProductContentRoutingTest {
     fun `a missing widget warms the app archive, never the base archive`() = runBlocking {
         coEvery { products.resolve(productId) } returns Result.success(resolved(app = "app.coinflip.dot"))
 
-        assertTrue(warmUp.warmUp(productId).isSuccess)
+        assertTrue(warmUp.warmUp(productId, openSessionId = null).isSuccess)
 
         coVerify(exactly = 1) { dotNs.resolveToLocalUri(any()) }
         coVerify(exactly = 1) { dotNs.resolveToLocalUri("app.coinflip.dot") }

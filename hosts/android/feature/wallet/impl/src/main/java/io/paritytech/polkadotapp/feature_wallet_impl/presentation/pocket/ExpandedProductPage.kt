@@ -30,8 +30,10 @@ class ExpandedProductPage(
     fun open(url: String) {
         val heldProduct = held
         if (heldProduct?.url == url) {
-            if (shownProduct.value == null) heldProduct.session.resumeConnections()
+            val hidden = shownProduct.value == null
+            if (hidden) heldProduct.session.resumeConnections()
             shownProduct.value = ShownProduct(url, heldProduct.session)
+            if (hidden) heldProduct.session.onShownAgain()
             return
         }
         release()
