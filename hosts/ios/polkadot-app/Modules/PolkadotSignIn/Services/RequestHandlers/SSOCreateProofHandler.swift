@@ -36,6 +36,7 @@ final class SSOCreateProofHandler: SSORequestHandling {
         do {
             let handler = handlerFactory.makeCreateProofHandler(callingProductId: request.callingProductId)
             let proof = try await handler.createProof(
+                keyHandle: request.keyHandle,
                 context: request.context,
                 ring: request.ring,
                 message: request.message
