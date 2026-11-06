@@ -2,20 +2,18 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.content.Context
 import android.content.res.AssetManager
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyInt
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
@@ -23,8 +21,8 @@ import java.io.File
 
 class AssetPinnedPocketCardsTest {
     private val tld = requireNotNull(DotNsTld.parse("testnet"))
-    private val context: Context = mock()
-    private val assets: AssetManager = mock()
+    private val context: Context = mockk()
+    private val assets: AssetManager = mockk()
 
     // The real bundled file, not a stand-in: a face that stopped decoding against the renderer
     // vocabulary would otherwise be found by the user at their first launch, never by a test.
@@ -33,9 +31,9 @@ class AssetPinnedPocketCardsTest {
     private val humanityKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
     private fun pinnedCards(): AssetPinnedPocketCards {
-        whenever(context.assets).thenReturn(assets)
-        whenever(assets.open("pocket/humanity.json")).thenReturn(bundledHumanityFace.inputStream())
-        whenever(context.getString(anyInt())).thenReturn("Humanity")
+        every { context.assets } returns assets
+        every { assets.open("pocket/humanity.json") } returns bundledHumanityFace.inputStream()
+        every { context.getString(any()) } returns "Humanity"
 
         return AssetPinnedPocketCards(context)
     }
@@ -58,8 +56,8 @@ class AssetPinnedPocketCardsTest {
     }
 
     private fun bundledImages(): AssetPinnedPocketCards {
-        whenever(context.assets).thenReturn(assets)
-        whenever(assets.list("pocket")).thenReturn(File("src/main/assets/pocket").list())
+        every { context.assets } returns assets
+        every { assets.list("pocket") } returns File("src/main/assets/pocket").list()
 
         return AssetPinnedPocketCards(context)
     }
@@ -104,7 +102,7 @@ class AssetPinnedPocketCardsTest {
     fun `another product's image does not list the app's assets`() {
         bundledImages().bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp")
 
-        verify(assets, never()).list("pocket")
+        verify(exactly = 0) { assets.list("pocket") }
     }
 
     // The key already says which network its product is on, so its bundled face is found offline.

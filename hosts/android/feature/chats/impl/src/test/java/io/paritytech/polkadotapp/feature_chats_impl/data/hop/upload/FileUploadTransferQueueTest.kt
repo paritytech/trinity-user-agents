@@ -1,34 +1,32 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload
 
 import android.net.Uri
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.NODE_A
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.NODE_B
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.NODE_C
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.RetryDecision
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.FileUploadRepository
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.thenThrowUnsafe
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 class FileUploadTransferQueueTest {
-    private val uploadConcurrency: UploadConcurrency = mock(UploadConcurrency::class.java)
-    private val repository: FileUploadRepository = mock(FileUploadRepository::class.java)
-    private val hopNodeUrlProvider: HopNodeUrlProvider = mock(HopNodeUrlProvider::class.java)
-    private val fileUri: Uri = mock(Uri::class.java)
+    private val uploadConcurrency: UploadConcurrency = mockk {
+        every { maxInFlight() } returns ALLOWED_UPLOADS
+    }
+    private val repository: FileUploadRepository = mockk(relaxUnitFun = true)
+    private val hopNodeUrlProvider: HopNodeUrlProvider = mockk()
+    private val fileUri: Uri = mockk()
 
     @Test
     fun `the upload queue allows the uploads in flight that UploadConcurrency gives when it is created`() {
-        withUploadSlots(uploadConcurrency, ALLOWED_UPLOADS)
-
         assertEquals(ALLOWED_UPLOADS, queue().maxInFlight)
     }
 
@@ -84,17 +82,17 @@ class FileUploadTransferQueueTest {
 
     private fun queue() = FileUploadTransferQueue(
         repository = repository,
-        uploader = mock(HopFileUploader::class.java),
+        uploader = mockk(),
         hopNodeUrlProvider = hopNodeUrlProvider,
         uploadConcurrency = uploadConcurrency
     )
 
     private suspend fun withRetryNode(failed: String, picked: String) {
-        whenever(hopNodeUrlProvider.pickForRetry(failed)).thenReturn(picked)
+        coEvery { hopNodeUrlProvider.pickForRetry(failed) } returns picked
     }
 
     private suspend fun withNoRetryNode(failed: String) {
-        whenever(hopNodeUrlProvider.pickForRetry(failed)).thenThrowUnsafe(IllegalStateException("No Hop node URLs available"))
+        coEvery { hopNodeUrlProvider.pickForRetry(failed) } throws IllegalStateException("No Hop node URLs available")
     }
 
     private fun retryAfter(failures: Int) = RetryDecision.Reschedule(
@@ -104,15 +102,15 @@ class FileUploadTransferQueueTest {
     )
 
     private suspend fun verifyRetryScheduledOn(nodeUrl: String, failures: Int) {
-        verify(repository).scheduleRetry(MESSAGE_ID, nodeUrl, failures, FIRST_FAILURE_AT, NEXT_ATTEMPT_AT)
+        coVerify(exactly = 1) { repository.scheduleRetry(MESSAGE_ID, nodeUrl, failures, FIRST_FAILURE_AT, NEXT_ATTEMPT_AT) }
     }
 
     private suspend fun verifyInProgressReleased() {
-        verify(repository).releaseInProgress()
+        coVerify(exactly = 1) { repository.releaseInProgress() }
     }
 
     private suspend fun verifyNeverAskedForAnotherNode() {
-        verify(hopNodeUrlProvider, never()).pickForRetry(any())
+        coVerify(exactly = 0) { hopNodeUrlProvider.pickForRetry(any()) }
     }
 
     private companion object {

@@ -1,27 +1,23 @@
 package io.paritytech.polkadotapp.feature_connection_status_impl.data
 
-import io.paritytech.polkadotapp.chains.network.binding.BlockNumber
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.network.binding.toBlockNumber
 import io.paritytech.polkadotapp.chains.network.rpc.RpcCalls
 import io.paritytech.polkadotapp.chains.network.rpc.model.SignedBlock
 import io.paritytech.polkadotapp.chains.storage.source.StorageDataSource
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.argThat
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 import java.math.BigInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 class ChainAnchorDataSourceTest {
-    private val rpcCalls: RpcCalls = mock(RpcCalls::class.java)
-    private val remoteStorage: StorageDataSource = mock(StorageDataSource::class.java)
+    private val rpcCalls: RpcCalls = mockk()
+    private val remoteStorage: StorageDataSource = mockk()
 
     private val dataSource = ChainAnchorDataSource(rpcCalls, remoteStorage)
 
@@ -42,8 +38,8 @@ class ChainAnchorDataSourceTest {
 
         dataSource.fetch(CHAIN_ID, EXPECTED_BLOCKS)
 
-        verify(rpcCalls).getBlockHeader(eq(CHAIN_ID), eq(HEAD_HASH))
-        verify(rpcCalls).getBlockHash(eq(CHAIN_ID), eqBlockNumber((HEAD_HEIGHT - EXPECTED_BLOCKS).toBlockNumber()))
+        coVerify(exactly = 1) { rpcCalls.getBlockHeader(CHAIN_ID, HEAD_HASH) }
+        coVerify(exactly = 1) { rpcCalls.getBlockHash(CHAIN_ID, (HEAD_HEIGHT - EXPECTED_BLOCKS).toBlockNumber()) }
     }
 
     @Test
@@ -65,26 +61,18 @@ class ChainAnchorDataSourceTest {
     }
 
     private suspend fun withChain(headHeight: Int, span: Duration) {
-        whenever(rpcCalls.getBlockHash(CHAIN_ID)).thenReturn(HEAD_HASH)
-        whenever(rpcCalls.getBlockHeader(eq(CHAIN_ID), eq(HEAD_HASH))).thenReturn(header(headHeight))
-        whenever(rpcCalls.getBlockHash(eq(CHAIN_ID), eqBlockNumber((headHeight - EXPECTED_BLOCKS).toBlockNumber())))
-            .thenReturn(PREVIOUS_HASH)
+        coEvery { rpcCalls.getBlockHash(CHAIN_ID) } returns HEAD_HASH
+        coEvery { rpcCalls.getBlockHeader(CHAIN_ID, HEAD_HASH) } returns header(headHeight)
+        coEvery { rpcCalls.getBlockHash(CHAIN_ID, (headHeight - EXPECTED_BLOCKS).toBlockNumber()) } returns PREVIOUS_HASH
         withTimestamp(at = HEAD_HASH, millis = PREVIOUS_MILLIS + span.inWholeMilliseconds)
         withTimestamp(at = PREVIOUS_HASH, millis = PREVIOUS_MILLIS)
     }
 
     private suspend fun withTimestamp(at: String, millis: Long) {
-        whenever(remoteStorage.query<BigInteger>(eq(CHAIN_ID), eq(at), any())).thenReturn(millis.toBigInteger())
+        coEvery { remoteStorage.query<BigInteger>(CHAIN_ID, at, any()) } returns millis.toBigInteger()
     }
 
     private fun header(height: Int) = SignedBlock.Block.Header(height.toString(radix = 16), parentHash = null)
-
-    // BlockNumber is a value class: Mockito's own matchers unbox null into it and NPE, and the argument it
-    // records is the unwrapped number. test-shared cannot carry this matcher because it does not see :chains.
-    private fun eqBlockNumber(value: BlockNumber): BlockNumber {
-        argThat<Any?> { actual -> actual?.toString() == value.value.toString() }
-        return value
-    }
 
     private companion object {
         const val CHAIN_ID = "people"

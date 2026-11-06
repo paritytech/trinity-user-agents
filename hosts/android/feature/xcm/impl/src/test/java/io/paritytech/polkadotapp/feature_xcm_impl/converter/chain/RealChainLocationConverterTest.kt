@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_xcm_impl.converter.chain
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
@@ -13,36 +16,25 @@ import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Int
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Junction.GlobalConsensus
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Junction.ParachainId
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.RelativeMultiLocation
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.mockito.Mock
-import org.mockito.junit.MockitoJUnitRunner
 
-@RunWith(MockitoJUnitRunner::class)
 class RealChainLocationConverterTest {
-    @Mock
-    private lateinit var xcmConfig: ChainXcmConfig
+    private val xcmConfig: ChainXcmConfig = mockk()
 
-    @Mock
-    private lateinit var chainRegistry: ChainRegistry
+    private val chainRegistry: ChainRegistry = mockk()
 
-    @Mock
-    private lateinit var polkadot: Chain
+    private val polkadot: Chain = mockk()
 
-    @Mock
-    private lateinit var pah: Chain
+    private val pah: Chain = mockk()
 
-    @Mock
-    private lateinit var kusama: Chain
+    private val kusama: Chain = mockk()
 
-    @Mock
-    private lateinit var kah: Chain
+    private val kah: Chain = mockk()
 
     private lateinit var converter: RealChainLocationConverter
 
@@ -62,12 +54,10 @@ class RealChainLocationConverterTest {
 
     @Before
     fun setUp() = runBlocking {
-        whenever(xcmConfig.parachainIds).thenReturn(
-            mapOf(
-                // In difference consensuses, same para id can be used
-                pahId to paraId,
-                kahId to paraId
-            )
+        every { xcmConfig.parachainIds } returns mapOf(
+            // In difference consensuses, same para id can be used
+            pahId to paraId,
+            kahId to paraId
         )
 
         setupRelay(polkadot, polkadotId, polkadotGenesis)
@@ -76,8 +66,8 @@ class RealChainLocationConverterTest {
         setupRelay(kusama, kusamaId, kusamaGenesis)
         setupChain(kah, kahId, kahGenesis, parentId = kusamaId)
 
-        whenever(chainRegistry.chainsById).thenAnswer { flowOf(allChainsById()) }
-        whenever(chainRegistry.currentChains).thenAnswer { flowOf(allChains()) }
+        every { chainRegistry.chainsById } answers { flowOf(allChainsById()) }
+        every { chainRegistry.currentChains } answers { flowOf(allChains()) }
 
         converter = RealChainLocationConverter(xcmConfig, chainRegistry)
     }
@@ -90,20 +80,20 @@ class RealChainLocationConverterTest {
         return listOf(polkadot, pah, kusama, kah)
     }
 
-    private suspend fun setupRelay(relaychain: Chain, chainId: String, genesisHash: GenesisHash) {
+    private fun setupRelay(relaychain: Chain, chainId: String, genesisHash: GenesisHash) {
         setupChain(relaychain, chainId, genesisHash, parentId = null)
     }
 
-    private suspend fun setupChain(
+    private fun setupChain(
         chain: Chain,
         chainId: String,
         genesisHash: GenesisHash,
         parentId: String?
     ) {
-        whenever(chain.id).thenReturn(chainId)
-        whenever(chain.genesisHash).thenReturn(genesisHash)
-        whenever(chain.parentId).thenReturn(parentId)
-        whenever(chainRegistry.getChain(chainId)).thenReturn(chain)
+        every { chain.id } returns chainId
+        every { chain.genesisHash } returns genesisHash
+        every { chain.parentId } returns parentId
+        coEvery { chainRegistry.getChain(chainId) } returns chain
     }
 
     @Test

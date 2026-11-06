@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.data.derivation
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.encrypt.junction.SubstrateJunctionDecoder
 import io.novasama.substrate_sdk_android.encrypt.mnemonic.MnemonicCreator
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
@@ -10,18 +13,16 @@ import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
 import io.paritytech.polkadotapp.feature_coinage_impl.TEST_INSTALLATION
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class CoinageDerivationTest {
-    private val accountRepository: AccountRepository = mock()
-    private val accountSecretsStorage: AccountSecretsStorage = mock()
+    private val accountRepository: AccountRepository = mockk()
+    private val accountSecretsStorage: AccountSecretsStorage = mockk()
 
     private val voucherDerivation = RealVoucherRingDerivation(accountRepository, accountSecretsStorage)
 
@@ -76,10 +77,10 @@ class CoinageDerivationTest {
     }
 
     private suspend fun withWalletMnemonic() {
-        val account: MetaAccount = mock()
-        whenever(account.id).thenReturn(WALLET_ID)
-        whenever(accountRepository.getWalletAccount()).thenReturn(account)
-        whenever(accountSecretsStorage.getMetaAccountPassphrase(WALLET_ID)).thenReturn(MNEMONIC)
+        val account: MetaAccount = mockk()
+        every { account.id } returns WALLET_ID
+        coEvery { accountRepository.getWalletAccount() } returns account
+        coEvery { accountSecretsStorage.getMetaAccountPassphrase(WALLET_ID) } returns MNEMONIC
     }
 
     private companion object {

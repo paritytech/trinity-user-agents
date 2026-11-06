@@ -8,17 +8,17 @@ The patterns below are the result of repeated correction during recent reviews. 
 
 ## Stack
 
-- **Mockito 5** (`org.mockito:mockito-core` — inline mock-maker is the default, final classes including `data class` work without `open`). **Not MockK.**
+- **mockk** (`io.mockk:mockk`, on the test classpath of every module that depends on `test-shared`; other modules add `testImplementation(libs.mockk)`). Final classes, `data class`es, value classes and suspend functions work without extra setup. **Not Mockito.** Instrumentation tests use `mockk-android`.
 - **JUnit 4**.
 - **`kotlinx.coroutines.runBlocking`** for suspend-fn driving. **Not** `runTest` — the project's existing tests use plain `runBlocking`; match that.
-- Test infrastructure (matchers, `whenever`, common helpers) lives in `test-shared/.../MockitoHelpers.kt`. Don't reinvent locally.
+- Shared test infrastructure lives in `test-shared`. Don't reinvent locally.
 
 ```kotlin
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyLong
-import io.paritytech.polkadotapp.test_shared.anyUInt
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 ```
 
 Add helpers to `test-shared` when you reach for a new matcher / fixture more than once. Don't keep copying them into each test class.
@@ -27,11 +27,11 @@ Add helpers to `test-shared` when you reach for a new matcher / fixture more tha
 
 ## Rules at a glance
 
-1. **Stub every method the SUT calls.** Mockito returns `null` for unstubbed suspend functions; Kotlin then unboxes `null` to a primitive / value class and NPEs. The failure looks like a mysterious `NullPointerException` deep inside the SUT, not a missing stub. If a test fails with NPE, the first hypothesis is "I forgot to stub something."
+1. **Stub every method the SUT calls.** A plain `mockk()` is strict: an unstubbed call throws `MockKException: no answer found`, naming the call. Use `mockk(relaxUnitFun = true)` when the SUT also calls `Unit` functions, suspend or not, that the test does not care about, and `mockk(relaxed = true)` only when the test genuinely ignores return values. A relaxed mock returns non-null defaults, so stub a nullable call explicitly when the test depends on `null`.
 
-2. **Value-class arg matchers go through `test-shared` helpers.** Use `anyUInt()` / `anyLong()` from `MockitoHelpers.kt`. `Mockito.any<UInt>()` NPEs because Mockito returns `null` cast to `UInt` and the JVM unboxes that.
+2. **Suspend functions go through `coEvery` / `coVerify`.** `every` / `verify` blocks cannot call suspend functions. Matchers such as `any()` work for value classes (`UInt`, `ULong`) and primitives directly.
 
-3. **`runBlocking<Unit>` in `@Test` and `@Before`.** A `verify(...)` call (or any non-Unit terminal expression) makes the `runBlocking` block's inferred type non-Unit, which JUnit rejects with `InvalidTestClassError`. Always pin to `Unit`:
+3. **`runBlocking<Unit>` in `@Test` and `@Before`.** A non-Unit terminal expression (an `assertThrows(...)`, or a SUT call whose result the test ignores) makes the `runBlocking` block's inferred type non-Unit, which JUnit rejects with `InvalidTestClassError`. Always pin to `Unit`:
    ```kotlin
    @Test fun `foo`() = runBlocking<Unit> { ... }
    ```
@@ -49,23 +49,24 @@ Add helpers to `test-shared` when you reach for a new matcher / fixture more tha
    }
    ```
 
-5. **Hide stubs behind intent-revealing helpers.** A test body should read as state declarations, not Mockito mechanics.
+5. **Hide stubs behind intent-revealing helpers.** A test body should read as state declarations, not mocking mechanics.
    ```kotlin
    // ✗
-   whenever(allocationRepository.hasStaleFor(any(), any(), eq(target), anyUInt())).thenReturn(false)
+   coEvery { allocationRepository.hasStaleFor(any(), any(), target, any()) } returns false
 
    // ✓
    withNoStaleAllocations()
    ```
 
-6. **Hide `verify(...)` calls behind intent-revealing helpers.** Same reason: the test body asserts intent, not Mockito syntax.
+6. **Hide `verify { ... }` calls behind intent-revealing helpers.** Same reason: the test body asserts intent, not mockk syntax.
    ```kotlin
    // ✗
-   verify(allocationRepository, never()).insert(any(), any(), any(), anyUInt(), anyLong(), any())
+   coVerify(exactly = 0) { allocationRepository.insert(any(), any(), any(), any(), any(), any()) }
 
    // ✓
    verifyNoAllocationInsertions()
    ```
+   A `verify { ... }` without a count passes when the call happened at least once. When the call must happen exactly once, write `verify(exactly = 1) { ... }`.
 
 7. **Hide non-trivial fixture construction behind named helpers.** If a test arrange line reads like a constructor call salad, lift it.
    ```kotlin
@@ -76,7 +77,7 @@ Add helpers to `test-shared` when you reach for a new matcher / fixture more tha
    withSlotTakenBy(target)
    ```
 
-8. **Use Mockito mocks over hand-rolled fakes for behavior-verification tests.** `verify(mock).insert(...)` reads better than `recorder.inserts shouldContain ...` and avoids drift between fake and interface. Fakes are appropriate when the SUT *queries* a stateful collaborator across many calls (e.g., a real repository semantics matter); mocks suffice when you only need to confirm calls happened.
+8. **Use mockk mocks over hand-rolled fakes for behavior-verification tests.** `verify { mock.insert(...) }` reads better than `recorder.inserts shouldContain ...` and avoids drift between fake and interface. Fakes are appropriate when the SUT *queries* a stateful collaborator across many calls (e.g., a real repository semantics matter); mocks suffice when you only need to confirm calls happened.
 
 9. **`Result<T>` assertions go through `assertSuccess` / domain-specific helpers**, not `assertTrue(result.isSuccess)`. Surface the failure message:
    ```kotlin
@@ -97,7 +98,7 @@ Add helpers to `test-shared` when you reach for a new matcher / fixture more tha
 
 11. **Audit coverage against `.claude/PLAN.md § Verification plan` before declaring done.** If the plan lists 8 unit cases, you have 8 tests (or a justified subset of them).
 
-12. **Don't open classes purely for testability.** Mockito 5 inline mock-maker handles final / data classes. Adding `open` only for tests violates `code/naming-and-hygiene.md § Don't expose mutable fields for testability` in spirit. If something can't be mocked, write a fake — don't change the production class.
+12. **Don't open classes purely for testability.** mockk handles final / data classes. Adding `open` only for tests violates `code/naming-and-hygiene.md § Don't expose mutable fields for testability` in spirit. If something can't be mocked, write a fake — don't change the production class.
 
 ---
 
@@ -109,7 +110,7 @@ Three prefixes; each carries a different intent:
 |---|---|---|
 | `with*` | State declaration / stub setup. Reads as "given the world is in this state." | `withChainContext()`, `withSlotTakenBy(target)`, `withNoStaleAllocations()`, `withZeroCooldown()`, `withSuccessfulSubmission()` |
 | `assert*` | Domain-level assertion on a value the test holds. | `assertSuccess(result)`, `assertNoAllocationAvailable(result)` |
-| `verify*` | Mockito invocation check. | `verifyAllocationInsertedFor(target, priority)`, `verifyNoEvictionPerformed()`, `verifyNoExtrinsicSubmitted()` |
+| `verify*` | mockk invocation check. | `verifyAllocationInsertedFor(target, priority)`, `verifyNoEvictionPerformed()`, `verifyNoExtrinsicSubmitted()` |
 
 `assertRenewerInvokedWith(...)` and `assertRenewerNotInvoked()` straddle the line (they're verify-based but read as assertions about the SUT's behavior). Either prefix is fine when the helper exists for the test's narrative; pick the one that reads better in context.
 
@@ -154,9 +155,8 @@ class RealStatementStoreSlotAllocatorTest {
     private val accountHigh: AccountId = byteArrayOf(0x02).toDataByteArray()
 
     // Mock collaborators. One line each. No body.
-    private val allocationRepository: StatementStoreSlotAllocationRepository =
-        mock(StatementStoreSlotAllocationRepository::class.java)
-    private val renewer: StatementStoreSlotRenewer = mock(StatementStoreSlotRenewer::class.java)
+    private val allocationRepository: StatementStoreSlotAllocationRepository = mockk()
+    private val renewer: StatementStoreSlotRenewer = mockk()
     // …
 
     // SUT — last so its constructor is visible at a glance.
@@ -169,6 +169,7 @@ class RealStatementStoreSlotAllocatorTest {
         // Only universal stubs. Per-test specifics stay per-test.
         withChainContext()
         withRenewerSucceeds()
+        withAllocationWritesAccepted()
     }
 
     @Test
@@ -176,14 +177,14 @@ class RealStatementStoreSlotAllocatorTest {
         withNoStaleAllocations()
         withZeroCooldown()
         withSlotTakenBy(accountNormal)
-        withAccountPriority(accountNormal, SlotPriority.Normal)
+        withTrackedPriorities(accountNormal to SlotPriority.Normal)
         withSuccessfulSubmission()
 
-        val result = allocator.allocate(target, OnExistingAllocationStrategy.INCREASE, SlotPriority.Normal)
+        val result = allocate(OnExistingAllocationStrategy.INCREASE, SlotPriority.Normal)
 
         assertSuccess(result)
-        verifyEvictedRowDeletedFor(accountNormal)
-        verifyAllocationInsertedFor(target, SlotPriority.Normal)
+        verifySlotDeletedFor(accountNormal, seq = 0u)
+        verifyAllocationInsertedFor(target, seq = 0u, priority = SlotPriority.Normal)
     }
 
     // … helpers at the bottom of the class, grouped by purpose:
@@ -199,29 +200,31 @@ Three visual blocks per test: arrange (one `with*` per line), act (one line), as
 
 ## When to add to `test-shared`
 
-The bar: a helper used by 2+ test classes, OR a helper that wraps Mockito boilerplate that's painful to remember (value-class matchers fit here). Don't pollute `test-shared` with one-off feature fixtures.
+The bar: a helper used by 2+ test classes, OR a helper that wraps mocking boilerplate that's painful to remember. Don't pollute `test-shared` with one-off feature fixtures.
 
 Current contents (`test-shared/src/main/java/io/paritytech/polkadotapp/test_shared/`):
-- `MockitoHelpers.kt` — `whenever`, `any`, `eq`, `argThat`, `anyUInt`, `anyLong`, `thenThrowUnsafe`.
 - `Assertions.kt` — common assert wrappers.
-- `DiffHelpers.kt`, `LoggerHelpers.kt`.
+- `LoggerHelpers.kt`, `FakeTimeProvider.kt`, `TestCoroutineDispatchers.kt`.
+- `chain/FakeChain.kt` — chain fixtures.
 
 ---
 
 ## Reviewer flags
 
-- **major** — `Mockito.any<UInt>()` or other value-class-typed `any()` (will NPE at runtime). Use `anyUInt()` from `test-shared`.
+- **major** — Mockito in a new or changed test. Use mockk.
+- **major** — `verify { ... }` / `coVerify { ... }` without a count where the test means the call happens exactly once. Use `exactly = 1`.
+- **minor** — `mockk(relaxed = true)` where a strict `mockk()` or `relaxUnitFun = true` would cover the test.
 - **major** — Production class made `open` purely for testability.
 - **minor** — `assertTrue(result.isSuccess)` without a helpful failure message — should be `assertSuccess(result)` or equivalent.
-- **minor** — Mockito stub or `verify(...)` invocation inline in a test body when a named `with*` / `verify*` helper would clarify intent (especially when used 2+ times across tests).
+- **minor** — mockk stub or `verify { ... }` invocation inline in a test body when a named `with*` / `verify*` helper would clarify intent (especially when used 2+ times across tests).
 - **minor** — Non-universal stub placed in `@Before` (default for some tests, overridden by others). Move to per-test.
-- **minor** — `runBlocking { … }` without `<Unit>` when the last expression is a `verify(...)` (the test won't be picked up by JUnit).
+- **minor** — `runBlocking { … }` without `<Unit>` when the last expression is not `Unit` (the test won't be picked up by JUnit).
 - **minor** — One-off matcher / fixture pattern reinvented in a test instead of added to `test-shared`.
 
 ---
 
 ## Canonical examples
 
-- `feature/statement-store/impl/src/test/.../RealStatementStoreSlotAllocatorTest.kt` — Mockito mocks + named helpers + `@Before` for truly-universal setup; covers the full allocator behavior contract.
-- `feature/statement-store/impl/src/test/.../RealStatementStoreSlotRenewerTest.kt` — mixes pure-logic comparator tests with end-to-end Mockito-based renewer flow tests.
-- `feature/coinage/impl/src/test/.../TransferPlannerTest.kt` — older `runBlocking` + Mockito style; some patterns predate this doc and don't follow every rule.
+- `feature/statement-store/impl/src/test/.../RealStatementStoreSlotAllocatorTest.kt` — mockk mocks + named helpers + `@Before` for truly-universal setup; covers the full allocator behavior contract.
+- `feature/statement-store/impl/src/test/.../RealStatementStoreSlotRenewerTest.kt` — mixes pure-logic comparator tests with end-to-end mockk-based renewer flow tests.
+- `feature/coinage/impl/src/test/.../TransferPlanTest.kt` (`TransferPlannerTest`) — some patterns predate this doc and don't follow every rule.

@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload
 
 import android.net.Uri
+import io.mockk.Runs
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.just
 import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -13,9 +17,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.FileUploadRe
 import io.paritytech.polkadotapp.feature_chats_impl.data.storage.AttachmentFileStorage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.HopTransferRetryState
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyInformationSize
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -58,34 +59,34 @@ fun fileUpload(
 )
 
 fun withMarkingImagePreProcessor(preProcessor: FileUploadPreProcessor, onPreProcess: () -> Unit = {}) {
-    whenever(preProcessor.appliesTo(any())).thenAnswer { (it.arguments[0] as String).startsWith(IMAGE_MIME_PREFIX) }
-    whenever(preProcessor.preProcess(any())).thenAnswer { invocation ->
+    every { preProcessor.appliesTo(any()) } answers { firstArg<String>().startsWith(IMAGE_MIME_PREFIX) }
+    every { preProcessor.preProcess(any()) } answers {
         onPreProcess()
-        invocation.arguments[0] as ByteArray + MARKER_BYTE
+        firstArg<ByteArray>() + MARKER_BYTE
     }
 }
 
 suspend fun withSubmitAllowed(hopSigner: HopSigner) {
-    whenever(hopSigner.ensureCanSubmit()).thenReturn(Unit)
+    coEvery { hopSigner.ensureCanSubmit() } just Runs
 }
 
 fun withUploadSlots(uploadConcurrency: UploadConcurrency, count: Int) {
-    whenever(uploadConcurrency.maxInFlight()).thenReturn(count)
+    every { uploadConcurrency.maxInFlight() } returns count
 }
 
 suspend fun withFileBytes(storage: AttachmentFileStorage, uri: Uri, size: Int): ByteArray {
     val bytes = patternBytes(size)
-    whenever(storage.readFileBytes(uri)).thenReturn(bytes)
+    coEvery { storage.readFileBytes(uri) } returns bytes
     return bytes
 }
 
 suspend fun withAttachmentMeta(attachmentMetaBuilder: AttachmentMetaBuilder) {
-    whenever(attachmentMetaBuilder.build(any(), any(), anyInformationSize()))
-        .thenReturn(Attachment.Meta.General(FILE_NAME, IMAGE_JPEG, InformationSize.ZERO))
+    coEvery { attachmentMetaBuilder.build(any(), any(), any()) } returns
+        Attachment.Meta.General(FILE_NAME, IMAGE_JPEG, InformationSize.ZERO)
 }
 
 suspend fun withUploadStillActive(repository: FileUploadRepository) {
-    whenever(repository.isActive(any())).thenReturn(true)
+    coEvery { repository.isActive(any()) } returns true
 }
 
 private fun retryStateAfter(attemptCount: Int): HopTransferRetryState {

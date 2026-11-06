@@ -2,6 +2,12 @@
 
 package io.paritytech.polkadotapp.feature_statement_store_impl.domain.slotAllocator
 
+import io.mockk.Runs
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.extrinsic.ExtrinsicStatus
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.common.domain.model.AccountId
@@ -16,21 +22,11 @@ import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.St
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.StatementStoreSlotAllocationRepository
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins.StatementStoreOrigins
 import io.paritytech.polkadotapp.feature_transactions.api.data.ExtrinsicService
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyLong
-import io.paritytech.polkadotapp.test_shared.anyUInt
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.eqUInt
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -43,12 +39,11 @@ class RealStatementStoreSlotRenewerTest {
     private val accountA: AccountId = byteArrayOf(0xA).toDataByteArray()
     private val accountB: AccountId = byteArrayOf(0xB).toDataByteArray()
 
-    private val chain: Chain = mock(Chain::class.java)
-    private val allocationRepository: StatementStoreSlotAllocationRepository =
-        mock(StatementStoreSlotAllocationRepository::class.java)
-    private val slotLoader: StatementStoreSlotLoader = mock(StatementStoreSlotLoader::class.java)
-    private val origins: StatementStoreOrigins = mock(StatementStoreOrigins::class.java)
-    private val extrinsicService: ExtrinsicService = mock(ExtrinsicService::class.java)
+    private val chain: Chain = mockk()
+    private val allocationRepository: StatementStoreSlotAllocationRepository = mockk()
+    private val slotLoader: StatementStoreSlotLoader = mockk()
+    private val origins: StatementStoreOrigins = mockk()
+    private val extrinsicService: ExtrinsicService = mockk()
 
     private val fixedNow: Instant = Instant.fromEpochSeconds(1_000_000)
 
@@ -64,7 +59,8 @@ class RealStatementStoreSlotRenewerTest {
 
     @Before
     fun setUp() = runBlocking<Unit> {
-        whenever(chain.id).thenReturn(chainId)
+        every { chain.id } returns chainId
+        withAllocationWritesAccepted()
     }
 
     // -- Comparator (pure-logic) tests --
@@ -181,7 +177,7 @@ class RealStatementStoreSlotRenewerTest {
         assertSuccess(result)
         verifyMarkedRenewed(id = 10)
         verifyMarkedRenewed(id = 20)
-        verify(allocationRepository, never()).deleteById(anyLong())
+        coVerify(exactly = 0) { allocationRepository.deleteById(any()) }
     }
 
     @Test
@@ -208,8 +204,8 @@ class RealStatementStoreSlotRenewerTest {
         val result = renewer.renew(context, priorityAccount = null)
 
         assertSuccess(result)
-        verify(allocationRepository, never()).markRenewed(anyLong(), anyUInt(), any(), anyUInt(), any())
-        verify(allocationRepository, never()).deleteById(anyLong())
+        coVerify(exactly = 0) { allocationRepository.markRenewed(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { allocationRepository.deleteById(any()) }
     }
 
     @Test
@@ -325,7 +321,12 @@ class RealStatementStoreSlotRenewerTest {
     // -- setup helpers (every used method stubbed explicitly) --
 
     private suspend fun withStaleRows(rows: List<StatementStoreSlotAllocationRecord>) {
-        whenever(allocationRepository.staleRows(eq(chainId), anyUInt())).thenReturn(rows)
+        coEvery { allocationRepository.staleRows(chainId, any()) } returns rows
+    }
+
+    private suspend fun withAllocationWritesAccepted() {
+        coEvery { allocationRepository.markRenewed(any(), any(), any(), any(), any()) } just Runs
+        coEvery { allocationRepository.deleteById(any()) } just Runs
     }
 
     private suspend fun withFreeSeqs(seqs: List<UInt>) {
@@ -334,13 +335,12 @@ class RealStatementStoreSlotRenewerTest {
 
     private suspend fun withSlots(vararg perCollection: StatementSlotsForCollection) {
         val slots = StatementStoreSlots(perCollection.toList())
-        whenever(slotLoader.loadSlots(any())).thenReturn(Result.success(slots))
-        whenever(origins.asResourcesStatementStoreSlot(anyUInt(), anyUInt(), any())).thenReturn(Result.success(mock()))
+        coEvery { slotLoader.loadSlots(any()) } returns Result.success(slots)
+        coEvery { origins.asResourcesStatementStoreSlot(any(), any(), any()) } returns Result.success(mockk())
     }
 
     private suspend fun withBatchResults(results: List<Result<ExtrinsicStatus.InBlock>>) {
-        whenever(extrinsicService.submitExtrinsicsAndAwaitInBlock(any(), any(), any(), any()))
-            .thenReturn(Result.success(results))
+        coEvery { extrinsicService.submitExtrinsicsAndAwaitInBlock(any(), any(), any(), any()) } returns Result.success(results)
     }
 
     // -- verification helpers --
@@ -350,15 +350,15 @@ class RealStatementStoreSlotRenewerTest {
     }
 
     private suspend fun verifyMarkedRenewed(id: Long) {
-        verify(allocationRepository, times(1)).markRenewed(eq(id), anyUInt(), any(), anyUInt(), any())
+        coVerify(exactly = 1) { allocationRepository.markRenewed(id, any(), any(), any(), any()) }
     }
 
     private suspend fun verifyMarkedRenewedInto(id: Long, seq: UInt, collection: PeopleCollection) {
-        verify(allocationRepository, times(1)).markRenewed(eq(id), anyUInt(), any(), eqUInt(seq), eq(collection))
+        coVerify(exactly = 1) { allocationRepository.markRenewed(id, any(), any(), seq, collection) }
     }
 
     private suspend fun verifyDeletedById(id: Long) {
-        verify(allocationRepository, times(1)).deleteById(eq(id))
+        coVerify(exactly = 1) { allocationRepository.deleteById(id) }
     }
 
     // -- fixtures --
@@ -382,6 +382,4 @@ class RealStatementStoreSlotRenewerTest {
 
     private fun failure(throwable: Throwable): Result<ExtrinsicStatus.InBlock> =
         Result.failure(throwable)
-
-    private inline fun <reified T : Any> mock(): T = mock(T::class.java)
 }

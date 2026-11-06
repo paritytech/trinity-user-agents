@@ -1,12 +1,15 @@
 package io.paritytech.polkadotapp.app.telemetry
 
+import io.mockk.Called
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,9 +18,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.doThrow
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verifyNoInteractions
 import java.util.UUID
 
 class HostProcessTelemetryTest {
@@ -29,7 +29,7 @@ class HostProcessTelemetryTest {
         osVersion = "15",
         appBuild = 42L,
     )
-    private val sentryCapture: SentryEventCapture = mock(SentryEventCapture::class.java)
+    private val sentryCapture: SentryEventCapture = mockk()
 
     @Test
     fun `captures the process event with the shared host tags when the app initializes`() {
@@ -121,8 +121,8 @@ class HostProcessTelemetryTest {
     @Test
     fun `returns the capture failure when capture throws`() {
         val error = IllegalStateException("Sentry unavailable")
-        val capture = mock(HostEventCapture::class.java)
-        doThrow(error).`when`(capture).capture(any())
+        val capture = mockk<HostEventCapture>()
+        every { capture.capture(any()) } throws error
         val initializer = initializer(capture)
 
         val result = with(computationalScope()) { initializer.initialize() }
@@ -139,7 +139,7 @@ class HostProcessTelemetryTest {
     private fun computationalScope() = ComputationalScope(CoroutineScope(Dispatchers.Unconfined))
 
     private fun verifyNothingSentToSentry() {
-        verifyNoInteractions(sentryCapture)
+        verify { sentryCapture wasNot Called }
     }
 
     private fun assertSuccess(result: Result<*>) {

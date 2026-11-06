@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_coinage_impl
 
 import android.text.TextUtils.split
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.spyk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.utils.emptySubstrateAccountId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinAmountBreakdown
@@ -19,16 +23,10 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.common.RealCoinAmou
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPlanner
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.InsufficientBalanceException
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingIndex
-import io.paritytech.polkadotapp.test_shared.any
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.doReturn
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.spy
-import org.mockito.Mockito.verify
 import java.math.BigDecimal
 import java.math.BigInteger
 
@@ -257,13 +255,13 @@ class TransferPlannerTest {
     }
 
     private fun withEveryBreakdownEmpty(): CoinAmountBreakdown {
-        val breakdown = spy(realBreakdown)
-        doReturn(emptyList<ValueExponent>()).`when`(breakdown).breakdown(any())
+        val breakdown = spyk(realBreakdown)
+        every { breakdown.breakdown(any()) } returns emptyList()
         return breakdown
     }
 
     private fun verifyNeverBrokenDown(breakdown: CoinAmountBreakdown) {
-        verify(breakdown, never()).breakdown(any())
+        verify(exactly = 0) { breakdown.breakdown(any()) }
     }
 
     private fun assertCoinExponents(expected: List<Int>, coins: List<Coin>) =
@@ -302,7 +300,7 @@ class TransferPlannerTest {
 
         return RecyclerVoucher(
             ringVrfKeyIndex = testKey(voucherIndexCounter++),
-            ringVrfPublicKey = mock(),
+            ringVrfPublicKey = mockk(),
             recyclerValue = ValueExponent(exponent),
             location = Location.InRecycler(index, recyclerMembers = FULL_RING, enteredAt = null),
             recyclerFungibility = RecyclerFungibility.NONE,

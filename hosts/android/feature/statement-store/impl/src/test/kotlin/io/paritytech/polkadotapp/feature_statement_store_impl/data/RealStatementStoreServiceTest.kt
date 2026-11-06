@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.feature_statement_store_impl.data
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.request.runtime.RuntimeRequest
 import io.novasama.substrate_sdk_android.wsrpc.subscription.response.SubscriptionChange
@@ -8,8 +11,6 @@ import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnection
 import io.paritytech.polkadotapp.feature_statement_store_api.data.TopicFilter
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -20,15 +21,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 // Nothing else in the suite fails if subscribeStatements stops running through the peer.
 class RealStatementStoreServiceTest {
-    private val chainRegistry: ChainRegistry = mock(ChainRegistry::class.java)
-    private val connection: ChainConnection = mock(ChainConnection::class.java)
-    private val socketService: SocketService = mock(SocketService::class.java)
+    private val chainRegistry: ChainRegistry = mockk()
+    private val connection: ChainConnection = mockk()
+    private val socketService: SocketService = mockk()
     private val peer = RealStatementStorePeer(
         KnownChains(people = PEOPLE, assetHub = "hub", bulletIn = "bulletin", hydration = null),
         handoverGrace = GRACE,
@@ -37,8 +37,8 @@ class RealStatementStoreServiceTest {
 
     @Before
     fun setUp() = runBlocking<Unit> {
-        whenever(chainRegistry.getConnection(PEOPLE)).thenReturn(connection)
-        whenever(connection.socketService).thenReturn(socketService)
+        coEvery { chainRegistry.getConnection(PEOPLE) } returns connection
+        every { connection.socketService } returns socketService
     }
 
     @Test
@@ -53,10 +53,10 @@ class RealStatementStoreServiceTest {
     }
 
     private fun withPeerSending(change: SubscriptionChange) {
-        whenever(socketService.subscribe(any<RuntimeRequest>(), any(), any())).thenAnswer { invocation ->
-            val listener = invocation.getArgument<SocketService.ResponseListener<SubscriptionChange>>(1)
+        every { socketService.subscribe(any<RuntimeRequest>(), any(), any()) } answers {
+            val listener = secondArg<SocketService.ResponseListener<SubscriptionChange>>()
             listener.onNext(change)
-            mock(SocketService.Cancellable::class.java)
+            mockk<SocketService.Cancellable>(relaxUnitFun = true)
         }
     }
 

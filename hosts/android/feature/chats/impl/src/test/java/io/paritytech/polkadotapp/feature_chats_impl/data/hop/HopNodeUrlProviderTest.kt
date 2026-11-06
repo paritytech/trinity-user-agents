@@ -1,18 +1,19 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.test_shared.assertFailureOf
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class HopNodeUrlProviderTest {
-    private val chainRegistry: ChainRegistry = mock(ChainRegistry::class.java)
-    private val bulletIn: Chain = mock(Chain::class.java)
+    private val chainRegistry: ChainRegistry = mockk()
+    private val bulletIn: Chain = mockk()
 
     private val provider = HopNodeUrlProvider(chainRegistry)
 
@@ -80,20 +81,18 @@ class HopNodeUrlProviderTest {
     }
 
     private suspend fun withHopUrls(vararg urls: String) {
-        whenever(chainRegistry.bulletInChain()).thenReturn(bulletIn)
-        whenever(bulletIn.externalApis).thenReturn(listOf(Chain.ExternalApi.Hop(urls.toList())))
+        coEvery { chainRegistry.bulletInChain() } returns bulletIn
+        every { bulletIn.externalApis } returns listOf(Chain.ExternalApi.Hop(urls.toList()))
     }
 
     private suspend fun withNoHopApiAndChainNodes(vararg urls: String) {
-        val nodes = urls.map { url ->
-            mock(Chain.Node::class.java).also { whenever(it.unformattedUrl).thenReturn(url) }
-        }
-        val chainNodes = mock(Chain.Nodes::class.java)
-        whenever(chainNodes.nodes).thenReturn(nodes)
+        val nodeList = urls.map { url -> mockk<Chain.Node> { every { unformattedUrl } returns url } }
+        val chainNodes = mockk<Chain.Nodes> { every { nodes } returns nodeList }
 
-        whenever(chainRegistry.bulletInChain()).thenReturn(bulletIn)
-        whenever(bulletIn.externalApis).thenReturn(emptyList())
-        whenever(bulletIn.nodes).thenReturn(chainNodes)
+        coEvery { chainRegistry.bulletInChain() } returns bulletIn
+        every { bulletIn.name } returns "bulletIn"
+        every { bulletIn.externalApis } returns emptyList()
+        every { bulletIn.nodes } returns chainNodes
     }
 
     private companion object {

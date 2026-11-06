@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_connection_status_impl.presentation.mixin
 
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
@@ -13,7 +15,6 @@ import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixi
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,13 +33,12 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.seconds
 
 class RealChainHealthMixinTest {
-    private val monitor: ChainHealthMonitor = mock(ChainHealthMonitor::class.java)
-    private val peer: StatementStorePeer = mock(StatementStorePeer::class.java)
+    private val monitor: ChainHealthMonitor = mockk()
+    private val peer: StatementStorePeer = mockk()
     private val answered = MutableStateFlow(true)
     private val lifecycle = FakeAppLifecycleObserver()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -48,8 +48,8 @@ class RealChainHealthMixinTest {
 
     @Before
     fun setUp() {
-        whenever(peer.chainId).thenReturn(PEOPLE)
-        whenever(peer.observeAnswered()).thenReturn(answered)
+        every { peer.chainId } returns PEOPLE
+        every { peer.observeAnswered() } returns answered
     }
 
     @After
@@ -206,7 +206,7 @@ class RealChainHealthMixinTest {
 
     private fun withMonitorSequence(): MutableSharedFlow<List<ChainHealth>> {
         val healths = MutableSharedFlow<List<ChainHealth>>(replay = 1)
-        whenever(monitor.observeChainsHealth()).thenReturn(healths)
+        every { monitor.observeChainsHealth() } returns healths
         return healths
     }
 
@@ -216,7 +216,7 @@ class RealChainHealthMixinTest {
             emit(healths.toList())
             awaitCancellation()
         }.onCompletion { cancellations.incrementAndGet() }
-        whenever(monitor.observeChainsHealth()).thenReturn(observed)
+        every { monitor.observeChainsHealth() } returns observed
     }
 
     private suspend fun RealChainHealthMixin.awaitModel() =

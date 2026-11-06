@@ -1,8 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol
 
+import io.mockk.Called
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropy
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
@@ -18,14 +20,11 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.ReservedRingVrfKeys
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.RingVrfKeyRegistry
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verifyNoInteractions
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductIdException
 
@@ -45,10 +44,10 @@ private fun ringOf(collection: String) = RingLocation(
 )
 
 class RealRingVrfKeySourceTest {
-    private val registry: RingVrfKeyRegistry = mock(RingVrfKeyRegistry::class.java)
-    private val reservedRingVrfKeys: ReservedRingVrfKeys = mock(ReservedRingVrfKeys::class.java)
+    private val registry: RingVrfKeyRegistry = mockk()
+    private val reservedRingVrfKeys: ReservedRingVrfKeys = mockk()
     private val ringVrfEntropyDeriver = FakeRingVrfEntropyDeriver()
-    private val membersRingLocator: MembersRingLocator = mock(MembersRingLocator::class.java)
+    private val membersRingLocator: MembersRingLocator = mockk()
 
     private val keySource = RealRingVrfKeySource(
         registry = registry,
@@ -79,7 +78,7 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `registered handle resolves to entropy derived at its own path`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(OWN_HANDLE)).thenReturn(listOf(PEOPLE_RING))
+        coEvery { registry.declaredRings(OWN_HANDLE) } returns listOf(PEOPLE_RING)
 
         val member = keySource.resolveMember(OWN_HANDLE, PEOPLE_RING).getOrThrow()
 
@@ -92,7 +91,7 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `a ring the handle never declared is rejected`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(OWN_HANDLE)).thenReturn(listOf(PEOPLE_RING))
+        coEvery { registry.declaredRings(OWN_HANDLE) } returns listOf(PEOPLE_RING)
 
         val error = keySource.resolveMember(OWN_HANDLE, OTHER_RING).exceptionOrNull()
 
@@ -101,11 +100,10 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `an unregistered reserved handle falls back to the embedded locator`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(PERSONHOOD_HANDLE)).thenReturn(emptyList())
-        whenever(reservedRingVrfKeys.isReserved(PERSONHOOD_HANDLE)).thenReturn(true)
-        whenever(membersRingLocator.locateRing(PEOPLE_RING)).thenReturn(
+        coEvery { registry.declaredRings(PERSONHOOD_HANDLE) } returns emptyList()
+        coEvery { reservedRingVrfKeys.isReserved(PERSONHOOD_HANDLE) } returns true
+        coEvery { membersRingLocator.locateRing(PEOPLE_RING) } returns
             Result.success(LocatedRing("people", RingCollectionId.paddedString("pop:polkadot.network/people"), metaId = 42L))
-        )
 
         val member = keySource.resolveMember(PERSONHOOD_HANDLE, PEOPLE_RING).getOrThrow()
 
@@ -115,8 +113,8 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `an unknown handle is not servable`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(UNKNOWN_HANDLE)).thenReturn(emptyList())
-        whenever(reservedRingVrfKeys.isReserved(UNKNOWN_HANDLE)).thenReturn(false)
+        coEvery { registry.declaredRings(UNKNOWN_HANDLE) } returns emptyList()
+        coEvery { reservedRingVrfKeys.isReserved(UNKNOWN_HANDLE) } returns false
 
         val error = keySource.resolveMember(UNKNOWN_HANDLE, PEOPLE_RING).exceptionOrNull()
 
@@ -125,8 +123,8 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `signing needs no ring but still needs a known handle`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(UNKNOWN_HANDLE)).thenReturn(emptyList())
-        whenever(reservedRingVrfKeys.isReserved(UNKNOWN_HANDLE)).thenReturn(false)
+        coEvery { registry.declaredRings(UNKNOWN_HANDLE) } returns emptyList()
+        coEvery { reservedRingVrfKeys.isReserved(UNKNOWN_HANDLE) } returns false
 
         val error = keySource.resolveEntropy(UNKNOWN_HANDLE).exceptionOrNull()
 
@@ -135,13 +133,13 @@ class RealRingVrfKeySourceTest {
 
     @Test
     fun `signing derives entropy for a reserved handle without consulting a ring`() = runBlocking<Unit> {
-        whenever(registry.declaredRings(PERSONHOOD_HANDLE)).thenReturn(emptyList())
-        whenever(reservedRingVrfKeys.isReserved(PERSONHOOD_HANDLE)).thenReturn(true)
+        coEvery { registry.declaredRings(PERSONHOOD_HANDLE) } returns emptyList()
+        coEvery { reservedRingVrfKeys.isReserved(PERSONHOOD_HANDLE) } returns true
 
         keySource.resolveEntropy(PERSONHOOD_HANDLE).getOrThrow()
 
         assertEquals("//peopl.dot//${PERSONHOOD_HANDLE.index.asPathSegment()}", ringVrfEntropyDeriver.lastPath)
-        verifyNoInteractions(membersRingLocator)
+        verify { membersRingLocator wasNot Called }
     }
 }
 

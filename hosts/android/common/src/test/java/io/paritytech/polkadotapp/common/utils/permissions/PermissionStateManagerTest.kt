@@ -1,30 +1,24 @@
 package io.paritytech.polkadotapp.common.utils.permissions
 
 import android.Manifest
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyBoolean
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mockito.doAnswer
-import org.mockito.Mockito.mock
 
 class PermissionStateManagerTest {
-    private val permissionStatusChecker = mock(PermissionStatusChecker::class.java)
-    private val preferences = mock(Preferences::class.java)
+    private val permissionStatusChecker = mockk<PermissionStatusChecker>()
+    private val preferences = mockk<Preferences>()
     private val stored = mutableMapOf<String, Boolean>()
 
     private val manager = PermissionStateManager(permissionStatusChecker, preferences)
 
     @Before
     fun setUp() {
-        whenever(preferences.getBoolean(anyString(), anyBoolean())).thenAnswer {
-            stored[it.getArgument(0)] ?: it.getArgument(1)
-        }
-        doAnswer { stored[it.getArgument(0)] = it.getArgument(1) }
-            .`when`(preferences).putBoolean(anyString(), anyBoolean())
+        every { preferences.getBoolean(any(), any()) } answers { stored[firstArg()] ?: secondArg() }
+        every { preferences.putBoolean(any(), any()) } answers { stored[firstArg()] = secondArg() }
     }
 
     @Test
@@ -130,11 +124,11 @@ class PermissionStateManagerTest {
     }
 
     private fun withRationale(shouldShow: Boolean) {
-        whenever(permissionStatusChecker.shouldShowRationale(anyString())).thenReturn(shouldShow)
+        every { permissionStatusChecker.shouldShowRationale(any()) } returns shouldShow
     }
 
     private fun withPermissionGranted(granted: Boolean) {
-        whenever(permissionStatusChecker.isGranted(anyString())).thenReturn(granted)
+        every { permissionStatusChecker.isGranted(any()) } returns granted
     }
 
     private fun withEarlierDenial() {

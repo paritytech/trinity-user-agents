@@ -2,15 +2,15 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload
 
 import android.app.ActivityManager
 import android.content.Context
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.MAX_IN_FLIGHT
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class UploadConcurrencyTest {
-    private val context: Context = mock(Context::class.java)
-    private val activityManager: ActivityManager = mock(ActivityManager::class.java)
+    private val context: Context = mockk()
+    private val activityManager: ActivityManager = mockk()
 
     private val uploadConcurrency = UploadConcurrency(context)
 
@@ -43,7 +43,7 @@ class UploadConcurrencyTest {
     }
 
     private fun withHeapClass(megabytes: Int) {
-        whenever(context.getSystemService(Context.ACTIVITY_SERVICE)).thenReturn(activityManager)
-        whenever(activityManager.memoryClass).thenReturn(megabytes)
+        every { context.getSystemService(Context.ACTIVITY_SERVICE) } returns activityManager
+        every { activityManager.memoryClass } returns megabytes
     }
 }

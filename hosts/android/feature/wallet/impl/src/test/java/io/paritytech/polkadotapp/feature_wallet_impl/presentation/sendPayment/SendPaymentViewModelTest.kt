@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
@@ -25,9 +28,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.do
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetNeverOpened
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedOnce
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedTwice
-import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -44,7 +45,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -53,23 +53,19 @@ private val STATE_TIMEOUT = 1.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SendPaymentViewModelTest {
-    private val router: PocketRouter = mock(PocketRouter::class.java)
-    private val clipboardService: ClipboardService = mock(ClipboardService::class.java)
-    private val getContactsUseCase: GetContactsUseCase = mock(GetContactsUseCase::class.java)
-    private val chatStarter: ChatStarter = mock(ChatStarter::class.java)
-    private val addressInputMixinFactory: AddressInputMixin.Factory = mock(AddressInputMixin.Factory::class.java)
-    private val addressInputMixin: AddressInputMixin = mock(AddressInputMixin::class.java)
-    private val usernameAddressConverterFactory: UsernameAddressConverterFactory =
-        mock(UsernameAddressConverterFactory::class.java)
-    private val parseAddressConverterFactory: ParseAddressConverterFactory = mock(ParseAddressConverterFactory::class.java)
-    private val parseAddressUsernameConverterFactory: ParseAddressUsernameConverterFactory =
-        mock(ParseAddressUsernameConverterFactory::class.java)
-    private val previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory =
-        mock(PreviousPaymentsAddressConverterFactory::class.java)
-    private val contactsAddressConverterFactory: ContactsAddressConverterFactory =
-        mock(ContactsAddressConverterFactory::class.java)
-    private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
-    private val addressConverter: AddressInputMixin.AddressConverter = mock(AddressInputMixin.AddressConverter::class.java)
+    private val router: PocketRouter = mockk(relaxUnitFun = true)
+    private val clipboardService: ClipboardService = mockk()
+    private val getContactsUseCase: GetContactsUseCase = mockk()
+    private val chatStarter: ChatStarter = mockk()
+    private val addressInputMixinFactory: AddressInputMixin.Factory = mockk()
+    private val addressInputMixin: AddressInputMixin = mockk()
+    private val usernameAddressConverterFactory: UsernameAddressConverterFactory = mockk()
+    private val parseAddressConverterFactory: ParseAddressConverterFactory = mockk()
+    private val parseAddressUsernameConverterFactory: ParseAddressUsernameConverterFactory = mockk()
+    private val previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory = mockk()
+    private val contactsAddressConverterFactory: ContactsAddressConverterFactory = mockk()
+    private val chainAssetProvider: ChainAssetProvider = mockk()
+    private val addressConverter: AddressInputMixin.AddressConverter = mockk()
 
     private val input = MutableStateFlow("")
     private val addressCandidates = MutableSharedFlow<AddressCandidates>(replay = 1)
@@ -83,12 +79,12 @@ class SendPaymentViewModelTest {
     @Before
     fun setUp() = runBlocking<Unit> {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        whenever(chainAssetProvider.chainId()).thenReturn(CHAIN_ID)
-        whenever(getContactsUseCase()).thenReturn(emptyList())
+        every { chainAssetProvider.chainId() } returns CHAIN_ID
+        coEvery { getContactsUseCase() } returns emptyList()
         withAddressConverters()
-        whenever(addressInputMixin.input).thenReturn(input)
-        whenever(addressInputMixin.addressCandidates).thenReturn(addressCandidates)
-        whenever(addressInputMixinFactory.create(any(), any(), any())).thenReturn(addressInputMixin)
+        every { addressInputMixin.input } returns input
+        every { addressInputMixin.addressCandidates } returns addressCandidates
+        every { addressInputMixinFactory.create(any(), any(), any()) } returns addressInputMixin
     }
 
     @After
@@ -210,11 +206,11 @@ class SendPaymentViewModelTest {
     }
 
     private fun withAddressConverters() {
-        whenever(previousPaymentsAddressConverterFactory.create(CHAIN_ID)).thenReturn(addressConverter)
-        whenever(contactsAddressConverterFactory.create()).thenReturn(addressConverter)
-        whenever(parseAddressConverterFactory.create(CHAIN_ID)).thenReturn(addressConverter)
-        whenever(parseAddressUsernameConverterFactory.create(addressConverter)).thenReturn(addressConverter)
-        whenever(usernameAddressConverterFactory.create()).thenReturn(addressConverter)
+        every { previousPaymentsAddressConverterFactory.create(CHAIN_ID) } returns addressConverter
+        every { contactsAddressConverterFactory.create() } returns addressConverter
+        every { parseAddressConverterFactory.create(CHAIN_ID) } returns addressConverter
+        every { parseAddressUsernameConverterFactory.create(addressConverter) } returns addressConverter
+        every { usernameAddressConverterFactory.create() } returns addressConverter
     }
 
     private suspend fun withRecentsListed(query: String) {

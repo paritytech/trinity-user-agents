@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import dagger.Lazy
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -26,13 +27,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProductWorkerRefCounterTest {
     private val productId = ProductId.parse("coinflip.dot").getOrThrow()
-    private val hostApiInteractor: HostApiInteractor = mock()
+    private val hostApiInteractor: HostApiInteractor = mockk()
 
     private class FakeWorker : ProductWorker {
         override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> = Result.success(Unit)

@@ -3,6 +3,12 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload
 
 import android.net.Uri
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.storage.file.ContentResolver
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
@@ -11,7 +17,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopService
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.NODE_A
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.auth.HopSigner
-import io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction.anyHopTicket
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.patternBytes
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.HopTransferRetryPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.MAX_IN_FLIGHT
@@ -21,13 +26,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.FileUploadRe
 import io.paritytech.polkadotapp.feature_chats_impl.data.storage.AttachmentFileStorage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.assertFailureOf
-import io.paritytech.polkadotapp.test_shared.capture
-import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.testDispatchers
-import io.paritytech.polkadotapp.test_shared.thenSuspend
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -45,10 +45,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.ArgumentCaptor
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import kotlin.time.Duration
@@ -57,21 +53,21 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 class HopFileUploaderBoundTest {
-    private val fileUri: Uri = mock(Uri::class.java)
-    private val otherFileUri: Uri = mock(Uri::class.java)
+    private val fileUri: Uri = mockk()
+    private val otherFileUri: Uri = mockk()
 
-    private val attachmentFileStorage: AttachmentFileStorage = mock(AttachmentFileStorage::class.java)
-    private val hopSigner: HopSigner = mock(HopSigner::class.java)
-    private val hopNodeUrlProvider: HopNodeUrlProvider = mock(HopNodeUrlProvider::class.java)
-    private val fileUploadRepository: FileUploadRepository = mock(FileUploadRepository::class.java)
-    private val messageAttachmentUpdater: ChatMessageAttachmentUpdater = mock(ChatMessageAttachmentUpdater::class.java)
-    private val attachmentMetaBuilder: AttachmentMetaBuilder = mock(AttachmentMetaBuilder::class.java)
-    private val contentResolver: ContentResolver = mock(ContentResolver::class.java)
-    private val fileProvider: FileProvider = mock(FileProvider::class.java)
-    private val uploadConcurrency: UploadConcurrency = mock(UploadConcurrency::class.java)
-    private val preProcessor: FileUploadPreProcessor = mock(FileUploadPreProcessor::class.java)
-    private val hopService: HopService = mock(HopService::class.java)
-    private val session: HopService.Session = mock(HopService.Session::class.java)
+    private val attachmentFileStorage: AttachmentFileStorage = mockk()
+    private val hopSigner: HopSigner = mockk()
+    private val hopNodeUrlProvider: HopNodeUrlProvider = mockk()
+    private val fileUploadRepository: FileUploadRepository = mockk(relaxUnitFun = true)
+    private val messageAttachmentUpdater: ChatMessageAttachmentUpdater = mockk()
+    private val attachmentMetaBuilder: AttachmentMetaBuilder = mockk()
+    private val contentResolver: ContentResolver = mockk()
+    private val fileProvider: FileProvider = mockk()
+    private val uploadConcurrency: UploadConcurrency = mockk()
+    private val preProcessor: FileUploadPreProcessor = mockk()
+    private val hopService: HopService = mockk()
+    private val session: HopService.Session = mockk()
     private val submitTimes = mutableListOf<Duration>()
     private var onPreProcess: () -> Unit = {}
 
@@ -238,12 +234,10 @@ class HopFileUploaderBoundTest {
     )
 
     private suspend fun TestScope.withSessionAnsweringFirst(submits: Int, after: Duration = Duration.ZERO) {
-        whenever(hopService.withSession<Any?>(any(), any())).thenSuspend { invocation ->
-            @Suppress("UNCHECKED_CAST")
-            val block = invocation.arguments[1] as suspend HopService.Session.() -> Any?
-            block(session)
+        coEvery { hopService.withSession<Any?>(any(), any()) } coAnswers {
+            secondArg<suspend HopService.Session.() -> Any?>()(session)
         }
-        whenever(session.submitEntry(any(), anyHopTicket())).thenSuspend {
+        coEvery { session.submitEntry(any(), any()) } coAnswers {
             submitTimes += currentTime.milliseconds
             if (submitTimes.size > submits) awaitCancellation()
             delay(after)
@@ -283,14 +277,14 @@ class HopFileUploaderBoundTest {
     }
 
     private suspend fun withSinglePendingRow(upload: FileUpload) {
-        whenever(fileUploadRepository.claimNextDue()).thenReturn(upload, null)
-        whenever(fileUploadRepository.observeQueueChanges()).thenReturn(MutableSharedFlow())
-        whenever(fileUploadRepository.getNextBackoffEndAt()).thenReturn(null)
+        coEvery { fileUploadRepository.claimNextDue() } returnsMany listOf(upload, null)
+        every { fileUploadRepository.observeQueueChanges() } returns MutableSharedFlow()
+        coEvery { fileUploadRepository.getNextBackoffEndAt() } returns null
     }
 
     private fun withCountedReads(missingUri: Uri? = null) {
-        whenever(contentResolver.openInputStream(any())).thenAnswer { invocation ->
-            if (invocation.arguments[0] == missingUri) {
+        every { contentResolver.openInputStream(any()) } answers {
+            if (firstArg<Uri>() == missingUri) {
                 null
             } else {
                 nodes.events += EVENT_OPEN
@@ -306,22 +300,24 @@ class HopFileUploaderBoundTest {
     }
 
     private suspend fun verifyNeverFailed() {
-        verify(fileUploadRepository, never()).markFailed(any(), any())
+        coVerify(exactly = 0) { fileUploadRepository.markFailed(any(), any()) }
     }
 
     private fun verifyPreProcessedOnce() {
-        verify(preProcessor).preProcess(any())
+        verify(exactly = 1) { preProcessor.preProcess(any()) }
     }
 
     private fun verifySessionSocketStopped() {
-        verify(nodes.sockets.single()).stop()
+        verify(exactly = 1) { nodes.sockets.single().stop() }
     }
 
     private suspend fun assertRescheduledWithFirstBackoff(messageId: String) {
-        val firstFailureAt: ArgumentCaptor<Instant> = ArgumentCaptor.forClass(Instant::class.java)
-        val nextAttemptAt: ArgumentCaptor<Instant> = ArgumentCaptor.forClass(Instant::class.java)
-        verify(fileUploadRepository).scheduleRetry(eq(messageId), eq(NODE_A), eq(1), capture(firstFailureAt), capture(nextAttemptAt))
-        assertEquals(FIRST_BACKOFF, nextAttemptAt.value - firstFailureAt.value)
+        val firstFailureAt = slot<Instant>()
+        val nextAttemptAt = slot<Instant>()
+        coVerify(exactly = 1) {
+            fileUploadRepository.scheduleRetry(messageId, NODE_A, 1, capture(firstFailureAt), capture(nextAttemptAt))
+        }
+        assertEquals(FIRST_BACKOFF, nextAttemptAt.captured - firstFailureAt.captured)
     }
 
     private fun assertActive(outcome: Deferred<Result<Unit>>) {

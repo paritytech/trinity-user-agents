@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_usernames_impl.data.claim
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_usernames_impl.data.claim.network.api.UsernameApi
 import io.paritytech.polkadotapp.feature_usernames_impl.data.claim.network.api.model.UsernameClaimRequest
@@ -7,8 +9,6 @@ import io.paritytech.polkadotapp.feature_usernames_impl.data.claim.network.api.m
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.UsernamesChainProvider
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.ClaimUsernameParams
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.UsernameClaimResult
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_jwt_auth_api.domain.error.BackendRequestError
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,13 +16,12 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import retrofit2.HttpException
 import retrofit2.Response
 
 class RealUsernameRepositoryTest {
-    private val api: UsernameApi = mock(UsernameApi::class.java)
-    private val chainProvider: UsernamesChainProvider = mock(UsernamesChainProvider::class.java)
+    private val api: UsernameApi = mockk()
+    private val chainProvider: UsernamesChainProvider = mockk()
 
     private val repository = RealUsernameRepository(api, chainProvider)
 
@@ -77,15 +76,15 @@ class RealUsernameRepositoryTest {
     }
 
     private suspend fun withClaimResponse(response: UsernameClaimResponse) {
-        whenever(api.claimUsername(any())).thenAnswer { invocation ->
-            requests += invocation.getArgument<UsernameClaimRequest>(0)
+        coEvery { api.claimUsername(any()) } answers {
+            requests += firstArg<UsernameClaimRequest>()
             response
         }
     }
 
     private suspend fun withClaimFailure(error: Throwable) {
-        whenever(api.claimUsername(any())).thenAnswer { invocation ->
-            requests += invocation.getArgument<UsernameClaimRequest>(0)
+        coEvery { api.claimUsername(any()) } answers {
+            requests += firstArg<UsernameClaimRequest>()
             throw error
         }
     }

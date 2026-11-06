@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.storage
 
 import android.net.Uri
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.storage.file.ContentResolver
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
@@ -10,7 +12,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.hop.THREE_CHUNK_FILE_SI
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.chunkSlices
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.patternBytes
 import io.paritytech.polkadotapp.test_shared.assertFailureOf
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -20,18 +21,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.io.FileNotFoundException
 import java.io.InputStream
 import kotlin.time.Duration.Companion.seconds
 
 class AttachmentFileStorageTest {
-    private val uri: Uri = mock(Uri::class.java)
+    private val uri: Uri = mockk()
     private val fileBytes = patternBytes(THREE_CHUNK_FILE_SIZE)
     private val slices = fileBytes.chunkSlices()
 
-    private val contentResolver: ContentResolver = mock(ContentResolver::class.java)
-    private val fileProvider: FileProvider = mock(FileProvider::class.java)
+    private val contentResolver: ContentResolver = mockk()
+    private val fileProvider: FileProvider = mockk()
 
     private val storage = AttachmentFileStorage(
         contentResolver = contentResolver,
@@ -114,20 +114,20 @@ class AttachmentFileStorageTest {
 
     private fun withTrickleStream(): TrickleInputStream {
         val stream = TrickleInputStream(fileBytes)
-        whenever(contentResolver.openInputStream(uri)).thenReturn(stream)
+        every { contentResolver.openInputStream(uri) } returns stream
         return stream
     }
 
     private fun withNoStream() {
-        whenever(contentResolver.openInputStream(uri)).thenReturn(null)
+        every { contentResolver.openInputStream(uri) } returns null
     }
 
     private fun withProviderSize(sizeInBytes: Long) {
-        whenever(contentResolver.querySize(uri)).thenReturn(sizeInBytes.bytes)
+        every { contentResolver.querySize(uri) } returns sizeInBytes.bytes
     }
 
     private fun withUnknownProviderSize() {
-        whenever(contentResolver.querySize(uri)).thenReturn(null)
+        every { contentResolver.querySize(uri) } returns null
     }
 
     private fun assertChunks(expected: List<ByteArray>, actual: List<ByteArray>) {

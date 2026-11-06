@@ -1,9 +1,12 @@
 package io.paritytech.polkadotapp.feature_backup_impl.domain.usecase
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.errors.BackupDecryptionKeyNotFoundException
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_backup_api.domain.error.ImportFromBackupError
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_backup_api.data.BackupExistsStorage
 import io.paritytech.polkadotapp.tools_backup_api.domain.BackupService
 import io.paritytech.polkadotapp.tools_backup_api.domain.error.CorruptedBackupException
@@ -14,13 +17,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 
 class RealImportAccountFromBackupUseCaseTest {
-    private val backupService: BackupService = mock()
-    private val accountRepository: AccountRepository = mock()
-    private val backupExistsStorage: BackupExistsStorage = mock()
+    private val backupService: BackupService = mockk()
+    private val accountRepository: AccountRepository = mockk(relaxUnitFun = true)
+    private val backupExistsStorage: BackupExistsStorage = mockk(relaxUnitFun = true)
 
     private val useCase = RealImportAccountFromBackupUseCase(
         backupService = backupService,
@@ -38,8 +39,8 @@ class RealImportAccountFromBackupUseCaseTest {
         val result = useCase()
 
         assertTrue(result.isSuccess)
-        verify(accountRepository).initAccounts(entropy)
-        verify(backupExistsStorage).setBackupExists(true)
+        coVerify(exactly = 1) { accountRepository.initAccounts(entropy) }
+        verify(exactly = 1) { backupExistsStorage.setBackupExists(true) }
     }
 
     @Test
@@ -95,12 +96,12 @@ class RealImportAccountFromBackupUseCaseTest {
     }
 
     private suspend fun givenServiceReturns(result: Result<RestorableBackup?>) {
-        whenever(backupService.getRestorableBackup()).thenReturn(result)
+        coEvery { backupService.getRestorableBackup() } returns result
     }
 
     private fun givenRestorableBackup(restoreResult: Result<Backup>): RestorableBackup {
-        val restorable: RestorableBackup = mock()
-        runBlocking { whenever(restorable.restore()).thenReturn(restoreResult) }
+        val restorable: RestorableBackup = mockk()
+        coEvery { restorable.restore() } returns restoreResult
         return restorable
     }
 }

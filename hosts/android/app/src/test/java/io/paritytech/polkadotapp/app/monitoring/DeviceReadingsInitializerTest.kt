@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.app.monitoring
 
+import android.app.ActivityManager
 import android.content.Context
+import android.os.PowerManager
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.app.telemetry.HostTelemetryEnabledProvider
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.platform.BatteryService
@@ -10,7 +14,6 @@ import kotlinx.coroutines.Job
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class DeviceReadingsInitializerTest {
     @Test
@@ -18,8 +21,11 @@ class DeviceReadingsInitializerTest {
         // Given
         val telemetryOff = HostTelemetryEnabledProvider { false }
         val initializer = DeviceReadingsInitializer(
-            context = mock(Context::class.java),
-            batteryService = mock(BatteryService::class.java),
+            context = mockk<Context> {
+                every { getSystemService(ActivityManager::class.java) } returns mockk()
+                every { getSystemService(PowerManager::class.java) } returns mockk()
+            },
+            batteryService = mockk<BatteryService>(),
             reporter = DeviceReadingsReporter(telemetryOff) { _, _, _ -> },
             telemetryEnabledProvider = telemetryOff,
         )

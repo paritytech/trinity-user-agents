@@ -19,7 +19,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import uniffi.truapi.RendererNode
 
 private const val FACE_URL = "http://127.0.0.1:5173/pocket/devicehood.json"
@@ -36,7 +35,7 @@ class PocketFacePreviewViewModelTest {
         }
     }
 
-    private val router: ProductsRouter = mock()
+    private val router: ProductsRouter = mockk()
 
     private fun viewModel() =
         PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router, mockk())

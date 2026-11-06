@@ -1,8 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop
 
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import org.mockito.Mockito
-
 const val NODE_A = "wss://hop-a.example"
 const val NODE_B = "wss://hop-b.example"
 const val NODE_C = "wss://hop-c.example"
@@ -18,8 +15,3 @@ fun ByteArray.chunkSlices(): List<ByteArray> =
     (indices step HopService.CHUNK_SIZE_BYTES).map { start ->
         copyOfRange(start, minOf(start + HopService.CHUNK_SIZE_BYTES, size))
     }
-
-fun anyChatId(): ChatId {
-    Mockito.argThat<Any?> { true }
-    return ChatId.fromRawValue(ByteArray(0))
-}

@@ -1,19 +1,22 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.repository
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.database.dao.FileUploadDao
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 import kotlin.time.Instant
 
 class FileUploadRepositoryTest {
-    private val dao: FileUploadDao = mock(FileUploadDao::class.java)
+    private val dao: FileUploadDao = mockk(relaxUnitFun = true) {
+        coEvery { claimNextDue(any()) } returns null
+    }
 
     private val repository = FileUploadRepository(dao, FakeTimeProvider { NOW_MILLIS })
 
@@ -48,19 +51,19 @@ class FileUploadRepositoryTest {
     }
 
     private fun withPendingIdsInvalidated(vararg pendingIdsPerInvalidation: List<String>) {
-        whenever(dao.observePendingIds()).thenReturn(flowOf(*pendingIdsPerInvalidation))
+        every { dao.observePendingIds() } returns flowOf(*pendingIdsPerInvalidation)
     }
 
     private suspend fun verifyClaimedAt(nowMillis: Long) {
-        verify(dao).claimNextDue(nowMillis)
+        coVerify(exactly = 1) { dao.claimNextDue(nowMillis) }
     }
 
     private suspend fun verifyInProgressReleased() {
-        verify(dao).releaseInProgress()
+        coVerify(exactly = 1) { dao.releaseInProgress() }
     }
 
     private suspend fun verifyRetryStored(messageId: String, nodeUrl: String, attempts: Int, firstFailureAt: Long, nextAttemptAt: Long) {
-        verify(dao).scheduleRetry(messageId, nodeUrl, attempts, firstFailureAt, nextAttemptAt)
+        coVerify(exactly = 1) { dao.scheduleRetry(messageId, nodeUrl, attempts, firstFailureAt, nextAttemptAt) }
     }
 
     private companion object {

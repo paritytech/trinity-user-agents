@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.locator
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
@@ -10,21 +13,18 @@ import io.paritytech.polkadotapp.feature_people_api.domain.PEOPLE_LITE
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocationError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocationJunction
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 private const val CANDIDATE_META_ID = 1L
 private const val WALLET_META_ID = 2L
 private const val CHAIN_ID = "people-chain"
 
 class RealMembersRingLocatorTest {
-    private val chainRegistry: ChainRegistry = mock(ChainRegistry::class.java)
-    private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
+    private val chainRegistry: ChainRegistry = mockk()
+    private val accountRepository: AccountRepository = mockk()
 
     private val locator = RealMembersRingLocator(
         chainRegistry = chainRegistry,
@@ -85,22 +85,22 @@ class RealMembersRingLocatorTest {
     private fun collection(collectionId: RingCollectionId) = RingLocationJunction.CollectionId(collectionId.value)
 
     private suspend fun withUnknownChain() {
-        whenever(chainRegistry.getChainIdByGenesisHash(any())).thenReturn(null)
+        coEvery { chainRegistry.getChainIdByGenesisHash(any()) } returns null
     }
 
     private suspend fun withResolvedChain() {
-        whenever(chainRegistry.getChainIdByGenesisHash(any())).thenReturn(CHAIN_ID)
+        coEvery { chainRegistry.getChainIdByGenesisHash(any()) } returns CHAIN_ID
     }
 
     private suspend fun withCandidateAccount() {
-        val account = mock(MetaAccount::class.java)
-        whenever(account.id).thenReturn(CANDIDATE_META_ID)
-        whenever(accountRepository.getAccountByPurpose(MetaAccount.Purpose.CANDIDATE)).thenReturn(account)
+        val account = mockk<MetaAccount>()
+        every { account.id } returns CANDIDATE_META_ID
+        coEvery { accountRepository.getAccountByPurpose(MetaAccount.Purpose.CANDIDATE) } returns account
     }
 
     private suspend fun withWalletAccount() {
-        val account = mock(MetaAccount::class.java)
-        whenever(account.id).thenReturn(WALLET_META_ID)
-        whenever(accountRepository.getWalletAccount()).thenReturn(account)
+        val account = mockk<MetaAccount>()
+        every { account.id } returns WALLET_META_ID
+        coEvery { accountRepository.getWalletAccount() } returns account
     }
 }

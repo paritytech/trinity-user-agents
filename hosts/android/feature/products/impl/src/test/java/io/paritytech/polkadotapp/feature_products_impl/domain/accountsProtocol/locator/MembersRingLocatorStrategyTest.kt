@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.locator
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingCollectionId
 import io.paritytech.polkadotapp.feature_people_api.domain.PEOPLE
@@ -8,10 +9,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class MembersRingLocatorStrategyTest {
-    private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
+    private val accountRepository: AccountRepository = mockk()
     private val otherCollection: RingCollectionId = RingCollectionId.paddedString("some:other/collection")
 
     @Test

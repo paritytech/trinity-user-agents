@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
@@ -9,19 +11,17 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 
 class ProductServingHostResolverTest {
-    private val resolveProductUseCase: ResolveProductUseCase = mock()
-    private val dotNsTldProvider: DotNsTldProvider = mock<DotNsTldProvider>().also {
-        runBlocking { whenever(it.getTld()).thenReturn(Result.success(DotNsTld.parse("dot")!!)) }
+    private val resolveProductUseCase: ResolveProductUseCase = mockk()
+    private val dotNsTldProvider: DotNsTldProvider = mockk {
+        coEvery { getTld() } returns Result.success(DotNsTld.parse("dot")!!)
     }
     private val resolver = ProductServingHostResolver(resolveProductUseCase, dotNsTldProvider)
 
@@ -38,8 +38,8 @@ class ProductServingHostResolverTest {
     )
 
     private suspend fun stubResolution(appHost: String?, widgetHost: String? = null) {
-        whenever(resolveProductUseCase.resolve(ProductId.parse("coinflip.dot").getOrThrow()))
-            .thenReturn(Result.success(resolvedWith(appHost, widgetHost)))
+        coEvery { resolveProductUseCase.resolve(ProductId.parse("coinflip.dot").getOrThrow()) } returns
+            Result.success(resolvedWith(appHost, widgetHost))
     }
 
     @Test

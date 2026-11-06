@@ -1,23 +1,22 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.tld
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_impl.data.repository.NetworkSuffixRepository
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsTldStorage
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 
 private val PASEO = DotNsTld.parse("paseo")!!
 
 class RealDotNsTldProviderTest {
-    private val networkSuffixRepository: NetworkSuffixRepository = mock(NetworkSuffixRepository::class.java)
+    private val networkSuffixRepository: NetworkSuffixRepository = mockk()
     private val storage = FakeDotNsTldStorage()
 
     private val provider by lazy {
@@ -61,7 +60,7 @@ class RealDotNsTldProviderTest {
         provider.getTld()
         provider.getTld()
 
-        verify(networkSuffixRepository, times(1)).networkSuffix()
+        coVerify(exactly = 1) { networkSuffixRepository.networkSuffix() }
         assertEquals(PASEO, provider.currentTldOrNull())
     }
 
@@ -81,11 +80,11 @@ class RealDotNsTldProviderTest {
     }
 
     private suspend fun withReportedSuffix(tld: DotNsTld?) {
-        whenever(networkSuffixRepository.networkSuffix()).thenReturn(Result.success(tld))
+        coEvery { networkSuffixRepository.networkSuffix() } returns Result.success(tld)
     }
 
     private suspend fun withFailingRead() {
-        whenever(networkSuffixRepository.networkSuffix()).thenReturn(Result.failure(IllegalStateException("rpc down")))
+        coEvery { networkSuffixRepository.networkSuffix() } returns Result.failure(IllegalStateException("rpc down"))
     }
 
     private class FakeDotNsTldStorage : DotNsTldStorage {

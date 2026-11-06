@@ -25,7 +25,7 @@ dependencies {
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.junit)
-    testImplementation(libs.mockito.core)
+    testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.squareup.retrofit2.core)
 }

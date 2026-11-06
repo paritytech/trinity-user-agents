@@ -2,20 +2,18 @@ package io.paritytech.polkadotapp.design.utils
 
 import android.view.View
 import android.view.Window
+import io.mockk.Runs
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.design.R
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.doAnswer
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 
 class OverlayHidingTest {
-    private val window: Window = mock()
-    private val decorView: View = mock()
+    private val window: Window = mockk()
+    private val decorView: View = mockk()
     private var countTag: Any? = null
 
     @Before
@@ -67,19 +65,17 @@ class OverlayHidingTest {
     }
 
     private fun withDecorViewKeepingTags() {
-        whenever(window.decorView).thenReturn(decorView)
-        whenever(decorView.getTag(R.id.overlay_hiding_count)).thenAnswer { countTag }
-        doAnswer { invocation ->
-            countTag = invocation.getArgument(1)
-            null
-        }.`when`(decorView).setTag(eq(R.id.overlay_hiding_count), any())
+        every { window.decorView } returns decorView
+        every { window.setHideOverlayWindows(any()) } just Runs
+        every { decorView.getTag(R.id.overlay_hiding_count) } answers { countTag }
+        every { decorView.setTag(R.id.overlay_hiding_count, any()) } answers { countTag = secondArg() }
     }
 
     private fun verifyOverlaysHidden(count: Int) {
-        verify(window, times(count)).setHideOverlayWindows(true)
+        verify(exactly = count) { window.setHideOverlayWindows(true) }
     }
 
     private fun verifyOverlaysShown(count: Int) {
-        verify(window, times(count)).setHideOverlayWindows(false)
+        verify(exactly = count) { window.setHideOverlayWindows(false) }
     }
 }

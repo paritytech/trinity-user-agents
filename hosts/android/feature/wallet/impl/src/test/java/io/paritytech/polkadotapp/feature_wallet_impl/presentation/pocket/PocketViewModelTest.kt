@@ -22,6 +22,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -99,8 +101,8 @@ class PocketViewModelTest {
 
     private fun createViewModel(dispatchers: CoroutineDispatchers = this.dispatchers) = PocketViewModel(
         interactor = interactor,
-        tokenAmountMapper = mockk(relaxed = true),
-        tokenAmountFormatter = mockk(relaxed = true),
+        tokenAmountMapper = mockk<TokenAmountMapper>(),
+        tokenAmountFormatter = mockk<TokenAmountFormatter>(),
         collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,

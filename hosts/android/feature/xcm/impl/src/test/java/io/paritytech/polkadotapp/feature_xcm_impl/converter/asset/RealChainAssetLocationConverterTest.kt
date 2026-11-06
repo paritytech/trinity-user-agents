@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_xcm_impl.converter.asset
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
@@ -17,51 +20,35 @@ import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Jun
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Junction.PalletInstance
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.MultiLocation.Junction.ParachainId
 import io.paritytech.polkadotapp.feature_xcm_api.multiLocation.RelativeMultiLocation
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.mockito.Mock
-import org.mockito.junit.MockitoJUnitRunner
 import java.math.BigInteger
 
-@RunWith(MockitoJUnitRunner::class)
 class RealChainAssetLocationConverterTest {
-    @Mock
-    private lateinit var xcmConfig: AssetsXcmConfig
+    private val xcmConfig: AssetsXcmConfig = mockk()
 
-    @Mock
-    private lateinit var chainLocationConverter: ChainLocationConverter
+    private val chainLocationConverter: ChainLocationConverter = mockk()
 
-    @Mock
-    private lateinit var polkadot: Chain
+    private val polkadot: Chain = mockk()
 
-    @Mock
-    private lateinit var pah: Chain
+    private val pah: Chain = mockk()
 
-    @Mock
-    private lateinit var kusama: Chain
+    private val kusama: Chain = mockk()
 
-    @Mock
-    private lateinit var dotOnPolkadot: Chain.Asset
+    private val dotOnPolkadot: Chain.Asset = mockk()
 
-    @Mock
-    private lateinit var dotOnPah: Chain.Asset
+    private val dotOnPah: Chain.Asset = mockk()
 
-    @Mock
-    private lateinit var ksmOnKusama: Chain.Asset
+    private val ksmOnKusama: Chain.Asset = mockk()
 
-    @Mock
-    private lateinit var usdcOnPah: Chain.Asset
+    private val usdcOnPah: Chain.Asset = mockk()
 
-    @Mock
-    private lateinit var dotOnKusama: Chain.Asset
+    private val dotOnKusama: Chain.Asset = mockk()
 
-    @Mock
-    private lateinit var chainRegistry: ChainRegistry
+    private val chainRegistry: ChainRegistry = mockk()
 
     private lateinit var converter: RealChainAssetLocationConverter
 
@@ -212,7 +199,7 @@ class RealChainAssetLocationConverterTest {
         assertEquals(expectedRelativeLocation, result)
     }
 
-    private suspend fun setupChains() {
+    private fun setupChains() {
         setupChain(
             chain = polkadot,
             chainId = polkadotChainId,
@@ -245,32 +232,32 @@ class RealChainAssetLocationConverterTest {
         setupAsset(dotOnKusama, kusamaChainId, dotOnKusamaId, "DOT")
     }
 
-    private suspend fun setupChain(
+    private fun setupChain(
         chain: Chain,
         chainId: ChainId,
         assets: Map<Int, Chain.Asset>
     ) {
-        whenever(chain.id).thenReturn(chainId)
-        whenever(chain.assetsById).thenReturn(assets)
-        whenever(chainRegistry.getChain(chainId)).thenReturn(chain)
+        every { chain.id } returns chainId
+        every { chain.assetsById } returns assets
+        coEvery { chainRegistry.getChain(chainId) } returns chain
     }
 
     private fun setupAsset(asset: Chain.Asset, chainId: String, assetId: Int, symbol: String) {
-        whenever(asset.chainId).thenReturn(chainId)
-        whenever(asset.id).thenReturn(assetId)
-        whenever(asset.symbol).thenReturn(symbol)
+        every { asset.chainId } returns chainId
+        every { asset.id } returns assetId
+        every { asset.symbol } returns symbol
     }
 
-    private suspend fun setupChainLocationConverter() {
-        whenever(chainLocationConverter.absoluteLocationFromChain(polkadot)).thenReturn(polkadotLocation)
-        whenever(chainLocationConverter.absoluteLocationFromChain(pah)).thenReturn(pahLocation)
-        whenever(chainLocationConverter.absoluteLocationFromChain(kusama)).thenReturn(kusamaLocation)
+    private fun setupChainLocationConverter() {
+        coEvery { chainLocationConverter.absoluteLocationFromChain(polkadot) } returns polkadotLocation
+        coEvery { chainLocationConverter.absoluteLocationFromChain(pah) } returns pahLocation
+        coEvery { chainLocationConverter.absoluteLocationFromChain(kusama) } returns kusamaLocation
     }
 
     private fun setupAssetSearchBySymbol() {
-        whenever(polkadot.assets).thenReturn(listOf(dotOnPolkadot))
-        whenever(pah.assets).thenReturn(listOf(dotOnPah, usdcOnPah))
-        whenever(kusama.assets).thenReturn(listOf(ksmOnKusama, dotOnKusama))
+        every { polkadot.assets } returns listOf(dotOnPolkadot)
+        every { pah.assets } returns listOf(dotOnPah, usdcOnPah)
+        every { kusama.assets } returns listOf(ksmOnKusama, dotOnKusama)
     }
 
     private fun setupXcmConfig() {
@@ -310,7 +297,7 @@ class RealChainAssetLocationConverterTest {
             FullChainAssetId(pahChainId, usdcAssetId) to "USDC-PAH"
         )
 
-        whenever(xcmConfig.reservesById).thenReturn(reservesById)
-        whenever(xcmConfig.assetToReserveIdOverrides).thenReturn(assetToReserveIdOverrides)
+        every { xcmConfig.reservesById } returns reservesById
+        every { xcmConfig.assetToReserveIdOverrides } returns assetToReserveIdOverrides
     }
 }

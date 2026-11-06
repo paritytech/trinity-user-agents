@@ -39,7 +39,7 @@ You audit a diff for violations of PolkadotApp architecture and code rules. **Do
    - Any `*Router.kt` / `*Navigator.kt` / new screen → `code/navigation-and-routers.md`.
    - Any `*Worker.kt` / `*StateMachine.kt` → `code/workers-and-background-sync.md`.
    - Any `markRegion` / `StalenessReport*` usage, or a new one-shot operation that submits an extrinsic or reads chain state on a user action → `code/diagnostics-and-stall-reporting.md`.
-   - Any `*Test.kt` under `src/test/` (Mockito usage, helper naming, `runBlocking<Unit>`) → `code/testing.md`.
+   - Any `*Test.kt` under `src/test/` (mockk usage, helper naming, `runBlocking<Unit>`) → `code/testing.md`.
 
 5. **Plan-vs-implementation diff** (only when PLAN.md is present):
    - Files in `must_not_touch` actually touched: **blocking**.

@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
@@ -19,7 +20,6 @@ import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.Durable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.math.BigInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -257,13 +257,13 @@ class CoinagePreClassificationTest {
         valueExponent = ValueExponent(1),
         age = age,
         isOnChain = onChain,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 
     private fun voucherOf(location: Location, ringVrfKeyIndex: Int = 0) = RecyclerVoucher(
         ringVrfKeyIndex = testKey(ringVrfKeyIndex),
-        ringVrfPublicKey = mock(),
+        ringVrfPublicKey = mockk(),
         recyclerValue = ValueExponent(1),
         location = location,
         recyclerFungibility = RecyclerFungibility.NONE,

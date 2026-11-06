@@ -2,11 +2,11 @@
 
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.HopTransferRetryState
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.thenSuspend
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
@@ -19,9 +19,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -424,16 +421,15 @@ class TransferQueueProcessorConcurrencyTest {
     }
 
     private suspend fun sequentialQueueWithHanging(vararg ids: String): TransferQueue<FakeItem> {
-        @Suppress("UNCHECKED_CAST")
-        val queue = mock(TransferQueue::class.java) as TransferQueue<FakeItem>
+        val queue: TransferQueue<FakeItem> = mockk(relaxUnitFun = true)
         val items = ids.map { FakeItem(it, HopTransferRetryState.None) }
-        whenever(queue.nextPending()).thenReturn(items.first(), *(items.drop(1) + null).toTypedArray())
-        whenever(queue.process(any())).thenSuspend { awaitCancellation() }
+        coEvery { queue.nextPending() } returnsMany items + null
+        coEvery { queue.process(any()) } coAnswers { awaitCancellation() }
         return queue
     }
 
     private suspend fun verifyProcessedOnce(queue: TransferQueue<FakeItem>) {
-        verify(queue, times(1)).process(any())
+        coVerify(exactly = 1) { queue.process(any()) }
     }
 
     private fun assertStarted(queue: FakeConcurrentQueue, id: String) {

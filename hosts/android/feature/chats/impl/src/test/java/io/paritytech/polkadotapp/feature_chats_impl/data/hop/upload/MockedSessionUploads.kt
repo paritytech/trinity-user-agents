@@ -1,6 +1,12 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload
 
 import android.net.Uri
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
@@ -9,29 +15,16 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.ChatMessageAttachmentUpdater
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopService
-import io.paritytech.polkadotapp.feature_chats_impl.data.hop.anyChatId
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.auth.HopSigner
-import io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction.anyHopTicket
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.model.HopChunkedPayload
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.model.HopPoolEntryPayload
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.model.VersionedHopPoolEntry
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.FileUploadRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.storage.AttachmentFileStorage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyInt
-import io.paritytech.polkadotapp.test_shared.capture
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.mockito.ArgumentCaptor
-import org.mockito.Mockito.atLeastOnce
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 const val VIDEO_MP4 = "video/mp4"
 const val LARGE_IMAGE_SIZE = 3_000_000
@@ -43,16 +36,16 @@ val STORED_HASH_1 = ByteArray(HASH_SIZE) { 0x71 }.toHexString(withPrefix = true)
 val STORED_HASH_2 = ByteArray(HASH_SIZE) { 0x72 }.toHexString(withPrefix = true)
 
 class MockedSessionUploads {
-    val fileUri: Uri = mock(Uri::class.java)
+    val fileUri: Uri = mockk()
 
-    private val attachmentFileStorage: AttachmentFileStorage = mock(AttachmentFileStorage::class.java)
-    private val hopService: HopService = mock(HopService::class.java)
-    private val session: HopService.Session = mock(HopService.Session::class.java)
-    private val hopSigner: HopSigner = mock(HopSigner::class.java)
-    private val fileUploadRepository: FileUploadRepository = mock(FileUploadRepository::class.java)
-    private val messageAttachmentUpdater: ChatMessageAttachmentUpdater = mock(ChatMessageAttachmentUpdater::class.java)
-    private val attachmentMetaBuilder: AttachmentMetaBuilder = mock(AttachmentMetaBuilder::class.java)
-    private val preProcessor: FileUploadPreProcessor = mock(FileUploadPreProcessor::class.java)
+    private val attachmentFileStorage: AttachmentFileStorage = mockk()
+    private val hopService: HopService = mockk()
+    private val session: HopService.Session = mockk()
+    private val hopSigner: HopSigner = mockk()
+    private val fileUploadRepository: FileUploadRepository = mockk(relaxUnitFun = true)
+    private val messageAttachmentUpdater: ChatMessageAttachmentUpdater = mockk(relaxUnitFun = true)
+    private val attachmentMetaBuilder: AttachmentMetaBuilder = mockk()
+    private val preProcessor: FileUploadPreProcessor = mockk()
 
     private val submittedPlaintexts = mutableListOf<ByteArray>()
     private val returnedHashes = mutableListOf<ByteArray>()
@@ -79,13 +72,11 @@ class MockedSessionUploads {
     }
 
     suspend fun withSuccessfulSession() {
-        whenever(hopService.withSession<Any?>(any(), any())).thenAnswer { invocation ->
-            @Suppress("UNCHECKED_CAST")
-            val block = invocation.arguments[1] as suspend HopService.Session.() -> Any?
-            runBlocking { block(session) }
+        coEvery { hopService.withSession<Any?>(any(), any()) } coAnswers {
+            secondArg<suspend HopService.Session.() -> Any?>()(session)
         }
-        whenever(session.submitEntry(any(), anyHopTicket())).thenAnswer { invocation ->
-            submittedPlaintexts += invocation.arguments[0] as ByteArray
+        coEvery { session.submitEntry(any(), any()) } answers {
+            submittedPlaintexts += firstArg<ByteArray>()
             val hash = ByteArray(HASH_SIZE) { submittedPlaintexts.size.toByte() }
             returnedHashes += hash
             hash
@@ -96,57 +87,57 @@ class MockedSessionUploads {
     suspend fun withFileBytes(size: Int): ByteArray = withFileBytes(attachmentFileStorage, fileUri, size)
 
     suspend fun withFileSize(size: Int) {
-        whenever(attachmentFileStorage.sizeOf(fileUri)).thenReturn(size.bytes)
+        coEvery { attachmentFileStorage.sizeOf(fileUri) } returns size.bytes
     }
 
     fun withVideoChunks(fromChunk: Int, slices: List<ByteArray>) {
-        whenever(attachmentFileStorage.readChunks(fileUri, fromChunk)).thenReturn(flowOf(*slices.toTypedArray()))
+        every { attachmentFileStorage.readChunks(fileUri, fromChunk) } returns flowOf(*slices.toTypedArray())
     }
 
     suspend fun withUploadStillActive() = withUploadStillActive(fileUploadRepository)
 
     suspend fun verifySessionOpenedOn(nodeUrl: String) {
-        verify(hopService).withSession<Any?>(eq(nodeUrl), any())
+        coVerify(exactly = 1) { hopService.withSession<Any?>(nodeUrl, any()) }
     }
 
     fun verifyStreamedFrom(chunk: Int) {
-        verify(attachmentFileStorage).readChunks(fileUri, chunk)
+        verify(exactly = 1) { attachmentFileStorage.readChunks(fileUri, chunk) }
     }
 
     fun verifyNeverStreamed() {
-        verify(attachmentFileStorage, never()).readChunks(any(), anyInt())
+        verify(exactly = 0) { attachmentFileStorage.readChunks(any(), any()) }
     }
 
     suspend fun verifyReadWhole() {
-        verify(attachmentFileStorage).readFileBytes(fileUri)
+        coVerify(exactly = 1) { attachmentFileStorage.readFileBytes(fileUri) }
     }
 
     suspend fun verifyNeverReadWhole() {
-        verify(attachmentFileStorage, never()).readFileBytes(any())
+        coVerify(exactly = 0) { attachmentFileStorage.readFileBytes(any()) }
     }
 
     suspend fun verifyNeverSized() {
-        verify(attachmentFileStorage, never()).sizeOf(any())
+        coVerify(exactly = 0) { attachmentFileStorage.sizeOf(any()) }
     }
 
     fun verifyNeverPreProcessed() {
-        verify(preProcessor, never()).preProcess(any())
+        verify(exactly = 0) { preProcessor.preProcess(any()) }
     }
 
     suspend fun verifyNoProgressRecorded() {
-        verify(fileUploadRepository, never()).updateProgress(any(), anyInt(), any())
+        coVerify(exactly = 0) { fileUploadRepository.updateProgress(any(), any(), any()) }
     }
 
     suspend fun firstRecordedProgress(): Int {
-        val uploadedChunks: ArgumentCaptor<Int> = ArgumentCaptor.forClass(Int::class.java)
-        verify(fileUploadRepository, atLeastOnce()).updateProgress(any(), capture(uploadedChunks), any())
-        return uploadedChunks.allValues.first()
+        val uploadedChunks = mutableListOf<Int>()
+        coVerify(atLeast = 1) { fileUploadRepository.updateProgress(any(), capture(uploadedChunks), any()) }
+        return uploadedChunks.first()
     }
 
     suspend fun sentAttachment(): Attachment.Hosted {
-        val attachment: ArgumentCaptor<Attachment.Hosted> = ArgumentCaptor.forClass(Attachment.Hosted::class.java)
-        verify(messageAttachmentUpdater).updateSentAttachment(anyChatId(), any(), capture(attachment))
-        return attachment.value
+        val attachment = slot<Attachment.Hosted>()
+        coVerify(exactly = 1) { messageAttachmentUpdater.updateSentAttachment(any(), any(), capture(attachment)) }
+        return attachment.captured
     }
 
     fun chunkPlaintexts(): List<ByteArray> = submittedPlaintexts.dropLast(1)

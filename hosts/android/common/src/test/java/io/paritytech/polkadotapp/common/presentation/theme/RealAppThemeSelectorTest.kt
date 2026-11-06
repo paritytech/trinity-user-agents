@@ -1,19 +1,19 @@
 package io.paritytech.polkadotapp.common.presentation.theme
 
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.storage.preferences.Editor
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 
 private const val THEME_KEY = "selected_app_theme_id"
 
 class RealAppThemeSelectorTest {
-    private val preferences: Preferences = mock(Preferences::class.java)
-    private val editor: Editor = mock(Editor::class.java)
+    private val preferences: Preferences = mockk()
+    private val editor: Editor = mockk(relaxUnitFun = true)
 
     @Test
     fun `selected theme starts as the stored theme when a theme id is stored`() {
@@ -49,15 +49,15 @@ class RealAppThemeSelectorTest {
     }
 
     private fun withStoredThemeId(id: String?) {
-        whenever(preferences.getString(THEME_KEY)).thenReturn(id)
+        every { preferences.getString(THEME_KEY) } returns id
     }
 
     private fun withPreferencesEditor() {
-        whenever(preferences.edit()).thenReturn(editor)
+        every { preferences.edit() } returns editor
     }
 
     private fun verifyThemeIdStored(theme: PolkadotAppTheme) {
-        verify(editor).putString(THEME_KEY, theme.id)
-        verify(editor).apply()
+        verify(exactly = 1) { editor.putString(THEME_KEY, theme.id) }
+        verify(exactly = 1) { editor.apply() }
     }
 }
