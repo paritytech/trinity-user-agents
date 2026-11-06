@@ -155,7 +155,8 @@ Coil and Kingfisher cache verified bytes by CID on disk and decoded images in me
 processed variants may add size or processing details to their keys. A disk hit can
 repopulate memory after a restart. There is no image freshness expiry: the bytes named
 by a CID do not change. Library capacity limits, eviction and explicit cache clearing
-still apply. Missing or corrupt cached bytes are fetched and verified again.
+still apply. After eviction, a later request fetches and verifies the bytes again.
+Cached bytes must still match the profile's declared format.
 
 Opening a chat resolves its profile with `force`, bypassing the core's record cache.
 The host still checks the CID image cache. An unchanged CID reuses existing bytes;
