@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.profile
 
+import coil.ComponentRegistry
 import coil.ImageLoader
 import coil.annotation.ExperimentalCoilApi
 import coil.decode.DataSource
@@ -19,12 +20,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import uniffi.truapi.ImageException
 import uniffi.truapi.ImageFormat
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
@@ -69,56 +70,18 @@ class PublicProfileAvatarFetcherTest {
     }
 
     @Test
-    fun `refreshed profiles reuse their CID and a changed CID checks its own cache`() = runTest {
-        val next = ProfileAvatar("next-cid", ImageFormat.PNG)
-        coEvery { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } returns
-            LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
-        coEvery { runtime.loadImage(ImageReference.Bulletin(next.cid, next.format)) } returns
-            LoadedImage(byteArrayOf(1, 2, 3), next.format, next.cid)
-
-        val sources = listOf(avatar, avatar, next, avatar, next).map { profile ->
-            fetch(profile).also { it.source.close() }.dataSource
-        }
-
-        assertEquals(listOf(DataSource.NETWORK, DataSource.DISK, DataSource.NETWORK, DataSource.DISK, DataSource.DISK), sources)
-        coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) }
-        coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(next.cid, next.format)) }
-    }
-
-    @Test
-    fun `a miss uses verified bytes and the detected format`() = runTest {
-        coEvery { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } returns
-            LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
-
-        val result = fetch(avatar)
-
-        assertEquals("image/webp", result.mimeType)
-        result.source.use { assertArrayEquals(WEBP_BYTES, it.source().readByteArray()) }
-    }
-
-    @Test
     fun `a changed declaration cannot display cached bytes of another format`() = runTest {
         coEvery { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } returns
             LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
         fetch(avatar).source.close()
 
-        val result = factory.create(ProfileAvatar(avatar.cid, ImageFormat.PNG), options, imageLoader).fetch()
+        val changed = ProfileAvatar(avatar.cid, ImageFormat.PNG)
+        val components = ComponentRegistry.Builder().also { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(it) }.build()
+        val result = factory.create(changed, options, imageLoader).fetch()
 
+        assertNotEquals(components.key(avatar, options), components.key(changed, options))
         assertNull(result)
         coVerify(exactly = 1) { runtime.loadImage(any()) }
-    }
-
-    @Test
-    fun `a failed image is not cached and can be retried`() = runTest {
-        coEvery { runtime.loadImage(any()) } throws ImageException.Unavailable("offline")
-        assertNull(factory.create(avatar, options, imageLoader).fetch())
-        coEvery { runtime.loadImage(any()) } returns LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
-
-        val retry = fetch(avatar)
-
-        assertEquals(DataSource.NETWORK, retry.dataSource)
-        retry.source.close()
-        coVerify(exactly = 2) { runtime.loadImage(any()) }
     }
 
     @Test

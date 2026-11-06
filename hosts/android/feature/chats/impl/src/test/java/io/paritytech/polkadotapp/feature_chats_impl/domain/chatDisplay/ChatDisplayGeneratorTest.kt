@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay
 
-import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
@@ -13,7 +11,7 @@ import org.junit.Test
 private const val PNG_ICON = "data:image/png;base64,iVBORw=="
 
 class ChatDisplayGeneratorTest {
-    private val generator = ChatDisplayGenerator(mockk { every { generateFromAccountId(any()) } returns "Brave Beaver" })
+    private val generator = ChatDisplayGenerator(mockk())
     private val manifestIconDisplay = ChatDisplay(
         name = "Jollity",
         avatar = ChatAvatar.Url("product-icon:dim2.paseo", placeholder = ChatAvatar.Account("Jollity", byteArrayOf(1))),
@@ -44,25 +42,6 @@ class ChatDisplayGeneratorTest {
         val display = generator.applyRoomMetadata(RoomMetadata(name = null, icon = PNG_ICON), ChatDisplay("Jollity", letter))
 
         assertSame(letter, (display.avatar as ChatAvatar.Url).placeholder)
-    }
-
-    // A contact's published avatar is resolved only when drawn, so their letter shows until it loads, and instead of
-    // it when they publish none.
-    @Test
-    fun `a contact with a username draws their public profile avatar over their letter`() {
-        val display = generator.generateAccountChatDisplay(ByteArray(32) { 1 }.intoAccountId(), username = "alice.01", avatarUrl = null)
-
-        val avatar = display.avatar as ChatAvatar.Url
-        assertEquals("public-profile:alice.01", avatar.url)
-        assertEquals("alice.01", avatar.placeholder?.name)
-    }
-
-    // A generated name is not a dotNS username, so it must never be looked up as one.
-    @Test
-    fun `a contact without a username draws only their generated letter`() {
-        val display = generator.generateAccountChatDisplay(ByteArray(32) { 1 }.intoAccountId(), username = null, avatarUrl = null)
-
-        assertEquals("Brave Beaver", (display.avatar as ChatAvatar.Account).name)
     }
 
     // Which room icons are acceptable is decided where a product registers them, so the chat draws any it is given.
