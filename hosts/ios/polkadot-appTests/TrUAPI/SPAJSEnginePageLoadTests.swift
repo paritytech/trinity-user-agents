@@ -82,12 +82,8 @@ private final class StubNavigationResponse: WKNavigationResponse {
     private let mainFrame: Bool
 
     init(status: Int, mainFrame: Bool) throws {
-        stubbedResponse = try #require(HTTPURLResponse(
-            url: #require(URL(string: "http://localhost:3000")),
-            statusCode: status,
-            httpVersion: nil,
-            headerFields: nil
-        ))
+        let url = try #require(URL(string: "http://localhost:3000"))
+        stubbedResponse = try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
         self.mainFrame = mainFrame
         super.init()
     }
