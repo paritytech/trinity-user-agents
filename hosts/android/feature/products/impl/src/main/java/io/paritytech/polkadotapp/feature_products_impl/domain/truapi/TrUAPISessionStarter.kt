@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
@@ -138,7 +137,8 @@ class TrUAPISessionStarter @Inject constructor(
     }
 
     /**
-     * Mints the page's host session. It travels with this page only: the WebView's archive lookups
+     * The page's host session: the one its tap or link minted, so the page's lookups join the fetch
+     * started at the tap, or a new one. It travels with this page only: the WebView's archive lookups
      * carry it, so a second page of the same product, or a prewarm, never takes or drops it.
      */
     private fun openSession(
@@ -146,8 +146,7 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         pageOpen: HostPageOpenTelemetry.PageOpen,
     ): String {
-        val hostSessionId = UUID.randomUUID().toString()
-        pageOpen.opened(productId, hostSessionId)
+        val hostSessionId = pageOpen.opened(productId)
         provider.useHostLoad(HostLoadContext(HostLoadTrigger.OPEN, hostSessionId))
 
         val mainFrameFailed = AtomicBoolean(false)

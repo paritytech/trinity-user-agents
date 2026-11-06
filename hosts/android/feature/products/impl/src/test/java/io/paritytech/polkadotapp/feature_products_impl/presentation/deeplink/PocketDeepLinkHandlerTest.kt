@@ -5,9 +5,10 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
@@ -30,7 +31,7 @@ class PocketDeepLinkHandlerTest {
     private val humanity = ProductId.parse("humanity.dot").getOrThrow()
     private val key = PocketCardKey(humanity, PocketCardId("humanity"))
     private var now = LINK_HANDLED_AT
-    private val pageOpens = HostPocketTaps({ now }, { LINK_HANDLED_AT_EPOCH }, HostEventCapture { })
+    private val pageOpens = HostOpenMarks({ now }, { LINK_HANDLED_AT_EPOCH }, HostEventCapture { }, { "link-session" }, HostCacheHits())
     private val link = mockk<Uri> { every { this@mockk.toString() } returns "polkadotapp://pocket/open" }
 
     private val handler = PocketDeepLinkHandler(

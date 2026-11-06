@@ -268,7 +268,7 @@ class PocketViewModel @Inject constructor(
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
-            warmUpProduct(card)
+            warmUpProduct(card, interactor.openingSession(card.key))
             lookUpOpeningFace(card)
         }
     }
@@ -289,8 +289,8 @@ class PocketViewModel @Inject constructor(
      * pages now spends that half second on the chain read and the download rather than in front of
      * them, and the load that follows joins this fetch instead of starting a second one.
      */
-    private fun warmUpProduct(card: PocketCardUiModel.ProductCard) = launchUnit {
-        interactor.warmUpProduct(card.key).logFailure("PocketViewModel: failed to warm up ${card.id}")
+    private fun warmUpProduct(card: PocketCardUiModel.ProductCard, openSessionId: String?) = launchUnit {
+        interactor.warmUpProduct(card.key, openSessionId).logFailure("PocketViewModel: failed to warm up ${card.id}")
     }
 
     /**
@@ -300,7 +300,7 @@ class PocketViewModel @Inject constructor(
      */
     private fun warmUpPrivilegedProducts(cards: List<PocketCardUiModel.ProductCard>) {
         cards.filter { it.pinned && warmedPrivilegedProducts.add(it.key.productId) }
-            .forEach(::warmUpProduct)
+            .forEach { warmUpProduct(it, openSessionId = null) }
     }
 
     fun dismissCard() {

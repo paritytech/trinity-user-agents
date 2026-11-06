@@ -107,6 +107,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
+        // The runtime's own connections, for signing: no product execution dials them.
+        observer = rpcConnectedTelemetry.observer({ null }) { cachedChains.get().label(it) },
     )
 
     /**
@@ -302,11 +304,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? =
-            chainProvider.connect(genesisHash)?.also { connectionId ->
-                // The runtime's own connections, for signing: no product execution dialled them.
-                rpcConnectedTelemetry.dialled(connectionId, executable = null) { cachedChains.get().label(genesisHash) }
-            }
+        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
             chainProvider.send(connectionId, request)

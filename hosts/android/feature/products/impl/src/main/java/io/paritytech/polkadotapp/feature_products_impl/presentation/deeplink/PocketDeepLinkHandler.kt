@@ -4,8 +4,8 @@ import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTap
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMark
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -46,7 +46,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private val gate: ProductDeepLinkGate,
     private val accountRepository: AccountRepository,
     private val router: ProductsRouter,
-    private val pageOpens: HostPocketTaps,
+    private val pageOpens: HostOpenMarks,
     @param:ApplicationContext private val context: Context,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
@@ -76,7 +76,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         return withContext(dispatchers.io) { handle(data, link) }
     }
 
-    private suspend fun handle(data: Uri, link: HostPocketTap?): Result<DeeplinkProcessingOutcome> =
+    private suspend fun handle(data: Uri, link: HostOpenMark?): Result<DeeplinkProcessingOutcome> =
         when (val deeplink = parser.parse(data.toString())) {
             null -> Result.success(malformed(data))
             PocketDeeplink.Collection -> openCollection()
@@ -96,7 +96,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private suspend fun dispatchCard(
         key: PocketCardKey,
         pageQuery: String,
-        link: HostPocketTap?,
+        link: HostOpenMark?,
     ): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }
 

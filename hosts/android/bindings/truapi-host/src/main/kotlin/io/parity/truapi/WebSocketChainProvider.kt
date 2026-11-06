@@ -22,6 +22,23 @@ fun interface ChainEndpointResolver {
 }
 
 /**
+ * Follows each connection's dials and the closes the host decides on, for the
+ * host's own telemetry. Called on whichever thread the event happens on, so
+ * implementations must not block.
+ */
+interface ChainConnectionObserver {
+    /**
+     * [connectionId] is about to dial its next endpoint for [genesisHash]:
+     * [attempt] 0 is its first, each later one replaces a node that failed
+     * before it opened.
+     */
+    fun dialling(connectionId: UInt, genesisHash: ByteArray, attempt: Int) = Unit
+
+    /** [closeAll] is closing [connectionId], before the core hears it closed. */
+    fun closingByHost(connectionId: UInt) = Unit
+}
+
+/**
  * Opens one OkHttp WebSocket per `chainConnect`, forwards `chainSend` frames,
  * and delivers inbound events to the callbacks set via [attach].
  *
@@ -42,6 +59,7 @@ class WebSocketChainProvider(
     // stays publishable, so diagnostics leave through the host's own logger
     // rather than pulling one in here.
     private val onLog: (message: String) -> Unit = {},
+    private val observer: ChainConnectionObserver = object : ChainConnectionObserver {},
 ) {
     private class EventSink(
         val onResponse: (connectionId: UInt, frame: String) -> Unit,
@@ -82,7 +100,7 @@ class WebSocketChainProvider(
         }
 
         val id = nextId.getAndIncrement().toUInt()
-        val connection = ChainConnection(id, urls)
+        val connection = ChainConnection(id, genesisHash, urls)
         // Registered before dialling so a terminal callback that fires during
         // dial() finds the entry and removes it, instead of racing the insert.
         connections[id] = connection
@@ -112,7 +130,10 @@ class WebSocketChainProvider(
     fun closeAll() {
         if (connections.isNotEmpty()) onLog("closing ${connections.size} chain connections")
         connections.keys.toList().forEach { id ->
-            connections.remove(id)?.close(notifyCore = true)
+            connections.remove(id)?.let { connection ->
+                observer.closingByHost(id)
+                connection.close(notifyCore = true)
+            }
         }
     }
 
@@ -137,6 +158,7 @@ class WebSocketChainProvider(
      */
     private inner class ChainConnection(
         private val id: UInt,
+        private val genesisHash: ByteArray,
         private val urls: List<String>,
     ) : WebSocketListener() {
         private val nextCandidate = AtomicInteger(0)
@@ -161,7 +183,9 @@ class WebSocketChainProvider(
          */
         fun connectNextEndpoint(): Boolean {
             if (state.get() == State.FINISHED) return false
-            val url = urls.getOrNull(nextCandidate.getAndIncrement()) ?: return false
+            val attempt = nextCandidate.getAndIncrement()
+            val url = urls.getOrNull(attempt) ?: return false
+            observer.dialling(id, genesisHash, attempt)
             dialledUrl = url
             onLog("chain connection $id dialling $url")
             val opening = client.newWebSocket(Request.Builder().url(url).build(), this)

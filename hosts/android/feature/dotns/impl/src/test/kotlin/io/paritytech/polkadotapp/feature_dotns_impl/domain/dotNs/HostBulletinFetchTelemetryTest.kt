@@ -83,17 +83,20 @@ class HostBulletinFetchTelemetryTest {
                         "host.app_flavor" to "gp",
                         "host.native_app_version" to "1.2.3",
                         "outcome" to "ok",
+                        "host.os_version" to "15",
                         "host.session_id" to "session-42",
-                        "trigger" to "open",
+                        "load.trigger" to "open",
                     ),
                     extras = mapOf(
                         "host.app_build" to 123L,
                         "event.monotonic_ms" to FETCHED_AT,
                         "duration_ms" to FETCHED_AT - FETCH_STARTED_AT,
+                        "app.launch_id" to "launch-7",
                         "host.session_id" to "session-42",
                         "dotns.domain" to APP_DOMAIN,
                         "dotns.content_hash_ms" to FETCH_STARTED_AT - LOOKUP_STARTED_AT,
                         "bulletin.bytes" to BUNDLE_BYTES,
+                        "queue_ms" to LOOKUP_STARTED_AT - ASKED_AT,
                     ),
                     durationMs = FETCHED_AT - FETCH_STARTED_AT,
                 ),
@@ -112,16 +115,53 @@ class HostBulletinFetchTelemetryTest {
         assertFalse(event.extras.containsKey("bulletin.bytes"))
     }
 
-    // The resolver remembers a name for the whole process, so without this a warm open sends nothing
-    // and reads as an open that never fetched. Once per session: the WebView asks on every request.
+    // The WebView asks on every request, and the page's lookups join the fetch its tap started under
+    // the same session: the read speaks for all of them.
     @Test
-    fun `a bundle this process already resolved is a cache hit once per session`() = runTest {
-        every { contentStorage.getContentDirectory(CONTENT_HASH) } returns temporaryFolder.root
+    fun `inside a session the read reports once and the lookups after it stay silent`() = runTest {
+        every { contentStorage.getContentDirectory(CONTENT_HASH) } returns null andThen temporaryFolder.root
+        coEvery { carFetcher.fetchCarToFile(any(), any()) } returns Result.success(temporaryFolder.newFile())
+        coEvery { contentStorage.saveContentStreaming(CONTENT_HASH, any()) } just Runs
         val resolver = resolver()
 
         opening { repeat(3) { resolver.resolveToLocalUri(APP_DOMAIN) } }
 
-        assertEquals(listOf("cache_hit", "cache_hit"), captured.map { it.tags["outcome"] })
+        assertEquals(listOf("ok"), captured.map { it.tags["outcome"] })
+    }
+
+    // The resolver remembers a name for the whole process, so without this a warm open sends nothing
+    // and reads as an open that never fetched. All of its time was spent waiting.
+    @Test
+    fun `a bundle another load already resolved is a cache hit once per session, its wait as queue time`() = runTest {
+        every { contentStorage.getContentDirectory(CONTENT_HASH) } returns temporaryFolder.root
+        val resolver = resolver()
+        withContext(HostLoadContext(HostLoadTrigger.PREWARM, sessionId = null)) { resolver.resolveToLocalUri(APP_DOMAIN) }
+        captured.clear()
+        every { timeProvider.nowMillis() } returnsMany listOf(ASKED_AT, FETCHED_AT)
+
+        opening { repeat(2) { resolver.resolveToLocalUri(APP_DOMAIN) } }
+
+        val hit = captured.single()
+        assertEquals("cache_hit" to "session-42", hit.tags["outcome"] to hit.tags["host.session_id"])
+        assertEquals(FETCHED_AT - ASKED_AT, hit.extras["queue_ms"])
+    }
+
+    // A failed read claims nothing, so the session still reports the content once another load fetched it.
+    @Test
+    fun `a failed read in a session leaves the session's next step to report`() = runTest {
+        every { contentStorage.getContentDirectory(CONTENT_HASH) } returns null
+        coEvery { carFetcher.fetchCarToFile(any(), any()) } returns
+            Result.failure(IllegalStateException("gateway down")) andThen Result.success(temporaryFolder.newFile())
+        coEvery { contentStorage.saveContentStreaming(CONTENT_HASH, any()) } answers {
+            every { contentStorage.getContentDirectory(CONTENT_HASH) } returns temporaryFolder.root
+        }
+        val resolver = resolver()
+
+        opening { resolver.resolveToLocalUri(APP_DOMAIN) }
+        withContext(HostLoadContext(HostLoadTrigger.PREWARM, sessionId = null)) { resolver.resolveToLocalUri(APP_DOMAIN) }
+        opening { resolver.resolveToLocalUri(APP_DOMAIN) }
+
+        assertEquals(listOf("error", "ok", "cache_hit"), captured.map { it.tags["outcome"] })
     }
 
     // Icons, chat names and face images read the same names; counted, they would read as opens.
@@ -165,7 +205,7 @@ class HostBulletinFetchTelemetryTest {
         }
 
         val event = captured.single()
-        assertEquals("prewarm", event.tags["trigger"])
+        assertEquals("prewarm", event.tags["load.trigger"])
         assertNull(event.tags["host.session_id"])
     }
 
@@ -182,7 +222,7 @@ class HostBulletinFetchTelemetryTest {
     @Test
     fun `the event is not built when capture drops it`() {
         HostBulletinFetchTelemetry(originProvider, timeProvider, HostEventCapture { }, HostCacheHits())
-            .report(APP_DOMAIN, OPEN, HostEventOutcome.OK, 30L, FETCH_STARTED_AT, BUNDLE_BYTES)
+            .report(APP_DOMAIN, OPEN, HostEventOutcome.OK, 30L, FETCH_STARTED_AT, BUNDLE_BYTES, queueMillis = 0L)
 
         verify(exactly = 0) { originProvider.current() }
         verify(exactly = 0) { timeProvider.nowMillis() }
@@ -215,6 +255,7 @@ class HostBulletinFetchTelemetryTest {
             platform = "android",
             osVersion = "15",
             appBuild = 123L,
+            launchId = "launch-7",
         )
     }
 }

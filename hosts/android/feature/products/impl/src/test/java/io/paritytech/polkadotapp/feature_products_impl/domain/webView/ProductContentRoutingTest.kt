@@ -102,7 +102,7 @@ class ProductContentRoutingTest {
         val failure = IllegalStateException("manifest unavailable")
         coEvery { products.resolve(productId) } returns Result.failure(failure)
 
-        assertEquals(failure, warmUp.warmUp(productId).exceptionOrNull())
+        assertEquals(failure, warmUp.warmUp(productId, openSessionId = null).exceptionOrNull())
 
         coVerify(exactly = 0) { dotNs.resolveToLocalUri(any()) }
     }
@@ -111,7 +111,7 @@ class ProductContentRoutingTest {
     fun `a missing widget warms the app archive, never the base archive`() = runBlocking {
         coEvery { products.resolve(productId) } returns Result.success(resolved(app = "app.coinflip.dot"))
 
-        assertTrue(warmUp.warmUp(productId).isSuccess)
+        assertTrue(warmUp.warmUp(productId, openSessionId = null).isSuccess)
 
         coVerify(exactly = 1) { dotNs.resolveToLocalUri(any()) }
         coVerify(exactly = 1) { dotNs.resolveToLocalUri("app.coinflip.dot") }

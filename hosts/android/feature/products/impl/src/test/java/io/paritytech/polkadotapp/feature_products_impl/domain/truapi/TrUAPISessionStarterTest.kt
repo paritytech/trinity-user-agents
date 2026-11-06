@@ -13,12 +13,14 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionIds
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
@@ -57,13 +59,18 @@ class TrUAPISessionStarterTest {
     private val events = mutableListOf<HostEvent>()
     private val capture = HostEventCapture { events += it() }
     private val clock = HostMonotonicTimeProvider { OPEN_REQUESTED_AT }
-    private val taps = HostPocketTaps(clock, { TAPPED_AT_EPOCH }, capture)
+    private var minted = 0
+    private val sessionIds = HostSessionIds { "session-${++minted}" }
+    private val cacheHits = HostCacheHits()
+    private val taps = HostOpenMarks(clock, { TAPPED_AT_EPOCH }, capture, sessionIds, cacheHits)
     private val installedOrigins = mutableListOf<HostPageOrigin?>()
     private val pageOpenTelemetry = HostPageOpenTelemetry(
-        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
         timeProvider = clock,
         capture = capture,
-        taps = taps,
+        marks = taps,
+        sessionIds = sessionIds,
+        cacheHits = cacheHits,
     )
     private val hostLoads = mutableListOf<HostLoadContext>()
     private val revealedListeners = mutableListOf<(PageReveal) -> Unit>()
@@ -225,7 +232,7 @@ class TrUAPISessionStarterTest {
         revealedListeners.forEach { it(PageReveal.THEME) }
 
         val revealed = events.single { it.name == "host.webview.revealed" }
-        assertEquals("theme" to installerSessionId.captured, revealed.tags["via"] to revealed.tags["host.session_id"])
+        assertEquals("theme" to installerSessionId.captured, revealed.tags["reveal.via"] to revealed.tags["host.session_id"])
     }
 
     // The page times its own load from the tap, so it gets the tap's wall-clock time; nothing else does.
@@ -237,6 +244,21 @@ class TrUAPISessionStarterTest {
 
         assertEquals(listOf(TAPPED_AT_EPOCH, null), installedOrigins.map { it?.openedAtEpochMs })
         assertEquals("pocket_card", installedOrigins.first()?.openSource)
+    }
+
+    // The tap's own fetch ran under the session it minted; the page takes it, so its lookups join that
+    // fetch instead of reporting the wait on it as a cache hit of their own.
+    @Test
+    fun `a page a card tap opened runs under the session the tap minted`() = runBlocking<Unit> {
+        taps.tapped(PRODUCT_ID.value)
+        val tapSession = taps.pendingSession(PRODUCT_ID.value)
+
+        startPage(this)
+
+        assertEquals("session-1", tapSession)
+        assertEquals(listOf(tapSession, tapSession), listOf(installerSessionId.captured, hostLoads.single().sessionId))
+        val tapped = events.single { it.name == "host.pocket.card_tapped" }
+        assertEquals("opened" to tapSession, tapped.tags["outcome"] to tapped.tags["host.session_id"])
     }
 
     private suspend fun startPage(scope: CoroutineScope) {

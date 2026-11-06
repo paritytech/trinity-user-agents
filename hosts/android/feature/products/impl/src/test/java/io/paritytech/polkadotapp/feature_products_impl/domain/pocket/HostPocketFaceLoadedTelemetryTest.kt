@@ -48,14 +48,16 @@ class HostPocketFaceLoadedTelemetryTest {
                     "host.app_flavor" to "gp",
                     "host.native_app_version" to "1.2.3",
                     "outcome" to "ok",
+                    "host.os_version" to "15",
                     "host.session_id" to "worker-session",
                     "product.id" to "humanity.dot",
-                    "worker" to "cold",
+                    "worker.state" to "cold",
                 ),
                 extras = mapOf(
                     "host.app_build" to 123L,
                     "event.monotonic_ms" to SHOWN_AT,
                     "duration_ms" to SHOWN_AT - REQUESTED_AT,
+                    "app.launch_id" to "launch-7",
                     "host.session_id" to "worker-session",
                 ),
                 durationMs = SHOWN_AT - REQUESTED_AT,
@@ -70,7 +72,7 @@ class HostPocketFaceLoadedTelemetryTest {
 
         load.track(flowOf("live")).collect()
 
-        assertEquals("warm", captured.single().tags["worker"])
+        assertEquals("warm", captured.single().tags["worker.state"])
     }
 
     @Test
@@ -161,6 +163,7 @@ class HostPocketFaceLoadedTelemetryTest {
             platform = "android",
             osVersion = "15",
             appBuild = 123L,
+            launchId = "launch-7",
         )
     }
 }

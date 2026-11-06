@@ -20,7 +20,7 @@ class DeviceReadingsInitializerTest {
         val initializer = DeviceReadingsInitializer(
             context = mock(Context::class.java),
             batteryService = mock(BatteryService::class.java),
-            reporter = DeviceReadingsReporter(telemetryOff) { _, _, _ -> },
+            reporter = DeviceReadingsReporter(telemetryOff, mock(SentryMetricsCapture::class.java)),
             telemetryEnabledProvider = telemetryOff,
         )
         val parentJob = Job()

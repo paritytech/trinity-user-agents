@@ -95,7 +95,7 @@ class HostPocketFaceLoadedTelemetry @Inject internal constructor(
                         durationMs = now - requestedAtMillis,
                         sessionId = sessionId(),
                         tags = mapOf("product.id" to productId.value) +
-                            warm?.let { mapOf("worker" to if (it) "warm" else "cold") }.orEmpty(),
+                            warm?.let { mapOf("worker.state" to if (it) "warm" else "cold") }.orEmpty(),
                     )
                 }
             }.logFailure("Failed to capture native host Pocket face event")

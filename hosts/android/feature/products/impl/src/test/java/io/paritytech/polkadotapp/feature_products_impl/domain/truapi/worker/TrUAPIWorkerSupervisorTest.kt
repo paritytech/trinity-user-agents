@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
+import android.webkit.WebView
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -9,8 +10,11 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -50,6 +54,7 @@ class TrUAPIWorkerSupervisorTest {
     private val bootEvents = mutableListOf<HostEvent>()
     private val attachedSessionIds = mutableListOf<String?>()
     private val configs = mutableListOf<ChatWebViewConfig>()
+    private val cacheHits = HostCacheHits()
 
     @Before
     fun parseScriptUrls() {
@@ -119,9 +124,28 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals("ok" to sessionId, boot.tags["outcome"] to boot.tags["host.session_id"])
         assertTrue(
             boot.extras.keys.containsAll(
-                listOf(HostWorkerBootTelemetry.RESOLVE_MS, HostWorkerBootTelemetry.EXECUTION_OPEN_MS, HostWorkerBootTelemetry.BLANK_READY_MS),
+                listOf(
+                    HostWorkerBootTelemetry.RESOLVE_MS,
+                    HostWorkerBootTelemetry.EXECUTION_OPEN_MS,
+                    HostWorkerBootTelemetry.WEBVIEW_CREATE_MS,
+                    HostWorkerBootTelemetry.BLANK_READY_MS,
+                ),
             ),
         )
+    }
+
+    @Test
+    fun `a stopped worker forgets what its session reported`() = runTest {
+        val supervisor = supervisor()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+        val load = HostLoadContext(HostLoadTrigger.OPEN, checkNotNull(supervisor.sessionId(PRODUCT)))
+        cacheHits.isFirst("host.bulletin.fetch", "worker.paseo", load)
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP)
+        advanceUntilIdle()
+
+        assertTrue(cacheHits.isFirst("host.bulletin.fetch", "worker.paseo", load))
     }
 
     @Test
@@ -175,9 +199,10 @@ class TrUAPIWorkerSupervisorTest {
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         bootTelemetry = HostWorkerBootTelemetry(
-            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
             timeProvider = { 0L },
             capture = { bootEvents += it() },
+            cacheHits = cacheHits,
         ),
         dispatchers = testDispatchers(),
     )
@@ -196,11 +221,16 @@ class TrUAPIWorkerSupervisorTest {
     // loss reaches whoever listens for it.
     private fun provider(): ChatWebViewProvider = mockk<ChatWebViewProvider>(relaxed = true).also { provider ->
         val pageFinished = mutableListOf<() -> Unit>()
+        val setups = mutableListOf<(WebView) -> Unit>()
+        coEvery { provider.addWebViewSetup(any()) } answers { setups += firstArg<(WebView) -> Unit>() }
         every { provider.addOnPageFinishedListener(any()) } answers { pageFinished += firstArg<() -> Unit>() }
         every { provider.addOnWebViewDestroyedListener(any()) } answers {
             rendererGoneListeners.getOrPut(provider) { mutableListOf() } += firstArg<() -> Unit>()
         }
-        coEvery { provider.loadInitialContent() } answers { pageFinished.forEach { it() } }
+        coEvery { provider.loadInitialContent() } answers {
+            setups.forEach { it(mockk(relaxed = true)) }
+            pageFinished.forEach { it() }
+        }
         coEvery { provider.accessWebView<Any?>(any()) } returns Unit
         providers += provider
     }

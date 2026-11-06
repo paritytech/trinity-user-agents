@@ -47,7 +47,7 @@ class RealPocketFaceSourceTest {
     private val streams = FakeStreams()
     private val reportedOutcomes = mutableListOf<String?>()
     private val telemetry = HostPocketFaceLoadedTelemetry(
-        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
         timeProvider = { 0L },
         capture = { event -> reportedOutcomes += event().tags["outcome"] },
     )

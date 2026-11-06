@@ -9,9 +9,10 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -28,7 +29,7 @@ import org.junit.Test
 class ProductSpaDeepLinkHandlerTest {
     private val tld = requireNotNull(DotNsTld.parse("dot"))
     private var now = LINK_HANDLED_AT
-    private val pageOpens = HostPocketTaps({ now }, { LINK_HANDLED_AT_EPOCH }, HostEventCapture { })
+    private val pageOpens = HostOpenMarks({ now }, { LINK_HANDLED_AT_EPOCH }, HostEventCapture { }, { "link-session" }, HostCacheHits())
     private val router = mockk<RootRouter>(relaxed = true)
 
     private val handler = ProductSpaDeepLinkHandler(

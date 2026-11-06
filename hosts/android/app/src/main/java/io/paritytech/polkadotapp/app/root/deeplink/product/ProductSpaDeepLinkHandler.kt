@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.app.root.deeplink.product
 import android.net.Uri
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -25,7 +25,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     private val rootRouter: RootRouter,
     private val dotNsTldProvider: DotNsTldProvider,
     private val gate: ProductDeepLinkGate,
-    private val pageOpens: HostPocketTaps,
+    private val pageOpens: HostOpenMarks,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false

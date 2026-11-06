@@ -12,6 +12,7 @@ import org.junit.Test
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import uniffi.truapi.truapiHostVersion
 
 class HostWebViewCreatedTelemetryTest {
     private val origin = HostEventOrigin(
@@ -21,6 +22,7 @@ class HostWebViewCreatedTelemetryTest {
         platform = "android",
         osVersion = "15",
         appBuild = 123L,
+        launchId = "launch-7",
     )
 
     @Test
@@ -30,12 +32,25 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report("bootstrap-session-42")
 
-        assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.name)
-        assertEquals("bootstrap-session-42", captured?.extras?.get("host.session_id"))
-        assertEquals("nightly", captured?.tags?.get("host.app_variant"))
-        assertEquals("gp", captured?.tags?.get("host.app_flavor"))
-        assertEquals(123L, captured?.extras?.get("host.app_build"))
-        assertEquals(456L, captured?.extras?.get("event.monotonic_ms"))
+        assertEquals(
+            HostEvent(
+                name = "host.webview.created",
+                tags = mapOf(
+                    "host.platform" to "android",
+                    "host.app_variant" to "nightly",
+                    "host.app_flavor" to "gp",
+                    "host.native_app_version" to "1.2.3",
+                    "truapi.host_version" to truapiHostVersion(),
+                    "host.session_id" to "bootstrap-session-42",
+                ),
+                extras = mapOf(
+                    "host.app_build" to 123L,
+                    "host.session_id" to "bootstrap-session-42",
+                    "event.monotonic_ms" to 456L,
+                ),
+            ),
+            captured,
+        )
     }
 
     @Test

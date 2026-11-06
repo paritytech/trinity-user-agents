@@ -42,6 +42,7 @@ import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -51,7 +52,7 @@ enum class WorkerDemand { START, STOP }
 sealed interface WorkerExecutionState {
     /** [sessionId] is this activation's host session, which its own telemetry carries too. */
     data class Running(val execution: TrUAPIProductExecution, val sessionId: String? = null) : WorkerExecutionState
-    data class Failed(val reason: Throwable) : WorkerExecutionState
+    data class Failed(val reason: Throwable, val sessionId: String? = null) : WorkerExecutionState
 }
 
 /**
@@ -72,7 +73,8 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val bootTelemetry: HostWorkerBootTelemetry,
     dispatchers: CoroutineDispatchers,
 ) {
-    private class RunningWorker(val scope: CoroutineScope, val sessionId: String) {
+    private class RunningWorker(val scope: CoroutineScope, val boot: HostWorkerBootTelemetry.WorkerBoot) {
+        val sessionId get() = boot.sessionId
         var webViewRuntime: WebViewRuntime? = null
     }
 
@@ -81,6 +83,9 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val transitions = Mutex()
     private val workers = mutableMapOf<ProductId, RunningWorker>()
     private val executionStates = MutableStateFlow<Map<ProductId, WorkerExecutionState>>(emptyMap())
+
+    // Read off the main thread, by the faces waiting on a worker still booting.
+    private val bootingSessions = ConcurrentHashMap<ProductId, String>()
 
     /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
     fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
@@ -105,16 +110,23 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     fun executionState(productId: ProductId): Flow<WorkerExecutionState?> =
         executionStates.map { it[productId] }.distinctUntilChanged()
 
-    /** The running worker's host session, which its face and chain connects report under. */
-    fun sessionId(productId: ProductId): String? =
-        (executionStates.value[productId] as? WorkerExecutionState.Running)?.sessionId
+    /**
+     * The host session of the product's worker activation, minted when it started, which its face and
+     * chain connects report under: while it boots, runs, or after its boot failed.
+     */
+    fun sessionId(productId: ProductId): String? = when (val state = executionStates.value[productId]) {
+        is WorkerExecutionState.Running -> state.sessionId
+        is WorkerExecutionState.Failed -> state.sessionId
+        null -> bootingSessions[productId]
+    }
 
     private fun start(productId: ProductId, demandedAtMillis: Long) {
         if (productId in workers) return
         // Each activation is a session of its own: the worker's spans join its host events by it.
-        val worker = RunningWorker(scope.childScope(), sessionId = UUID.randomUUID().toString())
-        val bootReport = bootTelemetry.begin(productId, worker.sessionId, demandedAtMillis)
+        val bootReport = bootTelemetry.begin(productId, UUID.randomUUID().toString(), demandedAtMillis)
+        val worker = RunningWorker(scope.childScope(), bootReport)
         workers[productId] = worker
+        bootingSessions[productId] = worker.sessionId
         executionStates.update { it - productId }
         worker.scope.launch {
             val booted = try {
@@ -134,7 +146,9 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                     transitions.withLock {
                         if (workers[productId] === worker) {
                             stop(productId)
-                            executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
+                            executionStates.update {
+                                it + (productId to WorkerExecutionState.Failed(cause, worker.sessionId))
+                            }
                         }
                     }
                 }
@@ -205,16 +219,12 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                     provider.useTrUAPIPermissions(execution)
                     // The WebView is built by the load below, and its setups run as soon as it exists.
                     val loadStartedAtMillis = bootTelemetry.nowMillis()
-                    var createdAtMillis = loadStartedAtMillis
-                    provider.addWebViewSetup {
-                        report.phase(HostWorkerBootTelemetry.WEBVIEW_CREATE_MS, loadStartedAtMillis)
-                        createdAtMillis = bootTelemetry.nowMillis()
-                    }
+                    provider.addWebViewSetup { report.webViewCreated(loadStartedAtMillis) }
                     webViewRuntime.loadInitialPage()
                     // A page that never reports ready would otherwise hold the boot open forever,
                     // and with it the execution, the WebView and the card's static face.
                     withTimeout(READY_TIMEOUT) { webViewRuntime.waitForReady() }
-                    report.phase(HostWorkerBootTelemetry.BLANK_READY_MS, createdAtMillis)
+                    report.blankReady()
                 }
                     // The bootstrap runs at document start; the entry module loads once the page
                     // exists, so it connects.
@@ -236,9 +246,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     private fun stop(productId: ProductId) {
         executionStates.update { it - productId }
+        bootingSessions.remove(productId)
         val worker = workers.remove(productId) ?: return
         worker.webViewRuntime?.dispose()
         worker.scope.cancel()
+        worker.boot.ended()
     }
 
     companion object {

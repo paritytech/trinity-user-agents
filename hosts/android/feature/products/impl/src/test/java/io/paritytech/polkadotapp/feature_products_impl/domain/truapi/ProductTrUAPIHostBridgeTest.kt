@@ -113,7 +113,7 @@ class ProductTrUAPIHostBridgeTest {
         val events = CopyOnWriteArrayList<HostEvent>()
         val reported = CountDownLatch(1)
         val telemetry = HostRpcConnectedTelemetry(
-            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
             timeProvider = { 0L },
             capture = {
                 events += it()
