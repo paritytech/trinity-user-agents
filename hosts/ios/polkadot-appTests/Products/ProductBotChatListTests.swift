@@ -49,7 +49,9 @@ struct ProductBotChatListTests {
     @Test
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveAvatar: { _, _ in nil })
+        let publicProfileFactory = PublicProfileAvatarViewModelFactory { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
 
         #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(
             using: iconFactory,
@@ -65,7 +67,9 @@ struct ProductBotChatListTests {
     @Test
     func aPersonLoadsTheirProfileWithoutLookingUpAProduct() {
         let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveAvatar: { _, _ in nil })
+        let publicProfileFactory = PublicProfileAvatarViewModelFactory { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
 
         let image = Chat.PeerMetadata.Icon.publicProfile(username: "alice.01").imageViewModel(
             using: iconFactory,
@@ -122,7 +126,9 @@ private extension ProductBotChatListTests {
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
             productIconViewModelFactory: RecordingProductIconViewModelFactory(),
-            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(resolveAvatar: { _, _ in nil }),
+            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory { _, _ in
+                throw ImageError.Unavailable(reason: "no profile avatar")
+            },
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())

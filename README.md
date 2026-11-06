@@ -447,7 +447,7 @@ reads the chain on each call.
 
 Android contacts and chat views load avatars through the shared loader.
 
-iOS contacts and chat views load avatars through the shared loader.
+iOS contacts and chat views load verified avatar bytes through the shared loader.
 
 `/profile [username]` and `/profile upload <image>` are available in the
 [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui).
