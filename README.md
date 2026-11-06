@@ -515,6 +515,8 @@ Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renew
 
 The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 
+The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
+
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
 to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)
