@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
 import uniffi.truapi.ProductId
 import java.util.Objects
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Per-product opaque identifier for a push notification.
@@ -14,8 +15,13 @@ import java.util.Objects
 // Waiting for migration to mockk
 class NotificationId(val value: Int) {
     internal companion object {
+        /** Keeps two notifications a product asks for in the same millisecond apart. */
+        private val sequence = AtomicInteger()
+
         fun generate(productId: ProductId): NotificationId {
-            return NotificationId(Objects.hash(productId.value, System.currentTimeMillis()))
+            return NotificationId(
+                Objects.hash(productId.value, System.currentTimeMillis(), sequence.incrementAndGet())
+            )
         }
     }
 }
