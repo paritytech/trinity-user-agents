@@ -85,6 +85,8 @@ url = { workspace = true }
 # copy of that global, so the sink lives here (see logging_native). Only that
 # module uses it, and only off wasm, so it arrives with the light client.
 log = { workspace = true, features = ["std"], optional = true }
+# `tls` although the TLS is this crate's own (see `ws`): the transport checks the
+# URL it is handed and accepts `wss` only with that feature on.
 jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls"], optional = true }
 jsonrpsee-core = { workspace = true, features = ["client"], optional = true }
 tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"], optional = true }

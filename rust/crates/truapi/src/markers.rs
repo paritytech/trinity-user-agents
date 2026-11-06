@@ -4,9 +4,11 @@
 //! A marker is a dotted target such as `truapi.chain.follow_budget_reached`.
 //! The core raises it, [`crate::logging`] hands it to the host, and the host
 //! decides what to do with it by looking it up here rather than by matching a
-//! prefix of its own. A target this table does not list is
-//! [`MarkerClass::Local`]: it stays on the device until someone says what it
-//! carries.
+//! prefix of its own. A host-addressed target this table does not list has no
+//! class, and nothing downstream knows what its detail carries. Every call
+//! site names a constant from here, so an unlisted target cannot be written by
+//! accident, and the tracing layer and the bridge both refuse one they cannot
+//! find in the table.
 //!
 //! Each entry's doc comment says what its detail may contain. That is the
 //! prose a reviewer reads when deciding whether a marker may be exported, and
@@ -20,7 +22,10 @@ pub enum MarkerClass {
 	/// Stays on the device. Its detail may name what the person is doing.
 	Local,
 	/// May be shipped off-device, at the given severity.
-	Export(Severity),
+	Export {
+		/// How loud the marker is once a host's logger has it.
+		severity: Severity,
+	},
 }
 
 /// How loud an exported marker is once it reaches a host's logger.
@@ -40,7 +45,7 @@ pub enum Severity {
 }
 
 /// One marker, and what its detail is allowed to carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Marker {
 	/// The dotted target, as raised by the core.
 	pub target: &'static str,
@@ -63,15 +68,15 @@ macro_rules! markers {
 			$(#[$entry])*
 			pub const $name: Marker = Marker {
 				target: $target,
-				class: MarkerClass::$class $((Severity::$severity))?,
+				class: MarkerClass::$class $({ severity: Severity::$severity })?,
 			};
 		)*
 
 		/// Every marker the core addresses to a host, grouped by subsystem.
 		///
-		/// A host reads this once and matches a target exactly. Anything missing
-		/// is [`MarkerClass::Local`], so a marker added later stays on the device
-		/// until it is listed here.
+		/// A host reads this once and matches a target exactly. A marker the core
+		/// raises without listing here is refused on its way out, so forgetting
+		/// this table costs the line rather than exporting it.
 		pub const MARKERS: &[Marker] = &[$($name,)*];
 
 		/// The class of `target`, or `None` when the table does not list it.
@@ -80,7 +85,7 @@ macro_rules! markers {
 		/// the compiler rejects.
 		pub fn class_of(target: &str) -> Option<MarkerClass> {
 			match target {
-				$($target => Some(MarkerClass::$class $((Severity::$severity))?),)*
+				$($target => Some(MarkerClass::$class $({ severity: Severity::$severity })?),)*
 				_ => None,
 			}
 		}
@@ -243,77 +248,4 @@ markers! {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// The table and the lookup are two outputs of one list, so this holds
-	/// unless the macro itself is wrong.
-	#[test]
-	fn the_table_and_the_lookup_agree() {
-		for marker in MARKERS {
-			assert_eq!(
-				class_of(marker.target),
-				Some(marker.class),
-				"{} is unreachable",
-				marker.target
-			);
-		}
-	}
-
-	#[test]
-	fn the_exported_map_holds_every_entry_and_nothing_else() {
-		let exported = crate::native::core_markers();
-		assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
-		for marker in MARKERS {
-			assert_eq!(
-				exported.get(marker.target),
-				Some(&marker.class),
-				"{} did not survive the crossing",
-				marker.target
-			);
-		}
-	}
-
-	#[test]
-	fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
-		let exported = crate::native::core_markers();
-		assert_eq!(exported.get(TRACING_ERROR.target), Some(&MarkerClass::Export(Severity::Error)));
-		assert_eq!(exported.get(TRACING_WARN.target), Some(&MarkerClass::Export(Severity::Warn)));
-		assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
-	}
-
-	#[test]
-	fn every_target_is_host_addressed() {
-		for marker in MARKERS {
-			assert!(
-				marker.target.starts_with(crate::logging::HOST_MARKER_PREFIX),
-				"{} is not addressed to a host",
-				marker.target
-			);
-		}
-	}
-
-	#[test]
-	fn an_unlisted_target_has_no_class() {
-		assert_eq!(class_of("truapi.not.registered"), None);
-		assert_eq!(class_of(CORE_STARTED.target), Some(CORE_STARTED.class));
-	}
-
-	#[test]
-	fn the_targets_the_layer_builds_are_registered() {
-		for level in ["warn", "error"] {
-			let target = format!("truapi.tracing.{level}");
-			assert!(
-				class_of(&target).is_some(),
-				"the layer raises {target}, which is not registered"
-			);
-		}
-	}
-
-	#[test]
-	fn native_callbacks_stay_on_the_device() {
-		for marker in MARKERS.iter().filter(|m| m.target.starts_with("truapi.native.")) {
-			assert_eq!(marker.class, MarkerClass::Local, "{} would be exported", marker.target);
-		}
-	}
-}
+mod tests;

@@ -39,7 +39,7 @@ type StagedSocket = SendWrapper<(WebSocket, SocketCallbacks)>;
 
 /// Open a browser WebSocket connection to `url`.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-	let (staged, handshake_rx, responses_tx, responses_rx) = open_socket(&url)?;
+	let OpenedSocket { staged, handshake_rx, responses_tx, responses_rx } = open_socket(&url)?;
 
 	match handshake_rx.await {
 		Ok(Ok(())) => {},
@@ -64,22 +64,19 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
 	}))
 }
 
+/// A socket just created, before its handshake has settled.
+struct OpenedSocket {
+	staged: StagedSocket,
+	handshake_rx: oneshot::Receiver<Result<(), String>>,
+	responses_tx: mpsc::UnboundedSender<String>,
+	responses_rx: mpsc::UnboundedReceiver<String>,
+}
+
 /// Create the socket and wire its callbacks.
 ///
 /// Synchronous on purpose: every non-`Send` JS value is created and wrapped
 /// here so the awaiting caller only holds `Send` state.
-#[allow(clippy::type_complexity)]
-fn open_socket(
-	url: &Url,
-) -> Result<
-	(
-		StagedSocket,
-		oneshot::Receiver<Result<(), String>>,
-		mpsc::UnboundedSender<String>,
-		mpsc::UnboundedReceiver<String>,
-	),
-	ProviderError,
-> {
+fn open_socket(url: &Url) -> Result<OpenedSocket, ProviderError> {
 	let socket = WebSocket::new(url.as_str()).map_err(|err| ProviderError::Transport {
 		reason: format!("WebSocket creation for {} failed: {err:?}", crate::error::redacted(url)),
 	})?;
@@ -148,12 +145,12 @@ fn open_socket(
 	socket.set_onerror(Some(onerror.as_ref().unchecked_ref()));
 	socket.set_onclose(Some(onclose.as_ref().unchecked_ref()));
 
-	Ok((
-		SendWrapper::new((socket, (onmessage, onopen, onerror, onclose))),
+	Ok(OpenedSocket {
+		staged: SendWrapper::new((socket, (onmessage, onopen, onerror, onclose))),
 		handshake_rx,
 		responses_tx,
 		responses_rx,
-	))
+	})
 }
 
 /// A live browser WebSocket connection exposed as a raw JSON-RPC pipe.
