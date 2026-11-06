@@ -279,11 +279,14 @@ private fun PocketList(
         label = "collectibles_press"
     )
 
+    // Reporting stops as the list starts to leave, so the ID bar comes back with the card rather than after the fade.
+    val leaving = isPocketScreenLeaving()
+
     Box {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .reportsScrollToStatusBar(listState),
+                .then(if (leaving) Modifier else Modifier.reportsScrollToStatusBar(listState)),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
             contentPadding = WindowInsets(
