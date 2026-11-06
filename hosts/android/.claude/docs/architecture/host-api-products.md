@@ -230,7 +230,7 @@ it cannot describe. Every variant is covered by
 ### Threading contract
 
 - **Prompt-driven callbacks** (`confirmUserAction`, `devicePermission`, `remotePermission`, `navigateTo`, `featureSupported`) are `suspend` and awaited by the core — they may stay pending until the user decides.
-- **Dispatcher-thread callbacks** (chain, theme, storage, core log) run inline and **must return promptly** — no blocking work. Chain I/O goes through `RpcChainProvider`, which dials truapi-provider's `connectRpc` off the dispatcher thread, one per bridge so each notifies the runtime or execution it dials for; theme is served from a cached value.
+- **Dispatcher-thread callbacks** (chain, theme, storage, core log) run inline and **must return promptly** — no blocking work. Chain I/O goes through `RpcChainProvider`, which dials each node through a truapi-provider `ChainProvider.withRpcNodes` off the dispatcher thread, one per bridge so each notifies the runtime or execution it dials for; theme is served from a cached value.
 - `devicePermissionStatus` and `currentLocale` are left on the shell defaults (not applicable / system locale) — wire them when a product needs them.
 
 ### Stack

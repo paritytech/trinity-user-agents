@@ -57,7 +57,6 @@ import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.coreMarkers
-import uniffi.truapi_provider.ChainProvider
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -78,7 +77,6 @@ import uniffi.truapi.ThemeVariant as NativeThemeVariant
  */
 class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
-    private val chainNodes: ChainProvider,
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -108,7 +106,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // this inline on its dispatcher thread, where blocking on the registry
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        provider = chainNodes,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 

@@ -10,12 +10,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi_provider.ChainProvider
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 class RpcChainProviderTest {
-    private val chainNodes = ChainProvider()
     private val server = MockWebServer()
     private val lines = LinkedBlockingQueue<String>()
     private val responses = LinkedBlockingQueue<Pair<UInt, String>>()
@@ -24,12 +22,14 @@ class RpcChainProviderTest {
     @After
     fun tearDown() {
         server.close()
-        chainNodes.destroy()
     }
 
-    private fun provider(urls: List<String>) = RpcChainProvider(
+    private fun provider(
+        urls: List<String>,
+        cleartextPermitted: (host: String) -> Boolean = { true },
+    ) = RpcChainProvider(
         resolver = { urls },
-        provider = chainNodes,
+        cleartextPermitted = cleartextPermitted,
         onLog = { lines.add(it) },
     ).apply {
         attach(
@@ -135,6 +135,42 @@ class RpcChainProviderTest {
 
         assertEquals(closedByHost, closed.next())
         assertNull(closed.poll(1, TimeUnit.SECONDS))
+    }
+
+    // The provider's sockets bypass the app's network security config, so a
+    // release build that forbids cleartext must not reach a ws:// node anyway.
+    @Test
+    fun `a ws endpoint whose host forbids cleartext is skipped for the next one`() {
+        val forbidden = "ws://forbidden.example/"
+        val answering = serve(echo)
+        val provider = provider(listOf(forbidden, answering), cleartextPermitted = { it != "forbidden.example" })
+
+        val id = provider.connect(ByteArray(32))!!
+        provider.send(id, REQUEST)
+
+        assertEquals(id to REQUEST, responses.next())
+        assertEquals(
+            "chain connection $id skipped $forbidden: cleartext traffic is not permitted to its host",
+            lines.next(),
+        )
+        assertEquals("chain connection $id dialling $answering", lines.next())
+    }
+
+    @Test
+    fun `the core learns of a connection whose only endpoint forbids cleartext`() {
+        val id = provider(listOf("ws://forbidden.example/"), cleartextPermitted = { false }).connect(ByteArray(32))
+
+        assertEquals(id, closed.next())
+    }
+
+    @Test
+    fun `a wss endpoint is not checked against the cleartext policy`() {
+        val checked = LinkedBlockingQueue<String>()
+
+        val id = provider(listOf("wss://127.0.0.1:1/"), cleartextPermitted = { checked.add(it) }).connect(ByteArray(32))
+
+        assertEquals(id, closed.next())
+        assertTrue(checked.isEmpty())
     }
 
     private companion object {

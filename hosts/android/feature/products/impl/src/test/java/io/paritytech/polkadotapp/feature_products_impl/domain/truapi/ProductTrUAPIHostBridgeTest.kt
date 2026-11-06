@@ -44,7 +44,6 @@ class ProductTrUAPIHostBridgeTest {
         hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
     ) = ProductTrUAPIHostBridge(
         hostApiInteractor = hostApiInteractor,
-        chainNodes = mockk(relaxed = true),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },

@@ -51,7 +51,6 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
-import uniffi.truapi_provider.ChainProvider
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -70,7 +69,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
     private val encryptedPreferences: EncryptedPreferences,
-    private val chainNodes: ChainProvider,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
@@ -99,7 +97,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private val chainProvider = RpcChainProvider(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        provider = chainNodes,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 

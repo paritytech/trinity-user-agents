@@ -161,7 +161,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.Runt
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
 import okhttp3.OkHttpClient
-import uniffi.truapi_provider.ChainProvider
 import javax.inject.Singleton
 
 @Module
@@ -427,10 +426,6 @@ internal interface ProductsModule {
     fun bindRequestPaymentUseCase(impl: RealRequestPaymentUseCase): RequestPaymentUseCase
 
     companion object {
-        @Provides
-        @Singleton
-        fun provideChainProvider(): ChainProvider = ChainProvider()
-
         @Provides
         @SpaBrowserFragmentClass
         fun provideSpaBrowserFragmentClass(): String = SpaBrowserFragment::class.java.name

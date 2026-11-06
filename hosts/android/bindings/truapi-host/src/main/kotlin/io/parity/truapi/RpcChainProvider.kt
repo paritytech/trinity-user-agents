@@ -1,9 +1,12 @@
 package io.parity.truapi
 
+import android.security.NetworkSecurityPolicy
 import uniffi.truapi_provider.ChainCloseReason
 import uniffi.truapi_provider.ChainMessageListener
 import uniffi.truapi_provider.ChainProvider
 import uniffi.truapi_provider.ChainProviderException
+import uniffi.truapi_provider.RpcNode
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -23,19 +26,25 @@ fun interface ChainEndpointResolver {
 }
 
 /**
- * Serves the core's `chainConnect`, `chainSend` and `chainClose` through
- * [ChainProvider.connectRpc], delivering inbound events to the callbacks set via
- * [attach].
+ * Serves the core's `chainConnect`, `chainSend` and `chainClose` from remote
+ * nodes through truapi-provider, delivering inbound events to the callbacks set
+ * via [attach]. Each dial builds a [ChainProvider] for that one node, so no
+ * request can reach a node or the light client the resolver did not name.
  *
  * An endpoint that fails before it ever opens is treated as a dead node rather
  * than a dead connection: the next candidate is tried under the same connection
  * id, so the core sees one connection attempt regardless of how many nodes it
  * took. Once a socket has opened, a later close is reported as such; the
  * provider never reconnects on its own.
+ *
+ * The provider's sockets bypass the app's network security config, so a `ws://`
+ * endpoint is dialled only when [cleartextPermitted] allows its host.
  */
 class RpcChainProvider(
     private val resolver: ChainEndpointResolver,
-    private val provider: ChainProvider,
+    private val cleartextPermitted: (host: String) -> Boolean = { host ->
+        NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)
+    },
     private val onLog: (message: String) -> Unit = {},
 ) {
     private class EventSink(
@@ -81,7 +90,7 @@ class RpcChainProvider(
         }
 
         val id = nextId.getAndIncrement().toUInt()
-        val connection = Connection(id, urls)
+        val connection = Connection(id, genesisHash, urls)
         // Registered before dialling so a close that lands mid-dial finds it.
         connections[id] = connection
         dialler.execute(connection::dial)
@@ -136,6 +145,7 @@ class RpcChainProvider(
      */
     private inner class Connection(
         private val id: UInt,
+        private val genesisHash: ByteArray,
         private val urls: List<String>,
     ) : ChainMessageListener {
         private val lock = Any()
@@ -150,9 +160,15 @@ class RpcChainProvider(
             for (url in urls) {
                 if (synchronized(lock) { state == State.FINISHED }) return
                 dialledUrl = url
+                if (!permitted(url)) {
+                    onLog("chain connection $id skipped $url: cleartext traffic is not permitted to its host")
+                    continue
+                }
                 onLog("chain connection $id dialling $url")
                 val opened = try {
-                    provider.connectRpc(url, this)
+                    ChainProvider.withRpcNodes(listOf(RpcNode(genesisHash, url))).use { node ->
+                        node.connect(genesisHash, this)
+                    }
                 } catch (error: ChainProviderException) {
                     onLog("chain connection $id failed on $url: ${error.describe()}")
                     continue
@@ -165,6 +181,12 @@ class RpcChainProvider(
                 return
             }
             finish()
+        }
+
+        /** A malformed URL is left for the provider to reject. */
+        private fun permitted(url: String): Boolean {
+            val target = runCatching { URI(url) }.getOrNull() ?: return true
+            return target.scheme != "ws" || cleartextPermitted(target.host.orEmpty())
         }
 
         private fun adopt(opened: RpcConnection): Boolean = synchronized(lock) {
@@ -228,7 +250,7 @@ class RpcChainProvider(
     private enum class State { CONNECTING, OPEN, FINISHED }
 
     private companion object {
-        // connectRpc blocks until the node answers or fails, and chainConnect is
+        // ChainProvider.connect blocks until the node answers or fails, and chainConnect is
         // called on the core's dispatcher thread, which must never block.
         val dialler: ExecutorService = Executors.newCachedThreadPool { task ->
             Thread(task, "truapi-chain-dial").apply { isDaemon = true }
