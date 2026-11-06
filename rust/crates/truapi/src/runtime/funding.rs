@@ -1236,7 +1236,8 @@ impl FundingRegistry {
 				Settlement::Payment(_) => services.payment_platform().is_some(),
 			};
 			if engine && self.lock_following().insert(intent.clone()) {
-				services.clone().follow_settlement(intent, provider, settlement);
+				let following = Following { registry: services.funding().clone(), intent };
+				services.clone().follow_settlement(following, provider, settlement);
 			}
 		}
 	}
@@ -1271,7 +1272,14 @@ impl FundingRegistry {
 				continue;
 			}
 			resolving.insert(funds.host_id, u64::MAX);
-			(services.spawner)(Box::pin(services.clone().resolve_start(intent, provider, funds)));
+			let asking = Resolving {
+				registry: services.funding().clone(),
+				host_id: funds.host_id,
+				next_ms: None,
+			};
+			(services.spawner)(Box::pin(
+				services.clone().resolve_start(asking, intent, provider, funds),
+			));
 		}
 	}
 
@@ -1290,16 +1298,22 @@ impl FundingRegistry {
 			})
 			.collect();
 		for (provider, generation, link) in due {
-			let services = services.clone();
-			(services.spawner.clone())(Box::pin(async move {
-				let registry = services.funding().clone();
+			let catching = CatchingUp {
+				registry: services.funding().clone(),
+				provider,
+				generation,
+				answered: false,
+			};
+			(services.spawner)(Box::pin(async move {
+				let mut catching = catching;
+				let registry = catching.registry.clone();
 				let mut answered = true;
-				for calls in registry.pending_calls(&provider) {
+				for calls in registry.pending_calls(&catching.provider) {
 					for call in calls {
 						answered &= registry.put(link.as_ref(), call).await;
 					}
 				}
-				registry.caught_up(&provider, generation, answered);
+				catching.answered = answered;
 			}));
 		}
 	}
@@ -1693,6 +1707,63 @@ impl Drop for StartGuard {
 	}
 }
 
+/// A session whose settlement is being followed, from
+/// [`FundingRegistry::follow_settlements`]. Dropping it, as the follow ends
+/// or its task is dropped, lets the reconciler follow the session again.
+struct Following {
+	registry: Arc<FundingRegistry>,
+	intent: String,
+}
+
+impl Drop for Following {
+	fn drop(&mut self) {
+		self.registry.lock_following().remove(&self.intent);
+		self.registry.wake();
+	}
+}
+
+/// Recorded funds the engine is being asked about, from
+/// [`FundingRegistry::resolve_starts`]. Dropping it leaves them due again at
+/// `next_ms`, or at once when that is `None`, so a task dropped while it asks
+/// does not keep them from being placed.
+struct Resolving {
+	registry: Arc<FundingRegistry>,
+	host_id: [u8; 32],
+	/// When the engine is asked again, in Unix milliseconds.
+	next_ms: Option<u64>,
+}
+
+impl Drop for Resolving {
+	fn drop(&mut self) {
+		match self.next_ms {
+			Some(next_ms) => {
+				self.registry.lock_resolving().insert(self.host_id, next_ms);
+				self.registry.retry_by(next_ms);
+			},
+			None => {
+				self.registry.lock_resolving().remove(&self.host_id);
+			},
+		}
+	}
+}
+
+/// A worker being handed its sessions, from
+/// [`FundingRegistry::catch_up_links`]. Dropping it records how the hand-over
+/// went, so one whose task is dropped is due again.
+struct CatchingUp {
+	registry: Arc<FundingRegistry>,
+	provider: ProductId,
+	generation: u64,
+	/// Whether every call was answered; `false` until the hand-over ends.
+	answered: bool,
+}
+
+impl Drop for CatchingUp {
+	fn drop(&mut self) {
+		self.registry.caught_up(&self.provider, self.generation, self.answered);
+	}
+}
+
 /// Run reconciling passes, each after a wake or once the last one's wait is
 /// up. Wakes that come during a pass bring one more. The task ends once a pass
 /// leaves nothing timed and no wake is queued, so an idle host keeps no task
@@ -2013,13 +2084,14 @@ impl RuntimeServices {
 	/// if this stops with it still due.
 	fn follow_settlement(
 		self: Arc<Self>,
-		intent: String,
+		following: Following,
 		provider_id: ProductId,
 		settlement: Settlement,
 	) {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
-			let registry = self.funding().clone();
+			let registry = following.registry.clone();
+			let intent = following.intent.clone();
 			let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
 			let refund = matches!(settlement, Settlement::Refund(_));
 			let moved = match settlement {
@@ -2070,8 +2142,7 @@ impl RuntimeServices {
 					futures_timer::Delay::new(retry_in).await;
 				}
 			}
-			registry.lock_following().remove(&intent);
-			registry.wake();
+			drop(following);
 		}));
 	}
 
@@ -2082,6 +2153,7 @@ impl RuntimeServices {
 	/// meanwhile settles the record itself.
 	async fn resolve_start(
 		self: Arc<Self>,
+		mut asking: Resolving,
 		intent: String,
 		provider_id: ProductId,
 		funds: StartedFunds,
@@ -2128,15 +2200,7 @@ impl RuntimeServices {
 					.map(|_| retry_ms)
 			},
 		};
-		match next_ms {
-			Some(next_ms) => {
-				registry.lock_resolving().insert(funds.host_id, next_ms);
-				registry.retry_by(next_ms);
-			},
-			None => {
-				registry.lock_resolving().remove(&funds.host_id);
-			},
-		}
+		asking.next_ms = next_ms;
 	}
 
 	/// What `funds` moved, read again after a growing wait until the host
@@ -2538,6 +2602,38 @@ mod tests {
 		registry.connected(&ramp);
 
 		assert!(waited && Arc::ptr_eq(&block_on(next), &started));
+	}
+
+	// A task dropped before it finishes, as when the runtime shuts its tasks
+	// down, must not leave its session, funds or worker marked as being
+	// worked on, or the reconciler would never take them up again.
+	#[test]
+	fn work_whose_task_is_dropped_is_taken_up_again() {
+		let registry = Arc::new(FundingRegistry::default());
+		registry.link(&ramp(), Arc::new(IdleLink));
+		let generation = registry.lock_links().by_provider[&ramp()].generation;
+		registry.lock_links().by_provider.get_mut(&ramp()).expect("linked").catch_up =
+			CatchUp::Running;
+		registry.lock_following().insert("fs_1".to_string());
+		registry.lock_resolving().insert([1; 32], u64::MAX);
+
+		drop(CatchingUp {
+			registry: registry.clone(),
+			provider: ramp(),
+			generation,
+			answered: false,
+		});
+		drop(Following { registry: registry.clone(), intent: "fs_1".to_string() });
+		drop(Resolving { registry: registry.clone(), host_id: [1; 32], next_ms: None });
+
+		assert_eq!(
+			(
+				matches!(registry.lock_links().by_provider[&ramp()].catch_up, CatchUp::Due { .. }),
+				registry.lock_following().is_empty(),
+				registry.lock_resolving().is_empty(),
+			),
+			(true, true, true)
+		);
 	}
 
 	// Every quote asked of a provider that never connects waits for it and
