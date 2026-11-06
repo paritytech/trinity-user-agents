@@ -93,16 +93,17 @@ The host draws the face above the Widget, and the user can move it out of the wa
 with `ExpandedCard::set_face_shown`, to take the whole screen or to bring the face back after something on it changed. A
 card definition's `faceShown` sets where the face starts when the card opens. The host sizes the Widget to the part of
 the screen the face leaves, so the Widget learns the space it has from its own `resize` event. The face is never locked:
-the user can always move it, and a call that arrives while the user is moving it has no effect and is answered
-`UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user made. Keeping
-the native face visible through the open and close animation, and preloading the WebView, are host implementation and
-not part of the contract.
+the user can always move it, and a call that arrives while the user is moving it or turning the card has no effect and
+is answered `UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user
+made. Keeping the native face visible through the open and close animation, and preloading the WebView, are host
+implementation and not part of the contract.
 
-A card with a back is turned over on the opened card by dragging sideways or flicking. The turn follows the finger,
-always settles flat on one side, and never shows a side mirrored. A card without a back does not turn, and a card in the
-collection never turns. Closing the card returns it to its front. The host loads the back no later than when the card
-opens, so turning never waits on it. On an opened card both sides count as on screen, an exception to the renderer's
-Live rule, since the back is one turn away.
+A card with a back is turned over on the opened card by dragging sideways or flicking, and the host offers the same turn
+as an accessibility action for users who cannot drag. The turn follows the finger, always settles flat on one side, and
+never shows a side mirrored. A card without a back does not turn, and a card in the collection never turns. Closing the
+card returns it to its front. The host loads the back no later than when the card opens, so turning never waits on it.
+On an opened card both sides count as on screen, an exception to the renderer's Live rule, since the back is one turn
+away.
 
 The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a "Show my code" button on its
 page for a user who does not know the card turns. The call names the side to show rather than turning by half a turn, so
@@ -315,7 +316,7 @@ pub struct HostExpandedCardSetFaceShownRequest {
 pub enum HostExpandedCardSetFaceShownError {
     /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
-    /// The user is moving the face; the request had no effect.
+    /// The user is moving the face or turning the card; the request had no effect.
     UserMoving,
     /// Catch-all.
     Unknown {
@@ -346,9 +347,8 @@ pub enum HostExpandedCardSetBackShownError {
 
 `HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as `remove_card`'s is.
 Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker caller is
-`Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. `set_face_shown`
-answers `UserMoving` while the user is moving the face, and `set_back_shown` while the user is turning the card or
-moving the face.
+`Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. Both calls answer
+`UserMoving` while the user is moving the face or turning the card.
 
 ## Trade-offs
 
