@@ -1,13 +1,15 @@
 //! What the CLI checks of a resolved network before a command runs: whether
 //! the light client can serve it, whether each endpoint reports the genesis
-//! it is routed as, and whether People reports the network's TLD as its
-//! `NetworkSuffix`.
+//! it is routed as, whether People reports the network's TLD as its
+//! `NetworkSuffix`, and whether an endpoint with one of Polkadot's genesis
+//! hashes serves a fork rather than Polkadot itself.
 
 use anyhow::{Result, anyhow, bail, ensure};
 
 use super::{
 	ChainEndpoint, NetworkConfig,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
+	reserved::{PolkadotChain, polkadot_chains},
 };
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -23,6 +25,9 @@ pub struct ChainChecks {
 	/// The TLD People's `NetworkSuffix` must equal, when the stack's own
 	/// endpoints are checked.
 	expected_suffix: Option<&'static str>,
+	/// The routed endpoints with one of Polkadot's genesis hashes, each of
+	/// which must show it serves a fork.
+	polkadot_chains: Vec<PolkadotChain>,
 }
 
 impl ChainChecks {
@@ -47,14 +52,16 @@ impl ChainChecks {
 			from_stack: if checks_stack { untouched } else { Vec::new() },
 			built_in,
 			expected_suffix: checks_stack.then_some(config.network_suffix),
+			polkadot_chains: polkadot_chains(&config.chains),
 		}
 	}
 
-	/// Fails when an endpoint an override reroutes fails its check; otherwise
-	/// the outcome of the stack's own endpoints, which a fetch of the published
-	/// descriptor may resolve.
+	/// Fails when an endpoint an override reroutes fails its check, or when an
+	/// endpoint with one of Polkadot's genesis hashes does not show it serves
+	/// a fork; otherwise the outcome of the stack's own endpoints, which a
+	/// fetch of the published descriptor may resolve.
 	pub async fn verify(&self, config: &NetworkConfig) -> Result<Result<()>> {
-		let (rerouted, from_stack) = futures::join!(
+		let (rerouted, from_stack, polkadot_forks) = futures::join!(
 			verify_endpoints(config, &self.rerouted, Unanswered::Fail, None, self.expected_suffix),
 			verify_endpoints(
 				config,
@@ -63,8 +70,14 @@ impl ChainChecks {
 				self.built_in.as_ref(),
 				self.expected_suffix
 			),
+			futures::future::try_join_all(
+				self.polkadot_chains
+					.iter()
+					.map(|chain| chain.ensure_fork(BUILT_IN_REFRESH_TIMEOUT))
+			),
 		);
 		rerouted?;
+		polkadot_forks?;
 		Ok(from_stack)
 	}
 

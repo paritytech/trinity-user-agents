@@ -10,7 +10,7 @@ use super::{
 	checks::{ChainChecks, refuse_light_client},
 	local_network,
 	overrides::{ChainOverrides, apply_backend_override},
-	reserved, stack,
+	stack,
 };
 use crate::{
 	chain::ChainBackend,
@@ -23,12 +23,12 @@ impl NetworkSource {
 	///
 	/// Fails when the routing sources cannot be combined, when a `--stack`
 	/// descriptor is unreachable, when the descriptor in use is expired or
-	/// lacks a role, when a network carries one of Polkadot's genesis hashes
-	/// or the retired `polkadot` namespace, when a `--stack` uses the `dot`
-	/// TLD or pcf-devnet's namespace, when the light client cannot serve the
-	/// network, when an endpoint reports a genesis other than the one it is
-	/// routed as, when an endpoint an override reroutes does not answer, and
-	/// when People's `NetworkSuffix` differs from a stack's TLD. A built-in
+	/// lacks a role, when a `--stack` has the id `polkadot`, the retired
+	/// namespace, when the light client cannot serve the network,
+	/// when an endpoint reports a genesis other than the one it is routed as,
+	/// when an endpoint an override reroutes does not answer, when an endpoint
+	/// with one of Polkadot's genesis hashes does not show it serves a fork,
+	/// and when People's `NetworkSuffix` differs from a stack's TLD. A built-in
 	/// network whose published descriptor is unreachable runs on its bundled
 	/// copy; when that copy fails a check, the descriptor is fetched once more
 	/// and the checks repeat only when the published copy is then in use.
@@ -69,7 +69,6 @@ impl NetworkSource {
 					.and_then(|descriptor| {
 						stack::stack_network_config(&descriptor, self.chain_backend)
 					})
-					.and_then(|base| reserved::ensure_stack_not_reserved(&base).map(|()| base))
 					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
 				(base, None)
 			},
@@ -91,7 +90,6 @@ impl NetworkSource {
 			config = local_network::resolve(config, path)?;
 		}
 		refuse_light_client(&config)?;
-		reserved::ensure_no_reserved_values(&config)?;
 		let checks = ChainChecks::plan(&config, &base_chains, local_path.is_some(), built_in);
 		Ok((config, checks))
 	}

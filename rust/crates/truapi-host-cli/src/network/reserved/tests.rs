@@ -1,87 +1,161 @@
+use std::sync::{Arc, Mutex};
+
 use clap::ValueEnum;
 
-use super::{
-	super::{
-		stack::stack_network_config,
-		testing::{edit_chain, edit_stack},
-	},
-	*,
-};
+use super::{super::Network, *};
 use crate::chain::ChainBackend;
 
-/// SPEC.md lists Polkadot's genesis hashes as reserved values. Compiled in
-/// with `include_str!` so a moved table breaks the build rather than drifting
-/// quietly.
+const DEADLINE: Duration = Duration::from_secs(5);
+
+const POLKADOT_PEOPLE_GENESIS: &str =
+	"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008";
+
+/// A loopback node whose finalized block is `finalized` and whose block at
+/// each height up to it hashes to `chain` followed by the height, so two
+/// nodes with the same `chain` serve the same chain. Records the height of
+/// each `chain_getBlockHash` call.
+async fn serve_node(chain: u8, finalized: u32) -> (String, Arc<Mutex<Vec<u32>>>) {
+	use futures_util::{SinkExt, StreamExt};
+	use tokio_tungstenite::tungstenite::Message;
+
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("loopback bind failed");
+	let url = format!("ws://{}", listener.local_addr().expect("no listener address"));
+	let heights = Arc::new(Mutex::new(Vec::new()));
+	let recorded = Arc::clone(&heights);
+	let hash = move |height: u32| format!("0x{chain:02x}{height:062x}");
+	tokio::spawn(async move {
+		loop {
+			let (socket, _) = listener.accept().await.expect("accept failed");
+			let recorded = Arc::clone(&recorded);
+			tokio::spawn(async move {
+				let mut socket =
+					tokio_tungstenite::accept_async(socket).await.expect("handshake failed");
+				while let Some(Ok(Message::Text(request))) = socket.next().await {
+					let request: serde_json::Value =
+						serde_json::from_str(&request).expect("request is not JSON");
+					let result = match request["method"].as_str() {
+						Some("chain_getFinalizedHead") => json!(hash(finalized)),
+						Some("chain_getHeader") => json!({ "number": format!("0x{finalized:x}") }),
+						Some("chain_getBlockHash") => {
+							let height = request["params"][0].as_u64().expect("no height") as u32;
+							recorded.lock().unwrap().push(height);
+							if height <= finalized { json!(hash(height)) } else { json!(null) }
+						},
+						method => panic!("unexpected {method:?}"),
+					};
+					let response =
+						json!({ "jsonrpc": "2.0", "id": request["id"], "result": result });
+					if socket.send(Message::text(response.to_string())).await.is_err() {
+						break;
+					}
+				}
+			});
+		}
+	});
+	(url, heights)
+}
+
+fn polkadot_chain(ws: &str, polkadot_rpc: &[&str]) -> PolkadotChain {
+	PolkadotChain {
+		endpoint: ChainEndpoint { genesis: [0x67; 32], ws: ws.to_owned() },
+		polkadot_rpc: polkadot_rpc.iter().map(|node| (*node).to_owned()).collect(),
+	}
+}
+
+/// Only an endpoint with one of real Polkadot's genesis hashes, from the
+/// bundled reference, is compared, against that chain's nodes; SPEC.md lists
+/// the role chains' genesis hashes. Compiled in with `include_str!` so a moved
+/// table breaks the build rather than drifting quietly.
 #[test]
-fn test_spec_reserved_genesis_table() {
+fn test_polkadot_chains_from_reference() {
 	const SPEC: &str = include_str!("../../../SPEC.md");
 
-	for (row, genesis) in ["People genesis", "Asset Hub genesis", "Bulletin genesis"]
-		.into_iter()
-		.zip(POLKADOT_GENESIS)
-	{
+	for network in Network::value_variants() {
+		assert!(polkadot_chains(&network.config(ChainBackend::Rpc).chains).is_empty());
+	}
+	let mut chains = Network::PaseoNextV2.config(ChainBackend::Rpc).chains;
+	hex::decode_to_slice(POLKADOT_PEOPLE_GENESIS, &mut chains.people.genesis).unwrap();
+	let reference = polkadot_reference();
+	let people = reference.chain("People").expect("reference without People");
+	assert_eq!(
+		polkadot_chains(&chains),
+		[PolkadotChain { endpoint: chains.people.clone(), polkadot_rpc: people.rpc.clone() }]
+	);
+
+	for (row, genesis) in [
+		("People genesis", POLKADOT_PEOPLE_GENESIS),
+		("Asset Hub genesis", "68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f"),
+		("Bulletin genesis", "2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4"),
+	] {
+		assert!(
+			reference
+				.chains
+				.iter()
+				.any(|chain| chain.genesis_hash == format!("0x{genesis}"))
+		);
 		assert!(SPEC.contains(&format!("| {row} | `0x{genesis}` |")));
 	}
 }
 
-/// A fork has its source's genesis, so a network routed at a copy of
-/// mainnet would sign mainnet-valid transactions with auto-approval. The
-/// check applies to the built-in networks as well as to a stack.
-#[test]
-fn test_polkadot_genesis_error() {
-	for network in Network::value_variants() {
-		let config = network.config(ChainBackend::Rpc);
-		assert!(ensure_no_reserved_values(&config).is_ok());
-	}
-
-	let polkadot_people = format!("0x{}", POLKADOT_GENESIS[0]);
-	let forked = edit_chain("People", |chain| chain["genesisHash"] = polkadot_people.into());
-	let error =
-		ensure_no_reserved_values(&stack_network_config(&forked, ChainBackend::Rpc).unwrap())
-			.expect_err("mainnet genesis accepted");
-	assert!(error.to_string().contains("Polkadot's chain"));
-
-	let mut pcf_devnet = Network::PcfDevnet.config(ChainBackend::Rpc);
-	hex::decode_to_slice(POLKADOT_GENESIS[1], &mut pcf_devnet.chains.asset_hub.genesis).unwrap();
-	let error = ensure_no_reserved_values(&pcf_devnet).expect_err("mainnet genesis accepted");
-	assert!(error.to_string().contains("Polkadot's chain"));
-}
-
-/// Earlier releases stored mainnet sessions under `polkadot`, so no stack
-/// runs under it.
-#[test]
-fn test_retired_polkadot_namespace_error() {
-	for id in ["polkadot", "polkadot-fork"] {
-		let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
-		let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
-		let error = ensure_no_reserved_values(&config).expect_err("polkadot namespace accepted");
-		assert!(error.to_string().contains("the polkadot namespace"));
+/// An endpoint whose block at the lower finalized height is real Polkadot's
+/// is Polkadot itself, whether it is behind or ahead of the Polkadot node.
+#[tokio::test]
+async fn test_polkadot_itself_error() {
+	for (endpoint_finalized, polkadot_finalized) in [(500, 900), (900, 500)] {
+		let (endpoint, _) = serve_node(1, endpoint_finalized).await;
+		let (polkadot, _) = serve_node(1, polkadot_finalized).await;
+		let error = polkadot_chain(&endpoint, &[&polkadot])
+			.ensure_fork(DEADLINE)
+			.await
+			.expect_err("Polkadot itself accepted");
+		assert!(error.to_string().contains("serves Polkadot itself: its block 500"));
 	}
 }
 
-/// A `dot` identity derives the same keys as on Polkadot, so only the
-/// bundled pcf-devnet copy may use the TLD.
-#[test]
-fn test_stack_dot_tld_error() {
-	let pcf_devnet = Network::PcfDevnet.config(ChainBackend::Rpc);
-	assert_eq!(pcf_devnet.network_suffix, POLKADOT_TLD);
-	assert!(ensure_no_reserved_values(&pcf_devnet).is_ok());
-
-	let dot = edit_stack(|descriptor| descriptor["tld"] = "dot".into());
-	let error = ensure_stack_not_reserved(&stack_network_config(&dot, ChainBackend::Rpc).unwrap())
-		.expect_err("dot TLD accepted");
-	assert!(error.to_string().contains(".dot"));
+/// A fork's chain diverges from Polkadot's, so it runs. Both nodes are
+/// compared at the lower of their finalized blocks, which neither side can
+/// drop, so a fork ahead of Polkadot runs too.
+#[tokio::test]
+async fn test_finalized_height() {
+	for (endpoint_finalized, polkadot_finalized) in [(500, 900), (900, 500)] {
+		let (endpoint, endpoint_heights) = serve_node(2, endpoint_finalized).await;
+		let (polkadot, polkadot_heights) = serve_node(1, polkadot_finalized).await;
+		polkadot_chain(&endpoint, &[&polkadot])
+			.ensure_fork(DEADLINE)
+			.await
+			.expect("fork refused");
+		assert_eq!(*endpoint_heights.lock().unwrap(), [500]);
+		assert_eq!(*polkadot_heights.lock().unwrap(), [500]);
+	}
 }
 
-/// A stack cannot pose as the built-in pcf-devnet network.
-#[test]
-fn test_stack_pcf_devnet_namespace_error() {
-	for id in ["pcf-devnet", "pcf-devnet-fork"] {
-		let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
-		let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
-		let error = ensure_stack_not_reserved(&config).expect_err("pcf-devnet namespace accepted");
-		assert!(error.to_string().contains("the pcf-devnet namespace"));
+/// One Polkadot node down does not stop the comparison while another answers.
+#[tokio::test]
+async fn test_polkadot_node_fallback() {
+	let (endpoint, _) = serve_node(1, 500).await;
+	let (polkadot, _) = serve_node(1, 900).await;
+	let error = polkadot_chain(&endpoint, &["ws://127.0.0.1:1", &polkadot])
+		.ensure_fork(DEADLINE)
+		.await
+		.expect_err("Polkadot itself accepted");
+	assert!(error.to_string().contains("serves Polkadot itself"));
+}
+
+/// The CLI cannot show an endpoint is not Polkadot when it, or every Polkadot
+/// node, does not answer, so the endpoint is an error.
+#[tokio::test]
+async fn test_unanswered_error() {
+	let (endpoint, _) = serve_node(2, 500).await;
+	let (polkadot, _) = serve_node(1, 900).await;
+	let closed = "ws://127.0.0.1:1";
+	for chain in [
+		polkadot_chain(closed, &[&polkadot]),
+		polkadot_chain(&endpoint, &[closed, "ws://127.0.0.1:2"]),
+		polkadot_chain(&endpoint, &[]),
+	] {
+		let error = chain.ensure_fork(DEADLINE).await.expect_err("unanswered check accepted");
+		assert!(error.to_string().contains("cannot tell"));
 	}
-	let paseo = stack_network_config(&edit_stack(|_| {}), ChainBackend::Rpc).unwrap();
-	assert!(ensure_stack_not_reserved(&paseo).is_ok());
 }

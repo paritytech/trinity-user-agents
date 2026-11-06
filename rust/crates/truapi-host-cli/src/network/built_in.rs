@@ -45,6 +45,23 @@ const PCF_DEVNET_STACK: BuiltInStack = BuiltInStack {
 	bundle: include_bytes!("../../stacks/pcf-devnet.json"),
 };
 
+/// Real Polkadot's descriptor, signed by PCF. Not a network the CLI runs on:
+/// it lists Polkadot's chains and the RPC nodes that tell a fork of Polkadot
+/// from Polkadot itself. Only the bundled copy is read;
+/// `scripts/update-stacks.sh` refreshes it with the built-ins.
+const POLKADOT_REFERENCE_STACK: BuiltInStack = BuiltInStack {
+	link: include_str!("../../stacks/polkadot.link"),
+	bundle: include_bytes!("../../stacks/polkadot.json"),
+};
+
+/// The bundled copy of real Polkadot's descriptor.
+pub fn polkadot_reference() -> Descriptor {
+	let reference = POLKADOT_REFERENCE_STACK;
+	trinity_stack::open(reference.bundle, &reference.pointer())
+		.expect("invalid bundled Polkadot reference")
+		.descriptor
+}
+
 impl Network {
 	fn built_in_stack(self) -> BuiltInStack {
 		match self {

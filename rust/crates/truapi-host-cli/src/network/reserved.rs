@@ -1,62 +1,130 @@
-//! The reserved values, Polkadot's genesis hashes and its `dot` TLD, and the
-//! checks that reject them where they do not belong.
+//! The check that tells a chain carrying one of Polkadot's genesis hashes, a
+//! fork, from Polkadot itself.
 
-use anyhow::{Result, ensure};
+use std::time::Duration;
 
-use super::{Network, NetworkConfig};
+use anyhow::{Result, anyhow, ensure};
+use serde_json::json;
+use truapi::statement_allowance::rpc::RpcClient;
 
-/// The genesis hashes of Polkadot's People, Asset Hub and Bulletin chains.
-const POLKADOT_GENESIS: [&str; 3] = [
-	"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
-	"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
-	"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
-];
+use super::{ChainEndpoint, built_in::polkadot_reference};
+use crate::stack_descriptor::Roles;
 
-const POLKADOT_TLD: &str = "dot";
-
-/// The namespace of `--network polkadot`, which earlier releases stored
-/// mainnet sessions under.
-const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
-
-/// Fails for a network that routes to one of Polkadot's chains or runs under
-/// the retired `polkadot` namespace. A fork of mainnet has mainnet's genesis,
-/// and a signature made against it is valid on mainnet itself.
-pub fn ensure_no_reserved_values(config: &NetworkConfig) -> Result<()> {
-	for endpoint in config.chains.iter() {
-		ensure!(
-			!POLKADOT_GENESIS.contains(&hex::encode(endpoint.genesis).as_str()),
-			"{} would route to Polkadot's chain at {}; point it at a test network",
-			config.id,
-			endpoint.ws
-		);
-	}
-	ensure!(
-		config.id != RETIRED_POLKADOT_NAMESPACE,
-		"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
-		 releases used for Polkadot mainnet; use a stack with another id"
-	);
-	Ok(())
+/// An endpoint with one of Polkadot's genesis hashes, and the RPC nodes of
+/// real Polkadot's chain with that genesis.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PolkadotChain {
+	/// The endpoint that must show it serves a fork.
+	pub endpoint: ChainEndpoint,
+	/// Real Polkadot's nodes for the endpoint's chain, from the bundled
+	/// reference, in the order they are tried.
+	pub polkadot_rpc: Vec<String>,
 }
 
-/// Fails for a `--stack` network that uses the `dot` TLD, which only the
-/// bundled pcf-devnet copy may use, or that runs under pcf-devnet's
-/// namespace, so a stack cannot pose as that built-in network. A `dot`
-/// identity derives the same keys as on Polkadot.
-pub fn ensure_stack_not_reserved(config: &NetworkConfig) -> Result<()> {
-	let pcf_devnet = Network::PcfDevnet.id();
-	ensure!(
-		config.id != pcf_devnet,
-		"a stack cannot run under the {pcf_devnet} namespace of the built-in network; use a \
-		 stack with another id"
-	);
-	ensure!(
-		config.network_suffix != POLKADOT_TLD,
-		"{} uses Polkadot's TLD .{}, which only the built-in {pcf_devnet} network may use; \
-		 point it at a test network",
-		config.id,
-		config.network_suffix
-	);
-	Ok(())
+/// The endpoints of `chains` with one of Polkadot's genesis hashes, each with
+/// real Polkadot's nodes for that chain.
+pub fn polkadot_chains(chains: &Roles<ChainEndpoint>) -> Vec<PolkadotChain> {
+	let reference = polkadot_reference();
+	chains
+		.iter()
+		.filter_map(|endpoint| {
+			let genesis = hex::encode(endpoint.genesis);
+			let chain = reference.chains.iter().find(|chain| {
+				chain.genesis_hash.trim_start_matches("0x").eq_ignore_ascii_case(&genesis)
+			})?;
+			Some(PolkadotChain { endpoint: endpoint.clone(), polkadot_rpc: chain.rpc.clone() })
+		})
+		.collect()
+}
+
+impl PolkadotChain {
+	/// Fails unless the endpoint serves a fork of Polkadot rather than
+	/// Polkadot itself: at the lower of its finalized block and real
+	/// Polkadot's, its block hash must differ from Polkadot's. Also fails when
+	/// the endpoint, or every Polkadot node, does not answer within
+	/// `deadline`, since the endpoint is then not shown to be a fork.
+	pub async fn ensure_fork(&self, deadline: Duration) -> Result<()> {
+		let ws = &self.endpoint.ws;
+		let hashes = tokio::time::timeout(deadline, self.finalized_hashes())
+			.await
+			.unwrap_or_else(|_| Err(format!("no answer within {}s", deadline.as_secs())));
+		let (height, fork_hash, polkadot_hash) = hashes.map_err(|reason| {
+			anyhow!(
+				"cannot tell {ws} from Polkadot ({reason}); a chain with Polkadot's genesis runs \
+				 only once it shows a fork"
+			)
+		})?;
+		ensure!(
+			fork_hash != polkadot_hash,
+			"{ws} serves Polkadot itself: its block {height} is Polkadot's {polkadot_hash}"
+		);
+		Ok(())
+	}
+
+	/// The lower of the endpoint's and Polkadot's finalized block numbers, and
+	/// the block hash each reports there, or why one side did not answer.
+	async fn finalized_hashes(&self) -> Result<(u32, String, String), String> {
+		let (fork, polkadot) = futures::join!(
+			connect_finalized(&self.endpoint.ws),
+			connect_first_finalized(&self.polkadot_rpc)
+		);
+		let (fork, fork_finalized) = fork?;
+		let (polkadot, polkadot_finalized) = polkadot?;
+		let height = fork_finalized.min(polkadot_finalized);
+		let (fork_hash, polkadot_hash) =
+			futures::join!(block_hash(&fork, height), block_hash(&polkadot, height));
+		let fork_hash = fork_hash.map_err(|reason| format!("its block {height}: {reason}"))?;
+		let polkadot_hash =
+			polkadot_hash.map_err(|reason| format!("Polkadot's block {height}: {reason}"))?;
+		Ok((height, fork_hash, polkadot_hash))
+	}
+}
+
+/// A connection to `ws` and the number of its finalized block.
+async fn connect_finalized(ws: &str) -> Result<(RpcClient, u32), String> {
+	let rpc = RpcClient::connect(ws).await.map_err(|error| error.to_string())?;
+	let finalized = finalized_number(&rpc)
+		.await
+		.map_err(|reason| format!("its finalized block: {reason}"))?;
+	Ok((rpc, finalized))
+}
+
+/// A connection to the first of Polkadot's `nodes` that reports its finalized
+/// block, and that block's number.
+async fn connect_first_finalized(nodes: &[String]) -> Result<(RpcClient, u32), String> {
+	let mut failures = Vec::new();
+	for node in nodes {
+		match connect_finalized(node).await {
+			Ok(connection) => return Ok(connection),
+			Err(reason) => failures.push(format!("{node}: {reason}")),
+		}
+	}
+	Err(format!("Polkadot's nodes did not answer: {}", failures.join("; ")))
+}
+
+/// The number of the block `rpc` reports as finalized.
+async fn finalized_number(rpc: &RpcClient) -> Result<u32, String> {
+	let head = rpc
+		.call("chain_getFinalizedHead", json!([]))
+		.await
+		.map_err(|error| error.to_string())?;
+	let header = rpc
+		.call("chain_getHeader", json!([head]))
+		.await
+		.map_err(|error| error.to_string())?;
+	let number = header["number"].as_str().ok_or("a header without a number")?;
+	u32::from_str_radix(number.trim_start_matches("0x"), 16).map_err(|error| error.to_string())
+}
+
+/// The hash of `rpc`'s block at `height`.
+async fn block_hash(rpc: &RpcClient, height: u32) -> Result<String, String> {
+	let hash = rpc
+		.call("chain_getBlockHash", json!([height]))
+		.await
+		.map_err(|error| error.to_string())?;
+	hash.as_str()
+		.map(str::to_owned)
+		.ok_or_else(|| "no block at that height".to_owned())
 }
 
 #[cfg(test)]

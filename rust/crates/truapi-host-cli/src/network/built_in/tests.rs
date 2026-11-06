@@ -3,16 +3,19 @@ use clap::ValueEnum;
 use super::{super::testing::edit_descriptor, *};
 
 /// A bundled copy that no longer opens with its pointer would leave the
-/// built-in network with nothing to start from when the published copy is
-/// unreachable.
+/// built-in network, or the check that tells a Polkadot fork from Polkadot,
+/// with nothing to start from when the published copy is unreachable.
 #[test]
 fn test_bundled_stack_pointers() {
-	for network in Network::value_variants() {
-		let built_in = network.built_in_stack();
+	let built_ins = Network::value_variants()
+		.iter()
+		.map(|network| (network.built_in_stack(), network.id()))
+		.chain([(POLKADOT_REFERENCE_STACK, "polkadot")]);
+	for (built_in, id) in built_ins {
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
-			.unwrap_or_else(|error| panic!("{}: {error}", network.id()));
+			.unwrap_or_else(|error| panic!("{id}: {error}"));
 		assert!(bundled.signed);
-		assert_eq!(bundled.descriptor.id, network.id());
+		assert_eq!(bundled.descriptor.id, id);
 	}
 }
 

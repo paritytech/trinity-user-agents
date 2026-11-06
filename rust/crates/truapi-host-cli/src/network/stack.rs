@@ -10,13 +10,28 @@ use crate::{
 	stack_descriptor::{ROLE_NAMES, StackProjection},
 };
 
+/// The namespace of `--network polkadot`, which earlier releases stored
+/// mainnet sessions under.
+const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
+
 /// A `--stack` descriptor's network, connected to over `chain_backend`, under
-/// the product namespace of the descriptor's `id` without a trailing `-fork`.
+/// the product namespace of the descriptor's `id` without a trailing `-fork`;
+/// a `polkadot-fork` stack runs under its own `id`. Fails for a stack with the
+/// id `polkadot`, the retired namespace of Polkadot mainnet sessions.
 pub fn stack_network_config(
 	descriptor: &Descriptor,
 	chain_backend: ChainBackend,
 ) -> Result<NetworkConfig> {
-	let id = descriptor.id.strip_suffix("-fork").unwrap_or(&descriptor.id);
+	ensure!(
+		descriptor.id != RETIRED_POLKADOT_NAMESPACE,
+		"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
+		 releases used for Polkadot mainnet; use a stack with another id"
+	);
+	let id = descriptor
+		.id
+		.strip_suffix("-fork")
+		.filter(|id| *id != RETIRED_POLKADOT_NAMESPACE)
+		.unwrap_or(&descriptor.id);
 	ensure!(
 		truapi::platform::is_dns_label(id),
 		"the stack id {:?} is not a lowercase label to use as the product namespace",

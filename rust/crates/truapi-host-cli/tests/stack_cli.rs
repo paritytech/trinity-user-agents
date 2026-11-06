@@ -297,6 +297,32 @@ fn test_bundle_skip_same_projection() {
 	let new_generation = fs::read(site.join(".well-known/trinity-stack.json")).unwrap();
 	assert!(bundle(new_generation.clone(), &skip).status.success());
 	assert_eq!(fs::read(out).unwrap(), new_generation);
+
+	let fallback_model = write_model(dir.path(), "Fallback", None);
+	let mut fallback_json: serde_json::Value =
+		serde_json::from_slice(&fs::read(&fallback_model).unwrap()).unwrap();
+	fallback_json["chains"][0]["rpc"]
+		.as_array_mut()
+		.unwrap()
+		.push("ws://127.0.0.1:9945".into());
+	fs::write(&fallback_model, fallback_json.to_string()).unwrap();
+	let fallback_site = dir.path().join("fallback");
+	let fallback_output = stack(&[
+		"publish",
+		&fallback_model,
+		"--generation",
+		"g2",
+		"--out",
+		fallback_site.to_str().unwrap(),
+		"--signing-key-file",
+		key_file,
+		"--state",
+		state,
+	]);
+	assert!(fallback_output.status.success());
+	let fallback = fs::read(fallback_site.join(".well-known/trinity-stack.json")).unwrap();
+	assert!(bundle(fallback.clone(), &skip).status.success());
+	assert_eq!(fs::read(out).unwrap(), fallback);
 }
 
 /// Every account derives under the TLD, so `bundle` rejects a copy that changes it, also when
@@ -434,22 +460,26 @@ fn test_network_check_url_and_link() {
 	assert!(stderr(&wrong_key).contains("bad-signature"));
 }
 
-/// A stack never runs on Polkadot's chains or TLD, nor under the retired `polkadot` namespace or
-/// the namespace of the built-in pcf-devnet network.
+/// A stack never runs under the retired `polkadot` namespace, where earlier releases stored mainnet
+/// sessions. A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
+/// namespace: whether its chains are Polkadot itself is checked against the chains before a command
+/// runs, which `network-check` does not contact.
 #[test]
 fn test_network_check_polkadot_values() {
 	let dir = tempfile::tempdir().unwrap();
-	let polkadot_people = local_descriptor(|descriptor| {
+	let polkadot = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
+	let output = network_check(&write_descriptor(dir.path(), &polkadot), &[]);
+	assert!(stderr(&output).contains("the polkadot namespace"));
+
+	let polkadot_fork = local_descriptor(|descriptor| {
+		descriptor["id"] = "polkadot-fork".into();
+		descriptor["tld"] = "dot".into();
 		descriptor["chains"][1]["genesisHash"] =
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
-	let dot = local_descriptor(|descriptor| descriptor["tld"] = "dot".into());
-	let pcf_devnet = local_descriptor(|descriptor| descriptor["id"] = "pcf-devnet".into());
-	let polkadot = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
-	for descriptor in [polkadot_people, dot, pcf_devnet, polkadot] {
-		let output = network_check(&write_descriptor(dir.path(), &descriptor), &[]);
-		assert!(!output.status.success());
-	}
+	let output = network_check(&write_descriptor(dir.path(), &polkadot_fork), &[]);
+	let routing: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(routing["network"], "polkadot-fork");
 }
 
 /// `--network` picks a built-in network and a stack any other one, and the error names where

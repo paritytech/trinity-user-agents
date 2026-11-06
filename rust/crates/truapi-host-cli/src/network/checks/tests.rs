@@ -4,7 +4,12 @@ use clap::ValueEnum;
 use trinity_stack::Descriptor;
 
 use super::{
-	super::{Network, overrides::ChainOverrides, stack::stack_network_config, testing::edit_stack},
+	super::{
+		Network,
+		overrides::ChainOverrides,
+		stack::stack_network_config,
+		testing::{edit_chain, edit_stack},
+	},
 	*,
 };
 
@@ -218,6 +223,24 @@ fn test_chain_checks_by_source() {
 	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo.chains, true, None);
 	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
 	assert_eq!(local.expected_suffix, None);
+}
+
+/// Only an endpoint with one of Polkadot's genesis hashes is compared with
+/// Polkadot, so a stack on the `dot` TLD alone costs nothing.
+#[test]
+fn test_polkadot_genesis_plan() {
+	let dot = edit_stack(|descriptor| descriptor["tld"] = "dot".into());
+	let dot = stack_network_config(&dot, ChainBackend::Rpc).unwrap();
+	assert!(ChainChecks::plan(&dot, &dot.chains, false, None).polkadot_chains.is_empty());
+
+	let forked = edit_chain("People", |chain| {
+		chain["genesisHash"] =
+			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
+	});
+	let forked = stack_network_config(&forked, ChainBackend::Rpc).unwrap();
+	let checks = ChainChecks::plan(&forked, &forked.chains, false, None);
+	let compared: Vec<_> = checks.polkadot_chains.iter().map(|chain| &chain.endpoint).collect();
+	assert_eq!(compared, [&forked.chains.people]);
 }
 
 /// Only the endpoints an override reroutes are checked as such, even one

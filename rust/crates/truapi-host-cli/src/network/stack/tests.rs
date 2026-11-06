@@ -67,6 +67,29 @@ fn test_stack_id_not_label() {
 	assert!(stack_network_config(&descriptor, ChainBackend::Rpc).is_err());
 }
 
+/// Earlier releases stored Polkadot mainnet sessions under `polkadot`, so no
+/// stack runs there; a `polkadot-fork` has its own state instead. A fork of
+/// any other stack shares its source's namespace, a `dot` TLD included.
+#[test]
+fn test_stack_namespace() {
+	let polkadot = edit_stack(|descriptor| descriptor["id"] = "polkadot".into());
+	let error = stack_network_config(&polkadot, ChainBackend::Rpc).unwrap_err();
+	assert!(error.to_string().contains("the polkadot namespace"));
+
+	for (id, namespace) in [
+		("polkadot-fork", "polkadot-fork"),
+		("pcf-devnet", "pcf-devnet"),
+		("pcf-devnet-fork", "pcf-devnet"),
+	] {
+		let descriptor = edit_stack(|descriptor| {
+			descriptor["id"] = id.into();
+			descriptor["tld"] = "dot".into();
+		});
+		let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
+		assert_eq!(config.id, namespace);
+	}
+}
+
 #[test]
 fn test_stack_missing_role_error() {
 	let descriptor = edit_stack(|descriptor| {

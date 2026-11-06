@@ -1087,9 +1087,13 @@ use, after fetching the published descriptor once more when it could not be fetc
 before. A `NetworkSuffix` other than the `tld` is an error. An endpoint an override or the
 local file reroutes must answer; any other that does not answer within 3 seconds is
 logged and left to fail on first use.
-No network routes to Polkadot's chains. Only the built-in `pcf-devnet` uses Polkadot's
-`dot` TLD: a stack whose `tld` is `dot` or whose namespace is `pcf-devnet` or `polkadot`
-(where earlier releases stored `--network polkadot` sessions) is refused.
+A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
+with one of Polkadot's genesis hashes, from a built-in, a stack, an override or the local
+file, is compared with real Polkadot, whose signed descriptor the binary ships as a
+reference: at the lower of the endpoint's and Polkadot's finalized block, an equal block
+hash means it serves Polkadot itself and the command stops, and so it does when the
+endpoint, or every Polkadot node the reference lists, does not answer. A stack with the id
+`polkadot` (where earlier releases stored `--network polkadot` sessions) is refused.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
@@ -1107,9 +1111,10 @@ People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
-`tld` the core does not serve (`paseo`, `testnet`), is unreachable or is past
+`tld` the core does not serve (`dot`, `paseo`, `testnet`), is unreachable or is past
 `expiresAt` is an error. The product namespace (`HostChainSet.network` and the
-state directory) is the descriptor's `id` without a trailing `-fork`. Use a
+state directory) is the descriptor's `id` without a trailing `-fork`, except that a
+`polkadot-fork` stack keeps its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that

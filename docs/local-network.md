@@ -40,7 +40,10 @@ node for its genesis, and prints the resolved routing as JSON, so a harness can 
 before starting a session; it fails when the variable is unset. `truapi-host network-check`
 prints the same routing without contacting any chain. Before any other command runs, each
 local endpoint is asked for its genesis and must answer with the file's; one that does not
-answer, or reports another genesis, stops the command.
+answer, or reports another genesis, stops the command. A local fork of Polkadot may carry
+Polkadot's genesis hashes; such an endpoint must then also show it is not Polkadot itself,
+by a block hash that differs from real Polkadot's at the lower of the two finalized blocks,
+and the command stops when it, or every real Polkadot node, does not answer.
 
 Use a separate host state directory and a disposable identity for the local run:
 
