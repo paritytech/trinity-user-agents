@@ -27,12 +27,9 @@ pub enum AllowanceAllocationError {
 	/// Signing host session or authority state was unavailable.
 	#[error("{0}")]
 	Authority(#[from] AuthorityError),
-	/// The stack has no chain for this role, so there is nothing to claim on.
-	#[error("the stack has no {chain} chain")]
-	ChainNotServed {
-		/// Role that could not be resolved.
-		chain: &'static str,
-	},
+	/// The stack has no Asset Hub to claim the allowance on.
+	#[error("the stack has no Asset Hub")]
+	NoAssetHub,
 	/// Product-account key derivation failed.
 	#[error("{0}")]
 	ProductAccount(#[from] ProductAccountError),
@@ -348,7 +345,7 @@ pub async fn allocate_smart_contract_allowance(
 
 	let asset_hub_genesis = services
 		.asset_hub_chain_genesis_hash()
-		.ok_or(AllowanceAllocationError::ChainNotServed { chain: "Asset Hub" })?;
+		.ok_or(AllowanceAllocationError::NoAssetHub)?;
 	let asset_hub_client = ChainClient::new(
 		statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
 			services.chain.rpc_client("PGAS allowance", &asset_hub_genesis).await.map_err(

@@ -101,10 +101,9 @@ pub struct SigningHostConfig {
 	/// parity with [`PairingHostConfig`] and for the future signer-side SSO
 	/// responder, which advertises host identity in handshake responses.
 	pub host: HostIdentity,
-	/// The stack the host runs. Its TLD must match the People chain's
-	/// `NetworkSuffix.NetworkSuffix`: every reserved RFC-0022 identity the
-	/// wallet derives ends in it, so a wrong one derives a different person
-	/// from the same seed.
+	/// The stack the host runs. Every reserved RFC-0022 identity the wallet
+	/// derives ends in its TLD, which has to equal the People chain's
+	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
 	pub stack: Stack,
 }
 
