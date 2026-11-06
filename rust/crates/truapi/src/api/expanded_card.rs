@@ -20,7 +20,8 @@ pub trait ExpandedCard: Send + Sync {
 	/// Show or hide the face above the calling Widget.
 	///
 	/// Succeeds when the face is already in that state. Fails with
-	/// `NotPresented` when the Widget is not shown under its card.
+	/// `NotPresented` when the Widget is not shown under its card, and
+	/// `UserMoving` while the user moves the face or turns the card.
 	///
 	/// ```ts
 	/// const result = await truapi.expandedCard.setFaceShown({ shown: false });
