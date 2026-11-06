@@ -1911,7 +1911,7 @@ impl ProductRuntimeControl {
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
-		let reference = WorkerReference::acquire(self.connection.clone());
+		let reference = self.connection.hold_worker();
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -2031,25 +2031,6 @@ impl FundingProviderLink for WorkerFundingLink {
 			.await
 			.is_ok()
 		})
-	}
-}
-
-/// One reference the core holds on a product's worker, released on drop.
-struct WorkerReference {
-	connection: Arc<ProductConnection>,
-}
-
-impl WorkerReference {
-	/// Take a reference on the worker of the product `connection` serves.
-	fn acquire(connection: Arc<ProductConnection>) -> Self {
-		connection.acquire_worker_reference();
-		Self { connection }
-	}
-}
-
-impl Drop for WorkerReference {
-	fn drop(&mut self) {
-		self.connection.release_worker_reference();
 	}
 }
 
