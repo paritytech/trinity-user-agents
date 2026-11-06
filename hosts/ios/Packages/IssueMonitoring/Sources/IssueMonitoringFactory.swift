@@ -36,14 +36,16 @@ public enum IssueMonitoringFactory {
     /// Builds the immutable product bootstrap only when this build links reporting support.
     public static func createNativeHostTelemetry(
         hostSessionID: UUID,
-        truapiHostVersion: @autoclosure () -> String
+        truapiHostVersion: @autoclosure () -> String,
+        openTap: HostOpenTap? = nil
     ) -> NativeHostTelemetry? {
         guard isReportingSupported else { return nil }
 
         return NativeHostTelemetry(
             hostSessionID: hostSessionID,
             origin: .current,
-            truapiHostVersion: truapiHostVersion()
+            truapiHostVersion: truapiHostVersion(),
+            openTap: openTap
         )
     }
 

@@ -221,6 +221,7 @@ public struct HostEvent: Sendable, Equatable {
         productID: String,
         outcome: HostEventOutcome,
         durationMilliseconds: Int,
+        tapMilliseconds: Int? = nil,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
@@ -231,7 +232,37 @@ public struct HostEvent: Sendable, Equatable {
             hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID]
+            tags: ["product.id": productID],
+            extras: tapMilliseconds.map { ["tap_ms": .integer($0)] } ?? [:]
+        )
+    }
+
+    /// The user tapping a Pocket card, or following a link to one: `opened` starts a page load,
+    /// `reused` shows the page already held, `reuseMilliseconds` after the tap.
+    public static func pocketCardTapped(
+        productID: String,
+        outcome: HostEventOutcome,
+        source: HostOpenSource,
+        reuseMilliseconds: Int?,
+        hostSessionID: UUID?,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        let session = hostSessionID?.telemetryValue
+
+        var tags = ["product.id": productID, "outcome": outcome.rawValue, "open.source": source.rawValue]
+        tags["host.session_id"] = session
+
+        var extras: [String: HostEventValue] = [:]
+        extras["reuse_ms"] = reuseMilliseconds.map(HostEventValue.integer)
+        extras["host.session_id"] = session.map(HostEventValue.string)
+
+        return make(
+            name: "host.pocket.card_tapped",
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: tags,
+            extras: extras
         )
     }
 }
@@ -243,6 +274,34 @@ public enum HostEventOutcome: String, Sendable {
     case timeout
     case noWorker = "no_worker"
     case abandoned
+    case opened
+    case reused
+}
+
+public enum HostOpenSource: String, Sendable {
+    case pocketCard = "pocket_card"
+    case deeplink
+    case other
+}
+
+/// The moment the user asked for a page, read where they asked, carried to the page it opens.
+public struct HostOpenTap: Sendable, Equatable {
+    public let hostSessionID: UUID
+    public let source: HostOpenSource
+    public let openedAtEpochMilliseconds: Int64
+    public let monotonicMilliseconds: Int
+
+    public init(
+        hostSessionID: UUID,
+        source: HostOpenSource,
+        openedAtEpochMilliseconds: Int64,
+        monotonicMilliseconds: Int
+    ) {
+        self.hostSessionID = hostSessionID
+        self.source = source
+        self.openedAtEpochMilliseconds = openedAtEpochMilliseconds
+        self.monotonicMilliseconds = monotonicMilliseconds
+    }
 }
 
 /// Why a load step ran.

@@ -325,6 +325,55 @@ struct HostEventTests {
         #expect(!telemetry.isFirstCacheHit(of: "host.product.resolved", productID: "other.testnet"))
     }
 
+    @Test func cardTappedSaysWhetherTheTapOpenedOrReusedAPage() throws {
+        let hostSessionID = try #require(UUID(uuidString: "6564F4CC-E69C-4052-BD4A-433F66790125"))
+
+        let reused = HostEvent.pocketCardTapped(
+            productID: "peopl.testnet",
+            outcome: .reused,
+            source: .pocketCard,
+            reuseMilliseconds: 180,
+            hostSessionID: hostSessionID,
+            origin: Self.origin,
+            monotonicMilliseconds: 9
+        )
+        let opened = HostEvent.pocketCardTapped(
+            productID: "peopl.testnet",
+            outcome: .opened,
+            source: .deeplink,
+            reuseMilliseconds: nil,
+            hostSessionID: nil,
+            origin: Self.origin,
+            monotonicMilliseconds: 9
+        )
+
+        #expect(reused.name == "host.pocket.card_tapped")
+        #expect(reused.tags["outcome"] == "reused")
+        #expect(reused.tags["open.source"] == "pocket_card")
+        #expect(reused.tags["product.id"] == "peopl.testnet")
+        #expect(reused.tags["host.session_id"] == "6564f4cc-e69c-4052-bd4a-433f66790125")
+        #expect(reused.extras["reuse_ms"] == .integer(180))
+        #expect(reused.durationMilliseconds == nil)
+        #expect(opened.tags["outcome"] == "opened")
+        #expect(opened.tags["open.source"] == "deeplink")
+        #expect(opened.extras["reuse_ms"] == nil)
+    }
+
+    @Test func aTapReadsBothClocksAndMintsTheSessionItsPageUses() {
+        let telemetry = HostLoadTelemetry(
+            recorder: RecordingHostEventRecorder(),
+            monotonicMilliseconds: { 42 },
+            epochMilliseconds: { 1_793_900_000_000 }
+        )
+
+        let tap = telemetry.beginOpen(source: .pocketCard)
+
+        #expect(tap?.monotonicMilliseconds == 42)
+        #expect(tap?.openedAtEpochMilliseconds == 1_793_900_000_000)
+        #expect(tap?.source == .pocketCard)
+        #expect(HostLoadTelemetry.disabled.beginOpen(source: .pocketCard) == nil)
+    }
+
     @Test func aNoopRecorderNeverBuildsTheEvent() {
         var built = false
 

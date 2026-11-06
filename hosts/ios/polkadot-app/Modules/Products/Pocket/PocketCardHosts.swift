@@ -21,6 +21,8 @@ final class PocketCardHosts {
         let pageQuery: String
         let view: SPAViewProtocol
         let surface: PocketCardSurface
+        /// The host session its page runs under, when telemetry is on.
+        let hostSessionId: UUID?
     }
 
     private var held: CardProduct?
@@ -30,6 +32,7 @@ final class PocketCardHosts {
     func product(
         for key: PocketCardKey,
         pageQuery: String = "",
+        hostSessionId: UUID? = nil,
         make: (PocketCardSurface) -> SPAViewProtocol?
     ) -> CardProduct? {
         if let held, held.key == key, held.pageQuery == pageQuery { return held }
@@ -39,7 +42,13 @@ final class PocketCardHosts {
         let surface = PocketCardSurface()
         guard let view = make(surface) else { return nil }
 
-        let product = CardProduct(key: key, pageQuery: pageQuery, view: view, surface: surface)
+        let product = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: view,
+            surface: surface,
+            hostSessionId: hostSessionId
+        )
         held = product
         return product
     }
@@ -50,7 +59,19 @@ final class PocketCardHosts {
         guard let held, held.key == key, held.pageQuery != pageQuery else { return }
 
         load(held.view)
-        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view, surface: held.surface)
+        self.held = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: held.view,
+            surface: held.surface,
+            hostSessionId: held.hostSessionId
+        )
+    }
+
+    func heldSession(of key: PocketCardKey) -> UUID? {
+        guard let held, held.key == key else { return nil }
+
+        return held.hostSessionId
     }
 
     func isOnDisplay(_ key: PocketCardKey) -> Bool {

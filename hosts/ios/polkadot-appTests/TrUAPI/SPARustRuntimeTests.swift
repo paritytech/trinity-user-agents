@@ -8,7 +8,10 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private func makeConfiguration(contentSource: SPAContentSource) throws -> SPAConfiguration {
+private func makeConfiguration(
+    contentSource: SPAContentSource,
+    openTap: HostOpenTap? = nil
+) throws -> SPAConfiguration {
     let tldProvider = StubTldProvider()
     let factory = ProductHostFactory(tldProvider: tldProvider)
     let host = try #require(factory.host(rawString: "test.dot"))
@@ -18,7 +21,8 @@ private func makeConfiguration(contentSource: SPAContentSource) throws -> SPACon
         isRootScreen: false,
         showMoreButton: false,
         page: ProductPage(host: host),
-        contentSource: contentSource
+        contentSource: contentSource,
+        openTap: openTap
     )
 }
 
@@ -399,6 +403,86 @@ struct SPARustRuntimeTests {
         #expect(execution.closeCallCount == 1)
         #expect(chainConnections.closeAllCallCount == 1)
         #expect(engine.destroyCallCount == 1)
+    }
+
+    /// The page a tap opened carries the tap, so its load can be timed from the user's finger.
+    @Test func aPageATapOpenedReportsTheTimeFromTheTap() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let clock = SteppingClock(start: 1_000, step: 250)
+        let tap = HostOpenTap(
+            hostSessionID: UUID(),
+            source: .pocketCard,
+            openedAtEpochMilliseconds: 1_793_900_000_000,
+            monotonicMilliseconds: 400
+        )
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .directURL(directURL), openTap: tap),
+            hostEventRecorder: recorder,
+            monotonicMilliseconds: { clock.read() }
+        )
+
+        _ = try await runtime.start(with: MockJSEngine())
+        await runtime.didFinishPageLoad(loaded: true, at: 2_000)
+
+        let pageLoaded = try #require(recorder.events.last)
+        #expect(pageLoaded.extras["tap_ms"] == .integer(1_600))
+        #expect(pageLoaded.extras["duration_ms"] == .integer(1_000))
+
+        await runtime.dispose()
+    }
+
+    @Test func aPageNoTapOpenedHasNoTapTime() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .directURL(directURL)),
+            hostEventRecorder: recorder
+        )
+
+        _ = try await runtime.start(with: MockJSEngine())
+        await runtime.didFinishPageLoad(loaded: true, at: 0)
+
+        #expect(recorder.events.last?.extras["tap_ms"] == nil)
+
+        await runtime.dispose()
+    }
+
+    /// The two fields are optional and additive, so the schema version stays 1.
+    @Test func aTappedPagesBootstrapCarriesWhenAndHowItWasOpened() throws {
+        let origin = HostEventOrigin(
+            launchID: UUID(),
+            osVersion: "18.1",
+            appVersion: nil,
+            appBuild: nil,
+            appVariant: "dev"
+        )
+        let tap = HostOpenTap(
+            hostSessionID: UUID(),
+            source: .deeplink,
+            openedAtEpochMilliseconds: 1_793_900_000_123,
+            monotonicMilliseconds: 0
+        )
+
+        let tapped = try RustRuntimeScriptsFactory(
+            bootstrapScript: "",
+            hostTelemetry: NativeHostTelemetry(
+                hostSessionID: UUID(),
+                origin: origin,
+                truapiHostVersion: "1",
+                openTap: tap
+            )
+        ).makeScripts()[0].content
+        let untapped = try RustRuntimeScriptsFactory(
+            bootstrapScript: "",
+            hostTelemetry: NativeHostTelemetry(hostSessionID: UUID(), origin: origin, truapiHostVersion: "1")
+        ).makeScripts()[0].content
+
+        #expect(tapped.contains(#""openedAtEpochMs":1793900000123"#))
+        #expect(tapped.contains(#""openSource":"deeplink""#))
+        #expect(tapped.contains(#""schemaVersion":"1""#))
+        #expect(!untapped.contains("openedAtEpochMs"))
+        #expect(!untapped.contains("openSource"))
     }
 
     @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {

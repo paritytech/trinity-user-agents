@@ -10,8 +10,11 @@ public struct NativeHostTelemetry: Encodable, Sendable {
     public let osVersion: String
     public let truapiHostVersion: String
     public let schemaVersion: String
+    /// Optional and additive, so the schema version stays 1: set only on the page a tap opened.
+    public let openedAtEpochMs: Int64?
+    public let openSource: String?
 
-    public init(hostSessionID: UUID, origin: HostEventOrigin, truapiHostVersion: String) {
+    public init(hostSessionID: UUID, origin: HostEventOrigin, truapiHostVersion: String, openTap: HostOpenTap? = nil) {
         hostSessionId = hostSessionID.uuidString.lowercased()
         appVersion = origin.appVersion
         appBuild = origin.appBuild.map(String.init)
@@ -20,5 +23,7 @@ public struct NativeHostTelemetry: Encodable, Sendable {
         osVersion = origin.osVersion
         self.truapiHostVersion = truapiHostVersion
         schemaVersion = "1"
+        openedAtEpochMs = openTap?.openedAtEpochMilliseconds
+        openSource = openTap?.source.rawValue
     }
 }

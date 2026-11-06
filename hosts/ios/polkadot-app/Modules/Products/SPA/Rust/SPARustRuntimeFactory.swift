@@ -36,7 +36,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             environment.routers.setPresentationView(presentationView)
         }
 
-        let hostSessionId = UUID()
+        let hostSessionId = environment.configuration.openTap?.hostSessionID ?? UUID()
         let executionModel = try environment.rust.makeSPAExecution(
             productId: productId,
             routers: environment.routers,
