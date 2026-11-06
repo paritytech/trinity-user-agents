@@ -1,6 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-mod profiles;
-
 use core::{future::ready, task::Poll};
 use std::{
 	collections::VecDeque,
@@ -190,4 +187,22 @@ async fn cancelling_a_load_drops_its_in_flight_read() {
 	drop(load);
 	let cancellation = futures::poll!(&mut cancellation);
 	assert!(matches!(cancellation, Poll::Ready(Err(_))), "{cancellation:?}");
+}
+
+#[tokio::test]
+async fn an_image_cannot_misdeclare_its_format() {
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: vec![("bitswap_v1_get", format!("\"0x{}\"", hex::encode(image())))],
+		..Default::default()
+	});
+
+	assert_eq!(
+		image_loader(platform, Arc::default())
+			.load(ImageReference::Bulletin {
+				cid: image_cid(),
+				declared_format: Some(ImageFormat::Jpeg),
+			})
+			.await,
+		Err(ImageError::Rejected { reason: "declared Jpeg, but the bytes are Png".into() })
+	);
 }

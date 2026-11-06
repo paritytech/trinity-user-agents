@@ -974,6 +974,8 @@ pub use platform::{
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
+pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
+#[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]
 pub use runtime::contacts::contact_handle;

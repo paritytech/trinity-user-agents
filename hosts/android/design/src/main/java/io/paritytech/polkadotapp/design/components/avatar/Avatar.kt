@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.design.components.avatar
 
-import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
@@ -25,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toOffset
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
@@ -37,13 +35,12 @@ import io.paritytech.polkadotapp.designsystem.typography.PolkadotTypography
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+const val AVATAR_REFRESH_PARAMETER = "avatar:refresh"
+
 sealed class AvatarUiModel {
     companion object;
 
-    /**
-     * [placeholder] shows until the image at [url] has loaded, and stays if it never does. A [refresh] reloads the image
-     * past every cache, while the cached one stays drawn.
-     */
+    /** [refresh] rereads profile metadata; immutable image bytes remain cached. */
     data class Image(val url: String, val placeholder: Name? = null, val refresh: Boolean = false) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
@@ -89,7 +86,12 @@ private fun ImageAvatar(
     ) {
         val letter = placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
         val context = LocalContext.current
-        val model = remember(context, url, refresh) { if (refresh) refreshRequest(context, url) else url }
+        val model = remember(context, url, refresh) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .setParameter(AVATAR_REFRESH_PARAMETER, refresh, memoryCacheKey = null)
+                .build()
+        }
 
         AsyncImage(
             model = model,
@@ -100,14 +102,6 @@ private fun ImageAvatar(
     }
 }
 
-private fun refreshRequest(context: Context, url: String): ImageRequest = ImageRequest.Builder(context)
-    .data(url)
-    .memoryCachePolicy(CachePolicy.WRITE_ONLY)
-    .diskCachePolicy(CachePolicy.WRITE_ONLY)
-    .placeholderMemoryCacheKey(url)
-    .build()
-
-// A refresh loads with the cached image as its placeholder, so the letter fills in only where nothing else is drawn.
 private fun AsyncImagePainter.State.withLetter(letter: Painter?): AsyncImagePainter.State = when {
     letter == null -> this
     this is AsyncImagePainter.State.Loading && painter == null -> copy(painter = letter)
