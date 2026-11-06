@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli-backends e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -506,6 +506,9 @@ e2e-cli-diagnosis: cli-runner ## Full playground diagnosis in a plain browser ta
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && TRUAPI_HOST_BIN="$(abspath target/release/truapi-host)" bun tests/e2e/cli-diagnosis.ts
 
+e2e-cli-backends: cli-runner ## Run the CLI on both chain backends, rpc and light-client, and compare them. SESSION=<name> picks the signing session.
+	bun scripts/cli-backends-e2e.ts $(if $(SESSION),--session $(SESSION))
+
 e2e-signing-cli: ## Run the generated battery against the direct signing-host CLI.
 	scripts/battery.sh --signing-host
 
@@ -539,7 +542,7 @@ e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head cal
 e2e-follow-after-transport-cut: ## Cut the chain connection under a chain-head read on the signing-host CLI; the follow must end and a fresh one must work.
 	scripts/follow-after-transport-cut-e2e.sh
 
-e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=stop|close|header|metadata.
+e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=close|header|metadata.
 	scripts/tx-during-outage-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.

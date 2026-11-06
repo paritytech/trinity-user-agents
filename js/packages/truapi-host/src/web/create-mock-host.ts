@@ -301,6 +301,15 @@ export interface StatementEntry {
   data: string | undefined;
   /** The signature proof, when the statement carries a signing one. */
   proof: { signature: string; signer: string } | undefined;
+  /** The 32-byte channel, `0x`-hex, or `undefined` when it carries none. */
+  channel: string | undefined;
+  /**
+   * The expiry as encoded: the expiration timestamp in seconds in the high 32
+   * bits and a sequence number in the low 32. `undefined` when it carries none.
+   */
+  expiry: bigint | undefined;
+  /** The 32-byte decryption key, `0x`-hex, or `undefined` when it carries none. */
+  decryptionKey: string | undefined;
   /** True when the product submitted it, false when a test injected it. */
   fromProduct: boolean;
   /** When the store took it, as epoch milliseconds. */
@@ -1032,7 +1041,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     // its contents: a suite chasing one it injected by hand has something to
     // see, where dropping it looks like the injection never happened.
     const fields = decodeStatement(statement.encoded) ?? [];
-    const proof = fields.find((field) => field.tag === "Proof")?.value as
+    const field = (tag: string) =>
+      fields.find((candidate) => candidate.tag === tag)?.value;
+    const proof = field("Proof") as
       | { tag: string; value: { signature: string; signer: string } }
       | undefined;
     return {
@@ -1046,6 +1057,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         proof && proof.tag !== "OnChain"
           ? { signature: proof.value.signature, signer: proof.value.signer }
           : undefined,
+      channel: field("Channel") as string | undefined,
+      expiry: field("Expiry") as bigint | undefined,
+      decryptionKey: field("DecryptionKey") as string | undefined,
       fromProduct: statement.fromProduct,
       timestamp: statement.timestamp,
     };

@@ -148,7 +148,7 @@ struct Cli {
 	command: Command,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, derive_more::Display)]
+#[derive(Clone, ValueEnum, derive_more::Display, Debug, PartialEq, Copy)]
 #[display(rename_all = "lowercase")]
 enum LogLevel {
 	Error,
@@ -175,7 +175,7 @@ impl LogLevel {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Clone, derive_more::Display, derive_more::Error, Debug, PartialEq)]
 #[display("invalid log level `{value}`; expected error, warn, info, debug, or trace")]
 struct InvalidLogLevel {
 	value: String,
@@ -360,7 +360,7 @@ enum Command {
 }
 
 /// Execution kind the CLI serves a product as.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Default, ValueEnum, Copy)]
 enum ExecutionKind {
 	/// Ordinary full-page product. Chat requests answer `Denied`, as they do
 	/// on any host that does not serve chat.
@@ -756,7 +756,7 @@ async fn run_pgas_check(
 	if submit && network.chain_backend == chain::ChainBackend::LightClient {
 		bail!(
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -1327,8 +1327,12 @@ async fn run_pairing_host(
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
-		let (ui, handle) =
-			TerminalUi::new_pairing(network.id, product_id.clone(), initial_log_filter);
+		let (ui, handle) = TerminalUi::new_pairing(
+			network.id,
+			network.chain_backend,
+			product_id.clone(),
+			initial_log_filter,
+		);
 		(Some(ui.enter()?), Some(handle))
 	} else {
 		(None, None)
@@ -1447,6 +1451,7 @@ async fn run_signing_host(
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new(
 			network.id,
+			network.chain_backend,
 			product_id,
 			initial_session_name.clone(),
 			initial_session_names,
@@ -1612,7 +1617,7 @@ struct SigningHostSession {
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
-#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[derive(derive_more::Display, derive_more::Error, Debug)]
 enum SessionOperationError {
 	#[display("failed to activate cached session")]
 	CachedActivation(GenericError),
@@ -4532,7 +4537,7 @@ mod cli_tests {
 		assert_eq!(
 			error.to_string(),
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 

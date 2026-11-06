@@ -1,20 +1,17 @@
-// WebSocket proxy for `scripts/tx-during-outage-e2e.sh`. When a frame carries
-// the trigger key, an outage starts for the given window, in one of these
-// modes:
+// WebSocket proxy for `scripts/tx-during-outage-e2e.sh`. It closes every
+// connection it carries and refuses new ones for the given window, in one of
+// these modes:
 //
-// - `close`: every open connection closes and new ones are refused.
-// - `stop`: connections stay open, every follow they carry is stopped, and a
-//   follow opened during the window is answered with an error after a delay,
-//   the way a node whose upstream lost DNS refuses to follow.
-// - `header`: nothing happens until the next `chainHead_v1_header`, which
-//   closes every connection under it and starts the window there, so the
-//   connection drops partway through reading the current block.
+// - `close`: a frame carrying the trigger closes everything at once.
+// - `header`: the trigger arms the cut, and the next `chainHead_v1_header`
+//   closes everything under it, so the connection drops partway through
+//   reading the current block.
 // - `metadata`: the trigger is not needed. The first runtime call fetching
-//   metadata closes every connection under it and starts the window, so the
-//   connection drops in the middle of a cold metadata download.
+//   metadata closes everything under it, so the connection drops in the
+//   middle of a cold metadata download.
 //
 // After the window it proxies normally again.
-// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|stop|header|metadata>
+// Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|header|metadata>
 import { writeFileSync } from "node:fs";
 
 const [upstreamUrl, portFile, trigger, outageArg, mode] = process.argv.slice(2);
@@ -24,23 +21,17 @@ if (
   !portFile ||
   !trigger ||
   !Number.isFinite(outageMs) ||
-  !["close", "stop", "header", "metadata"].includes(mode ?? "")
+  !["close", "header", "metadata"].includes(mode ?? "")
 ) {
   console.error(
-    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|stop|header|metadata>",
+    "usage: tx-during-outage-proxy.ts <upstream> <port-file> <trigger> <outage-ms> <close|header|metadata>",
   );
   process.exit(2);
 }
-/** How long a follow opened during a `stop` outage waits before it is refused. */
-const REFUSAL_DELAY_MS = 1_500;
 
 interface Link {
   upstream: WebSocket;
   pending: string[];
-  /** Request id to method, for requests still waiting on an answer. */
-  methods: Map<unknown, string>;
-  /** Follow subscriptions this connection carries. */
-  follows: Set<string>;
 }
 
 const links = new Set<Bun.ServerWebSocket<Link>>();
@@ -59,62 +50,26 @@ function parse(frame: string): Record<string, unknown> | undefined {
   }
 }
 
-function closeEverything() {
+function closeEverything(under: string) {
+  downUntil = Date.now() + outageMs;
+  console.log(
+    `proxy: closing ${links.size} connections ${under} and refusing new ones for ${outageMs} ms`,
+  );
   for (const link of links) {
     link.data.upstream.close();
     link.close();
   }
 }
 
-function startOutage() {
-  cut = true;
-  if (mode === "header") {
-    armed = true;
-    console.log("proxy: armed, the next chainHead_v1_header closes every connection");
-    return;
-  }
-  downUntil = Date.now() + outageMs;
-  if (mode === "close") {
-    console.log(
-      `proxy: closing ${links.size} connections and refusing new ones for ${outageMs} ms`,
-    );
-    closeEverything();
-    return;
-  }
-  let stopped = 0;
-  for (const link of links) {
-    for (const subscription of link.data.follows) {
-      link.send(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          method: "chainHead_v1_followEvent",
-          params: { subscription, result: { event: "stop" } },
-        }),
-      );
-      stopped++;
-    }
-    link.data.follows.clear();
-  }
-  console.log(
-    `proxy: stopped ${stopped} follows and refusing new ones for ${outageMs} ms`,
-  );
-}
-
 const server = Bun.serve<Link>({
   hostname: "127.0.0.1",
   port: 0,
   fetch(request, server) {
-    if (mode !== "stop" && down()) {
+    if (down()) {
       return new Response("outage", { status: 503 });
     }
     const upstream = new WebSocket(upstreamUrl);
-    const data: Link = {
-      upstream,
-      pending: [],
-      methods: new Map(),
-      follows: new Set(),
-    };
-    if (server.upgrade(request, { data })) {
+    if (server.upgrade(request, { data: { upstream, pending: [] } })) {
       return undefined;
     }
     upstream.close();
@@ -124,35 +79,26 @@ const server = Bun.serve<Link>({
     maxPayloadLength: 64 * 1024 * 1024,
     open(ws) {
       links.add(ws);
-      const { upstream, pending, methods, follows } = ws.data;
+      const { upstream, pending } = ws.data;
       upstream.addEventListener("open", () => {
         for (const frame of pending.splice(0)) upstream.send(frame);
       });
-      upstream.addEventListener("message", (event) => {
-        const frame = String(event.data);
-        const message = parse(frame);
-        if (message && "id" in message) {
-          const method = methods.get(message.id);
-          methods.delete(message.id);
-          if (
-            method === "chainHead_v1_follow" &&
-            typeof message.result === "string"
-          ) {
-            follows.add(message.result);
-          }
-        }
-        ws.send(frame);
-      });
+      upstream.addEventListener("message", (event) => ws.send(String(event.data)));
       upstream.addEventListener("close", () => ws.close());
       upstream.addEventListener("error", () => ws.close());
     },
     message(ws, message) {
       const frame = String(message);
-      if (!cut && frame.includes(trigger)) {
-        startOutage();
-        if (mode === "close") return;
-      }
       const request = parse(frame);
+      if (!cut && mode !== "metadata" && frame.includes(trigger)) {
+        cut = true;
+        if (mode === "close") {
+          closeEverything("on the trigger");
+          return;
+        }
+        armed = true;
+        console.log("proxy: armed, the next chainHead_v1_header closes every connection");
+      }
       if (
         mode === "metadata" &&
         !cut &&
@@ -160,40 +106,13 @@ const server = Bun.serve<Link>({
         frame.includes("Metadata_metadata")
       ) {
         cut = true;
-        downUntil = Date.now() + outageMs;
-        console.log(
-          `proxy: closing ${links.size} connections under a metadata call and refusing new ones for ${outageMs} ms`,
-        );
-        closeEverything();
+        closeEverything("under a metadata call");
         return;
       }
       if (armed && request?.method === "chainHead_v1_header") {
         armed = false;
-        downUntil = Date.now() + outageMs;
-        console.log(
-          `proxy: closing ${links.size} connections under chainHead_v1_header and refusing new ones for ${outageMs} ms`,
-        );
-        closeEverything();
+        closeEverything("under chainHead_v1_header");
         return;
-      }
-      if (
-        mode === "stop" &&
-        down() &&
-        request?.method === "chainHead_v1_follow"
-      ) {
-        setTimeout(() => {
-          ws.send(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: request.id,
-              error: { code: -32603, message: "upstream unreachable" },
-            }),
-          );
-        }, REFUSAL_DELAY_MS);
-        return;
-      }
-      if (request && "id" in request && typeof request.method === "string") {
-        ws.data.methods.set(request.id, request.method);
       }
       if (ws.data.upstream.readyState === WebSocket.OPEN) {
         ws.data.upstream.send(frame);

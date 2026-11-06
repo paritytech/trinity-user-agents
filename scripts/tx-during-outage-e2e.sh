@@ -40,7 +40,7 @@ people_ws="$(jq -r '.chains[] | select(.role == "People") | .rpc[0]' <<<"$descri
 trigger_key="0x$(printf '7a%.0s' $(seq 1 32))"
 
 echo "==> starting the People proxy"
-bun "$proxy_script" "$people_ws" "$state/proxy-port" "${trigger_key}" "${OUTAGE_MS:-4000}" "${OUTAGE_MODE:-stop}" &
+bun "$proxy_script" "$people_ws" "$state/proxy-port" "${trigger_key}" "${OUTAGE_MS:-4000}" "${OUTAGE_MODE:-close}" &
 proxy_pid=$!
 for _ in $(seq 1 100); do
   [ -s "$state/proxy-port" ] && break

@@ -8,6 +8,7 @@ import SubstrateSdk
 /// RFC-0004 Accounts Protocol `create_account_proof` backed by host-held member keys.
 protocol APCreateProofHandling: Sendable {
     func createProof(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation,
         message: Data
@@ -19,7 +20,7 @@ final class APCreateProofHandler: APBaseMembershipHandler, @unchecked Sendable {
 
     init(
         callingProductId: ProductId?,
-        options: [CreateProofOrAliasOption],
+        builtInKeys: BuiltInPersonhoodKeysProviding,
         depsResolver: MembershipDepsResolving,
         confirmationRequester: CreateProofConfirming,
         logger: LoggerProtocol
@@ -28,7 +29,7 @@ final class APCreateProofHandler: APBaseMembershipHandler, @unchecked Sendable {
 
         super.init(
             callingProductId: callingProductId,
-            options: options,
+            builtInKeys: builtInKeys,
             depsResolver: depsResolver,
             logger: logger
         )
@@ -37,12 +38,20 @@ final class APCreateProofHandler: APBaseMembershipHandler, @unchecked Sendable {
 
 extension APCreateProofHandler: APCreateProofHandling {
     func createProof(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation,
         message: Data
     ) async throws -> RingVrfProof {
         do {
-            return try await performCreateProof(context: context, ring: ring, message: message)
+            try await confirmProofCreationIfNeeded(context: context, message: message)
+            let keyManager = try resolveKeyManager(handle: keyHandle, ring: ring)
+            return try await performCreateProof(
+                keyManager: keyManager,
+                context: context,
+                ring: ring,
+                message: message
+            )
         } catch {
             logger.error("Create proof failed: \(error)")
             throw CreateProofError.wrapping(error)
@@ -52,13 +61,16 @@ extension APCreateProofHandler: APCreateProofHandling {
 
 private extension APCreateProofHandler {
     func performCreateProof(
+        keyManager: BandersnatchKeyManaging,
         context: ProductProofContext,
         ring: RingLocation,
         message: Data
     ) async throws -> RingVrfProof {
         let contextBytes = try context.contextBytes()
 
-        try await confirmProofCreationIfNeeded(context: context, message: message)
+        guard let collectionId = ring.collectionId else {
+            throw CreateProofError.keyNotInRing
+        }
 
         guard let deps = try await resolveDeps(for: ring) else {
             throw CreateProofError.ringNotFound
@@ -66,18 +78,15 @@ private extension APCreateProofHandler {
 
         let blockHash = try await deps.blockInfoProvider.fetchCurrentHash()
 
-        guard let collectionId = requestedCollection(for: ring) else {
-            throw CreateProofError.unknown("No ring keys configured")
-        }
-
-        let selection = try await selectMemberKey(
+        let ringIndex = try await fetchRingIndex(
+            of: keyManager.getMemberKey(),
             in: collectionId,
             deps: deps,
             blockHash: blockHash
         )
 
         guard let params = try await deps.proofParamsFetcher.fetch(
-            for: selection.ringIndex,
+            for: ringIndex,
             collectionId: collectionId,
             blockHash: blockHash
         ) else {
@@ -85,26 +94,26 @@ private extension APCreateProofHandler {
         }
 
         guard let revision = try await deps.proofParamsFetcher.fetchCurrentRevision(
-            for: selection.ringIndex,
+            for: ringIndex,
             collectionId: collectionId,
             blockHash: blockHash
         ) else {
             throw CreateProofError.ringNotFound
         }
 
-        let proof = try selection.option.keyManager.createProof(
+        let proof = try keyManager.createProof(
             message,
             members: params.ringMembers,
             context: contextBytes,
             domainSize: params.ringSize
         )
 
-        let alias = try selection.option.keyManager.deriveAlias(for: contextBytes)
+        let alias = try keyManager.deriveAlias(for: contextBytes)
 
         return RingVrfProof(
             proof: proof,
             contextualAlias: ContextualAlias(context: contextBytes, alias: alias),
-            ringIndex: selection.ringIndex,
+            ringIndex: ringIndex,
             ringRevision: revision
         )
     }
@@ -127,24 +136,31 @@ private extension APCreateProofHandler {
         }
     }
 
-    func selectMemberKey(
+    func resolveKeyManager(handle: RingVrfKeyHandle, ring: RingLocation) throws -> BandersnatchKeyManaging {
+        do {
+            return try builtInKeys.resolve(handle: handle, ring: ring)
+        } catch BuiltInPersonhoodKeyError.keyNotRegistered {
+            throw CreateProofError.keyNotRegistered
+        } catch BuiltInPersonhoodKeyError.keyNotInRing {
+            throw CreateProofError.keyNotInRing
+        }
+    }
+
+    func fetchRingIndex(
+        of memberKey: BandersnatchPubKey,
         in collectionId: MembersPallet.CollectionIdentifier,
         deps: MembershipDeps,
         blockHash: BlockHashData?
-    ) async throws -> (option: CreateProofOrAliasOption, ringIndex: MembersPallet.RingIndex) {
-        let memberKeys = try options.map { try $0.keyManager.getMemberKey() }
-
+    ) async throws -> MembersPallet.RingIndex {
         let statuses = try await deps.statusChecker.checkStatuses(
-            of: memberKeys.map { MembershipStatusInput(memberKey: $0, collection: collectionId) },
+            of: [MembershipStatusInput(memberKey: memberKey, collection: collectionId)],
             blockHash: blockHash
         )
 
-        for (option, memberKey) in zip(options, memberKeys) {
-            if let ringIndex = statuses[memberKey] {
-                return (option, ringIndex)
-            }
+        guard let ringIndex = statuses[memberKey] else {
+            throw CreateProofError.notMember
         }
 
-        throw CreateProofError.notMember
+        return ringIndex
     }
 }

@@ -18,7 +18,6 @@ use crate::{
 const REFUND_KEY_DOMAIN: &[u8] = b"nft-purse/refund";
 
 /// The purse a refund takes items out of, and how many.
-#[derive(Debug)]
 pub struct RefundDrain {
 	/// The purse the deposit moved the items into.
 	pub from: PurseId,
