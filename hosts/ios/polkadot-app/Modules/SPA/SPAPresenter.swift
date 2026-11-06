@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import UIKit
 import UIKitExt
@@ -66,6 +67,11 @@ extension SPAPresenter: SPAPresenterProtocol {
     }
 
     func didTapClose() {
+        if configuration.presentation == .fullScreen {
+            wireframe.dismiss(view: view)
+            return
+        }
+
         guard let browserTabId = configuration.browserTabId else { return }
 
         wireframe.close(tabId: browserTabId)
@@ -129,6 +135,10 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
 
     func didUpdateLoadPhase(_ phase: ProductLoadPhase) {
         view?.updateLoadPhase(phase)
+    }
+
+    func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+        view?.showChainStatus(rows)
     }
 
     func didFail(error: Error) {
