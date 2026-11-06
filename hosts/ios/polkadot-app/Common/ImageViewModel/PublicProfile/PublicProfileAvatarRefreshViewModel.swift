@@ -61,7 +61,8 @@ private extension PublicProfileAvatarRefreshViewModel {
         completion: ((Bool) -> Void)?
     ) {
         let options = optionsFactory.options(for: settings, animated: animated) + [.forceRefresh]
-        let cachedImage = KingfisherManager.shared.cache.retrieveImageInMemoryCache(
+        let cache = KingfisherParsedOptionsInfo(options).targetCache ?? KingfisherManager.shared.cache
+        let cachedImage = cache.retrieveImageInMemoryCache(
             forKey: provider.cacheKey,
             options: options
         )
