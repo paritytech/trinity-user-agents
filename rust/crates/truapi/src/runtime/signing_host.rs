@@ -119,6 +119,7 @@ impl SigningHost {
 	pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
 		let platform = services.platform.clone();
 		let ring_resolver = ChainRingResolver::new(services.chain.clone());
+		let session_state = SessionState::new();
 		Arc::new(Self {
 			services,
 			platform: platform.clone(),
@@ -127,13 +128,13 @@ impl SigningHost {
 			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-			session_state: SessionState::new(),
+			session_state: session_state.clone(),
 			auth_state: AuthStateMachine::new(platform.clone()),
 			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			activation_generation: Mutex::new(0),
-			grants: HostGrantStore::new(platform.clone(), GrantKeeping::Wallet),
+			grants: HostGrantStore::new(platform.clone(), GrantKeeping::Wallet, session_state),
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
@@ -201,6 +202,7 @@ impl SigningHost {
 			[0xcc; 32],
 			crate::test_support::test_spawner(),
 		);
+		let session_state = SessionState::new();
 		Arc::new(Self {
 			services,
 			platform: platform.clone(),
@@ -209,13 +211,13 @@ impl SigningHost {
 			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-			session_state: SessionState::new(),
+			session_state: session_state.clone(),
 			auth_state: AuthStateMachine::new(platform.clone()),
 			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			activation_generation: Mutex::new(0),
-			grants: HostGrantStore::new(platform.clone(), GrantKeeping::Wallet),
+			grants: HostGrantStore::new(platform.clone(), GrantKeeping::Wallet, session_state),
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
@@ -282,7 +284,6 @@ impl SigningHost {
 		let ring_vrf_domain_entropy = derive_ring_vrf_domain_entropy(&entropy, product_id)?;
 		self.grants
 			.remember_auto_signing_key(
-				&self.session_state,
 				&current,
 				grant_revision,
 				product_id,
@@ -311,7 +312,6 @@ impl SigningHost {
 		let key = StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?;
 		self.grants
 			.retain_allowance(
-				&self.session_state,
 				&current,
 				grant_revision,
 				product_id,
@@ -1261,7 +1261,6 @@ impl ProductAuthority for SigningHost {
 		if let Some(AccountGrant::StatementStore { key, period: Some(kept_period) }) = self
 			.grants
 			.cached_allowance(
-				&self.session_state,
 				&current,
 				grant_revision,
 				product_id,

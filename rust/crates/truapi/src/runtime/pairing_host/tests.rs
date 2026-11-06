@@ -1249,7 +1249,6 @@ async fn remember_auto_key(
 	pairing_host
 		.grants
 		.remember_auto_signing_key(
-			&pairing_host.session_state,
 			session,
 			grant_revision,
 			&crate::platform::ProductId::for_test(product_id),
@@ -1278,7 +1277,7 @@ async fn retain_allowance_key(
 	};
 	pairing_host
 		.grants
-		.retain_allowance(&pairing_host.session_state, session, grant_revision, product_id, &grant)
+		.retain_allowance(session, grant_revision, product_id, &grant)
 		.await
 }
 
@@ -1291,13 +1290,7 @@ async fn cached_allowance_key(
 ) -> Result<Option<AccountGrant>, AuthorityError> {
 	pairing_host
 		.grants
-		.cached_allowance(
-			&pairing_host.session_state,
-			session,
-			grant_revision,
-			product_id,
-			resource,
-		)
+		.cached_allowance(session, grant_revision, product_id, resource)
 		.await
 }
 

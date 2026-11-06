@@ -13,7 +13,6 @@ use truapi::latest::{
 
 use super::{
 	HostSession,
-	allowances::GrantScope,
 	authority::{
 		AccountCaller, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, GrantKeeping, ProductAuthority,
@@ -120,14 +119,19 @@ impl PairingHost {
 		Arc::new_cyclic(|weak_self: &Weak<PairingHost>| {
 			let owner: Weak<dyn PairedSessionOwner> = weak_self.clone();
 			let session = SsoRequestService::new(services.clone(), host_config, owner);
+			let session_state = session.session_state();
 			Self {
 				services: services.clone(),
 				platform: services.platform.clone(),
 				chain: services.chain.clone(),
-				session_state: session.session_state(),
+				session_state: session_state.clone(),
 				session,
 				consent: ProductConsent::new(services.platform.clone()),
-				grants: HostGrantStore::new(services.platform.clone(), GrantKeeping::Paired),
+				grants: HostGrantStore::new(
+					services.platform.clone(),
+					GrantKeeping::Paired,
+					session_state,
+				),
 				ring_resolver: ChainRingResolver::new(services.chain.clone()),
 				ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
 				#[cfg(feature = "test-host")]
@@ -230,11 +234,7 @@ impl PairingHost {
 		if session.sso.is_none() {
 			return false;
 		}
-		let cache_key = (GrantScope::from_session(&session), product_id.clone());
-		self.grants
-			.known_product_subtree(&self.session_state, &session, cache_key)
-			.await
-			.is_none()
+		self.grants.known_product_subtree(&session, product_id).await.is_none()
 	}
 
 	fn current_private_session(

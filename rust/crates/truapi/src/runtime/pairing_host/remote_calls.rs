@@ -2,7 +2,7 @@
 
 use super::{
 	super::{
-		allowances::{AllowanceResource, GrantScope},
+		allowances::AllowanceResource,
 		authority::{
 			AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
@@ -40,12 +40,7 @@ impl PairingHost {
 			return Err(AuthorityError::Disconnected);
 		}
 		let grant_revision = self.grants.lifecycle().revision();
-		let cache_key = (GrantScope::from_session(session), product_id.clone());
-		if let Some(public_key) = self
-			.grants
-			.known_product_subtree(&self.session_state, session, cache_key.clone())
-			.await
-		{
+		if let Some(public_key) = self.grants.known_product_subtree(session, product_id).await {
 			return Ok(public_key);
 		}
 		let public_key = self
@@ -55,13 +50,7 @@ impl PairingHost {
 			.map_err(remote_authority_error)?;
 		if !self
 			.grants
-			.persist_product_subtree_if_current(
-				&self.session_state,
-				session,
-				grant_revision,
-				cache_key,
-				public_key,
-			)
+			.persist_product_subtree_if_current(session, grant_revision, product_id, public_key)
 			.await
 		{
 			return Err(AuthorityError::Disconnected);
@@ -366,7 +355,6 @@ impl PairingHost {
 		if let Some(AccountGrant::StatementStore { key, .. }) = self
 			.grants
 			.cached_allowance(
-				&self.session_state,
 				session,
 				grant_revision,
 				product_id,
@@ -390,7 +378,6 @@ impl PairingHost {
 				let key = StatementStoreAllowanceKey::from_secret_bytes(slot_account_key)?;
 				self.grants
 					.retain_allowance(
-						&self.session_state,
 						session,
 						grant_revision,
 						product_id,
@@ -414,13 +401,7 @@ impl PairingHost {
 		let grant_revision = self.grants.lifecycle().revision();
 		if let Some(AccountGrant::Bulletin(key)) = self
 			.grants
-			.cached_allowance(
-				&self.session_state,
-				session,
-				grant_revision,
-				product_id,
-				AllowanceResource::Bulletin,
-			)
+			.cached_allowance(session, grant_revision, product_id, AllowanceResource::Bulletin)
 			.await?
 		{
 			return Ok(key);
@@ -445,7 +426,7 @@ impl PairingHost {
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let grant_revision = self.grants.lifecycle().revision();
 		self.grants
-			.evict_bulletin_allowance(&self.session_state, session, grant_revision, product_id)
+			.evict_bulletin_allowance(session, grant_revision, product_id)
 			.await?;
 		self.allocate_bulletin_allowance_key(
 			cx,
@@ -479,7 +460,6 @@ impl PairingHost {
 				let key = BulletinAllowanceKey::from_secret_bytes(slot_account_key)?;
 				self.grants
 					.retain_allowance(
-						&self.session_state,
 						session,
 						grant_revision,
 						product_id,
@@ -503,28 +483,13 @@ impl PairingHost {
 	) -> Result<(), AuthorityError> {
 		match grant {
 			grant @ (AccountGrant::StatementStore { .. } | AccountGrant::Bulletin(_)) => {
-				self.grants
-					.retain_allowance(
-						&self.session_state,
-						session,
-						grant_revision,
-						product_id,
-						&grant,
-					)
-					.await
+				self.grants.retain_allowance(session, grant_revision, product_id, &grant).await
 			},
 			AccountGrant::AutoSigning(key) => {
 				let expected =
 					self.remote_product_subtree_public_key(cx, session, product_id).await?;
 				self.grants
-					.remember_auto_signing_key(
-						&self.session_state,
-						session,
-						grant_revision,
-						product_id,
-						expected,
-						key,
-					)
+					.remember_auto_signing_key(session, grant_revision, product_id, expected, key)
 					.await
 			},
 			AccountGrant::SmartContract => Ok(()),

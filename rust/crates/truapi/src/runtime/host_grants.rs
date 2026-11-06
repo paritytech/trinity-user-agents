@@ -110,6 +110,7 @@ pub struct HostGrantStore {
 	state: Mutex<GrantState>,
 	persistence: futures::lock::Mutex<()>,
 	caches: Mutex<GrantCaches>,
+	session_state: Arc<SessionState>,
 }
 
 #[derive(Default)]
@@ -175,13 +176,20 @@ pub struct HostGrantPersistence<'a> {
 
 impl HostGrantStore {
 	/// Bind retained capabilities to the host's storage, kept as `keeping` says.
-	pub fn new(storage: Arc<dyn CoreStorage>, keeping: GrantKeeping) -> Self {
+	///
+	/// Grants are only kept for the session `session_state` selects.
+	pub fn new(
+		storage: Arc<dyn CoreStorage>,
+		keeping: GrantKeeping,
+		session_state: Arc<SessionState>,
+	) -> Self {
 		Self {
 			storage,
 			keeping,
 			state: Mutex::new(GrantState::default()),
 			persistence: futures::lock::Mutex::new(()),
 			caches: Mutex::new(GrantCaches::default()),
+			session_state,
 		}
 	}
 
@@ -217,23 +225,21 @@ impl HostGrantStore {
 
 	fn session_secret_allocation_is_current(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 	) -> bool {
-		self.lifecycle().is_current(session_state, session, grant_revision)
+		self.lifecycle().is_current(session, grant_revision)
 	}
 
 	fn cache_auto_signing_key_if_current(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		cache_key: AutoSigningCacheKey,
 		key: AutoSigningKey,
 	) -> bool {
 		let lifecycle = self.lifecycle();
-		if !lifecycle.is_current(session_state, session, grant_revision) {
+		if !lifecycle.is_current(session, grant_revision) {
 			return false;
 		}
 		self.caches().auto_signing_keys.insert(cache_key, key);
@@ -243,45 +249,36 @@ impl HostGrantStore {
 	/// Load a retained public subtree from memory or durable storage.
 	pub async fn known_product_subtree(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
-		cache_key: (GrantScope, ProductId),
+		product_id: &ProductId,
 	) -> Option<[u8; 32]> {
 		let grant_revision = self.lifecycle().revision();
+		let cache_key = (GrantScope::from_session(session), product_id.clone());
 		if let Some(public_key) = self.caches().product_subtrees.get(&cache_key).copied() {
 			return Some(public_key);
 		}
-		self.stored_product_subtree(session_state, session, grant_revision, cache_key)
-			.await
+		self.stored_product_subtree(session, grant_revision, product_id).await
 	}
 
 	/// Restore a public subtree only into the selected live session.
 	async fn stored_product_subtree(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
-		cache_key: (GrantScope, ProductId),
+		product_id: &ProductId,
 	) -> Option<[u8; 32]> {
 		if self.keeping == GrantKeeping::Wallet {
 			return None;
 		}
-		let public_key =
-			product_subtree::read_product_subtree(&*self.storage, session, &cache_key.1)
-				.await
-				.inspect_err(|error| warn!(reason = %error, "stored product subtree read failed"))
-				.ok()
-				.flatten()?;
+		let public_key = product_subtree::read_product_subtree(&*self.storage, session, product_id)
+			.await
+			.inspect_err(|error| warn!(reason = %error, "stored product subtree read failed"))
+			.ok()
+			.flatten()?;
 		// A stored key still has to belong to the live pairing before it is
 		// served, exactly as a freshly fetched one does.
-		self.cache_product_subtree_if_current(
-			session_state,
-			session,
-			grant_revision,
-			cache_key,
-			public_key,
-		)
-		.then_some(public_key)
+		self.cache_product_subtree_if_current(session, grant_revision, product_id, public_key)
+			.then_some(public_key)
 	}
 
 	/// Persist and memory-cache a freshly fetched product subtree public key.
@@ -293,30 +290,27 @@ impl HostGrantStore {
 	/// has gone. A wallet's own host only caches the key.
 	pub async fn persist_product_subtree_if_current(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
-		cache_key: (GrantScope, ProductId),
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) -> bool {
-		let product_id = cache_key.1.clone();
 		if self.keeping == GrantKeeping::Wallet {
 			return self.cache_product_subtree_if_current(
-				session_state,
 				session,
 				grant_revision,
-				cache_key,
+				product_id,
 				public_key,
 			);
 		}
 		let _storage_guard = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return false;
 		}
 		let persisted = match product_subtree::write_product_subtree(
 			&*self.storage,
 			session,
-			&product_id,
+			product_id,
 			public_key,
 		)
 		.await
@@ -327,18 +321,12 @@ impl HostGrantStore {
 				false
 			},
 		};
-		if self.cache_product_subtree_if_current(
-			session_state,
-			session,
-			grant_revision,
-			cache_key,
-			public_key,
-		) {
+		if self.cache_product_subtree_if_current(session, grant_revision, product_id, public_key) {
 			return true;
 		}
 		if persisted {
 			let _ =
-				product_subtree::remove_product_subtree(&*self.storage, session, &product_id).await;
+				product_subtree::remove_product_subtree(&*self.storage, session, product_id).await;
 		}
 		false
 	}
@@ -346,17 +334,18 @@ impl HostGrantStore {
 	/// Cache a public subtree only for the selected live session.
 	fn cache_product_subtree_if_current(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
-		cache_key: (GrantScope, ProductId),
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) -> bool {
 		let lifecycle = self.lifecycle();
-		if !lifecycle.is_current(session_state, session, grant_revision) {
+		if !lifecycle.is_current(session, grant_revision) {
 			return false;
 		}
-		self.caches().product_subtrees.insert(cache_key, public_key);
+		self.caches()
+			.product_subtrees
+			.insert((GrantScope::from_session(session), product_id.clone()), public_key);
 		true
 	}
 
@@ -368,7 +357,6 @@ impl HostGrantStore {
 	/// with [`AuthorityError::Rejected`] for a grant that is not an allowance.
 	pub async fn retain_allowance(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
@@ -382,7 +370,7 @@ impl HostGrantStore {
 			_ => return Err(AuthorityError::Rejected),
 		};
 		let _storage = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		if self.keeping == GrantKeeping::Paired {
@@ -395,8 +383,7 @@ impl HostGrantStore {
 			)
 			.await?;
 		}
-		if let Err(error) =
-			self.remember_allowance(session_state, session, grant_revision, product_id, allowance)
+		if let Err(error) = self.remember_allowance(session, grant_revision, product_id, allowance)
 		{
 			if self.keeping == GrantKeeping::Paired {
 				let _ =
@@ -410,14 +397,13 @@ impl HostGrantStore {
 
 	fn remember_allowance(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
 		allowance: &AccountGrant,
 	) -> Result<(), AuthorityError> {
 		let lifecycle = self.lifecycle();
-		if !lifecycle.is_current(session_state, session, grant_revision) {
+		if !lifecycle.is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		match allowance {
@@ -445,7 +431,6 @@ impl HostGrantStore {
 	/// `session` is no longer selected.
 	pub async fn cached_allowance(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
@@ -453,7 +438,7 @@ impl HostGrantStore {
 	) -> Result<Option<AccountGrant>, AuthorityError> {
 		let cache_key = AllowanceCacheKey::new(session, product_id, resource);
 		let _storage = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		let cached = match resource {
@@ -493,7 +478,7 @@ impl HostGrantStore {
 				},
 			}
 		};
-		self.remember_allowance(session_state, session, grant_revision, product_id, &allowance)?;
+		self.remember_allowance(session, grant_revision, product_id, &allowance)?;
 		Ok(Some(allowance))
 	}
 
@@ -513,13 +498,12 @@ impl HostGrantStore {
 	/// Drop a product's Bulletin key from memory and storage before it is replaced.
 	pub async fn evict_bulletin_allowance(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
 	) -> Result<(), AuthorityError> {
 		let _storage = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		self.caches().bulletin_allowances.remove(&AllowanceCacheKey::new(
@@ -536,7 +520,7 @@ impl HostGrantStore {
 			)
 			.await?;
 		}
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		Ok(())
@@ -547,7 +531,6 @@ impl HostGrantStore {
 	/// A wallet's own host keeps it in memory for this activation; a paired host stores it.
 	pub async fn remember_auto_signing_key(
 		&self,
-		session_state: &SessionState,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
@@ -558,17 +541,12 @@ impl HostGrantStore {
 		let owner = AutoSigningOwner::from_session(session);
 		let cache_key = (owner.clone(), product_id.clone());
 		if self.keeping == GrantKeeping::Wallet {
-			let kept = self.cache_auto_signing_key_if_current(
-				session_state,
-				session,
-				grant_revision,
-				cache_key,
-				grant,
-			);
+			let kept =
+				self.cache_auto_signing_key_if_current(session, grant_revision, cache_key, grant);
 			return if kept { Ok(()) } else { Err(AuthorityError::Disconnected) };
 		}
 		let persistence = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		persistence.clear_legacy_auto_signing_key(product_id).await?;
@@ -593,7 +571,7 @@ impl HostGrantStore {
 			secret: *grant.as_secret_bytes(),
 			ring_vrf_domain_entropy: *grant.ring_vrf_domain_entropy(),
 		});
-		if !self.session_secret_allocation_is_current(session_state, session, grant_revision) {
+		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		self.storage
@@ -602,13 +580,7 @@ impl HostGrantStore {
 			.map_err(|err| AuthorityError::Unknown {
 				reason: format!("failed to persist AutoSigning capability: {}", err.reason),
 			})?;
-		if !self.cache_auto_signing_key_if_current(
-			session_state,
-			session,
-			grant_revision,
-			cache_key,
-			grant,
-		) {
+		if !self.cache_auto_signing_key_if_current(session, grant_revision, cache_key, grant) {
 			let _ = persistence.clear_auto_signing_product(product_id).await;
 			return Err(AuthorityError::Disconnected);
 		}
@@ -752,13 +724,9 @@ impl HostGrantGuard<'_> {
 		self.state.revision
 	}
 
-	fn is_current(
-		&self,
-		session_state: &SessionState,
-		session: &SessionInfo,
-		revision: u64,
-	) -> bool {
-		self.state.revision == revision && GrantScope::from_session(session).matches(session_state)
+	fn is_current(&self, session: &SessionInfo, revision: u64) -> bool {
+		self.state.revision == revision &&
+			GrantScope::from_session(session).matches(&self.store.session_state)
 	}
 
 	fn advance(&mut self) {

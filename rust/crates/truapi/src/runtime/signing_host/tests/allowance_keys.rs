@@ -110,7 +110,6 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 	let session = state.current().unwrap();
 	let revision = signing_host.grants.lifecycle().revision();
 	futures::executor::block_on(signing_host.grants.retain_allowance(
-		&state,
 		&session,
 		revision,
 		&ProductId::for_test(product_id),
@@ -124,7 +123,6 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 	let session = state.current().unwrap();
 	let revision = signing_host.grants.lifecycle().revision();
 	futures::executor::block_on(signing_host.grants.cached_allowance(
-		&state,
 		&session,
 		revision,
 		&ProductId::for_test(product_id),
@@ -314,7 +312,6 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		.expect("re-activation succeeds");
 
 	let remembered_stale = futures::executor::block_on(signing_host.grants.retain_allowance(
-		&state,
 		&session,
 		revision,
 		&ProductId::for_test(PRODUCT_ID),
