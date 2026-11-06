@@ -31,7 +31,7 @@ const COLLAPSED_SLEEP: Duration = Duration::from_millis(200);
 
 /// Wraps a platform and collapses its long sleeps. Every other capability is
 /// the inner platform's.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ShortDeadlinePlatform<T> {
 	inner: T,
 }

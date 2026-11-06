@@ -71,9 +71,8 @@ final class CoinageAssetStore {
         let rawDesigns: [RawDesign] = try Self.decode("designs", in: bundle)
         let rawMeshes: [RawMesh] = try Self.decode("meshes", in: bundle)
 
-        let environmentLevels = manifest.env.cube.levels.count
-        params = Params(raw: raw, levels: environmentLevels)
-        metalRows = metals.flatMap { $0.reflectance + [$0.roughness] + $0.tone + [0] }
+        params = Params(raw: raw, levels: CoinageStudioBake.levels)
+        metalRows = metals.flatMap { $0.reflectance + [$0.roughness] + $0.tone + [$0.brush ?? 1] }
         designs = rawDesigns.map(Design.init(raw:))
         meshes = try rawMeshes.reduce(into: [:]) { loaded, entry in
             loaded[entry.id] = try Self.load(entry.mesh, device: device, bundle: bundle)
@@ -83,11 +82,7 @@ final class CoinageAssetStore {
         }
 
         reliefAtlas = try Self.loadReliefAtlas(device: device, bundle: bundle, atlas: atlas)
-        environment = try Self.loadEnvironment(
-            device: device,
-            bundle: bundle,
-            levels: manifest.env.cube.levels
-        )
+        environment = try Self.bakeStudio(device: device, bundle: bundle)
     }
 
     /// Every mesh, already loaded. A lookup, never a read.
@@ -118,9 +113,12 @@ extension CoinageAssetStore {
         let tilePixels: Float
         let environmentMaxLod: Float
         var lightTurn: SIMD3<Float> = .zero
+        /// Every coin leaned the same way, for the debug dial; zero in use.
+        var coinTurn: SIMD3<Float> = .zero
         let material: [Float]
         var backdrop: [Float] = [0, 0, 0]
         var debug: Int32 = 0
+        var grain: Float = 1
 
         fileprivate init(raw: RawParams, levels: Int) {
             tilePixels = raw.atlas.tilePx
@@ -133,34 +131,24 @@ extension CoinageAssetStore {
                 raw.material.tone, raw.material.grime, raw.material.engraveDark,
                 raw.material.frost, raw.material.wallRough, raw.material.aaVariance,
                 raw.material.aaThreshold, raw.material.reliefBias,
-                Tuning.ambient, Tuning.reliefGain, Tuning.roomLift
-            ] + Tuning.panels.prefix(Tuning.panelCount).flatMap(Self.packed)
+                raw.material.spinGrain, raw.material.spinMinPx, raw.material.rimPolish, raw.material.wallSatin,
+                raw.material.brushCover, raw.material.brushDepth, raw.material.brushScale, raw.material.brushStretch,
+                raw.material.wearDarken, raw.material.wearMatte, raw.material.brushMinPx,
+                Tuning.reliefGain, Tuning.roomLift
+            ] + Tuning.panels.prefix(Tuning.panelCount).flatMap(\.packed)
+                + Array(repeating: 0, count: max(Tuning.panelCount - Tuning.panels.count, 0) * 5)
         }
 
-        /// A panel as the shader reads it: unit direction, cosine of the half angle, gain.
-        private static func packed(_ panel: Tuning.Panel) -> [Float] {
-            let direction = panel.direction
-            let length = max((direction * direction).sum().squareRoot(), 1e-6)
-
-            return [
-                direction.x / length, direction.y / length, direction.z / length,
-                cos(panel.halfAngle), panel.gain
-            ]
-        }
-
-        /// The struct's own alignment, from the `float2` it opens with.
-        ///
-        /// Metal rounds a struct's size up to its alignment, and on a device it refuses a bound
-        /// buffer smaller than the argument the shader declares — it fails at the draw call, with
-        /// nothing before it to say why. The simulator does not check, so the mismatch only shows
-        /// on hardware. Padding to the same rule the shader uses keeps the two the same size
-        /// however many fields are added.
+        /// The struct's own alignment, from the `float2` it opens with. Metal rounds a struct up
+        /// to it, and a device refuses a smaller buffer at the draw call with nothing to say why;
+        /// the simulator does not check. Padding by the same rule keeps the two sizes equal.
         static let alignment = MemoryLayout<Float>.size * 2
 
         func packed() -> [Float] {
             var out: [Float] = [
                 viewportWidth, viewportHeight, dpr, tilePixels, environmentMaxLod,
-                lightTurn.x, lightTurn.y, lightTurn.z
+                lightTurn.x, lightTurn.y, lightTurn.z,
+                coinTurn.x, coinTurn.y, coinTurn.z, grain
             ]
             out += material
             out += backdrop
@@ -229,11 +217,13 @@ private extension CoinageAssetStore {
         let reflectance: [Float]
         let roughness: Float
         let tone: [Float]
+        let brush: Float?
 
         enum CodingKeys: String, CodingKey {
             case reflectance = "f0"
             case roughness
             case tone
+            case brush
         }
     }
 
@@ -255,6 +245,8 @@ private extension CoinageAssetStore {
             let exposure, luster, rimLuster, lusterMinPx, studioRadius, studioScale: Float
             let rollGloss, rollReliefHaze, haze, polish, tone, grime: Float
             let engraveDark, frost, wallRough, aaVariance, aaThreshold, reliefBias: Float
+            let spinGrain, spinMinPx, rimPolish, wallSatin: Float
+            let brushCover, brushDepth, brushScale, brushStretch, wearDarken, wearMatte, brushMinPx: Float
         }
 
         let atlas: Atlas
@@ -263,20 +255,6 @@ private extension CoinageAssetStore {
     }
 
     struct Manifest: Decodable {
-        struct Level: Decodable {
-            let level: Int
-            let size: Int
-            let faces: [String: String]
-        }
-
-        struct Cube: Decodable {
-            let levels: [Level]
-        }
-
-        struct Environment: Decodable {
-            let cube: Cube
-        }
-
         /// What the relief atlas is, rather than what this file hopes it is. The tile size is in
         /// `params.json` for the shader; the rest is here because only the loader needs it.
         struct Atlas: Decodable {
@@ -284,7 +262,6 @@ private extension CoinageAssetStore {
             let channels: Int
         }
 
-        let env: Environment
         let atlases: [String: Atlas]
     }
 
@@ -390,94 +367,14 @@ private extension CoinageAssetStore {
         return texture
     }
 
-    /// Slices go in Metal's own face order; every level of the prefiltered chain is uploaded, so a
-    /// rough metal reads a blurred studio without the shader doing the blurring.
-    /// The prefiltered studio: seven mip levels of a cube, forty-two Radiance files.
-    ///
-    /// Decoded all at once rather than one after another. They are independent, decoding is the
-    /// whole cost, and doing them in turn was most of what was left of the wait to open the view.
-    /// The uploads stay on one thread: `MTLTexture.replace` makes no promise about being called
-    /// from several at once, and they are not where the time goes.
-    static func loadEnvironment(
-        device: MTLDevice,
-        bundle: Bundle,
-        levels: [Manifest.Level]
-    ) throws -> MTLTexture {
-        guard let base = levels.first else { throw Failure.malformed("no environment levels") }
+    /// The studio's lamps and room from `params.json`, baked into its cube on the GPU.
+    static func bakeStudio(device: MTLDevice, bundle: Bundle) throws -> MTLTexture {
+        let studio: CoinageStudioBake.Studio = try decode("params", in: bundle)
 
-        let descriptor = MTLTextureDescriptor.textureCubeDescriptor(
-            pixelFormat: .rgba16Float,
-            size: base.size,
-            mipmapped: true
-        )
-        descriptor.mipmapLevelCount = levels.count
-        descriptor.usage = [.shaderRead]
-
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
-            throw Failure.deviceRefused("environment cube")
+        guard let library = try? device.makeDefaultLibrary(bundle: bundle) else {
+            throw Failure.deviceRefused("shader library")
         }
 
-        let faces = try environmentFaces(bundle: bundle, levels: levels)
-        var decoded = [CoinageRadianceImage.Face?](repeating: nil, count: faces.count)
-        let lock = NSLock()
-
-        DispatchQueue.concurrentPerform(iterations: faces.count) { index in
-            guard let image = try? CoinageRadianceImage.decode(Data(contentsOf: faces[index].url)) else { return }
-
-            lock.lock()
-            decoded[index] = image
-            lock.unlock()
-        }
-
-        for (index, face) in faces.enumerated() {
-            guard let image = decoded[index] else {
-                throw Failure.malformed("could not read \(face.url.lastPathComponent)")
-            }
-
-            image.pixels.withUnsafeBytes { raw in
-                texture.replace(
-                    region: MTLRegionMake2D(0, 0, image.width, image.height),
-                    mipmapLevel: face.level,
-                    slice: face.slice,
-                    withBytes: raw.baseAddress!,
-                    bytesPerRow: image.width * 8,
-                    bytesPerImage: image.width * image.height * 8
-                )
-            }
-        }
-
-        return texture
+        return try CoinageStudioBake.bake(studio, device: device, library: library)
     }
-
-    /// One face of one mip level of the cube, resolved to a file.
-    private struct EnvironmentFace {
-        let level: Int
-        let slice: Int
-        let url: URL
-    }
-
-    /// Every face of every level, in the order the cube wants them, resolved up front so the
-    /// decode has nothing to look up and nothing to throw.
-    private static func environmentFaces(
-        bundle: Bundle,
-        levels: [Manifest.Level]
-    ) throws -> [EnvironmentFace] {
-        try levels.flatMap { level in
-            try faceOrder.enumerated().map { slice, face in
-                guard let path = level.faces[face] else {
-                    throw Failure.malformed("level \(level.level) is missing \(face)")
-                }
-
-                let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-
-                guard let url = bundle.url(forResource: name, withExtension: "hdr") else {
-                    throw Failure.missingAsset("\(name).hdr")
-                }
-
-                return EnvironmentFace(level: level.level, slice: slice, url: url)
-            }
-        }
-    }
-
-    static let faceOrder = ["px", "nx", "py", "ny", "pz", "nz"]
 }

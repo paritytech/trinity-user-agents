@@ -61,13 +61,19 @@ failing, which is the single most expensive failure mode in this migration.
 **5. No spec depends on a refused capability.** Grep first:
 
 ```bash
-grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus|setLoginBehavior" e2e/
+grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus" e2e/
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-`setLoginBehavior` is the sharpest: suites pass `"success"`/`"reject"` to drive
-an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
-because this is a signing host and that flow belongs to a pairing host.
+`setLoginBehavior("success" | "reject")` is served: it answers a product's
+login request while the host is signed out, so a suite booting with
+`loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
+the first account, or the one named as a second argument. The old custom
+function form has no equivalent, because the answer is given in the page.
+The default differs: the old host approved login requests unless told
+otherwise, and this one answers `Rejected`, as a real signing host does, until
+a suite calls `setLoginBehavior("success")`. A suite that relied on the old
+default adds that call.
 
 The statement-store controls and `injectChatAction` are served, so they are not
 in this grep. `injectStatement` takes `{topics, data}` the way the old package
@@ -87,8 +93,10 @@ working.
 
 Network constants and the log-entry types come from the same subpath, so a file
 importing `PASEO_ASSET_HUB`, `SigningLogEntry`, `PermissionLogEntry`,
-`ChatMessageLogEntry`, `LoginBehavior` or `DevAccountName` needs no second
-import path.
+`ChatMessageLogEntry` or `DevAccountName` needs no second import path.
+`LoginBehavior` here is the `"auto" | "manual"` boot option. The type
+`setLoginBehavior` takes, which the old package called `LoginBehavior`, is
+`LoginRequestBehavior`.
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
 `HexString` is on that subpath as well, for a file annotating a `genesisHash`.
@@ -323,6 +331,10 @@ missed:
   `"TransactionSubmit"` is `"ChainSubmit"`, and `grantPermission` with the old
   tag records a decision no request ever matches.
 - **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Declining a signature in one test.** Call `testHost.setConfirmUserActions(false)`
+  before the action and `true` after, rather than booting a second fixture
+  with `mock: { confirmUserActions: false }`. A permission the core has
+  already cached keeps its answer.
 - **Signed out is a boot option.** An empty `accounts` fails the page at boot,
   which a suite sees as the fixture timing out; pass `loginBehavior: "manual"`.
   `simulateDisconnect` drops the chain connections and refuses new ones until
@@ -338,11 +350,15 @@ missed:
   the key as bytes, not hex.
 - **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
   `getPreimages()` answers the seeded values only, as bytes. Statement entries
-  carry `topics` and `data` directly, not under `.statement`. A `Remote`
+  carry `topics` and `data` directly, not under `.statement`, along with
+  `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
+  also takes. A `Remote`
   permission's value is `{ domains }`, not an array.
-- **Deep links go in `productUrl`.** The host page's own path, query and hash
-  configure the host and do not reach the product, so a spec opening the
-  product at a route passes that route in `productUrl`.
+- **Deep links.** The host page passes its path, its hash and every query
+  parameter it does not read itself on to the product, as a real host does.
+  With the fixture, call `testHost.openDeepLink("/notes/1?view=raw#top")`,
+  which loads the host page again at that link. With the server alone, open
+  `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server`.
 
 ### A suite that submits extrinsics must fund the product account first
 
@@ -415,7 +431,7 @@ for its resources on connect, so a later call would land after that.
 
 ## 4. What refuses, and why
 
-Six of `TestHostAPI`'s members throw with an explanation rather than returning
+Five of `TestHostAPI`'s members, the payment ones, throw with an explanation rather than returning
 something plausible. The rest, including the statement-store controls and
 `injectChatAction`, are served.
 
@@ -425,8 +441,6 @@ something plausible. The rest, including the statement-store controls and
   payment platforms yet. This host answers every payment call `Unsupported`,
   so there is no payment engine to drive. A suite with payment specs cannot
   migrate them; it can only drop or rewrite them.
-- `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
-  to the fixture instead, which is where this host takes it.
 
 A test reaching one of these gets a reason, not `is not a function`.
 

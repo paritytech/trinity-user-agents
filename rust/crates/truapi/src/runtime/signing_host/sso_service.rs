@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::platform::{
-	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-	UserConfirmationReview,
+	CreateTransactionReview, LegacySigningAccount, ProductId, ResourceAllocationReview,
+	SignPayloadReview, SignRawReview, UserConfirmationReview,
 };
 use tracing::warn;
 use truapi::latest as api;
@@ -183,6 +183,9 @@ impl SigningHostSsoService {
 		request: SignRawWithLegacyAccountRequest,
 		watermarked: bool,
 	) -> Result<api::HostSignPayloadResponse, String> {
+		self.signing_host
+			.identity_keypair_for(request.account)
+			.map_err(|err| err.to_string())?;
 		let public_request = api::HostSignRawWithLegacyAccountRequest {
 			signer: product_public_key_to_address(request.account),
 			payload: request.data,
@@ -190,6 +193,7 @@ impl SigningHostSsoService {
 		self.confirm(
 			cx,
 			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
 				request: public_request.clone(),
 				watermarked,
 			}),
@@ -221,7 +225,7 @@ impl SigningHostSsoService {
 			.create_transaction(&cx.call, &cx.session, None, request)
 			.await
 			.map(|response| response.transaction)
-			.map_err(|err| err.to_string())
+			.map_err(AuthorityError::into_sso_reason)
 	}
 
 	async fn allocate(
@@ -462,9 +466,15 @@ impl SigningHostSsoService {
 		request: CreateTransactionWithLegacyAccountRequest,
 	) -> CreateTransactionResponse {
 		let CreateTransactionLegacyPayload::V1(payload) = request.payload;
+		self.signing_host
+			.identity_keypair_for(payload.signer)
+			.map_err(|err| err.to_string())?;
 		self.serve_create_transaction(
 			cx,
-			CreateTransactionReview::LegacyAccount(payload.clone()),
+			CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: payload.clone(),
+			},
 			CreateTransactionAuthorityRequest::IdentityAccount(payload),
 		)
 		.await
@@ -548,69 +558,4 @@ impl SigningHostSsoService {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn resource_allocation_summary_reflects_per_resource_outcomes() {
-		let result = resource_allocation_outcome(&Ok(vec![SsoAllocationOutcome::Allocated(
-			SsoAllocatedResource::SmartContractAllowance,
-		)]));
-		assert_eq!((result.outcome, result.reason), ("ok", None));
-
-		let result = resource_allocation_outcome(&Ok(vec![SsoAllocationOutcome::Rejected]));
-		assert_eq!(
-			(result.outcome, result.reason.as_deref()),
-			("rejected", Some("Requested resource was rejected"))
-		);
-
-		let result = resource_allocation_outcome(&Ok(vec![
-			SsoAllocationOutcome::Allocated(SsoAllocatedResource::BulletinAllowance {
-				slot_account_key: vec![1; 64],
-			}),
-			SsoAllocationOutcome::Rejected,
-			SsoAllocationOutcome::NotAvailable,
-		]));
-		assert_eq!(
-			(result.outcome, result.reason.as_deref()),
-			("partial", Some("1 of 3 requested resources allocated; 1 rejected; 1 unavailable"))
-		);
-
-		let result = resource_allocation_outcome(&Ok(vec![SsoAllocationOutcome::NotAvailable]));
-		assert_eq!(
-			(result.outcome, result.reason.as_deref()),
-			("not_available", Some("Requested resource is not available"))
-		);
-	}
-
-	#[test]
-	fn mixed_unallocated_resources_report_rejection() {
-		let result = resource_allocation_outcome(&Ok(vec![
-			SsoAllocationOutcome::Rejected,
-			SsoAllocationOutcome::NotAvailable,
-		]));
-
-		assert_eq!(
-			(result.outcome, result.reason.as_deref()),
-			("rejected", Some("No resources allocated; 1 rejected; 1 unavailable"))
-		);
-	}
-
-	#[test]
-	fn allocation_transcript_includes_single_line_item_failures() {
-		let answer = allocation_reply(
-			Ok(vec![SsoAllocationOutcome::NotAvailable]),
-			vec!["rpc\nfailed".to_string(), "provider\rdown".to_string()],
-		)
-		.finish(
-			"allocation-1",
-			crate::host_internal::sso_messages::v1::RemoteMessage::ResourceAllocationResponse,
-		);
-
-		assert_eq!(answer.outcome.outcome, "not_available");
-		assert_eq!(
-			answer.outcome.reason.as_deref(),
-			Some("Requested resource is not available: rpc failed; provider down")
-		);
-	}
-}
+mod tests;

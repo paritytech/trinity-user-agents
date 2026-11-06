@@ -1,7 +1,3 @@
-#![allow(
-	clippy::double_must_use,
-	reason = "async-trait generates must_use futures for async trait methods"
-)]
 // The pairing-flow future nests the chain, SSO and identity futures deeply
 // enough that proving the tree's auto traits exceeds the default limit.
 #![recursion_limit = "256"]
@@ -102,17 +98,18 @@ pub mod latest {
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
 		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
-		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
-		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
-		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
-		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
+		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
+		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
 		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
 		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
@@ -153,6 +150,9 @@ pub mod latest {
 	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
 	/// Transaction creation failure.
 	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction creation failure for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountError =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountError>;
 	/// Transaction created for a legacy account.
 	pub type HostCreateTransactionWithLegacyAccountResponse =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
@@ -334,6 +334,12 @@ pub mod latest {
 	/// Failure showing a provider screen.
 	pub type HostFundingPresentFrameError =
 		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
+	/// Request to close a provider screen.
+	pub type HostFundingCloseFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameRequest>;
+	/// Failure closing a provider screen.
+	pub type HostFundingCloseFrameError =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -887,6 +893,8 @@ mod truapi_core;
 mod test_support;
 #[cfg(feature = "runtime")]
 mod unix_time;
+#[cfg(feature = "runtime")]
+mod wake;
 
 // Dispatch must keep serving deprecated APIs while clients migrate.
 #[cfg(feature = "runtime")]
@@ -985,8 +993,8 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;
@@ -1004,56 +1012,4 @@ pub use wasm::{
 };
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn mapping_domain_errors_preserves_framework_outcomes() {
-		let errors = [
-			CallError::Domain(7),
-			CallError::Denied,
-			CallError::Unsupported,
-			CallError::MalformedFrame { reason: "invalid payload".into() },
-			CallError::HostFailure { reason: "host disconnected".into() },
-			CallError::Cancelled,
-		];
-		assert_eq!(
-			errors.map(|error| error.map_domain(|domain| domain.to_string())),
-			[
-				CallError::Domain("7".to_string()),
-				CallError::Denied,
-				CallError::Unsupported,
-				CallError::MalformedFrame { reason: "invalid payload".into() },
-				CallError::HostFailure { reason: "host disconnected".into() },
-				CallError::Cancelled,
-			],
-		);
-	}
-
-	#[test]
-	fn call_context_timeout_can_be_set_and_replaced() {
-		let default = Duration::from_secs(180);
-		let explicit = Duration::from_millis(25);
-
-		let mut cx = CallContext::with_request_id("request-1".to_string());
-		assert_eq!(cx.timeout(), None);
-		cx.set_timeout(default);
-		assert_eq!(cx.timeout(), Some(default));
-
-		cx.set_timeout(explicit);
-		assert_eq!(cx.timeout(), Some(explicit));
-	}
-
-	#[test]
-	fn cancellation_token_clones_share_cancellation() {
-		let token = CancellationToken::default();
-		let cloned = token.clone();
-		let wait = cloned.cancelled();
-
-		token.cancel();
-
-		let reason = futures::executor::block_on(wait);
-		assert_eq!(reason, CancellationReason::Cancelled);
-		assert!(cloned.is_cancelled());
-	}
-}
+mod tests;

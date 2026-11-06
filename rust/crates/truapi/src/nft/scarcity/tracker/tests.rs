@@ -204,7 +204,8 @@ fn holding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<([u8; 32], HeldItem)
 	let held = HeldItem {
 		collection: row.get("collection")?,
 		item: row.get("item")?,
-		instance: row.get::<_, i64>("instance")? as u64,
+		instance: u64::try_from(row.get::<_, i64>("instance")?)
+			.expect("stored instance ids are non-negative"),
 	};
 	Ok((row.get("key")?, held))
 }

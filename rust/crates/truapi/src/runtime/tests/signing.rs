@@ -564,8 +564,12 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	let cx = CallContext::with_request_id("create-tx-1".to_string());
 	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
 	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
-	let HostCreateTransactionResponse::V1(inner) = response;
-	assert_eq!(inner.transaction, vec![0xca, 0xfe]);
+	assert_eq!(
+		response,
+		HostCreateTransactionResponse::V1(v01::HostCreateTransactionResponse {
+			transaction: vec![0xca, 0xfe],
+		})
+	);
 	let message = submitted_remote_message(&platform, &session);
 	assert!(matches!(
 		message.data,
@@ -573,6 +577,104 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 			crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionRequest(_)
 		)
 	));
+}
+
+/// A paired host whose first `halted_subscribes` SSO subscriptions get dotli's
+/// halt error, with a phone that signs.
+fn create_transaction_over_halted_store(
+	halted_subscribes: usize,
+) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		create_transaction_confirmed: true,
+		sso_halted_subscribes: halted_subscribes,
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			crate::host_internal::sso_messages::RemoteMessage {
+				message_id: "wallet-create-tx-halted".to_string(),
+				data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+					crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionResponse(
+						crate::host_internal::sso_messages::Response {
+							responding_to: "create-tx-halted".to_string(),
+							payload: Ok(vec![0xca, 0xfe]),
+						},
+					),
+				),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, session);
+	(platform, host)
+}
+
+/// A halt before the request is sent is waited out, so a call the user
+/// already approved still reaches the phone.
+#[test]
+fn a_relayed_create_transaction_waits_out_a_halt_before_it_is_sent() {
+	let (platform, host) = create_transaction_over_halted_store(1);
+	let cx = CallContext::with_request_id("create-tx-halted".to_string());
+	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+
+	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
+
+	assert_eq!(
+		(
+			response,
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+		),
+		(
+			HostCreateTransactionResponse::V1(v01::HostCreateTransactionResponse {
+				transaction: vec![0xca, 0xfe],
+			}),
+			3,
+			1
+		)
+	);
+}
+
+/// Cancelling during a halt returns at once and never sends the request.
+#[test]
+fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
+	let (platform, host) = create_transaction_over_halted_store(usize::MAX);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("create-tx-halted".to_string(), cancel.clone());
+	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let call = std::thread::spawn(move || {
+		futures::executor::block_on(host.create_transaction(&cx, request)).unwrap_err()
+	});
+	wait_until(
+		|| recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement") == 1,
+		"the relayed request did not start subscribing",
+	);
+	let withdrawn = std::time::Instant::now();
+
+	cancel.cancel();
+
+	let err = call.join().expect("the create_transaction thread panicked");
+	assert!(
+		withdrawn.elapsed() < std::time::Duration::from_millis(500),
+		"{:?}",
+		withdrawn.elapsed()
+	);
+	assert_eq!(
+		err,
+		CallError::Domain(HostCreateTransactionError::V1(
+			v01::HostCreateTransactionError::Unknown {
+				reason: "Account authority request cancelled for create-tx-halted".to_string(),
+			}
+		))
+	);
+	assert_eq!(
+		(
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+		),
+		(1, 0)
+	);
 }
 
 fn gated_create_transaction(
@@ -709,6 +811,29 @@ fn legacy_sign_payload_rejects_identity_account() {
 }
 
 #[test]
+fn legacy_sign_payload_review_names_the_product_account() {
+	let platform = Arc::new(StubPlatform::default());
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+	let request = v01::HostSignPayloadWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: sign_payload_data(),
+	};
+
+	futures::executor::block_on(host.sign_payload_with_legacy_account(
+		&CallContext::default(),
+		HostSignPayloadWithLegacyAccountRequest::V1(request.clone()),
+	))
+	.unwrap_err();
+
+	assert_eq!(
+		*platform.sign_payload_reviews.lock().unwrap(),
+		vec![SignPayloadReview::LegacyAccount { account: account_id("myapp.dot", 0), request }]
+	);
+}
+
+#[test]
 fn legacy_sign_raw_rejects_signer_mismatch() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
@@ -769,12 +894,11 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("legacy-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0))
-				.to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
 	let HostSignRawWithLegacyAccountResponse::V1(inner) = response;
@@ -802,6 +926,14 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		truapi::latest::RawPayload::Bytes { bytes }
 			if bytes == b"hello"
 	));
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Product(account_id("myapp.dot", 0)),
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]
@@ -865,11 +997,11 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("identity-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(identity).to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(identity).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
@@ -883,6 +1015,14 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		panic!("expected legacy raw signing request");
 	};
 	assert_eq!(request.account, identity);
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]

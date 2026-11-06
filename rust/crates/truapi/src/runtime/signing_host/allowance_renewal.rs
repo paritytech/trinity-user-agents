@@ -77,7 +77,7 @@ impl From<StatementRenewalError> for GenericError {
 }
 
 /// A statement account or derivation recipe the wallet keeps renewed.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, derive_more::Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StatementRenewalTarget {
 	/// `//allowance//statement-store//{product_id}` from the active root entropy.
@@ -90,6 +90,7 @@ pub enum StatementRenewalTarget {
 	/// A fixed account, e.g. a pairing peer's device statement key.
 	Account {
 		/// Account to keep allowed.
+		#[debug("{}", crate::logging::Account::new(account_id))]
 		account_id: [u8; 32],
 		/// Human-readable name used in logs and reports.
 		label: String,

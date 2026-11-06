@@ -3,6 +3,7 @@ import FoundationExt
 import PolkadotUI
 import Products
 import func TrUAPIHost.productContentScheme
+import SwiftUI
 import UIKit
 import UIKitExt
 import WebKit
@@ -20,6 +21,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 
     private var titleObservation: NSKeyValueObservation?
     private var didSetupWebViewLayout = false
+    private lazy var chainStatusHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
     private var pendingFailureTask: Task<Void, Never>?
@@ -122,7 +124,8 @@ private extension SPASimplifiedViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs:
+            case .dotNs,
+                 .bundled:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
@@ -189,13 +192,40 @@ private extension SPASimplifiedViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.presentation != .pushed {
+        if configuration.presentation == .fullScreen {
+            setupFullScreenLayout()
+        } else if configuration.presentation != .pushed {
             rootView.setupBrowserTabLayout()
         } else if configuration.isRootScreen {
             rootView.setupRootLayout()
         } else {
             rootView.setupDefaultLayout()
         }
+    }
+
+    func setupFullScreenLayout() {
+        addChild(chainStatusHost)
+        chainStatusHost.view.backgroundColor = .clear
+        rootView.setupFullScreenLayout(chainStatusView: chainStatusHost.view)
+        chainStatusHost.didMove(toParent: self)
+
+        refreshStatusStrip()
+    }
+
+    func refreshStatusStrip() {
+        rootView.statusBarTitleButton.bind(viewModel: StatusBarTitleViewModel(
+            title: navigationItem.title ?? configuration.page.host.name,
+            showsLogo: true,
+            menu: makeStatusBarMenu()
+        ))
+    }
+
+    func makeStatusBarMenu() -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.presenter.makeMenuElements() ?? [])
+            }
+        ])
     }
 
     // MARK: - Actions
@@ -224,6 +254,12 @@ extension SPASimplifiedViewController: SPAViewProtocol {
 
     func updateTitle(_ title: String) {
         navigationItem.title = title
+        refreshStatusStrip()
+    }
+
+    func showChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+        chainStatusHost.rootView = ChainConnectionStatusBarView(models: rows)
+        rootView.setChainStatusWidth(ChainConnectionStatusBarView.ringsWidth(count: rows.count))
     }
 
     func reload() {

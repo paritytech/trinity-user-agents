@@ -107,14 +107,132 @@ const HOST_SINK_EVENT_LEVEL: Level = Level::WARN;
 /// How much of an account a line that leaves the device may name.
 const ACCOUNT_HANDLE_BYTES: usize = 4;
 
-/// A short handle for an account, for a line that leaves the device.
+/// An account named in a log line.
 ///
-/// Enough to tell two accounts apart within one log, and not the identifier
-/// itself. A host ships these lines to a crash reporter, where a whole account
-/// id is a public key that indexes everything that account has ever done. Lines
-/// that stay on the device can name it in full.
-pub fn account_handle(account: &[u8]) -> String {
-	hex::encode(&account[..account.len().min(ACCOUNT_HANDLE_BYTES)])
+/// Both `Display` and `Debug` write a short handle of the account's leading
+/// bytes, so either sigil in a `tracing` field is safe to use. The handle is
+/// enough to tell two accounts apart within one log and is not the identifier
+/// itself. A host ships warnings and errors to a crash reporter, where a whole
+/// account id is a public key that indexes everything that account has ever
+/// done.
+///
+/// A line that stays on the device names the account in full through
+/// [`Account::in_full`], which has to be asked for by name.
+#[derive(Clone, Copy)]
+pub struct Account<'a>(&'a [u8]);
+
+impl<'a> Account<'a> {
+	/// Names `account` in a log line.
+	pub fn new(account: &'a [u8]) -> Self {
+		Self(account)
+	}
+
+	/// The whole account, for a line that stays on the device.
+	pub fn in_full(&self) -> String {
+		hex::encode(self.0)
+	}
+}
+
+impl fmt::Display for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		for byte in &self.0[..self.0.len().min(ACCOUNT_HANDLE_BYTES)] {
+			write!(f, "{byte:02x}")?;
+		}
+		Ok(())
+	}
+}
+
+impl fmt::Debug for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+/// Longest a host-supplied string may run in a line that leaves the device,
+/// counted after escaping and not counting the quotes around it.
+const HOST_TEXT_MAX_CHARS: usize = 160;
+
+/// Text a host handed the core, named in a log line.
+///
+/// A foreign exception message is written by code the core does not control.
+/// It can run to any length, can carry newlines and the separators a detail
+/// is built from, and the host ships warnings and errors to a crash reporter.
+/// Both `Display` and `Debug` write it quoted and escaped the way a Rust
+/// string literal is written, and stop after a bounded number of characters,
+/// so it stays on one line, cannot be read as the fields beside it, and
+/// cannot reorder what follows it.
+///
+/// Escaping goes through `char::escape_debug`, which covers the categories
+/// `char::is_control` leaves out, the line and paragraph separators and the
+/// bidirectional overrides among them.
+///
+/// The wording of the text is not otherwise rewritten. This bounds its shape,
+/// and it is the one place a rule about its content would go.
+#[derive(Clone, Copy)]
+pub struct HostText<'a>(&'a str);
+
+impl<'a> HostText<'a> {
+	/// Names `text`, which came from a host, in a log line.
+	pub fn new(text: &'a str) -> Self {
+		Self(text)
+	}
+}
+
+impl fmt::Display for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_char('"')?;
+		let stopped_early = write_bounded_escaped(f, self.0)?;
+		f.write_char('"')?;
+		if stopped_early {
+			f.write_char('\u{2026}')?;
+		}
+		Ok(())
+	}
+}
+
+/// Writes `text` escaped into `out`, stopping at [`HOST_TEXT_MAX_CHARS`].
+///
+/// Returns whether it stopped early. The bound counts the escape rather than
+/// the character behind it, so what is written is what is bounded and an
+/// escape is never cut in half.
+fn write_bounded_escaped(out: &mut impl fmt::Write, text: &str) -> Result<bool, fmt::Error> {
+	let mut written = 0;
+	for character in text.chars() {
+		let escaped = character.escape_debug();
+		if written + escaped.len() > HOST_TEXT_MAX_CHARS {
+			return Ok(true);
+		}
+		written += escaped.len();
+		for part in escaped {
+			out.write_char(part)?;
+		}
+	}
+	Ok(false)
+}
+
+/// `text`, as a host handed it, bounded and escaped so it is safe to keep.
+///
+/// [`HostText`] makes a host's string safe in the one line that names it.
+/// A string the core stores and hands on travels to places that line cannot
+/// reach: the warnings raised about it later, and the product the error is
+/// returned to. Bounding it where it enters means the value carries its own
+/// bound, so none of those places has to remember.
+///
+/// The result is one line, bounded to the same number of characters as the
+/// log field, plus a mark when something was dropped. It is not quoted,
+/// because it is read by a person rather than by a log parser.
+pub fn bound_host_text(text: &str) -> String {
+	let mut bounded = String::new();
+	if write_bounded_escaped(&mut bounded, text).expect("writing to a String cannot fail") {
+		bounded.push('\u{2026}');
+	}
+	bounded
+}
+
+impl fmt::Debug for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
 }
 
 /// Longest detail the host sink forwards, in characters.
@@ -489,231 +607,4 @@ pub mod testing {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use std::sync::Mutex;
-
-	/// The host sink is process-wide, so a test that installs one has to own it
-	/// for the whole of its run or a sibling's teardown reads as its own.
-	static SINK_TESTS: Mutex<()> = Mutex::new(());
-
-	/// A host-addressed target the table does not list never reaches a sink,
-	/// so a marker added without saying what it carries stays on the device.
-	#[test]
-	fn an_unregistered_marker_is_refused() {
-		let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-		init();
-		set_level(DEFAULT_LEVEL);
-		let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-		let recorder = seen.clone();
-		let _sink = set_host_sink(Arc::new(move |marker: &str, _detail: &str| {
-			recorder.lock().unwrap().push(marker.to_string());
-		}));
-
-		tracing::warn!(target: "truapi.not.registered", "a marker nobody declared");
-		tracing::warn!(target: "truapi.core.started", "a marker that is declared");
-
-		let seen = seen.lock().unwrap().clone();
-		assert!(
-			!seen.iter().any(|marker| marker == "truapi.not.registered"),
-			"an unregistered marker reached the sink: {seen:?}",
-		);
-		assert!(
-			seen.iter().any(|marker| marker == "truapi.core.started"),
-			"the registered marker beside it was dropped too: {seen:?}",
-		);
-	}
-
-	/// The floor must stay at `ERROR` so a host that never calls
-	/// `setLogLevel` still sees protocol violations, and a typo must not be
-	/// able to silence them.
-	/// A marked event reaches the host's sink even though the level filter is
-	/// at its default, which is what an ordinary `warn!` cannot do.
-	#[test]
-	fn a_marked_event_reaches_the_host_sink_at_the_default_level() {
-		let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-		init();
-		set_level(DEFAULT_LEVEL);
-		let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-		let recorder = seen.clone();
-		let _sink = set_host_sink(Arc::new(move |marker: &str, detail: &str| {
-			recorder.lock().unwrap().push((marker.to_string(), detail.to_string()));
-		}));
-
-		tracing::warn!(target: "truapi.chain.follow_budget_reached", "four of four");
-		tracing::warn!(target: "truapi::test", "routine crate traffic");
-
-		// Filtered rather than compared whole: other tests in this binary share
-		// the subscriber and can raise their own marked events.
-		let seen = seen.lock().unwrap().clone();
-		assert!(
-			seen.contains(&(
-				"truapi.chain.follow_budget_reached".to_string(),
-				"four of four".to_string()
-			)),
-			"the sink missed the marked event with the default ERROR filter in place: {seen:?}",
-		);
-		assert!(
-			!seen.iter().any(|(marker, _)| marker == "truapi::test"),
-			"an unmarked event reached the host sink: {seen:?}",
-		);
-
-		// Leave no sink behind for other tests in this binary.
-		*HOST_SINK.write().unwrap() = None;
-	}
-
-	/// A sink that logs is a host writing its own log, so it must not be able
-	/// to drive the layer back into itself. A global subscriber takes a path
-	/// with no reentrancy guard of its own, so the layer carries one.
-	#[test]
-	fn an_event_raised_inside_the_sink_does_not_re_enter_it() {
-		let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-		init();
-		set_level(DEFAULT_LEVEL);
-		let depth = Arc::new(Mutex::new(0usize));
-		let recorder = depth.clone();
-		let _sink = set_host_sink(Arc::new(move |_marker: &str, _detail: &str| {
-			*recorder.lock().unwrap() += 1;
-			// A plain warning, not a marked one: a host shipping these onward
-			// logs on the way, and every warning in the process reaches this
-			// sink, so this is the path that actually recurses in production.
-			tracing::warn!("raised from inside the sink");
-			tracing::info!(target: "truapi.core.started", "and a marked one");
-		}));
-
-		tracing::info!(target: "truapi.core.started", "one marked event");
-
-		assert_eq!(*depth.lock().unwrap(), 1, "the event the sink raised re-entered the sink",);
-
-		tracing::warn!("one plain warning");
-
-		assert_eq!(*depth.lock().unwrap(), 2, "the sink re-entered on a plain warning",);
-
-		// Leave no sink behind for other tests in this binary.
-		*HOST_SINK.write().unwrap() = None;
-	}
-
-	/// The host filter has no level opinion of its own, so without a hint it
-	/// would pin the process-wide max level at `TRACE` and cost every `debug!`
-	/// in every crate the static check that cuts it before any dispatch.
-	#[test]
-	fn the_host_filter_does_not_raise_the_process_max_level() {
-		init();
-		set_level(DEFAULT_LEVEL);
-		assert_eq!(LevelFilter::current(), HOST_MARKER_MAX_LEVEL);
-	}
-
-	/// A dependency's warnings are not a host's business, and the reentrancy
-	/// guard is thread-local, so admitting every crate's would let any of them
-	/// drive the sink back into itself from a thread the guard cannot see.
-	#[test]
-	fn a_warning_from_another_crate_does_not_reach_the_host_sink() {
-		let lines = testing::host_sink_lines(|| {
-			tracing::warn!(target: "subxt::backend", "a dependency warning");
-			tracing::warn!(target: "truapi::probe", "a warning of our own");
-		});
-
-		assert!(
-			!lines.iter().any(|line| line.contains("a dependency warning")),
-			"a dependency's warning reached the host sink: {lines:?}",
-		);
-		assert!(
-			lines.iter().any(|line| line.contains("a warning of our own")),
-			"our own warning did not reach the host sink: {lines:?}",
-		);
-	}
-
-	#[test]
-	fn parse_level_defaults_to_the_error_floor() {
-		assert_eq!(DEFAULT_LEVEL, LevelFilter::ERROR);
-		assert_eq!(parse_level("nonsense"), DEFAULT_LEVEL);
-		assert_eq!(parse_level(""), DEFAULT_LEVEL);
-	}
-
-	/// Silencing the channel stays possible, but only on purpose.
-	#[test]
-	fn parse_level_silences_only_on_an_explicit_request() {
-		assert_eq!(parse_level("off"), LevelFilter::OFF);
-		assert_eq!(parse_level("OFF"), LevelFilter::OFF);
-		assert_eq!(parse_level("none"), LevelFilter::OFF);
-	}
-
-	/// The console stays at `ERROR` by default, so warnings reach a native
-	/// host only through the sink, and routine chatter must not.
-	#[test]
-	fn the_host_sink_receives_warnings_and_errors_only() {
-		let lines = testing::host_sink_lines(|| {
-			tracing::info!(target: "truapi::chain", "routine");
-			tracing::warn!(target: "truapi::chain", kind = "Unavailable", "chain call failed");
-			tracing::error!(target: "truapi::chain", "undecodable frame");
-		});
-		assert_eq!(
-			lines,
-			vec![
-				"truapi.tracing.warn truapi::chain: chain call failed {kind=\"Unavailable\"}",
-				"truapi.tracing.error truapi::chain: undecodable frame",
-			]
-		);
-	}
-
-	/// A runtime that is torn down must stop forwarding to its host, but must
-	/// not silence the runtime that replaced it.
-	#[test]
-	fn dropping_a_registration_removes_only_its_own_sink() {
-		static SINK: RwLock<Option<HostSink>> = RwLock::new(None);
-		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
-		let recording = |name: &'static str| -> HostSink {
-			let recorded = lines.clone();
-			Arc::new(move |_marker, _detail| recorded.lock().unwrap().push(name))
-		};
-		let warn_through_sink = || {
-			let subscriber = Registry::default()
-				.with(HostSinkLayer { sink: &SINK }.with_filter(HOST_SINK_LEVEL));
-			tracing::subscriber::with_default(subscriber, || tracing::warn!("chain call failed"));
-		};
-
-		let first = HostSinkRegistration::install(&SINK, recording("first"));
-		let second = HostSinkRegistration::install(&SINK, recording("second"));
-		drop(first);
-		warn_through_sink();
-		drop(second);
-		warn_through_sink();
-
-		// Dropping the one that does not own the slot changes nothing, and
-		// dropping the owner puts back what it displaced. Restoring is what
-		// lets a host install before the rest of its startup: a runtime that
-		// fails to start leaves the one already running still logging.
-		//
-		// The second line here is the cost of that: `first` was already
-		// dropped, so its sink is put back with nobody behind it. A native
-		// host's sink holds its callbacks weakly and goes quiet when its
-		// runtime does, so a restored sink with no runtime says nothing.
-		assert_eq!(*lines.lock().unwrap(), vec!["second", "first"]);
-	}
-
-	/// A host exception message is unbounded and leaves the device, so the
-	/// sink caps it without splitting a character.
-	#[test]
-	fn the_host_sink_bounds_the_detail_in_characters() {
-		let reason = "\u{e9}".repeat(10_000);
-		let lines = testing::host_sink_lines(|| {
-			tracing::warn!(target: "truapi::chain", "{reason}");
-		});
-
-		let detail: String = format!("truapi::chain: {reason}")
-			.chars()
-			.take(HOST_SINK_DETAIL_MAX_CHARS)
-			.collect();
-		assert_eq!(lines, vec![format!("truapi.tracing.warn {detail}")]);
-	}
-
-	#[test]
-	fn parse_level_reads_each_named_level() {
-		assert_eq!(parse_level("error"), LevelFilter::ERROR);
-		assert_eq!(parse_level("warn"), LevelFilter::WARN);
-		assert_eq!(parse_level("warning"), LevelFilter::WARN);
-		assert_eq!(parse_level("info"), LevelFilter::INFO);
-		assert_eq!(parse_level("debug"), LevelFilter::DEBUG);
-		assert_eq!(parse_level("trace"), LevelFilter::TRACE);
-	}
-}
+mod tests;
