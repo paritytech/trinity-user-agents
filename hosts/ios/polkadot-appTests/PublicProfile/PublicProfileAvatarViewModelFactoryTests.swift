@@ -158,7 +158,7 @@ struct PublicProfileAvatarViewModelFactoryTests {
         let bytes = testPicturePNG(size: CGSize(width: 3, height: 2))
         let provider = RawImageDataProvider(data: bytes, cacheKey: UUID().uuidString)
         let cache = ImageCache(name: UUID().uuidString)
-        try cache.store(#require(UIImage(data: bytes)), forKey: provider.cacheKey, toDisk: false)
+        try await cache.store(#require(UIImage(data: bytes)), forKey: provider.cacheKey, toDisk: false)
         let callbackQueue = DispatchQueue(label: "old-avatar-callback")
         let release = DispatchSemaphore(value: 0)
         callbackQueue.async { release.wait() }
