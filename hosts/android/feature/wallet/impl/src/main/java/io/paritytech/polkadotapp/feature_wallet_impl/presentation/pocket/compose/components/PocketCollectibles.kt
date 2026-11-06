@@ -94,7 +94,7 @@ fun PocketCollectibles(
     val notRevealedYet = remember { MutableStateFlow(false) }
     val loadProgress by (product?.session?.loadProgress ?: noProgressYet).collectAsStateWithLifecycle()
     val webView by (product?.session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
-    val pageRevealed by (product?.session?.pageRevealed ?: notRevealedYet).collectAsStateWithLifecycle()
+    val isPageRevealed by (product?.session?.isPageRevealed ?: notRevealedYet).collectAsStateWithLifecycle()
 
     val book = remember { CollectiblesBookMotion() }
     var stage by remember { mutableStateOf(BookStage.Closed) }
@@ -110,7 +110,7 @@ fun PocketCollectibles(
             snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
         }
         val revealed = loaded is DotNsLoadProgress.Completed &&
-            withTimeoutOrNull(ReadyTimeout) { snapshotFlow { pageRevealed }.first { it } } != null
+            withTimeoutOrNull(ReadyTimeout) { snapshotFlow { isPageRevealed }.first { it } } != null
         if (revealed) {
             awaitSteadyFrames(frameInterval)
             book.handOff()
@@ -162,7 +162,7 @@ fun PocketCollectibles(
                         book = book,
                         inset = pageInset,
                         color = PolkadotTheme.colors.bg.surface.main,
-                        veilsPage = { stage == BookStage.Opened && pageRevealed }
+                        veilsPage = { stage == BookStage.Opened && isPageRevealed }
                     )
                     // Until the page fills the box, the masked margins sit over live page content.
                     .then(if (stage == BookStage.Shown) Modifier else Modifier.pointerInput(Unit) {})

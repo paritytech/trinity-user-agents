@@ -92,7 +92,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     val loadProgress: Flow<DotNsLoadProgress> =
         if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
 
-    val pageRevealed = MutableStateFlow(!waitForInitialTheme)
+    val isPageRevealed = MutableStateFlow(!waitForInitialTheme)
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
@@ -108,7 +108,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
             setBackgroundColor(Color.TRANSPARENT)
             if (waitForInitialTheme) {
                 alpha = 0f
-                pageRevealed.value = false
+                isPageRevealed.value = false
                 // WebView takes touches even when disabled, so a hidden page is shielded by consuming them.
                 setOnTouchListener { _, _ -> true }
                 isFocusable = false
@@ -162,16 +162,16 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     private fun revealAfterRendering(view: WebView) {
-        if (getWebViewOrNull() !== view || pageRevealed.value) return
+        if (getWebViewOrNull() !== view || isPageRevealed.value) return
         view.postVisualStateCallback(0L, object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) = reveal(view)
         })
     }
 
     private fun reveal(view: WebView) {
-        if (getWebViewOrNull() !== view || pageRevealed.value) return
+        if (getWebViewOrNull() !== view || isPageRevealed.value) return
         view.alpha = 1f
-        pageRevealed.value = true
+        isPageRevealed.value = true
         view.setOnTouchListener(null)
         view.isFocusable = true
         view.isFocusableInTouchMode = true
