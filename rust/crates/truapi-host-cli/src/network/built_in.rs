@@ -28,6 +28,12 @@ impl BuiltInStack {
 	fn pointer(&self) -> Pointer {
 		Pointer::from_link(self.link.trim()).expect("invalid built-in stack link")
 	}
+
+	fn bundled(&self) -> Descriptor {
+		trinity_stack::open(self.bundle, &self.pointer())
+			.expect("invalid bundled stack")
+			.descriptor
+	}
 }
 
 const PASEO_NEXT_V2_STACK: BuiltInStack = BuiltInStack {
@@ -56,10 +62,7 @@ const POLKADOT_REFERENCE_STACK: BuiltInStack = BuiltInStack {
 
 /// The bundled copy of real Polkadot's descriptor.
 pub fn polkadot_reference() -> Descriptor {
-	let reference = POLKADOT_REFERENCE_STACK;
-	trinity_stack::open(reference.bundle, &reference.pointer())
-		.expect("invalid bundled Polkadot reference")
-		.descriptor
+	POLKADOT_REFERENCE_STACK.bundled()
 }
 
 impl Network {
@@ -74,10 +77,7 @@ impl Network {
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching anything.
 	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
-		let built_in = self.built_in_stack();
-		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
-			.expect("invalid bundled stack");
-		stack_config(&bundled.descriptor, self.id().to_owned(), chain_backend)
+		stack_config(&self.built_in_stack().bundled(), self.id().to_owned(), chain_backend)
 			.expect("invalid bundled stack")
 	}
 

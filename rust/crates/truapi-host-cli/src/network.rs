@@ -11,7 +11,7 @@ mod built_in;
 mod checks;
 pub mod local_network;
 mod overrides;
-mod reserved;
+mod polkadot_fork;
 mod source;
 mod stack;
 #[cfg(test)]
@@ -33,8 +33,8 @@ pub enum Network {
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
 	Previewnet,
-	/// PCF's devnet on Paseo, read from the descriptor PCF publishes. Its TLD
-	/// is `dot`, which no other network may use.
+	/// PCF's devnet on Paseo, on the `dot` TLD, read from the descriptor PCF
+	/// publishes.
 	#[value(name = "pcf-devnet")]
 	PcfDevnet,
 }

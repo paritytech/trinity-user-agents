@@ -1138,8 +1138,6 @@ async fn report_slot_scan(
 	Ok(())
 }
 
-/// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
-/// each confirmation on the CLI.
 fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
 	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
 }

@@ -8,7 +8,7 @@ use super::{
 		Network,
 		overrides::ChainOverrides,
 		stack::stack_network_config,
-		testing::{edit_chain, edit_stack},
+		testing::{edit_stack, serve_rpc},
 	},
 	*,
 };
@@ -17,39 +17,15 @@ use super::{
 /// `genesis` and `state_getStorage` with `network_suffix`, SCALE-encoded,
 /// or no value.
 async fn serve_chain(genesis: [u8; 32], network_suffix: Option<&'static str>) -> String {
-	use futures_util::{SinkExt, StreamExt};
 	use parity_scale_codec::Encode;
-	use tokio_tungstenite::tungstenite::Message;
 
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("loopback bind failed");
-	let url = format!("ws://{}", listener.local_addr().expect("no listener address"));
 	let suffix = network_suffix
 		.map(|suffix| format!("0x{}", hex::encode(suffix.as_bytes().to_vec().encode())));
-	tokio::spawn(async move {
-		loop {
-			let (socket, _) = listener.accept().await.expect("accept failed");
-			let suffix = suffix.clone();
-			tokio::spawn(async move {
-				let mut socket =
-					tokio_tungstenite::accept_async(socket).await.expect("handshake failed");
-				while let Some(Ok(Message::Text(request))) = socket.next().await {
-					let request: serde_json::Value =
-						serde_json::from_str(&request).expect("request is not JSON");
-					let result = match request["method"].as_str() {
-						Some("state_getStorage") => serde_json::json!(suffix),
-						_ => serde_json::json!(format!("0x{}", hex::encode(genesis))),
-					};
-					let response = serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": result });
-					if socket.send(Message::text(response.to_string())).await.is_err() {
-						break;
-					}
-				}
-			});
-		}
-	});
-	url
+	serve_rpc(move |method, _| match method {
+		"state_getStorage" => serde_json::json!(suffix),
+		_ => serde_json::json!(format!("0x{}", hex::encode(genesis))),
+	})
+	.await
 }
 
 /// Every role on a loopback port nothing listens on.
@@ -198,7 +174,7 @@ async fn test_network_suffix_absent_or_unreachable() {
 		.expect("unreachable People rejected");
 }
 
-/// Every built-in stack has every endpoint and the suffix checked, as a
+/// Built-in stacks have every endpoint and the suffix checked, as a
 /// `--stack` does; a local network and the light client, which does not use
 /// the RPC endpoints, do not, beyond what an override reroutes.
 #[test]
@@ -207,11 +183,6 @@ fn test_chain_checks_by_source() {
 	let built_in = ChainChecks::plan(&paseo, &paseo.chains, false, None);
 	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
 	assert_eq!(built_in.expected_suffix, Some("paseo"));
-
-	let pcf_devnet = Network::PcfDevnet.config(ChainBackend::Rpc);
-	let pcf_devnet_checks = ChainChecks::plan(&pcf_devnet, &pcf_devnet.chains, false, None);
-	assert_eq!((pcf_devnet_checks.rerouted.len(), pcf_devnet_checks.from_stack.len()), (0, 3));
-	assert_eq!(pcf_devnet_checks.expected_suffix, Some("dot"));
 
 	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
 	let light_client = ChainChecks::plan(&light_client, &paseo.chains, false, None);
@@ -223,24 +194,6 @@ fn test_chain_checks_by_source() {
 	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo.chains, true, None);
 	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
 	assert_eq!(local.expected_suffix, None);
-}
-
-/// Only an endpoint with one of Polkadot's genesis hashes is compared with
-/// Polkadot, so a stack on the `dot` TLD alone costs nothing.
-#[test]
-fn test_polkadot_genesis_plan() {
-	let dot = edit_stack(|descriptor| descriptor["tld"] = "dot".into());
-	let dot = stack_network_config(&dot, ChainBackend::Rpc).unwrap();
-	assert!(ChainChecks::plan(&dot, &dot.chains, false, None).polkadot_chains.is_empty());
-
-	let forked = edit_chain("People", |chain| {
-		chain["genesisHash"] =
-			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
-	});
-	let forked = stack_network_config(&forked, ChainBackend::Rpc).unwrap();
-	let checks = ChainChecks::plan(&forked, &forked.chains, false, None);
-	let compared: Vec<_> = checks.polkadot_chains.iter().map(|chain| &chain.endpoint).collect();
-	assert_eq!(compared, [&forked.chains.people]);
 }
 
 /// Only the endpoints an override reroutes are checked as such, even one

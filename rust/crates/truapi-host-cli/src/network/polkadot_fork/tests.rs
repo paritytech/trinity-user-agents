@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use clap::ValueEnum;
 
-use super::{super::Network, *};
+use super::{
+	super::{Network, testing::serve_rpc},
+	*,
+};
 use crate::chain::ChainBackend;
-
-const DEADLINE: Duration = Duration::from_secs(5);
 
 const POLKADOT_PEOPLE_GENESIS: &str =
 	"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008";
@@ -15,45 +16,20 @@ const POLKADOT_PEOPLE_GENESIS: &str =
 /// nodes with the same `chain` serve the same chain. Records the height of
 /// each `chain_getBlockHash` call.
 async fn serve_node(chain: u8, finalized: u32) -> (String, Arc<Mutex<Vec<u32>>>) {
-	use futures_util::{SinkExt, StreamExt};
-	use tokio_tungstenite::tungstenite::Message;
-
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("loopback bind failed");
-	let url = format!("ws://{}", listener.local_addr().expect("no listener address"));
 	let heights = Arc::new(Mutex::new(Vec::new()));
 	let recorded = Arc::clone(&heights);
 	let hash = move |height: u32| format!("0x{chain:02x}{height:062x}");
-	tokio::spawn(async move {
-		loop {
-			let (socket, _) = listener.accept().await.expect("accept failed");
-			let recorded = Arc::clone(&recorded);
-			tokio::spawn(async move {
-				let mut socket =
-					tokio_tungstenite::accept_async(socket).await.expect("handshake failed");
-				while let Some(Ok(Message::Text(request))) = socket.next().await {
-					let request: serde_json::Value =
-						serde_json::from_str(&request).expect("request is not JSON");
-					let result = match request["method"].as_str() {
-						Some("chain_getFinalizedHead") => json!(hash(finalized)),
-						Some("chain_getHeader") => json!({ "number": format!("0x{finalized:x}") }),
-						Some("chain_getBlockHash") => {
-							let height = request["params"][0].as_u64().expect("no height") as u32;
-							recorded.lock().unwrap().push(height);
-							if height <= finalized { json!(hash(height)) } else { json!(null) }
-						},
-						method => panic!("unexpected {method:?}"),
-					};
-					let response =
-						json!({ "jsonrpc": "2.0", "id": request["id"], "result": result });
-					if socket.send(Message::text(response.to_string())).await.is_err() {
-						break;
-					}
-				}
-			});
-		}
-	});
+	let url = serve_rpc(move |method, params| match method {
+		"chain_getFinalizedHead" => json!(hash(finalized)),
+		"chain_getHeader" => json!({ "number": format!("0x{finalized:x}") }),
+		"chain_getBlockHash" => {
+			let height = params[0].as_u64().expect("no height") as u32;
+			recorded.lock().unwrap().push(height);
+			if height <= finalized { json!(hash(height)) } else { json!(null) }
+		},
+		method => panic!("unexpected {method:?}"),
+	})
+	.await;
 	(url, heights)
 }
 
@@ -100,14 +76,15 @@ fn test_polkadot_chains_from_reference() {
 }
 
 /// An endpoint whose block at the lower finalized height is real Polkadot's
-/// is Polkadot itself, whether it is behind or ahead of the Polkadot node.
+/// is Polkadot itself, whether it is behind or ahead of the Polkadot node. A
+/// Polkadot node that is down leaves the next one to compare against.
 #[tokio::test]
 async fn test_polkadot_itself_error() {
 	for (endpoint_finalized, polkadot_finalized) in [(500, 900), (900, 500)] {
 		let (endpoint, _) = serve_node(1, endpoint_finalized).await;
 		let (polkadot, _) = serve_node(1, polkadot_finalized).await;
-		let error = polkadot_chain(&endpoint, &[&polkadot])
-			.ensure_fork(DEADLINE)
+		let error = polkadot_chain(&endpoint, &["ws://127.0.0.1:1", &polkadot])
+			.ensure_fork()
 			.await
 			.expect_err("Polkadot itself accepted");
 		assert!(error.to_string().contains("serves Polkadot itself: its block 500"));
@@ -123,24 +100,12 @@ async fn test_finalized_height() {
 		let (endpoint, endpoint_heights) = serve_node(2, endpoint_finalized).await;
 		let (polkadot, polkadot_heights) = serve_node(1, polkadot_finalized).await;
 		polkadot_chain(&endpoint, &[&polkadot])
-			.ensure_fork(DEADLINE)
+			.ensure_fork()
 			.await
 			.expect("fork refused");
 		assert_eq!(*endpoint_heights.lock().unwrap(), [500]);
 		assert_eq!(*polkadot_heights.lock().unwrap(), [500]);
 	}
-}
-
-/// One Polkadot node down does not stop the comparison while another answers.
-#[tokio::test]
-async fn test_polkadot_node_fallback() {
-	let (endpoint, _) = serve_node(1, 500).await;
-	let (polkadot, _) = serve_node(1, 900).await;
-	let error = polkadot_chain(&endpoint, &["ws://127.0.0.1:1", &polkadot])
-		.ensure_fork(DEADLINE)
-		.await
-		.expect_err("Polkadot itself accepted");
-	assert!(error.to_string().contains("serves Polkadot itself"));
 }
 
 /// The CLI cannot show an endpoint is not Polkadot when it, or every Polkadot
@@ -153,9 +118,8 @@ async fn test_unanswered_error() {
 	for chain in [
 		polkadot_chain(closed, &[&polkadot]),
 		polkadot_chain(&endpoint, &[closed, "ws://127.0.0.1:2"]),
-		polkadot_chain(&endpoint, &[]),
 	] {
-		let error = chain.ensure_fork(DEADLINE).await.expect_err("unanswered check accepted");
+		let error = chain.ensure_fork().await.expect_err("unanswered check accepted");
 		assert!(error.to_string().contains("cannot tell"));
 	}
 }

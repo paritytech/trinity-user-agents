@@ -11,8 +11,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use crossterm::style::Stylize;
 use trinity_stack::{
-	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, open,
-	render,
+	DEFAULT_LINK_BASE, Descriptor, Document, Fetched, Pointer, PublishState, Rendered, Status,
+	accept, open, render,
 };
 use zeroize::Zeroizing;
 
@@ -283,11 +283,14 @@ async fn bundle(
 				out.display()
 			);
 		}
+		fn rpc_lists(stack: &Descriptor) -> impl Iterator<Item = &Vec<String>> {
+			stack.chains.iter().map(|chain| &chain.rpc)
+		}
+		// The Polkadot fork check falls back through every RPC node of the reference copy.
 		let is_current = skip_same_projection &&
 			open(bytes, &pointer).is_ok() &&
 			StackProjection::of(stored_descriptor) == StackProjection::of(descriptor) &&
-			// The Polkadot fork check falls back through every RPC node of the reference copy.
-			stored_descriptor.chains.iter().map(|chain| &chain.rpc).eq(descriptor.chains.iter().map(|chain| &chain.rpc)) &&
+			rpc_lists(stored_descriptor).eq(rpc_lists(descriptor)) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
 			stored_descriptor.valid_until == descriptor.valid_until;
 		if is_current {

@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 use super::{
 	ChainEndpoint, NetworkConfig,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
-	reserved::{PolkadotChain, polkadot_chains},
+	polkadot_fork::{PolkadotChain, polkadot_chains},
 };
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -71,9 +71,7 @@ impl ChainChecks {
 				self.expected_suffix
 			),
 			futures::future::try_join_all(
-				self.polkadot_chains
-					.iter()
-					.map(|chain| chain.ensure_fork(BUILT_IN_REFRESH_TIMEOUT))
+				self.polkadot_chains.iter().map(PolkadotChain::ensure_fork)
 			),
 		);
 		rerouted?;
@@ -151,6 +149,16 @@ async fn probe_endpoint(
 	Ok(EndpointReport { genesis, network_suffix })
 }
 
+/// `check`'s outcome, or an error once [`BUILT_IN_REFRESH_TIMEOUT`] passes
+/// without one.
+pub async fn within_check_timeout<T>(
+	check: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+	tokio::time::timeout(BUILT_IN_REFRESH_TIMEOUT, check).await.unwrap_or_else(|_| {
+		Err(format!("no answer within {}s", BUILT_IN_REFRESH_TIMEOUT.as_secs()))
+	})
+}
+
 /// Fails when one of `endpoints` reports a genesis other than the one it is
 /// routed as, adding the restart hint of `built_in` to the error, when People
 /// reports a `NetworkSuffix` other than `expected_suffix`, or when an endpoint
@@ -169,11 +177,7 @@ async fn verify_endpoints(
 		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
 		let report = match unanswered {
 			Unanswered::Fail => probe.await,
-			Unanswered::Warn => {
-				tokio::time::timeout(BUILT_IN_REFRESH_TIMEOUT, probe).await.unwrap_or_else(|_| {
-					Err(format!("no answer within {}s", BUILT_IN_REFRESH_TIMEOUT.as_secs()))
-				})
-			},
+			Unanswered::Warn => within_check_timeout(probe).await,
 		};
 		let report = match (report, unanswered) {
 			(Ok(report), _) => report,

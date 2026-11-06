@@ -1,13 +1,11 @@
 //! The check that tells a chain carrying one of Polkadot's genesis hashes, a
 //! fork, from Polkadot itself.
 
-use std::time::Duration;
-
 use anyhow::{Result, anyhow, ensure};
 use serde_json::json;
 use truapi::statement_allowance::rpc::RpcClient;
 
-use super::{ChainEndpoint, built_in::polkadot_reference};
+use super::{ChainEndpoint, built_in::polkadot_reference, checks::within_check_timeout};
 use crate::stack_descriptor::Roles;
 
 /// An endpoint with one of Polkadot's genesis hashes, and the RPC nodes of
@@ -28,10 +26,8 @@ pub fn polkadot_chains(chains: &Roles<ChainEndpoint>) -> Vec<PolkadotChain> {
 	chains
 		.iter()
 		.filter_map(|endpoint| {
-			let genesis = hex::encode(endpoint.genesis);
-			let chain = reference.chains.iter().find(|chain| {
-				chain.genesis_hash.trim_start_matches("0x").eq_ignore_ascii_case(&genesis)
-			})?;
+			let genesis = format!("0x{}", hex::encode(endpoint.genesis));
+			let chain = reference.chains.iter().find(|chain| chain.genesis_hash == genesis)?;
 			Some(PolkadotChain { endpoint: endpoint.clone(), polkadot_rpc: chain.rpc.clone() })
 		})
 		.collect()
@@ -42,12 +38,11 @@ impl PolkadotChain {
 	/// Polkadot itself: at the lower of its finalized block and real
 	/// Polkadot's, its block hash must differ from Polkadot's. Also fails when
 	/// the endpoint, or every Polkadot node, does not answer within
-	/// `deadline`, since the endpoint is then not shown to be a fork.
-	pub async fn ensure_fork(&self, deadline: Duration) -> Result<()> {
+	/// [`super::built_in::BUILT_IN_REFRESH_TIMEOUT`], since the endpoint is then
+	/// not shown to be a fork.
+	pub async fn ensure_fork(&self) -> Result<()> {
 		let ws = &self.endpoint.ws;
-		let hashes = tokio::time::timeout(deadline, self.finalized_hashes())
-			.await
-			.unwrap_or_else(|_| Err(format!("no answer within {}s", deadline.as_secs())));
+		let hashes = within_check_timeout(self.finalized_hashes()).await;
 		let (height, fork_hash, polkadot_hash) = hashes.map_err(|reason| {
 			anyhow!(
 				"cannot tell {ws} from Polkadot ({reason}); a chain with Polkadot's genesis runs \
