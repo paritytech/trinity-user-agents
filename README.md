@@ -445,9 +445,9 @@ For avatars, `ImageReference::Username { username, force }` resolves a
 hosts cache records for one hour; `force` refreshes them. The Rust WASM resolver
 reads the chain on each call.
 
-Android contacts and chat views load avatars through the shared loader.
+Android contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
 
-iOS contacts and chat views load verified avatar bytes through the shared loader.
+iOS contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
 
 `/profile [username]` and `/profile upload <image>` are available in the
 [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui).

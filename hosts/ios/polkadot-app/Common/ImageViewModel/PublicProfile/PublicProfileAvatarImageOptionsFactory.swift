@@ -15,9 +15,11 @@ final class PublicProfileAvatarImageOptionsFactory: ImageProcessingOptionsProduc
             }
             return true
         } + [
-            .cacheMemoryOnly,
+            .targetCache(PublicProfileAvatarImageCache.shared),
             .memoryCacheExpiration(.seconds(3_600)),
-            .memoryCacheAccessExtendingExpiration(.none)
+            .memoryCacheAccessExtendingExpiration(.none),
+            .diskCacheExpiration(.seconds(3_600)),
+            .diskCacheAccessExtendingExpiration(.none)
         ]
     }
 }
