@@ -1,3 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
+mod cache;
+
 use alloy_primitives::Address;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -246,8 +249,16 @@ async fn raw_profile_text_keeps_malformed_data_visible_to_writers() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn profile_services() -> Arc<RuntimeServices> {
+	services_with_platform(Arc::new(StubPlatform {
+		chain_connect_error: Some("offline"),
+		..Default::default()
+	}))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 	RuntimeServices::new(
-		Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() }),
+		platform,
 		HostInfo {
 			name: "Profile test".into(),
 			icon: None,
@@ -265,7 +276,7 @@ fn profile_services() -> Arc<RuntimeServices> {
 #[tokio::test]
 async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	let (_directory, db) = crate::store::open_temporary_core_db();
-	let record = ProfileRecord::default();
+	let record = PublicProfile { avatar: None };
 	let now = current_unix_secs();
 	db.write(move |tx| {
 		dao::store_record(tx, "alice01", &ProfileRecord::default(), now, now + RECORD_TTL_SECS)
@@ -291,4 +302,86 @@ fn a_lite_username_resolves_part_by_part() {
 
 	assert_eq!(username_node(tld, "alice.01"), expected);
 	assert_eq!(username_node(tld, "alicebc"), namehash_under(&tld_node(tld), "alicebc"));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn cached_metadata_never_loads_bulletin() {
+	for entries in [
+		vec![subxt::utils::WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
+			cid: [9; 32].into(),
+			format: crate::ImageFormat::Png,
+		}))],
+		vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![0, 1])],
+		vec![],
+	] {
+		let platform = Arc::new(StubPlatform::default());
+		let services = services_with_platform(platform.clone());
+		let (_directory, db) = crate::store::open_temporary_core_db();
+		let now = current_unix_secs();
+		let record = ProfileRecord { entries };
+		let expected = PublicProfile { avatar: record.avatar() };
+		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now, now + RECORD_TTL_SECS))
+			.await
+			.unwrap();
+		assert!(services.install_core_db(db));
+
+		let profile = PublicProfiles::new(services).resolve("alice.01", false).await.unwrap();
+
+		assert_eq!((profile, platform.chain_connects.lock().unwrap().clone()), (expected, vec![]));
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors() {
+	for (expires_in, force) in [(0, false), (RECORD_TTL_SECS, true)] {
+		let platform =
+			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
+		let services = services_with_platform(platform.clone());
+		let (_directory, db) = crate::store::open_temporary_core_db();
+		let now = current_unix_secs();
+		let record = ProfileRecord {
+			entries: vec![subxt::utils::WrapperKeepOpaque::from_value(ProfileEntry::Avatar(
+				ProfileAvatar { cid: [9; 32].into(), format: crate::ImageFormat::Png },
+			))],
+		};
+		let stored = record.clone();
+		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now, now + expires_in))
+			.await
+			.unwrap();
+		assert!(services.install_core_db(db.clone()));
+
+		let result = PublicProfiles::new(services).resolve("alice.01", force).await;
+		let stored: Vec<u8> = db
+			.read(|conn| {
+				Ok(conn.query_row(
+					"SELECT public_record FROM public_profiles WHERE username = 'alice.01'",
+					[],
+					|row| row.get(0),
+				)?)
+			})
+			.await
+			.unwrap();
+
+		assert_eq!(
+			(
+				matches!(result, Err(PublicProfileError::Dotns(_))),
+				platform.chain_connects.lock().unwrap().clone(),
+				stored
+			),
+			(true, vec![[3; 32]], record.encode())
+		);
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn an_invalid_username_does_not_need_storage_or_a_chain() {
+	let profiles = PublicProfiles::new(profile_services());
+
+	assert!(matches!(
+		profiles.resolve("alice.1", false).await,
+		Err(PublicProfileError::InvalidUsername)
+	));
 }
