@@ -64,7 +64,7 @@ private extension SearchContactPresenterAvatarTests {
             wireframe: SearchContactWireframe(),
             publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(
                 resolveProfile: { username, force in
-                    await resolver.resolve(username: username, force: force)
+                    try await resolver.resolve(username: username, force: force)
                 },
                 loadAvatar: { avatar in
                     try await resolver.loadAvatar(avatar)

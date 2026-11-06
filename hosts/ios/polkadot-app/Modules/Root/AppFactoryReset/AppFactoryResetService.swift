@@ -48,7 +48,7 @@
             clearAllNotifications()
             deleteCloudBackup()
             deleteCoreDataDatabases()
-            clearSDKCaches()
+            await clearSDKCaches()
             // Last: applying a config syncs the chain registry, which must not write into stores being deleted.
             await initializer.refetchConfig()
 
@@ -144,14 +144,9 @@
             }
         }
 
-        func clearSDKCaches() {
-            KingfisherManager.shared.cache.clearMemoryCache()
-            KingfisherManager.shared.cache.clearDiskCache()
-            do {
-                try PublicProfileAvatarImageCache.shared.clear()
-            } catch {
-                logger.error("Failed to wipe public profile images: \(error)")
-            }
+        func clearSDKCaches() async {
+            await KingfisherManager.shared.cache.clearCache()
+            await PublicProfileAvatarImageOptionsFactory.cache.clearCache()
         }
     }
 #endif

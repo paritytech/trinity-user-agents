@@ -3,7 +3,7 @@ import PolkadotUI
 import TrUAPIHost
 
 protocol PublicProfileAvatarViewModelMaking {
-    /// With `refresh`, the first load bypasses the core's profile metadata cache.
+    /// With `refresh`, display the cached avatar before forcing a metadata refresh.
     func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol
 }
 
