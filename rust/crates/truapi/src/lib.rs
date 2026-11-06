@@ -975,7 +975,8 @@ pub use platform::{
 };
 #[cfg(feature = "runtime")]
 pub use public_profile::{
-	ProfileAvatar, ProfileEntry, ProfileRecord, ProfileRecordLocation, PublicProfile, PublicProfileError,
+	ProfileAvatar, ProfileEntry, ProfileRecord, ProfileRecordLocation, PublicProfile,
+	PublicProfileError,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
