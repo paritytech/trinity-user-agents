@@ -41,7 +41,7 @@ pub enum RuntimeType {
 }
 
 /// What a chain-head storage query returns for a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum StorageQueryType {
 	/// Return the value under the key.
 	Value,

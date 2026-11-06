@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
 import android.net.Uri
-import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
 import io.mockk.Runs
 import io.mockk.coEvery
@@ -16,7 +15,6 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -76,7 +74,7 @@ class PocketViewModelTest {
     private val spaHost: SpaHost = mockk {
         every {
             context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(any(), any()) }
-        } returns FakeSpaHostSession()
+        } returns mockk<SpaHostSession>(relaxed = true)
     }
 
     // One dispatcher for the screen's own scope and for the pool its card list is assembled on, so
@@ -87,15 +85,6 @@ class PocketViewModelTest {
     private val dispatchers = TestCoroutineDispatchers(testDispatcher)
 
     private val cardOpenRequests = PocketCardOpenRequests()
-
-    private class FakeSpaHostSession : SpaHostSession {
-        override val webView = MutableStateFlow<WebView?>(null)
-        override val currentUrl = MutableStateFlow("")
-        override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
-        override val title = MutableStateFlow("")
-        override fun pauseConnections() = Unit
-        override fun resumeConnections() = Unit
-    }
 
     // The card list is shared eagerly in the view model's own scope, which outlives the test unless
     // it is cancelled.
