@@ -1,8 +1,11 @@
+import DesignSystem
 import SwiftUI
 
 /// How a crypto network id from a provider's routes is shown. The ids are the
 /// lowercase names the core uses (`polkadot` is Asset Hub); an id this table
-/// does not know is shown capitalised.
+/// does not know is shown capitalised. The tints are each network's and
+/// token's own brand colour, which the design system has no token for; an
+/// unknown one takes the design system's tertiary colour.
 struct FundingNetwork: Identifiable, Hashable {
     let id: String
 
@@ -11,7 +14,7 @@ struct FundingNetwork: Identifiable, Hashable {
     }
 
     var tint: Color {
-        Self.tints[id] ?? .gray
+        Self.tints[id] ?? .fgTertiary
     }
 
     var monogram: String {
@@ -26,7 +29,7 @@ struct FundingToken: Identifiable, Hashable {
     var id: String { symbol }
 
     var tint: Color {
-        Self.tints[symbol.uppercased()] ?? .gray
+        Self.tints[symbol.uppercased()] ?? .fgTertiary
     }
 
     var monogram: String {

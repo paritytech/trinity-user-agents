@@ -37,14 +37,13 @@ public struct BundledProduct: Hashable, Sendable {
     }
 
     /// The Worker manifest it ships when that manifest serves Funding, read
-    /// the way a published manifest's `includes` is.
-    public func fundingWorkerManifest(fileManager: FileManager = .default) -> String? {
-        guard let manifest = workerManifest(fileManager: fileManager),
-              let dto = try? JSONDecoder().decode(ExecutableManifestDTO.self, from: Data(manifest.utf8)),
-              dto.includes?.contains(.funding) == true
-        else { return nil }
+    /// the way a published manifest's `includes` is. Throws when the manifest
+    /// it ships cannot be read as one.
+    public func fundingWorkerManifest(fileManager: FileManager = .default) throws -> String? {
+        guard let manifest = workerManifest(fileManager: fileManager) else { return nil }
 
-        return manifest
+        let dto = try JSONDecoder().decode(ExecutableManifestDTO.self, from: Data(manifest.utf8))
+        return dto.includes?.contains(.funding) == true ? manifest : nil
     }
 
     /// Whether it ships a Worker.

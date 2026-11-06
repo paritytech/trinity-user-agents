@@ -8,7 +8,7 @@ use truapi::latest::RemoteStatementStoreSubscribeRequest;
 use super::StatementStoreParseError;
 
 /// Which statements a watch matches, by their topics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum TopicFilter {
 	/// Statements that carry every one of these topics.
 	MatchAll(Vec<[u8; 32]>),

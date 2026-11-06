@@ -71,12 +71,15 @@ use truapi::latest::{
 	HostPaymentTopUpStatusSubscribeItem,
 };
 
-use super::services::RuntimeServices;
+use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
-	host_logic::funding::{
-		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
-		UNACKNOWLEDGED_LIMIT, retained,
+	host_logic::{
+		funding::{
+			CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice,
+			FundingSession, FundingSessionError, FundingSessionSummary, Settlement, StartRecord,
+			StartedFunds, UNACKNOWLEDGED_LIMIT, retained,
+		},
+		funding_providers::FundingSelection,
 	},
 	platform::{
 		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
@@ -158,6 +161,15 @@ struct Link {
 	catch_up: CatchUp,
 }
 
+/// Every provider's worker connection, and who waits for one to connect.
+#[derive(Default)]
+struct Links {
+	/// Each provider's worker connection, by product id.
+	by_provider: HashMap<ProductId, Link>,
+	/// Callers waiting for a provider's worker to connect, by product id.
+	waiters: HashMap<ProductId, Signal>,
+}
+
 /// Whether a worker connection has been handed every session it serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CatchUp {
@@ -180,10 +192,22 @@ enum ProviderCall {
 	Cancel(String, CancelCall),
 }
 
+/// How to reach the reconciler task, and when it asked to run again.
+#[derive(Default)]
+struct Reconciler {
+	/// Wakes the task, once one runs.
+	wake: Option<mpsc::UnboundedSender<()>>,
+	/// The earliest time a background step asked to be tried again, in Unix
+	/// milliseconds.
+	retry_at: Option<u64>,
+}
+
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
 struct Announcements {
-	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
+	/// Each change with the record the session had when it was queued, or
+	/// `None` for one compacted before then.
+	pending: VecDeque<(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
 	/// The [`FundingRegistry::is_in_progress`] the host was last told.
@@ -192,7 +216,7 @@ struct Announcements {
 
 /// One change the host is told of.
 enum Announcement {
-	Session(String, HostFundingStatusSubscribeItem),
+	Session(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>),
 	InProgress(bool),
 }
 
@@ -229,45 +253,155 @@ pub trait FundingFeed: Send + Sync {
 	);
 }
 
+/// What commits change, behind one lock: a commit replaces it and tells the
+/// watchers under that lock, so a reader never sees one part of a commit
+/// without the rest.
+#[derive(Default)]
+struct Held {
+	/// Sessions held in full, by intent.
+	sessions: HashMap<String, FundingSession>,
+	/// Ended sessions compacted out of `sessions`, by intent. Should a
+	/// session sit in both, the full record wins.
+	pack: HashMap<String, PackedSession>,
+	/// Sessions whose overlay is still up, with what the user picked in it so
+	/// far: live in memory, so the overlay can quote and pick a provider for
+	/// them, but not stored until the user starts them. Closing the overlay
+	/// drops its selection with it.
+	presenting: HashMap<String, Option<FundingSelection>>,
+	subscribers: Subscribers,
+	/// Sessions past the moment they count as taking longer whose host has
+	/// heard so, as nothing else changes in them then.
+	told_longer: HashSet<String>,
+}
+
+/// What a commit's edit works on: copies of the sessions and their
+/// overlays, which become current once what changed is stored, and the pack
+/// as it stands, with the rows the edit rewrites kept apart. A commit whose
+/// write fails drops it, so none of it reaches memory.
+pub struct Draft<'a> {
+	/// Sessions held in full, by intent.
+	pub sessions: HashMap<String, FundingSession>,
+	/// Sessions whose overlay is up, with what the user picked in each.
+	presenting: HashMap<String, Option<FundingSelection>>,
+	pack: &'a HashMap<String, PackedSession>,
+	/// Rows of the pack this edit rewrites, by intent.
+	repacked: HashMap<String, PackedSession>,
+}
+
+impl Draft<'_> {
+	/// Compacted session `intent`, as this edit leaves it.
+	fn packed(&self, intent: &str) -> Option<&PackedSession> {
+		self.repacked.get(intent).or_else(|| self.pack.get(intent))
+	}
+}
+
+/// What a commit makes current once it is stored.
+struct Update {
+	/// The sessions still held in full.
+	kept: HashMap<String, FundingSession>,
+	/// Sessions compacted as they ended.
+	ended: Vec<FundingSession>,
+	presenting: HashMap<String, Option<FundingSelection>>,
+	/// Kept sessions whose row is written.
+	put: Vec<String>,
+	/// Sessions whose row is deleted.
+	removed: Vec<String>,
+	/// Pack rows written: the sessions compacted, then those rewritten.
+	packed: Vec<PackedSession>,
+}
+
+impl Update {
+	/// Whether anything is written.
+	fn writes(&self) -> bool {
+		!self.put.is_empty() || !self.removed.is_empty() || !self.packed.is_empty()
+	}
+}
+
+impl Held {
+	/// What making `sessions`, `presenting` and `repacked` current changes,
+	/// compacting what ended by `now_ms`.
+	fn update(
+		&self,
+		sessions: HashMap<String, FundingSession>,
+		presenting: HashMap<String, Option<FundingSelection>>,
+		repacked: HashMap<String, PackedSession>,
+		now_ms: u64,
+	) -> Update {
+		let (kept, ended) = retained(sessions.into_values(), now_ms);
+		let kept: HashMap<String, FundingSession> =
+			kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
+		// An assigned session is stored even while its overlay is up, as its
+		// provider's reports are stored before they are answered. A session
+		// only shown in the overlay is not stored, so holding one changes
+		// nothing worth writing.
+		let stored = |presenting: &HashMap<String, _>, session: &FundingSession| {
+			!presenting.contains_key(&session.intent) || session.provider_id.is_some()
+		};
+		let put = kept
+			.values()
+			.filter(|session| {
+				stored(&presenting, session) &&
+					self.sessions
+						.get(&session.intent)
+						.is_none_or(|held| held != *session || !stored(&self.presenting, held))
+			})
+			.map(|session| session.intent.clone())
+			.collect();
+		let removed = self
+			.sessions
+			.values()
+			.filter(|held| {
+				stored(&self.presenting, held) &&
+					!kept.get(&held.intent).is_some_and(|session| stored(&presenting, session))
+			})
+			.map(|held| held.intent.clone())
+			.collect();
+		let packed = ended.iter().map(PackedSession::from).chain(repacked.into_values()).collect();
+		Update { kept, ended, presenting, put, removed, packed }
+	}
+
+	/// Make stored `update` current. Returns the sessions it compacted as
+	/// they ended, by intent.
+	fn apply(&mut self, update: Update) -> HashMap<String, FundingSession> {
+		let Update { kept, ended, presenting, packed, .. } = update;
+		self.pack
+			.extend(packed.into_iter().map(|packed| (packed.summary.intent.clone(), packed)));
+		self.sessions = kept;
+		// A selection the host reported while the write was in flight stands.
+		self.presenting = presenting
+			.into_iter()
+			.map(|(intent, selection)| {
+				let current = self.presenting.remove(&intent).unwrap_or(selection);
+				(intent, current)
+			})
+			.collect();
+		ended.into_iter().map(|session| (session.intent.clone(), session)).collect()
+	}
+}
+
 /// Host-global funding sessions, their subscribers and the host surface.
 #[derive(Default)]
 pub struct FundingRegistry {
-	sessions: Mutex<HashMap<String, FundingSession>>,
-	/// Ended sessions compacted out of [`Self::sessions`], by intent.
-	/// Should a session sit in both, the full record wins.
-	pack: Mutex<HashMap<String, PackedSession>>,
-	/// Sessions compacted by the commit that ended them, held in full until
-	/// that ending is handed to the host, so the host gets the full record
-	/// with it.
-	ending: Mutex<HashMap<String, FundingSession>>,
-	/// Sessions whose overlay is still up: live in memory, so the overlay can
-	/// quote and pick a provider for them, but not stored until the user
-	/// starts them.
-	presenting: Mutex<HashSet<String>>,
-	subscribers: Mutex<Subscribers>,
+	/// The sessions, their overlays and their watchers.
+	held: Mutex<Held>,
 	announcements: Mutex<Announcements>,
-	/// Sessions past the moment they count as taking longer whose host has
-	/// heard so, as nothing else changes in them then.
-	told_longer: Mutex<HashSet<String>>,
-	/// Held across every load and write; the flag records whether persisted
-	/// sessions have been loaded.
-	writes: AsyncMutex<bool>,
-	/// Whether persisted sessions have been loaded, readable without the
-	/// write lock.
+	/// Held across every load and write, so persisted snapshots land in
+	/// order.
+	writes: AsyncMutex<()>,
+	/// Whether persisted sessions have been loaded. Set under
+	/// [`Self::writes`], and readable without it.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
 	feed: OnceLock<Arc<dyn FundingFeed>>,
 	/// The core database the sessions are stored in.
 	db: OnceLock<store::Db>,
-	/// Each provider's worker connection, by product id.
-	links: Mutex<HashMap<ProductId, Link>>,
-	/// Callers waiting for a provider's worker to connect, by product id.
-	link_waiters: Mutex<HashMap<ProductId, Vec<oneshot::Sender<()>>>>,
+	/// Each provider's worker connection, and who waits for one.
+	links: Mutex<Links>,
 	/// The generation the next link takes.
 	next_generation: AtomicU64,
-	/// Sessions holding a reference on their provider's worker, with that
-	/// provider. Only the reconciler changes it.
-	holding: Mutex<HashMap<String, ProductId>>,
+	/// Each session's hold on its provider's worker, kept in line with the
+	/// sessions by [`Self::hold_workers`].
+	holding: Mutex<HashMap<String, WorkerHold>>,
 	/// Sessions whose top-ups or payment are being followed to an outcome.
 	following: Mutex<HashSet<String>>,
 	/// Ids of funds whose host call is in flight, so no second call under
@@ -276,11 +410,8 @@ pub struct FundingRegistry {
 	/// Recorded funds the host has not taken, by id, with when the reconciler
 	/// may next ask the engine about them: `u64::MAX` while it is asking.
 	resolving: Mutex<HashMap<[u8; 32], u64>>,
-	/// Wakes the reconciler task, once one runs.
-	reconciler: Mutex<Option<mpsc::UnboundedSender<()>>>,
-	/// The earliest time a background step asked to be tried again, in Unix
-	/// milliseconds.
-	retry_at: Mutex<Option<u64>>,
+	/// The reconciler task's handle and when it is next due.
+	reconciler: Mutex<Reconciler>,
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
@@ -341,8 +472,8 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		let provider = provider_id.clone();
 		let assigned = self
-			.commit(now_ms, move |sessions| {
-				let assigned = sessions.get_mut(&intent).and_then(|session| {
+			.commit(now_ms, move |draft| {
+				let assigned = draft.sessions.get_mut(&intent).and_then(|session| {
 					session.assign(&provider, choice, now_ms).then(|| session.assignment())
 				});
 				let changed = assigned.iter().map(|session| session.intent.clone()).collect();
@@ -362,14 +493,19 @@ impl FundingRegistry {
 	pub fn link(&self, provider_id: &ProductId, link: Arc<dyn FundingProviderLink>) {
 		let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
 		self.lock_links()
+			.by_provider
 			.insert(provider_id.clone(), Link { link, generation, catch_up: CatchUp::Connecting });
 	}
 
 	/// Drop `link`, unless a newer one replaced it.
 	pub fn unlink(&self, provider_id: &ProductId, link: &Arc<dyn FundingProviderLink>) {
 		let mut links = self.lock_links();
-		if links.get(provider_id).is_some_and(|held| Arc::ptr_eq(&held.link, link)) {
-			links.remove(provider_id);
+		if links
+			.by_provider
+			.get(provider_id)
+			.is_some_and(|held| Arc::ptr_eq(&held.link, link))
+		{
+			links.by_provider.remove(provider_id);
 		}
 	}
 
@@ -384,12 +520,13 @@ impl FundingRegistry {
 		let readied = {
 			let mut links = self.lock_links();
 			let readied = links
+				.by_provider
 				.get_mut(provider_id)
 				.filter(|held| held.catch_up == CatchUp::Connecting)
 				.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
 				.is_some();
-			for waiter in lock(&self.link_waiters).remove(provider_id).unwrap_or_default() {
-				let _ = waiter.send(());
+			if let Some(mut waiters) = links.waiters.remove(provider_id) {
+				waiters.fire();
 			}
 			readied
 		};
@@ -399,14 +536,9 @@ impl FundingRegistry {
 	}
 
 	/// The link to `provider_id`'s worker once that worker has connected,
-	/// waiting for it when it has not. A caller holds the worker meanwhile,
-	/// so the host runs it, and bounds the wait itself.
-	pub async fn connected_link(&self, provider_id: &ProductId) -> Arc<dyn FundingProviderLink> {
-		self.connected_link_besides(provider_id, None).await
-	}
-
-	/// As [`Self::connected_link`], but waiting past `besides`, a link a call
-	/// just failed on, for the connection that follows it.
+	/// waiting for it when it has not, and past `besides`, a link a call just
+	/// failed on, for the connection that follows it. A caller holds the
+	/// worker meanwhile, so the host runs it, and bounds the wait itself.
 	pub async fn connected_link_besides(
 		&self,
 		provider_id: &ProductId,
@@ -414,16 +546,14 @@ impl FundingRegistry {
 	) -> Arc<dyn FundingProviderLink> {
 		loop {
 			let connected = {
-				let links = self.lock_links();
-				if let Some(held) = links.get(provider_id).filter(|held| {
+				let mut links = self.lock_links();
+				if let Some(held) = links.by_provider.get(provider_id).filter(|held| {
 					held.catch_up != CatchUp::Connecting &&
 						!besides.is_some_and(|failed| Arc::ptr_eq(&held.link, failed))
 				}) {
 					return held.link.clone();
 				}
-				let (sender, connected) = oneshot::channel();
-				lock(&self.link_waiters).entry(provider_id.clone()).or_default().push(sender);
-				connected
+				links.waiters.entry(provider_id.clone()).or_default().wait()
 			};
 			let _ = connected.await;
 		}
@@ -432,8 +562,9 @@ impl FundingRegistry {
 	/// What `provider_id`'s worker has to hear when it connects, one list per
 	/// session it serves, oldest first.
 	fn pending_calls(&self, provider_id: &ProductId) -> Vec<Vec<ProviderCall>> {
-		let sessions = self.lock_sessions();
-		let mut served: Vec<&FundingSession> = sessions
+		let held = self.lock_held();
+		let mut served: Vec<&FundingSession> = held
+			.sessions
 			.values()
 			.filter(|session| {
 				session.serves_provider() && session.provider_id.as_ref() == Some(provider_id)
@@ -467,8 +598,8 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		let provider_id = &provider.product_id;
 		let host_id = |id: &[u8; 32]| host_payment_id(provider, *id);
-		self.commit(now_ms, move |sessions| {
-			let reported = match sessions.get_mut(&intent) {
+		self.commit(now_ms, move |draft| {
+			let reported = match draft.sessions.get_mut(&intent) {
 				Some(session) => session.report(provider_id, update, host_id, now_ms),
 				None => Err(HostFundingReportError::NotFound),
 			};
@@ -488,14 +619,15 @@ impl FundingRegistry {
 
 	/// Whether session `intent` recorded funds under `host_id`.
 	pub fn recorded_start(&self, intent: &str, host_id: &[u8; 32]) -> bool {
-		self.lock_sessions()
+		self.lock_held()
+			.sessions
 			.get(intent)
 			.is_some_and(|session| session.started.iter().any(|record| record.host_id == *host_id))
 	}
 
 	/// Whether a session of `provider_id` recorded funds under `host_id`.
 	pub fn holds_start(&self, provider_id: &ProductId, host_id: &[u8; 32]) -> bool {
-		self.lock_sessions().values().any(|session| {
+		self.lock_held().sessions.values().any(|session| {
 			session.provider_id.as_ref() == Some(provider_id) &&
 				session.started.iter().any(|record| record.host_id == *host_id)
 		})
@@ -516,7 +648,8 @@ impl FundingRegistry {
 		asked: FundsAsked,
 	) -> Result<Option<StartRecord>, FundingSessionError> {
 		let FundsAsked { direction, host_id, amount, terms } = asked;
-		self.commit(now_ms, |sessions| {
+		self.commit(now_ms, |draft| {
+			let sessions = &mut draft.sessions;
 			let elsewhere = sessions.values().any(|session| {
 				session.intent != intent &&
 					session.provider_id.as_ref() == Some(provider_id) &&
@@ -559,8 +692,8 @@ impl FundingRegistry {
 		host_id: [u8; 32],
 		taken: bool,
 	) -> Result<(), FundingSessionError> {
-		self.commit(now_ms, |sessions| {
-			let changed = sessions.get_mut(intent).is_some_and(|session| {
+		self.commit(now_ms, |draft| {
+			let changed = draft.sessions.get_mut(intent).is_some_and(|session| {
 				if taken { session.accept_start(&host_id) } else { session.forget_start(&host_id) }
 			});
 			((), Vec::from_iter(changed.then(|| intent.to_string())))
@@ -578,48 +711,65 @@ impl FundingRegistry {
 
 	/// Snapshot one session.
 	pub fn get(&self, intent: &str) -> Option<FundingSession> {
-		self.lock_sessions().get(intent).cloned()
+		self.lock_held().sessions.get(intent).cloned()
 	}
 
 	/// How session `intent` ended, whether held in full or compacted. `None`
 	/// while it is open or when no such session is held.
 	#[cfg(test)]
 	pub fn ended(&self, intent: &str) -> Option<HostFundingStatusSubscribeItem> {
-		match self.get(intent) {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
 			Some(session) => session.is_terminal().then(|| session.wire_item()),
-			None => self.lock_pack().get(intent).map(|packed| packed.summary.wire_item()),
+			None => held.pack.get(intent).map(|packed| packed.summary.wire_item()),
 		}
 	}
 
 	/// Whether session `intent`'s overlay is up.
 	pub fn is_presenting(&self, intent: &str) -> bool {
-		self.lock_presenting().contains(intent)
+		self.lock_held().presenting.contains_key(intent)
 	}
 
 	/// The sessions whose overlay is up.
 	pub fn presenting(&self) -> Vec<String> {
-		self.lock_presenting().iter().cloned().collect()
+		self.lock_held().presenting.keys().cloned().collect()
+	}
+
+	/// Record what the user picked in session `intent`'s overlay. Returns
+	/// whether its overlay is up; a closed one keeps nothing.
+	pub fn select(&self, intent: &str, selection: FundingSelection) -> bool {
+		self.lock_held()
+			.presenting
+			.get_mut(intent)
+			.map(|held| *held = Some(selection))
+			.is_some()
+	}
+
+	/// What the user picked so far in session `intent`'s overlay.
+	pub fn selection(&self, intent: &str) -> Option<FundingSelection> {
+		self.lock_held().presenting.get(intent).cloned().flatten()
 	}
 
 	/// Whether a provider still works on any session: one in flight, or a
 	/// withdrawal whose payout or refund it has not reported.
 	pub fn is_in_progress(&self) -> bool {
-		self.lock_sessions().values().any(FundingSession::has_working_provider)
+		self.lock_held().sessions.values().any(FundingSession::has_working_provider)
 	}
 
 	/// Every ended session, held in full or compacted into the pack, as
 	/// summaries newest first, each once: what the host shows as history.
 	pub fn history(&self) -> Vec<FundingSessionSummary> {
 		let mut history: Vec<_> = {
-			let sessions = self.lock_sessions();
-			let recorded = sessions
+			let held = self.lock_held();
+			let recorded = held
+				.sessions
 				.values()
 				.filter(|session| session.is_terminal())
 				.map(FundingSession::summary);
-			let pack = self.lock_pack();
-			let compacted = pack
+			let compacted = held
+				.pack
 				.values()
-				.filter(|packed| !sessions.contains_key(&packed.summary.intent))
+				.filter(|packed| !held.sessions.contains_key(&packed.summary.intent))
 				.map(|packed| packed.summary.clone());
 			recorded.chain(compacted).collect()
 		};
@@ -630,12 +780,11 @@ impl FundingRegistry {
 	/// Who opened session `intent`, held in full or in the pack: `None` when
 	/// no such session is held, `Some(None)` when the host opened it.
 	pub fn owner(&self, intent: &str) -> Option<Option<ProductId>> {
-		if let Some(session) = self.lock_sessions().get(intent) {
+		let held = self.lock_held();
+		if let Some(session) = held.sessions.get(intent) {
 			return Some(session.owner_product_id.clone());
 		}
-		self.lock_pack()
-			.get(intent)
-			.map(|packed| packed.summary.owner_product_id.clone())
+		held.pack.get(intent).map(|packed| packed.summary.owner_product_id.clone())
 	}
 
 	/// Record that the host told the user how ended session `intent` went,
@@ -648,36 +797,23 @@ impl FundingRegistry {
 		now_ms: u64,
 		intent: &str,
 	) -> Result<bool, FundingSessionError> {
-		let held = intent.to_string();
-		let in_full = self
-			.commit(now_ms, move |sessions| {
-				let acknowledged = sessions
-					.get_mut(&held)
-					.filter(|session| session.is_terminal() && !session.acknowledged)
-					.map(|session| session.acknowledged = true)
-					.is_some();
-				(acknowledged, Vec::new())
-			})
-			.await?;
-		if in_full {
-			return Ok(true);
-		}
-		// The commit above loaded the pack; holding the write lock keeps a
-		// concurrent commit from writing the row between the read and here.
-		let _writes = self.writes.lock().await;
-		let db = self.db()?;
-		let packed = {
-			let pack = self.lock_pack();
-			pack.get(intent)
-				.filter(|packed| !packed.acknowledged)
-				.map(|packed| PackedSession { acknowledged: true, ..packed.clone() })
-		};
-		let Some(packed) = packed else {
-			return Ok(false);
-		};
-		store::write(db, &[], Vec::new(), core::slice::from_ref(&packed)).await?;
-		self.lock_pack().insert(intent.to_string(), packed);
-		Ok(true)
+		self.commit(now_ms, |draft| {
+			if let Some(session) = draft
+				.sessions
+				.get_mut(intent)
+				.filter(|session| session.is_terminal() && !session.acknowledged)
+			{
+				session.acknowledged = true;
+				return (true, Vec::new());
+			}
+			let Some(packed) = draft.packed(intent).filter(|packed| !packed.acknowledged) else {
+				return (false, Vec::new());
+			};
+			let packed = PackedSession { acknowledged: true, ..packed.clone() };
+			draft.repacked.insert(intent.to_string(), packed);
+			(true, Vec::new())
+		})
+		.await
 	}
 
 	/// Cancel session `intent` at the user's request: end it if no provider
@@ -691,10 +827,11 @@ impl FundingRegistry {
 	) -> Result<CancelOutcome, FundingSessionError> {
 		let target = intent.to_string();
 		let (outcome, provider) = self
-			.commit(now_ms, move |sessions| {
-				let Some(session) =
-					sessions.get_mut(&target).filter(|_| !self.lock_presenting().contains(&target))
-				else {
+			.commit(now_ms, move |draft| {
+				if draft.presenting.contains_key(&target) {
+					return ((CancelOutcome::Refused, None), Vec::new());
+				}
+				let Some(session) = draft.sessions.get_mut(&target) else {
 					return ((CancelOutcome::Refused, None), Vec::new());
 				};
 				let outcome = session.cancel(now_ms);
@@ -727,8 +864,8 @@ impl FundingRegistry {
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		let target = intent.to_string();
 		let (confirmation, call) = self
-			.commit(now_ms, move |sessions| {
-				let Some(session) = sessions.get_mut(&target) else {
+			.commit(now_ms, move |draft| {
+				let Some(session) = draft.sessions.get_mut(&target) else {
 					return ((CancelConfirmation::NoOffer, None), Vec::new());
 				};
 				let confirmation = session.confirm_cancel(terms, now_ms);
@@ -754,11 +891,12 @@ impl FundingRegistry {
 		&self,
 		intent: &str,
 	) -> Option<BoxStream<'static, HostFundingStatusSubscribeItem>> {
-		// A commit fans out under this lock after writing, so holding it from
-		// the read to the registration means no change is missed.
-		let mut subscribers = self.lock_subscribers();
-		let Some(session) = self.get(intent) else {
-			let item = self.lock_pack().get(intent)?.summary.wire_item();
+		// A commit replaces the sessions and fans out to their subscribers
+		// under this lock, so holding it from the read to the registration
+		// means every change is heard once.
+		let mut held = self.lock_held();
+		let Some(session) = held.sessions.get(intent).cloned() else {
+			let item = held.pack.get(intent)?.summary.wire_item();
 			return Some(stream::once(async move { item }).boxed());
 		};
 		let terminal = session.is_terminal();
@@ -767,7 +905,7 @@ impl FundingRegistry {
 			return Some(current.boxed());
 		}
 		let (sender, receiver) = mpsc::unbounded();
-		let senders = subscribers.entry(intent.to_string()).or_default();
+		let senders = held.subscribers.entry(intent.to_string()).or_default();
 		// A product that reloads subscribes again without the session
 		// changing, so watchers it left are dropped here too.
 		senders.retain(|sender| !sender.is_closed());
@@ -786,14 +924,14 @@ impl FundingRegistry {
 	) -> Result<bool, FundingSessionError> {
 		let intent = session.intent.clone();
 		let presented = self
-			.commit(now_ms, |sessions| {
-				if sessions.contains_key(&session.intent) ||
-					self.lock_pack().contains_key(&session.intent)
+			.commit(now_ms, |draft| {
+				if draft.sessions.contains_key(&session.intent) ||
+					draft.packed(&session.intent).is_some()
 				{
 					return (false, Vec::new());
 				}
-				self.lock_presenting().insert(session.intent.clone());
-				sessions.insert(session.intent.clone(), session);
+				draft.presenting.insert(session.intent.clone(), None);
+				draft.sessions.insert(session.intent.clone(), session);
 				(true, Vec::new())
 			})
 			.await;
@@ -811,18 +949,18 @@ impl FundingRegistry {
 		// Leaving the overlay inside the commit, so no other commit stores
 		// the session before this one announces it.
 		let started = self
-			.commit(now_ms, |_| {
-				self.lock_presenting().remove(intent);
+			.commit(now_ms, |draft| {
+				draft.presenting.remove(intent);
 				((), vec![intent.to_string()])
 			})
 			.await;
-		if started.is_err() &&
-			!self.discard(intent).await &&
-			let Some(session) = self.get(intent)
-		{
+		if started.is_err() && !self.discard(intent).await {
 			// A provider took it under the overlay, so it is stored and runs
 			// as started: announce it like any started session.
-			self.fan_out(&session);
+			let mut held = self.lock_held();
+			if let Some(session) = held.sessions.get(intent).cloned() {
+				self.fan_out(&mut held, &session);
+			}
 		}
 		started
 	}
@@ -837,32 +975,30 @@ impl FundingRegistry {
 	/// cancelled: the user never started it.
 	async fn discard(&self, intent: &str) -> bool {
 		let _writes = self.writes.lock().await;
-		if self
-			.lock_sessions()
-			.get(intent)
-			.is_some_and(|session| session.provider_id.is_some())
-		{
-			// Its provider may be working on it and it is stored, so it runs
-			// as started instead of staying hidden under an overlay that is
-			// gone.
-			self.lock_presenting().remove(intent);
-			return false;
-		}
-		self.lock_presenting().remove(intent);
-		self.lock_sessions().remove(intent);
+		let watchers = {
+			let mut held = self.lock_held();
+			held.presenting.remove(intent);
+			if held.sessions.get(intent).is_some_and(|session| session.provider_id.is_some()) {
+				// Its provider may be working on it and it is stored, so it
+				// runs as started instead of staying hidden under an overlay
+				// that is gone.
+				return false;
+			}
+			held.sessions.remove(intent);
+			held.subscribers.remove(intent).unwrap_or_default()
+		};
 		let cancelled =
 			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled };
-		for sender in self.lock_subscribers().remove(intent).unwrap_or_default() {
+		for sender in watchers {
 			// A watcher that already went away has nothing to hear.
 			let _ = sender.unbounded_send(cancelled.clone());
 		}
 		true
 	}
 
-	/// Apply `edit` to a copy of the sessions, persist what changed, then make
-	/// it current and notify every session `edit` names. An edit may move
-	/// sessions in or out of the overlay; when the write fails, that move is
-	/// undone along with the rest.
+	/// Apply `edit` to a [`Draft`], persist what changed, then make it current
+	/// and notify every session `edit` names. A write that fails drops the
+	/// draft, so memory keeps what was stored.
 	///
 	/// Persisted sessions are loaded first on the first call, and every
 	/// commit expires the sessions past their deadline, so a long suspend
@@ -870,130 +1006,96 @@ impl FundingRegistry {
 	pub async fn commit<R>(
 		&self,
 		now_ms: u64,
-		edit: impl FnOnce(&mut HashMap<String, FundingSession>) -> (R, Vec<String>),
+		edit: impl FnOnce(&mut Draft<'_>) -> (R, Vec<String>),
 	) -> Result<R, FundingSessionError> {
-		let mut loaded = self.writes.lock().await;
+		let writes = self.writes.lock().await;
 		let db = self.db()?;
-		if !*loaded {
+		if !self.loaded.load(Ordering::Acquire) {
 			// Held as stored, so a commit writes only the rows it changes.
 			let (sessions, summaries) = store::load(db).await?;
-			self.lock_sessions()
+			let mut held = self.lock_held();
+			held.sessions
 				.extend(sessions.into_iter().map(|session| (session.intent.clone(), session)));
-			self.lock_pack().extend(
+			held.pack.extend(
 				summaries.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
 			);
-			*loaded = true;
 			self.loaded.store(true, Ordering::Release);
 		}
-		let presenting_before = self.lock_presenting().clone();
-		let mut working = self.lock_sessions().clone();
-		let mut changed = Vec::new();
-		let (result, edited) = edit(&mut working);
-		// A session the host is told about must be stored too, which covers
-		// one leaving the overlay: started, though nothing in it changed.
-		let announces = !edited.is_empty();
-		changed.extend(edited);
 		let mut lapsed = Vec::new();
-		for session in working.values_mut() {
-			if session.expire_if_due(now_ms) {
-				changed.push(session.intent.clone());
-			}
-			if session.lapse_cancel_offer(now_ms) {
-				changed.push(session.intent.clone());
-				lapsed.extend(session.provider_id.clone().map(|provider| {
-					(
-						provider,
-						ProviderCall::Cancel(
-							session.intent.clone(),
-							CancelCall::Settle(FundingCancelDecision::Declined),
-						),
-					)
-				}));
-			}
-		}
-		// The write lock keeps the in-memory map unchanged until this commit
-		// replaces it, so it still holds the sessions as they were before `edit`.
-		if announces || working != *self.lock_sessions() {
-			let (kept, ended) = retained(working.into_values(), now_ms);
-			let compacted: Vec<PackedSession> = ended.iter().map(PackedSession::from).collect();
-			let kept: HashMap<String, FundingSession> =
-				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
-			// An assigned session is stored even while its overlay is up, as
-			// its provider's reports are stored before they are answered. A
-			// session only shown in the overlay is not stored, so holding one
-			// changes nothing worth writing.
-			let stored = |presenting: &HashSet<String>, session: &FundingSession| {
-				!presenting.contains(&session.intent) || session.provider_id.is_some()
+		// The write lock keeps every commit out until this one is done, so
+		// what the draft was copied from is still current when it lands.
+		let (result, mut changed, mut update) = {
+			let held = self.lock_held();
+			let mut draft = Draft {
+				sessions: held.sessions.clone(),
+				presenting: held.presenting.clone(),
+				pack: &held.pack,
+				repacked: HashMap::new(),
 			};
-			let (put, removed) = {
-				let presenting = self.lock_presenting();
-				let before = self.lock_sessions();
-				let put: Vec<&FundingSession> = kept
-					.values()
-					.filter(|session| {
-						stored(&presenting, session) &&
-							before.get(&session.intent).is_none_or(|held| {
-								held != *session || !stored(&presenting_before, held)
-							})
-					})
-					.collect();
-				let removed: Vec<String> = before
-					.values()
-					.filter(|held| {
-						stored(&presenting_before, held) &&
-							!kept
-								.get(&held.intent)
-								.is_some_and(|session| stored(&presenting, session))
-					})
-					.map(|held| held.intent.clone())
-					.collect();
-				(put, removed)
-			};
-			let writes = !put.is_empty() || !removed.is_empty() || !compacted.is_empty();
-			if writes && let Err(error) = store::write(db, &put, removed, &compacted).await {
-				*self.lock_presenting() = presenting_before;
-				return Err(error);
+			let (result, edited) = edit(&mut draft);
+			// A session the host is told about must be stored too, which
+			// covers one leaving the overlay: started, though nothing in it
+			// changed.
+			let announces = !edited.is_empty();
+			let mut changed = edited;
+			for session in draft.sessions.values_mut() {
+				if session.expire_if_due(now_ms) {
+					changed.push(session.intent.clone());
+				}
+				if session.lapse_cancel_offer(now_ms) {
+					changed.push(session.intent.clone());
+					lapsed.extend(session.provider_id.clone().map(|provider| {
+						(
+							provider,
+							ProviderCall::Cancel(
+								session.intent.clone(),
+								CancelCall::Settle(FundingCancelDecision::Declined),
+							),
+						)
+					}));
+				}
 			}
-			self.lock_pack().extend(
-				compacted.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
-			);
-			*self.lock_sessions() = kept;
-			// A session this commit ended goes to the host in full once more.
-			self.lock_ending().extend(
-				ended
-					.into_iter()
-					.filter(|session| changed.contains(&session.intent))
-					.map(|session| (session.intent.clone(), session)),
-			);
+			let Draft { sessions, presenting, repacked, .. } = draft;
+			let edits = announces ||
+				!repacked.is_empty() ||
+				sessions != held.sessions ||
+				presenting.len() != held.presenting.len() ||
+				presenting.keys().any(|intent| !held.presenting.contains_key(intent));
+			let update = edits.then(|| held.update(sessions, presenting, repacked, now_ms));
+			(result, changed, update)
+		};
+		if let Some(update) = update.as_mut().filter(|update| update.writes()) {
+			let put: Vec<&FundingSession> =
+				update.put.iter().filter_map(|intent| update.kept.get(intent)).collect();
+			store::write(db, &put, core::mem::take(&mut update.removed), &update.packed).await?;
 		}
-		// Each session once, even when an edit and its expiry both name it.
-		let mut announced = HashSet::new();
-		changed.retain(|intent| announced.insert(intent.clone()));
-		for intent in changed {
-			let ending = self.lock_ending().get(&intent).cloned();
-			if let Some(session) = self.get(&intent).or(ending) {
-				self.fan_out(&session);
-			} else if let Some(packed) = self.lock_pack().get(&intent).cloned() {
-				self.tell_host_packed(&packed);
-			}
-		}
-		// What no announcement waits for is not held: the host is not told
-		// of a session whose overlay is up, nor of any without a surface.
 		{
-			let pending: HashSet<String> = self
-				.lock_announcements()
-				.pending
-				.iter()
-				.map(|(intent, _)| intent.clone())
-				.collect();
-			self.lock_ending().retain(|intent, _| pending.contains(intent));
-		}
-		for session in self.now_taking_longer(now_ms) {
-			if !announced.contains(&session.intent) {
-				self.tell_host(&session);
+			// Replaced and fanned out under one lock, so a subscriber either
+			// reads the sessions before this commit and hears it, or reads
+			// them after and does not.
+			let mut held = self.lock_held();
+			let mut ending = update.map(|update| held.apply(update)).unwrap_or_default();
+			// Each session once, even when an edit and its expiry both name it.
+			let mut announced = HashSet::new();
+			changed.retain(|intent| announced.insert(intent.clone()));
+			for intent in changed {
+				// A session this commit compacted as it ended goes out in full
+				// once more.
+				let session =
+					held.sessions.get(&intent).cloned().or_else(|| ending.remove(&intent));
+				if let Some(session) = session {
+					self.fan_out(&mut held, &session);
+				} else if let Some(packed) = held.pack.get(&intent) {
+					self.tell_host_packed(packed);
+				}
+			}
+			for session in now_taking_longer(&mut held, now_ms) {
+				if !announced.contains(&session.intent) {
+					self.tell_host(&held, &session);
+				}
 			}
 		}
-		drop(loaded);
+		drop(writes);
 		for (provider, call) in lapsed {
 			self.call(&provider, vec![call]);
 		}
@@ -1010,11 +1112,11 @@ impl FundingRegistry {
 			return;
 		};
 		let mut reconciler = self.lock_reconciler();
-		if reconciler.as_ref().is_some_and(|wake| wake.unbounded_send(()).is_ok()) {
+		if reconciler.wake.as_ref().is_some_and(|wake| wake.unbounded_send(()).is_ok()) {
 			return;
 		}
 		let (wake, woken) = mpsc::unbounded();
-		*reconciler = Some(wake);
+		reconciler.wake = Some(wake);
 		drop(reconciler);
 		(services.spawner)(Box::pin(reconcile(Arc::downgrade(&services), woken)));
 	}
@@ -1022,8 +1124,8 @@ impl FundingRegistry {
 	/// Ask the reconciler to run again by `at_ms`, in Unix milliseconds.
 	fn retry_by(&self, at_ms: u64) {
 		{
-			let mut retry_at = self.lock_retry_at();
-			*retry_at = Some(retry_at.map_or(at_ms, |held| held.min(at_ms)));
+			let mut reconciler = self.lock_reconciler();
+			reconciler.retry_at = Some(reconciler.retry_at.map_or(at_ms, |held| held.min(at_ms)));
 		}
 		self.wake();
 	}
@@ -1046,7 +1148,9 @@ impl FundingRegistry {
 					if self.loaded.load(Ordering::Acquire) {
 						self.reconcile_work(services, now_ms);
 					}
-					return Some(SWEEP_RETRY.as_millis() as u64);
+					return Some(
+						u64::try_from(SWEEP_RETRY.as_millis()).expect("retry delay fits in u64"),
+					);
 				},
 			}
 		}
@@ -1055,70 +1159,71 @@ impl FundingRegistry {
 	}
 
 	fn reconcile_work(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
-		self.retain_quotes(services);
 		self.hold_workers(services);
 		self.follow_settlements(services);
 		self.resolve_starts(services, now_ms);
 		self.catch_up_links(services, now_ms);
 	}
 
-	/// Keep quotes only for open sessions still waiting on a provider.
-	fn retain_quotes(&self, services: &RuntimeServices) {
-		let quoting: HashSet<String> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| !session.is_terminal() && session.provider_id.is_none())
-			.map(|session| session.intent.clone())
-			.collect();
-		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
-	}
-
 	/// Every assigned open session holds its provider's worker. The
-	/// reconciler keeps the holds current, and an overlay closing takes them
-	/// before it lets its own go; each session's hold is taken and let go
-	/// once, under the lock. A worker that starts and calls back changes the
+	/// reconciler keeps the holds current, and an overlay closing brings them
+	/// in line before it lets its own go. Holds are taken outside every lock
+	/// and kept only if the session still wants them once the lock is back,
+	/// so a pass that read the sessions before a newer one released a hold
+	/// cannot take it again. A worker that starts and calls back changes the
 	/// sessions, which the next pass picks up.
-	fn hold_workers(&self, services: &RuntimeServices) {
-		let assigned: HashMap<String, ProductId> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| session.serves_provider())
-			.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
-			.collect();
-		let (acquire, release) = {
+	fn hold_workers(&self, services: &Arc<RuntimeServices>) {
+		let (released, missing) = {
+			let held = self.lock_held();
+			let sessions = &held.sessions;
 			let mut holding = self.lock_holding();
-			let mut acquire = Vec::new();
-			for (intent, provider) in &assigned {
-				if !holding.contains_key(intent) {
-					holding.insert(intent.clone(), provider.clone());
-					acquire.push(provider.clone());
-				}
-			}
-			let mut release = Vec::new();
-			holding.retain(|intent, provider| {
-				let kept = assigned.contains_key(intent);
-				if !kept {
-					release.push(provider.clone());
-				}
-				kept
-			});
-			(acquire, release)
+			let stale: Vec<String> = holding
+				.iter()
+				.filter(|(intent, hold)| held_for(sessions, intent) != Some(hold.provider()))
+				.map(|(intent, _)| intent.clone())
+				.collect();
+			let released: Vec<WorkerHold> =
+				stale.iter().filter_map(|intent| holding.remove(intent)).collect();
+			let missing: Vec<(String, ProductId)> = sessions
+				.keys()
+				.filter(|intent| !holding.contains_key(*intent))
+				.filter_map(|intent| Some((intent.clone(), held_for(sessions, intent)?.clone())))
+				.collect();
+			(released, missing)
+		};
+		let taken: Vec<(String, WorkerHold)> = missing
+			.into_iter()
+			.map(|(intent, provider)| (intent, WorkerHold::acquire(services, &provider)))
+			.collect();
+		let unwanted: Vec<WorkerHold> = {
+			let held = self.lock_held();
+			let sessions = &held.sessions;
+			let mut holding = self.lock_holding();
+			taken
+				.into_iter()
+				.filter_map(|(intent, hold)| {
+					if holding.contains_key(&intent) ||
+						held_for(sessions, &intent) != Some(hold.provider())
+					{
+						return Some(hold);
+					}
+					holding.insert(intent, hold);
+					None
+				})
+				.collect()
 		};
 		// Taken before let go, so a provider moving from an ended session to
 		// a new one keeps its worker running.
-		for provider in &acquire {
-			services.worker_ledger.acquire(provider);
-		}
-		for provider in &release {
-			services.worker_ledger.release(provider);
-		}
+		drop(unwanted);
+		drop(released);
 	}
 
 	/// Follow every session whose outcome is due, once the engine its funds
 	/// went through is installed.
 	fn follow_settlements(&self, services: &Arc<RuntimeServices>) {
 		let due: Vec<(String, ProductId, Settlement)> = self
-			.lock_sessions()
+			.lock_held()
+			.sessions
 			.values()
 			.filter_map(|session| {
 				let settlement = session.settlement_due()?;
@@ -1133,7 +1238,8 @@ impl FundingRegistry {
 				Settlement::Payment(_) => services.payment_platform().is_some(),
 			};
 			if engine && self.lock_following().insert(intent.clone()) {
-				services.clone().follow_settlement(intent, provider, settlement);
+				let following = Following { registry: services.funding().clone(), intent };
+				services.clone().follow_settlement(following, provider, settlement);
 			}
 		}
 	}
@@ -1143,7 +1249,8 @@ impl FundingRegistry {
 	/// not [`UNKNOWN_FUNDS_GRACE_MS`] after they were recorded.
 	fn resolve_starts(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
 		let pending: Vec<(String, ProductId, StartedFunds)> = self
-			.lock_sessions()
+			.lock_held()
+			.sessions
 			.values()
 			.filter(|session| session.serves_provider())
 			.flat_map(|session| {
@@ -1167,7 +1274,14 @@ impl FundingRegistry {
 				continue;
 			}
 			resolving.insert(funds.host_id, u64::MAX);
-			(services.spawner)(Box::pin(services.clone().resolve_start(intent, provider, funds)));
+			let asking = Resolving {
+				registry: services.funding().clone(),
+				host_id: funds.host_id,
+				next_ms: None,
+			};
+			(services.spawner)(Box::pin(
+				services.clone().resolve_start(asking, intent, provider, funds),
+			));
 		}
 	}
 
@@ -1175,6 +1289,7 @@ impl FundingRegistry {
 	fn catch_up_links(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
 		let due: Vec<(ProductId, u64, Arc<dyn FundingProviderLink>)> = self
 			.lock_links()
+			.by_provider
 			.iter_mut()
 			.filter_map(|(provider, held)| match held.catch_up {
 				CatchUp::Due { not_before_ms } if not_before_ms <= now_ms => {
@@ -1185,16 +1300,22 @@ impl FundingRegistry {
 			})
 			.collect();
 		for (provider, generation, link) in due {
-			let services = services.clone();
-			(services.spawner.clone())(Box::pin(async move {
-				let registry = services.funding().clone();
+			let catching = CatchingUp {
+				registry: services.funding().clone(),
+				provider,
+				generation,
+				answered: false,
+			};
+			(services.spawner)(Box::pin(async move {
+				let mut catching = catching;
+				let registry = catching.registry.clone();
 				let mut answered = true;
-				for calls in registry.pending_calls(&provider) {
+				for calls in registry.pending_calls(&catching.provider) {
 					for call in calls {
 						answered &= registry.put(link.as_ref(), call).await;
 					}
 				}
-				registry.caught_up(&provider, generation, answered);
+				catching.answered = answered;
 			}));
 		}
 	}
@@ -1203,10 +1324,15 @@ impl FundingRegistry {
 	/// went: done when every call was answered, due again shortly otherwise.
 	/// A link replaced meanwhile is left as it is.
 	fn caught_up(&self, provider_id: &ProductId, generation: u64, answered: bool) {
-		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		let retry_ms = current_unix_millis().saturating_add(
+			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let due = {
 			let mut links = self.lock_links();
-			let held = links.get_mut(provider_id).filter(|held| held.generation == generation);
+			let held = links
+				.by_provider
+				.get_mut(provider_id)
+				.filter(|held| held.generation == generation);
 			let due = !answered ||
 				held.as_ref().is_some_and(|held| held.catch_up == CatchUp::RunningThenDue);
 			if let Some(held) = held {
@@ -1225,9 +1351,14 @@ impl FundingRegistry {
 	/// call. A link still connecting or already due is caught up anyway, and
 	/// one being caught up is due again once that ends.
 	fn call_unanswered(&self, provider_id: &ProductId, generation: u64) {
-		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		let retry_ms = current_unix_millis().saturating_add(
+			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let mut links = self.lock_links();
-		let Some(held) = links.get_mut(provider_id).filter(|held| held.generation == generation)
+		let Some(held) = links
+			.by_provider
+			.get_mut(provider_id)
+			.filter(|held| held.generation == generation)
 		else {
 			return;
 		};
@@ -1246,15 +1377,16 @@ impl FundingRegistry {
 	/// or dropped.
 	fn next_wake(&self, now_ms: u64) -> Option<u64> {
 		let retry = {
-			let mut retry_at = self.lock_retry_at();
-			let held = *retry_at;
+			let mut reconciler = self.lock_reconciler();
+			let held = reconciler.retry_at;
 			if held.is_some_and(|at_ms| at_ms <= now_ms) {
-				*retry_at = None;
+				reconciler.retry_at = None;
 			}
 			held
 		};
 		let link = self
 			.lock_links()
+			.by_provider
 			.values()
 			.filter_map(|held| match held.catch_up {
 				CatchUp::Due { not_before_ms } => Some(not_before_ms),
@@ -1287,6 +1419,7 @@ impl FundingRegistry {
 		};
 		let Some((link, generation)) = self
 			.lock_links()
+			.by_provider
 			.get(provider_id)
 			.map(|held| (held.link.clone(), held.generation))
 		else {
@@ -1328,9 +1461,10 @@ impl FundingRegistry {
 				};
 				let target = intent.clone();
 				let answered = self
-					.commit(current_unix_millis(), move |sessions| {
+					.commit(current_unix_millis(), move |draft| {
 						let now_ms = current_unix_millis();
-						let changed = sessions
+						let changed = draft
+							.sessions
 							.get_mut(&target)
 							.is_some_and(|session| session.answer_cancel(answer, now_ms));
 						((), if changed { vec![target] } else { Vec::new() })
@@ -1349,8 +1483,8 @@ impl FundingRegistry {
 				}
 				let target = intent.clone();
 				let answered = self
-					.commit(current_unix_millis(), move |sessions| {
-						if let Some(session) = sessions.get_mut(&target) {
+					.commit(current_unix_millis(), move |draft| {
+						if let Some(session) = draft.sessions.get_mut(&target) {
 							session.cancel_settled(&decision);
 						}
 						((), Vec::new())
@@ -1381,77 +1515,52 @@ impl FundingRegistry {
 	}
 
 	fn next_deadline(&self) -> Option<u64> {
-		let told_longer = self.lock_told_longer();
-		self.lock_sessions()
+		let held = self.lock_held();
+		held.sessions
 			.values()
 			.flat_map(|session| {
 				let longer =
-					session.longer_at_ms().filter(|_| !told_longer.contains(&session.intent));
+					session.longer_at_ms().filter(|_| !held.told_longer.contains(&session.intent));
 				[session.next_alarm_ms(), longer]
 			})
 			.flatten()
 			.min()
 	}
 
-	/// The sessions that reached the moment they count as taking longer by
-	/// `now_ms` since the host last heard of them. A later report moves that
-	/// moment, so the host hears of it again.
-	fn now_taking_longer(&self, now_ms: u64) -> Vec<FundingSession> {
-		let mut told_longer = self.lock_told_longer();
-		let sessions = self.lock_sessions();
-		told_longer.retain(|intent| {
-			sessions
-				.get(intent)
-				.and_then(FundingSession::longer_at_ms)
-				.is_some_and(|at_ms| at_ms <= now_ms)
-		});
-		sessions
-			.values()
-			.filter(|session| {
-				session.longer_at_ms().is_some_and(|at_ms| at_ms <= now_ms) &&
-					told_longer.insert(session.intent.clone())
-			})
-			.cloned()
-			.collect()
-	}
-
-	fn lock_told_longer(&self) -> MutexGuard<'_, HashSet<String>> {
-		lock(&self.told_longer)
-	}
-
 	/// Tell subscribers about a session's current stage and queue it for the
 	/// host. A terminal stage ends the subscriber streams.
-	fn fan_out(&self, session: &FundingSession) {
+	fn fan_out(&self, held: &mut Held, session: &FundingSession) {
 		let item = session.wire_item();
-		{
-			let mut subscribers = self.lock_subscribers();
-			if let Some(senders) = subscribers.get_mut(&session.intent) {
-				senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
-			}
-			if session.is_terminal() {
-				subscribers.remove(&session.intent);
-			}
+		if let Some(senders) = held.subscribers.get_mut(&session.intent) {
+			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
 		}
-		self.tell_host(session);
+		if session.is_terminal() {
+			held.subscribers.remove(&session.intent);
+		}
+		self.tell_host(held, session);
 	}
 
 	/// Queue the ending of compacted session `packed` for the host again, as
 	/// it has not told the user how it went.
 	fn tell_host_packed(&self, packed: &PackedSession) {
 		if self.platform.get().is_some() {
-			self.lock_announcements()
-				.pending
-				.push_back((packed.summary.intent.clone(), packed.summary.wire_item()));
+			self.lock_announcements().pending.push_back((
+				packed.summary.intent.clone(),
+				packed.summary.wire_item(),
+				None,
+			));
 		}
 	}
 
 	/// Queue `session`'s current stage for the host, which hears of a session
 	/// once the user starts it.
-	fn tell_host(&self, session: &FundingSession) {
-		if self.platform.get().is_some() && !self.lock_presenting().contains(&session.intent) {
-			self.lock_announcements()
-				.pending
-				.push_back((session.intent.clone(), session.wire_item()));
+	fn tell_host(&self, held: &Held, session: &FundingSession) {
+		if self.platform.get().is_some() && !held.presenting.contains_key(&session.intent) {
+			self.lock_announcements().pending.push_back((
+				session.intent.clone(),
+				session.wire_item(),
+				Some(Box::new(session.clone())),
+			));
 		}
 	}
 
@@ -1459,7 +1568,8 @@ impl FundingRegistry {
 	/// lock so the host may call back into the registry, then whether a
 	/// provider still works on any session, when that changed. Each session
 	/// goes with the record and progress it has when delivered, which are at
-	/// least as new as its status. One caller delivers at a time, and a
+	/// least as new as its status, or once it is compacted with the record it
+	/// was queued with. One caller delivers at a time, and a
 	/// change committed from inside the callback is delivered by that caller
 	/// once the callback returns.
 	fn announce(&self) {
@@ -1474,7 +1584,9 @@ impl FundingRegistry {
 			let next = {
 				let mut announcements = self.lock_announcements();
 				let next = match announcements.pending.pop_front() {
-					Some((intent, item)) => Some(Announcement::Session(intent, item)),
+					Some((intent, item, queued)) => {
+						Some(Announcement::Session(intent, item, queued))
+					},
 					None if announcements.in_progress != Some(in_progress) => {
 						announcements.in_progress = Some(in_progress);
 						Some(Announcement::InProgress(in_progress))
@@ -1486,21 +1598,12 @@ impl FundingRegistry {
 			};
 			let feed = self.feed();
 			match next {
-				Some(Announcement::Session(intent, item)) => {
+				Some(Announcement::Session(intent, item, queued)) => {
 					platform.funding_session_changed(intent.clone(), item.clone());
 					if let Some(feed) = feed {
-						// The full record of a session compacted as it ended
-						// goes with every change still queued, and is let go
-						// with the one that ends it.
-						let ending = {
-							let mut ending = self.lock_ending();
-							if matches!(item, HostFundingStatusSubscribeItem::InProgress { .. }) {
-								ending.get(&intent).cloned()
-							} else {
-								ending.remove(&intent)
-							}
-						};
-						let session = self.get(&intent).or(ending);
+						// The record the session has now, or the one it was
+						// queued with once it is compacted.
+						let session = self.get(&intent).or(queued.map(|queued| *queued));
 						let progress =
 							session.as_ref().map(|session| session.progress(current_unix_millis()));
 						feed.funding_session_changed(intent, item, session, progress);
@@ -1520,12 +1623,8 @@ impl FundingRegistry {
 		lock(&self.announcements)
 	}
 
-	fn lock_reconciler(&self) -> MutexGuard<'_, Option<mpsc::UnboundedSender<()>>> {
+	fn lock_reconciler(&self) -> MutexGuard<'_, Reconciler> {
 		lock(&self.reconciler)
-	}
-
-	fn lock_retry_at(&self) -> MutexGuard<'_, Option<u64>> {
-		lock(&self.retry_at)
 	}
 
 	fn lock_starting(&self) -> MutexGuard<'_, HashSet<[u8; 32]>> {
@@ -1536,31 +1635,15 @@ impl FundingRegistry {
 		lock(&self.resolving)
 	}
 
-	fn lock_ending(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		lock(&self.ending)
+	fn lock_held(&self) -> MutexGuard<'_, Held> {
+		lock(&self.held)
 	}
 
-	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, PackedSession>> {
-		lock(&self.pack)
+	fn lock_links(&self) -> MutexGuard<'_, Links> {
+		lock(&self.links)
 	}
 
-	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
-		lock(&self.presenting)
-	}
-
-	fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		lock(&self.sessions)
-	}
-
-	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
-		lock(&self.subscribers)
-	}
-
-	fn lock_links(&self) -> MutexGuard<'_, HashMap<ProductId, Link>> {
-		self.links.lock().unwrap_or_else(PoisonError::into_inner)
-	}
-
-	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, ProductId>> {
+	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
 	}
 
@@ -1575,8 +1658,34 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Callers waiting for one kind of change, each woken by the next
+/// [`Self::fire`]. A waiter that went away is dropped by the next
+/// [`Self::wait`], so a change that never comes holds no more than the
+/// callers still waiting for it.
+#[derive(Default)]
+pub struct Signal(Vec<oneshot::Sender<()>>);
+
+impl Signal {
+	/// Resolves at the next [`Self::fire`], or with `Canceled` should the
+	/// signal be dropped first.
+	pub fn wait(&mut self) -> oneshot::Receiver<()> {
+		self.0.retain(|waiter| !waiter.is_canceled());
+		let (waiter, fired) = oneshot::channel();
+		self.0.push(waiter);
+		fired
+	}
+
+	/// Wake every caller waiting.
+	pub fn fire(&mut self) {
+		for waiter in self.0.drain(..) {
+			// A caller that went away has nothing to hear.
+			let _ = waiter.send(());
+		}
+	}
+}
+
 /// Funds a provider's worker asks the host to move for a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct FundsAsked {
 	/// Which way they move.
 	pub direction: FundingDirection,
@@ -1601,6 +1710,63 @@ impl Drop for StartGuard {
 		// The reconciler leaves a record alone while its call is in flight,
 		// so it looks again once the call is done.
 		self.registry.wake();
+	}
+}
+
+/// A session whose settlement is being followed, from
+/// [`FundingRegistry::follow_settlements`]. Dropping it, as the follow ends
+/// or its task is dropped, lets the reconciler follow the session again.
+struct Following {
+	registry: Arc<FundingRegistry>,
+	intent: String,
+}
+
+impl Drop for Following {
+	fn drop(&mut self) {
+		self.registry.lock_following().remove(&self.intent);
+		self.registry.wake();
+	}
+}
+
+/// Recorded funds the engine is being asked about, from
+/// [`FundingRegistry::resolve_starts`]. Dropping it leaves them due again at
+/// `next_ms`, or at once when that is `None`, so a task dropped while it asks
+/// does not keep them from being placed.
+struct Resolving {
+	registry: Arc<FundingRegistry>,
+	host_id: [u8; 32],
+	/// When the engine is asked again, in Unix milliseconds.
+	next_ms: Option<u64>,
+}
+
+impl Drop for Resolving {
+	fn drop(&mut self) {
+		match self.next_ms {
+			Some(next_ms) => {
+				self.registry.lock_resolving().insert(self.host_id, next_ms);
+				self.registry.retry_by(next_ms);
+			},
+			None => {
+				self.registry.lock_resolving().remove(&self.host_id);
+			},
+		}
+	}
+}
+
+/// A worker being handed its sessions, from
+/// [`FundingRegistry::catch_up_links`]. Dropping it records how the hand-over
+/// went, so one whose task is dropped is due again.
+struct CatchingUp {
+	registry: Arc<FundingRegistry>,
+	provider: ProductId,
+	generation: u64,
+	/// Whether every call was answered; `false` until the hand-over ends.
+	answered: bool,
+}
+
+impl Drop for CatchingUp {
+	fn drop(&mut self) {
+		self.registry.caught_up(&self.provider, self.generation, self.answered);
 	}
 }
 
@@ -1636,7 +1802,7 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 				let mut reconciler = services.funding().lock_reconciler();
 				let queued = woken.try_recv().is_ok();
 				if !queued {
-					*reconciler = None;
+					reconciler.wake = None;
 				}
 				queued
 			},
@@ -1648,7 +1814,7 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 }
 
 /// `future`'s output, or `None` once `limit` passed first.
-async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
+pub(crate) async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
 	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
 		Either::Left((output, _)) => Some(output),
 		Either::Right(_) => None,
@@ -1771,22 +1937,23 @@ impl RuntimeServices {
 			retry(
 				|| async {
 					let loaded = registry
-						.commit(current_unix_millis(), |sessions| {
-							// Ended sessions the host has not acknowledged are
+						.commit(current_unix_millis(), |draft| {
+							// Ended draft.sessions the host has not acknowledged are
 							// handed over again, so the user hears every
 							// outcome: those held in full, then the newest
 							// compacted ones.
-							let mut pending: Vec<String> = sessions
+							let mut pending: Vec<String> = draft
+								.sessions
 								.values()
 								.filter(|session| session.needs_handoff())
 								.map(|session| session.intent.clone())
 								.collect();
-							let mut unseen: Vec<PackedSession> = registry
-								.lock_pack()
+							let mut unseen: Vec<PackedSession> = draft
+								.pack
 								.values()
 								.filter(|packed| {
 									!packed.acknowledged &&
-										!sessions.contains_key(&packed.summary.intent)
+										!draft.sessions.contains_key(&packed.summary.intent)
 								})
 								.cloned()
 								.collect();
@@ -1833,8 +2000,9 @@ impl RuntimeServices {
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
 		self.funding()
-			.commit(current_unix_millis(), move |sessions| {
-				let settled = sessions
+			.commit(current_unix_millis(), move |draft| {
+				let settled = draft
+					.sessions
 					.get_mut(&intent)
 					.filter(|session| !session.is_terminal())
 					.map(|session| session.stage = stage)
@@ -1910,7 +2078,7 @@ impl RuntimeServices {
 		if assigned {
 			// The others' answers can no longer be used, so the quotes still
 			// asked of them stop and let their workers go.
-			self.funding_quotes().end_quotes(intent);
+			self.funding_quotes().end(intent);
 		}
 		Ok(assigned)
 	}
@@ -1922,13 +2090,14 @@ impl RuntimeServices {
 	/// if this stops with it still due.
 	fn follow_settlement(
 		self: Arc<Self>,
-		intent: String,
+		following: Following,
 		provider_id: ProductId,
 		settlement: Settlement,
 	) {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
-			let registry = self.funding().clone();
+			let registry = following.registry.clone();
+			let intent = following.intent.clone();
 			let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
 			let refund = matches!(settlement, Settlement::Refund(_));
 			let moved = match settlement {
@@ -1954,32 +2123,32 @@ impl RuntimeServices {
 				},
 			};
 			if let Some(moved) = moved {
-				let mut retry_in = FOLLOW_RETRY_FIRST;
+				let mut pauses = Backoff::new(FOLLOW_RETRY_FIRST, FOLLOW_RETRY_LONGEST);
 				loop {
 					let settling = intent.clone();
 					let settled = registry
-						.commit(current_unix_millis(), move |sessions| {
+						.commit(current_unix_millis(), move |draft| {
 							let now_ms = current_unix_millis();
-							let settled = sessions.get_mut(&settling).is_some_and(|session| {
-								if refund {
-									session.settle_refund(moved)
-								} else {
-									session.settle(moved, now_ms)
-								}
-							});
+							let settled =
+								draft.sessions.get_mut(&settling).is_some_and(|session| {
+									if refund {
+										session.settle_refund(moved)
+									} else {
+										session.settle(moved, now_ms)
+									}
+								});
 							((), if settled { vec![settling] } else { Vec::new() })
 						})
 						.await;
 					let Err(error) = settled else {
 						break;
 					};
+					let retry_in = pauses.next_pause();
 					tracing::warn!(%error, ?retry_in, "settling a funding session failed");
 					futures_timer::Delay::new(retry_in).await;
-					retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
 				}
 			}
-			registry.lock_following().remove(&intent);
-			registry.wake();
+			drop(following);
 		}));
 	}
 
@@ -1990,6 +2159,7 @@ impl RuntimeServices {
 	/// meanwhile settles the record itself.
 	async fn resolve_start(
 		self: Arc<Self>,
+		mut asking: Resolving,
 		intent: String,
 		provider_id: ProductId,
 		funds: StartedFunds,
@@ -1999,7 +2169,9 @@ impl RuntimeServices {
 		let held = engine_holds(&self, &provider, funds.direction, funds.host_id).await;
 		let now_ms = current_unix_millis();
 		let lapse_ms = funds.recorded_at_ms.saturating_add(UNKNOWN_FUNDS_GRACE_MS);
-		let retry_ms = now_ms.saturating_add(RESOLVE_RETRY.as_millis() as u64);
+		let retry_ms = now_ms.saturating_add(
+			u64::try_from(RESOLVE_RETRY.as_millis()).expect("retry delay fits in u64"),
+		);
 		let (taken, next_ms) = match held {
 			Ok(true) => (Some(true), None),
 			Ok(false) if now_ms >= lapse_ms => (Some(false), None),
@@ -2015,10 +2187,10 @@ impl RuntimeServices {
 				let host_id = funds.host_id;
 				let target = intent.clone();
 				let written = registry
-					.commit(now_ms, |sessions| {
+					.commit(now_ms, |draft| {
 						let starting = registry.lock_starting().contains(&host_id);
 						let changed = !starting &&
-							sessions.get_mut(&target).is_some_and(|session| {
+							draft.sessions.get_mut(&target).is_some_and(|session| {
 								if taken {
 									session.accept_start(&host_id)
 								} else {
@@ -2036,15 +2208,7 @@ impl RuntimeServices {
 					.map(|_| retry_ms)
 			},
 		};
-		match next_ms {
-			Some(next_ms) => {
-				registry.lock_resolving().insert(funds.host_id, next_ms);
-				registry.retry_by(next_ms);
-			},
-			None => {
-				registry.lock_resolving().remove(&funds.host_id);
-			},
-		}
+		asking.next_ms = next_ms;
 	}
 
 	/// What `funds` moved, read again after a growing wait until the host
@@ -2057,7 +2221,7 @@ impl RuntimeServices {
 		direction: FundingDirection,
 		funds: &StartedFunds,
 	) -> Option<u128> {
-		let mut retry_in = FOLLOW_RETRY_FIRST;
+		let mut pauses = Backoff::new(FOLLOW_RETRY_FIRST, FOLLOW_RETRY_LONGEST);
 		loop {
 			let read = match direction {
 				FundingDirection::In => {
@@ -2080,8 +2244,7 @@ impl RuntimeServices {
 			if read.is_some() {
 				return read;
 			}
-			futures_timer::Delay::new(retry_in).await;
-			retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
+			futures_timer::Delay::new(pauses.next_pause()).await;
 			if self
 				.funding()
 				.get(intent)
@@ -2187,11 +2350,11 @@ impl RuntimeServices {
 			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
 			.collect();
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.
 		registry.hold_workers(&self);
 		drop(warm);
-		self.forget_funding_selection(&session.intent);
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
 				registry
@@ -2300,1064 +2463,38 @@ fn unknown_for_good(funds: &StartedFunds, now_ms: u64) -> bool {
 	now_ms.saturating_sub(funds.named_at_ms.unwrap_or_default()) >= UNKNOWN_FUNDS_GRACE_MS
 }
 
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::latest::{FundingInboundUpdate, FundingOutboundUpdate};
-
-	use futures::executor::block_on;
-	use parity_scale_codec::Encode;
-
-	use super::store::{put_session_row, rows};
-	use crate::{
-		host_logic::funding::FundingStage,
-		store::{Db, open_memory_core_db},
-	};
-
-	const NOW: u64 = 1_700_000_000_000;
-	const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
-
-	fn ramp() -> ProductId {
-		ProductId::for_test("ramp.dot")
-	}
-
-	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
-		FundingSession::new(
-			intent.to_string(),
-			Some(ProductId::for_test("wallet.dot")),
-			FundingDirection::In,
-			Some(100),
-			opened_at_ms,
-		)
-	}
-
-	// Recorded funds waiting out their grace are dropped on time even when
-	// an earlier retry already fired, and funds being read now set no wake.
-	#[test]
-	fn the_next_wake_includes_when_recorded_funds_are_read_again() {
-		let registry = FundingRegistry::default();
-		registry.lock_resolving().insert([1; 32], NOW + 60_000);
-		registry.lock_resolving().insert([2; 32], u64::MAX);
-
-		assert_eq!(registry.next_wake(NOW), Some(60_000));
-	}
-
-	/// A worker link that takes nothing, for tests of the catch-up state.
-	struct IdleLink;
-
-	impl FundingProviderLink for IdleLink {
-		fn quote(&self, _ask: FundingQuoteAsk) -> BoxFuture<'static, Option<FundingQuoteAnswer>> {
-			Box::pin(async { None })
-		}
-
-		fn assign(&self, _session: FundingAssignment) -> BoxFuture<'static, bool> {
-			Box::pin(async { false })
-		}
-
-		fn cancel(&self, _intent: String) -> BoxFuture<'static, Option<FundingCancelAnswer>> {
-			Box::pin(async { None })
-		}
-
-		fn settle_cancel(
-			&self,
-			_intent: String,
-			_decision: FundingCancelDecision,
-		) -> BoxFuture<'static, bool> {
-			Box::pin(async { false })
-		}
-	}
-
-	// An unanswered call makes a caught-up link due again, but never starts
-	// a second catch-up beside a running one nor one before the worker is
-	// ready: a running one is due again once it ends.
-	#[test]
-	fn an_unanswered_call_leaves_a_connecting_or_running_catch_up_alone() {
-		let registry = FundingRegistry::default();
-		registry.link(&ramp(), Arc::new(IdleLink));
-		let state = || registry.lock_links()[&ramp()].catch_up;
-		let set =
-			|catch_up| registry.lock_links().get_mut(&ramp()).expect("linked").catch_up = catch_up;
-		let generation = registry.lock_links()[&ramp()].generation;
-
-		registry.call_unanswered(&ramp(), generation);
-		let connecting = state();
-		set(CatchUp::Running);
-		registry.call_unanswered(&ramp(), generation);
-		let running = state();
-		registry.caught_up(&ramp(), generation, true);
-		let after_run = matches!(state(), CatchUp::Due { .. });
-		set(CatchUp::Done);
-		registry.call_unanswered(&ramp(), generation);
-		let after_done = matches!(state(), CatchUp::Due { .. });
-
-		assert_eq!(
-			(connecting, running, after_run, after_done),
-			(CatchUp::Connecting, CatchUp::RunningThenDue, true, true)
-		);
-	}
-
-	// A worker the host is stopping keeps its link until its connection
-	// closes, so a call that failed on it waits for the worker started in
-	// its place.
-	#[test]
-	fn a_link_a_call_failed_on_is_passed_over_for_the_next_connection() {
-		let registry = FundingRegistry::default();
-		let ramp = ramp();
-		let stopping: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
-		registry.link(&ramp, stopping.clone());
-		registry.connected(&ramp);
-		let mut next = Box::pin(registry.connected_link_besides(&ramp, Some(&stopping)));
-		let waited = futures::FutureExt::now_or_never(&mut next).is_none();
-		let started: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
-		registry.link(&ramp, started.clone());
-		registry.connected(&ramp);
-
-		assert!(waited && Arc::ptr_eq(&block_on(next), &started));
-	}
-
-	// A deadline already past belongs to funds whose call is still in
-	// flight, which the reconciler skips; waking for it would spin.
-	#[test]
-	fn a_past_deadline_of_funds_in_flight_sets_no_wake() {
-		let registry = FundingRegistry::default();
-		registry.lock_resolving().insert([1; 32], NOW - 1);
-
-		assert_eq!(registry.next_wake(NOW), None);
-	}
-
-	fn registry_on(db: &Db) -> FundingRegistry {
-		let registry = FundingRegistry::default();
-		assert!(registry.install_db(db.clone()));
-		registry
-	}
-
-	fn stored_intents(db: &Db) -> Vec<String> {
-		block_on(stored_sessions(db))
-			.into_iter()
-			.map(|session| session.intent)
-			.collect()
-	}
-
-	fn insert(registry: &FundingRegistry, session: FundingSession) {
-		block_on(registry.commit(NOW, move |sessions| {
-			sessions.insert(session.intent.clone(), session);
-			((), Vec::new())
-		}))
-		.expect("inserted");
-	}
-
-	#[test]
-	fn a_settled_session_survives_later_saves() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_old", NOW - DAY_MS));
-		block_on(registry.sweep(NOW)).expect("swept");
-
-		insert(&registry, session("fs_new", NOW));
-
-		assert_eq!(
-			(stored_intents(&db), block_on(rows(&db, "funding_summary")).len()),
-			(vec!["fs_new".to_string()], 1)
-		);
-	}
-
-	#[test]
-	fn a_subscriber_sees_the_current_stage_then_expiry_and_the_end() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_1", NOW));
-		let stream = registry.subscribe("fs_1").expect("session exists");
-
-		block_on(registry.sweep(NOW + DAY_MS)).expect("swept");
-
-		assert_eq!(
-			block_on(stream.collect::<Vec<_>>()),
-			vec![
-				HostFundingStatusSubscribeItem::InProgress { expires_at: Some(NOW + DAY_MS) },
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired },
-			]
-		);
-	}
-
-	#[test]
-	fn subscribing_drops_watchers_that_went_away() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_1", NOW));
-		for _ in 0..3 {
-			drop(registry.subscribe("fs_1").expect("session exists"));
-		}
-		let _live = registry.subscribe("fs_1").expect("session exists");
-
-		assert_eq!(registry.lock_subscribers()["fs_1"].len(), 1);
-	}
-
-	#[test]
-	fn a_restart_restores_open_sessions_and_expires_overdue_ones() {
-		let db = open_memory_core_db();
-		let before = registry_on(&db);
-		insert(&before, session("fs_live", NOW));
-		insert(&before, session("fs_overdue", NOW - DAY_MS));
-
-		let after = registry_on(&db);
-		block_on(after.sweep(NOW)).expect("loaded");
-
-		assert_eq!(after.get("fs_live"), Some(session("fs_live", NOW)));
-		assert_eq!(
-			after.lock_pack().get("fs_overdue").map(|packed| packed.summary.stage.clone()),
-			Some(FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW })
-		);
-	}
-
-	// A provider that restarts after a withdrawal was released must still be
-	// handed it, or it could never report how the payout went; once it has,
-	// there is nothing left for it to do.
-	#[test]
-	fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
-		let registry = registry_on(&open_memory_core_db());
-		let mut released =
-			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
-		assert!(released.assign(
-			&ProductId::for_test("ramp.dot"),
-			crate::host_logic::funding::test_choice(),
-			NOW
-		));
-		released.updates.push(crate::host_logic::funding::FundingUpdateRecord {
-			update: FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-				payment_id: [4; 32],
-				amount: 100,
-			}),
-			at_ms: NOW,
-		});
-		assert!(released.settle(100, NOW));
-		insert(&registry, released);
-		let first_served = || {
-			registry
-				.pending_calls(&ProductId::for_test("ramp.dot"))
-				.into_iter()
-				.flatten()
-				.find_map(|call| match call {
-					ProviderCall::Assign(session) => Some(session.intent),
-					ProviderCall::Cancel(..) => None,
-				})
-		};
-
-		let before = first_served();
-		let reported = block_on(registry.report(
-			NOW + 1,
-			&worker("ramp.dot"),
-			"fs_out",
-			FundingUpdate::Out(FundingOutboundUpdate::Payout {
-				outcome: truapi::latest::FundingPayout::PaidOut,
-			}),
-		))
-		.expect("stored");
-		let after = first_served();
-
-		assert_eq!((before, reported, after), (Some("fs_out".to_string()), Ok(()), None));
-	}
-
-	fn worker(provider_id: &str) -> ProductContext {
-		ProductContext::new_with_execution(ProductId::for_test(provider_id), ExecutableKind::Worker)
-	}
-
-	/// Funds a report named, as the core follows them.
-	fn named_funds_record(host_id: [u8; 32], amount: u128) -> StartedFunds {
-		StartedFunds {
-			direction: FundingDirection::In,
-			host_id,
-			amount,
-			terms: [0; 32],
-			recorded_at_ms: NOW,
-			accepted: true,
-			named_at_ms: Some(NOW),
-		}
-	}
-
-	/// Record funds `provider` starts under `host_id` for session `intent`.
-	fn record(
-		registry: &FundingRegistry,
-		provider: &str,
-		intent: &str,
-		host_id: [u8; 32],
-		amount: u128,
-	) -> Option<StartRecord> {
-		block_on(registry.record_start(
-			NOW,
-			&ProductId::for_test(provider),
-			intent,
-			FundsAsked { direction: FundingDirection::In, host_id, amount, terms: [0; 32] },
-		))
-		.expect("stored")
-	}
-
-	// Funds belong to the session the provider names when it starts them,
-	// whatever their amount: a first top-up of 100 for session B, which asks
-	// 200, is B's even while session A asks 100, so A can still be
-	// cancelled and B can name it.
-	#[test]
-	fn started_funds_belong_to_the_session_they_were_started_for() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		for (intent, amount) in [("fs_a", 100), ("fs_b", 200)] {
-			let mut session = FundingSession::new(
-				intent.to_string(),
-				Some(ProductId::for_test("wallet.dot")),
-				FundingDirection::In,
-				Some(amount),
-				NOW,
-			);
-			assert!(session.assign(&ramp(), crate::host_logic::funding::test_choice(), NOW));
-			insert(&registry, session);
-		}
-		let host_id = host_payment_id(&worker("ramp.dot"), [1; 32]);
-		let recorded = record(&registry, "ramp.dot", "fs_b", host_id, 100);
-		block_on(registry.finish_start(NOW, "fs_b", host_id, true)).expect("stored");
-		let report = |intent: &str| {
-			block_on(registry.report(
-				NOW,
-				&worker("ramp.dot"),
-				intent,
-				FundingUpdate::In(FundingInboundUpdate::Crediting {
-					top_up_id: [1; 32],
-					amount: 100,
-				}),
-			))
-			.expect("stored")
-		};
-
-		assert_eq!(
-			(
-				recorded,
-				report("fs_a"),
-				report("fs_b"),
-				block_on(registry.cancel(NOW, "fs_a")).expect("stored"),
-				registry.get("fs_a").expect("kept").started,
-			),
-			(
-				Some(StartRecord::New),
-				Err(HostFundingReportError::NotStarted),
-				Ok(()),
-				CancelOutcome::Requested,
-				Vec::new(),
-			)
-		);
-	}
-
-	// A withdrawal whose payout failed is refunded with a top-up, so it takes
-	// a top-up named for it, which moves in; a withdrawal still paying out
-	// takes none.
-	#[test]
-	fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
-		let registry = registry_on(&open_memory_core_db());
-		let withdrawal = |intent: &str, payout: Option<truapi::latest::FundingPayout>| {
-			let mut withdrawal =
-				FundingSession { direction: FundingDirection::Out, ..session(intent, NOW) };
-			assert!(withdrawal.assign(
-				&ProductId::for_test("ramp.dot"),
-				crate::host_logic::funding::test_choice(),
-				NOW
-			));
-			withdrawal.record_start(FundingDirection::Out, [4; 32], 80, [0; 32], NOW);
-			withdrawal.accept_start(&[4; 32]);
-			withdrawal
-				.report(
-					&ProductId::for_test("ramp.dot"),
-					FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-						payment_id: [4; 32],
-						amount: 80,
-					}),
-					|id| *id,
-					NOW,
-				)
-				.expect("collecting");
-			assert!(withdrawal.settle(80, NOW));
-			if let Some(outcome) = payout {
-				withdrawal
-					.report(
-						&ProductId::for_test("ramp.dot"),
-						FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }),
-						|id| *id,
-						NOW,
-					)
-					.expect("payout");
-			}
-			withdrawal
-		};
-		let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
-		insert(&registry, withdrawal("fs_failed", Some(failed)));
-		insert(&registry, withdrawal("fs_paying", None));
-		let refund = |intent: &str, host_id: [u8; 32]| {
-			block_on(registry.record_start(
-				NOW,
-				&ProductId::for_test("ramp.dot"),
-				intent,
-				FundsAsked { direction: FundingDirection::In, host_id, amount: 80, terms: [0; 32] },
-			))
-			.expect("stored")
-		};
-
-		assert_eq!(
-			(
-				refund("fs_failed", [7; 32]),
-				refund("fs_paying", [8; 32]),
-				registry
-					.get("fs_failed")
-					.expect("kept")
-					.pending_starts()
-					.map(|funds| (funds.direction, funds.host_id))
-					.collect::<Vec<_>>(),
-			),
-			(Some(StartRecord::New), None, vec![(FundingDirection::In, [7; 32])])
-		);
-	}
-
-	// A top-up settles one session once: its id cannot be recorded for a
-	// second session of the provider, a session it was not started for
-	// cannot name it, and nor can another provider, or a session the
-	// provider does not serve.
-	#[test]
-	fn started_funds_are_named_once_by_the_session_they_were_started_for() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		let served = |intent: &str, provider: &str| {
-			let mut session = session(intent, NOW);
-			assert!(session.assign(
-				&ProductId::for_test(provider),
-				crate::host_logic::funding::test_choice(),
-				NOW
-			));
-			session
-		};
-		for session in
-			[served("fs_a", "ramp.dot"), served("fs_b", "ramp.dot"), served("fs_c", "other.dot")]
-		{
-			insert(&registry, session);
-		}
-		let host_id = host_payment_id(&worker("ramp.dot"), [9; 32]);
-		let recorded = record(&registry, "ramp.dot", "fs_a", host_id, 100);
-		let again = record(&registry, "ramp.dot", "fs_b", host_id, 100);
-		let unserved = record(&registry, "ramp.dot", "fs_c", host_id, 100);
-		block_on(registry.finish_start(NOW, "fs_a", host_id, true)).expect("stored");
-		let crediting =
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [9; 32], amount: 100 });
-		let report = |provider: &str, intent: &str| {
-			block_on(registry.report(NOW, &worker(provider), intent, crediting.clone()))
-				.expect("stored")
-		};
-
-		assert_eq!(
-			(
-				(recorded, again, unserved),
-				report("ramp.dot", "fs_a"),
-				report("ramp.dot", "fs_b"),
-				report("other.dot", "fs_c"),
-				registry.get("fs_a").expect("kept").started,
-			),
-			(
-				(Some(StartRecord::New), Some(StartRecord::Conflict), None),
-				Ok(()),
-				Err(HostFundingReportError::NotStarted),
-				Err(HostFundingReportError::NotStarted),
-				vec![named_funds_record(host_id, 100)],
-			)
-		);
-	}
-
-	// A claim that is not final yet can still be reversed, and a top-up the
-	// host does not know may only be slow to appear: neither settles the
-	// session until the host decides or the grace period runs out.
-	#[test]
-	fn only_a_final_claim_or_a_long_unknown_top_up_settles() {
-		let funds = named_funds_record([1; 32], 100);
-		let read = |statuses: Vec<_>, now_ms| {
-			block_on(top_up_moved(stream::iter(statuses).boxed(), &funds, now_ms))
-		};
-		let not_found = || vec![Err(HostPaymentTopUpStatusSubscribeError::TopUpNotFound)];
-
-		assert_eq!(
-			(
-				read(
-					vec![Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false })],
-					NOW
-				),
-				read(
-					vec![
-						Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false }),
-						Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true })
-					],
-					NOW
-				),
-				read(
-					vec![Ok(HostPaymentTopUpStatusSubscribeItem::ClaimedPartially {
-						actual_claimed: 40
-					})],
-					NOW
-				),
-				read(not_found(), NOW + UNKNOWN_FUNDS_GRACE_MS - 1),
-				read(not_found(), NOW + UNKNOWN_FUNDS_GRACE_MS),
-				read(
-					vec![Err(HostPaymentTopUpStatusSubscribeError::Unknown {
-						reason: "offline".into()
-					})],
-					NOW
-				),
-			),
-			(None, Some(100), Some(40), None, Some(0), None)
-		);
-	}
-
-	#[test]
-	fn a_payment_settles_from_its_completion_or_a_long_absence() {
-		let funds = named_funds_record([1; 32], 100);
-		let read = |statuses: Vec<_>, now_ms| {
-			block_on(payment_moved(stream::iter(statuses).boxed(), &funds, now_ms))
-		};
-		let not_found = || vec![Err(HostPaymentStatusSubscribeError::PaymentNotFound)];
-
-		assert_eq!(
-			(
-				read(vec![Ok(HostPaymentStatusSubscribeItem::Processing)], NOW),
-				read(vec![Ok(HostPaymentStatusSubscribeItem::Completed)], NOW),
-				read(not_found(), NOW + UNKNOWN_FUNDS_GRACE_MS - 1),
-				read(not_found(), NOW + UNKNOWN_FUNDS_GRACE_MS),
-			),
-			(None, Some(100), None, Some(0))
-		);
-	}
-
-	/// A host that, told of a change, cancels the next session in
-	/// `cancels` from inside the callback, as a host recording its history
-	/// there would acknowledge from there.
-	struct ReentrantHost {
-		registry: OnceLock<Weak<FundingRegistry>>,
-		cancels: Mutex<VecDeque<&'static str>>,
-		/// Each session the host heard of, and whether the write lock was
-		/// free at the time.
-		heard: Mutex<Vec<(String, bool)>>,
-	}
-
-	#[async_trait::async_trait]
-	impl FundingPlatform for ReentrantHost {
-		async fn present_funding(
-			&self,
-			_product: Option<&ProductContext>,
-			_session: FundingPresentation,
-		) -> Result<FundingPresentOutcome, GenericError> {
-			Ok(FundingPresentOutcome::Dismissed)
-		}
-
-		async fn present_provider_frame(
-			&self,
-			_provider: &ProductContext,
-			_intent: String,
-			_target: truapi::latest::FundingFrameTarget,
-		) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
-			Ok(truapi::latest::FundingFrameOutcome::Closed)
-		}
-
-		fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
-
-		fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
-			let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
-			// Calling back while the lock is held would hang, so that is
-			// recorded instead of attempted.
-			let writes_free = registry.writes.try_lock().is_some();
-			self.heard.lock().expect("heard mutex poisoned").push((intent, writes_free));
-			let next = self.cancels.lock().expect("cancels mutex poisoned").pop_front();
-			if let (true, Some(next)) = (writes_free, next) {
-				std::thread::spawn(move || block_on(registry.cancel(NOW, next)))
-					.join()
-					.expect("cancel thread")
-					.expect("cancelled");
-			}
-		}
-	}
-
-	// A host told of a change may act on it straight away, and must still
-	// hear of every change in the order it was made.
-	#[test]
-	fn the_host_hears_of_changes_in_order_and_may_call_back() {
-		let db = open_memory_core_db();
-		let registry = Arc::new(registry_on(&db));
-		insert(&registry, session("fs_a", NOW));
-		insert(&registry, session("fs_b", NOW));
-		let host = Arc::new(ReentrantHost {
-			registry: OnceLock::new(),
-			cancels: Mutex::new(VecDeque::from(["fs_b"])),
-			heard: Mutex::new(Vec::new()),
-		});
-		assert!(host.registry.set(Arc::downgrade(&registry)).is_ok());
-		assert!(registry.install_platform(host.clone()));
-
-		assert_eq!(
-			block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"),
-			CancelOutcome::Ended
-		);
-
-		assert_eq!(
-			*host.heard.lock().expect("heard mutex poisoned"),
-			[("fs_a".to_string(), true), ("fs_b".to_string(), true)]
-		);
-	}
-
-	#[test]
-	fn a_failed_save_changes_nothing_in_memory() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_1", NOW));
-		block_on(fail_writes(&db, true));
-
-		let failed = block_on(registry.commit(NOW, |sessions| {
-			sessions.clear();
-			((), Vec::new())
-		}));
-
-		assert!(failed.is_err());
-		assert_eq!(registry.get("fs_1"), Some(session("fs_1", NOW)));
-	}
-
-	#[test]
-	fn a_session_whose_start_failed_is_not_stored_by_a_later_commit() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
-		block_on(fail_writes(&db, true));
-
-		let started = block_on(registry.start(NOW, "fs_1"));
-		block_on(fail_writes(&db, false));
-		insert(&registry, session("fs_2", NOW));
-
-		assert!(started.is_err());
-		assert_eq!(registry.get("fs_1"), None);
-		assert_eq!(block_on(stored_sessions(&db)), vec![session("fs_2", NOW)]);
-	}
-
-	/// A funding surface that answers everything and hears nothing.
-	struct SilentPlatform;
-
-	#[async_trait::async_trait]
-	impl FundingPlatform for SilentPlatform {
-		async fn present_funding(
-			&self,
-			_product: Option<&ProductContext>,
-			_session: FundingPresentation,
-		) -> Result<FundingPresentOutcome, GenericError> {
-			Ok(FundingPresentOutcome::Dismissed)
-		}
-
-		async fn present_provider_frame(
-			&self,
-			_provider: &ProductContext,
-			_intent: String,
-			_target: truapi::latest::FundingFrameTarget,
-		) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
-			Ok(truapi::latest::FundingFrameOutcome::Closed)
-		}
-
-		fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
-	}
-
-	/// A host feed that records, per session, whether each push carried the
-	/// full record.
-	#[derive(Default)]
-	struct RecordingFeed {
-		pushed: Mutex<Vec<(String, bool)>>,
-	}
-
-	impl RecordingFeed {
-		fn sessions(&self, intent: &str) -> Vec<bool> {
-			lock(&self.pushed)
-				.iter()
-				.filter(|(pushed, _)| pushed == intent)
-				.map(|(_, in_full)| *in_full)
-				.collect()
-		}
-
-		fn clear(&self) {
-			lock(&self.pushed).clear();
-		}
-	}
-
-	impl FundingFeed for RecordingFeed {
-		fn funding_session_changed(
-			&self,
-			intent: String,
-			_status: HostFundingStatusSubscribeItem,
-			session: Option<FundingSession>,
-			_progress: Option<crate::host_logic::funding::FundingProgress>,
-		) {
-			lock(&self.pushed).push((intent, session.is_some()));
-		}
-
-		fn funding_in_progress_changed(&self, _in_progress: bool) {}
-
-		fn funding_options_changed(
-			&self,
-			_intent: String,
-			_options: crate::host_logic::funding_providers::FundingOptions,
-		) {
-		}
-	}
-
-	// History is the core's: a session is listed as soon as it ends, before
-	// the host acknowledges it, and an open one is not. The ended one is
-	// compacted at once, remembering that the host has not acknowledged it.
-	#[test]
-	fn history_lists_every_ended_session_whether_acknowledged_or_not() {
-		let registry = registry_on(&open_memory_core_db());
-		insert(&registry, session("fs_open", NOW));
-		insert(&registry, session("fs_ended", NOW - DAY_MS));
-		block_on(registry.sweep(NOW)).expect("expired");
-		let packed = registry.lock_pack().get("fs_ended").cloned().expect("compacted");
-
-		assert_eq!(
-			(registry.get("fs_ended"), packed.acknowledged, registry.history()),
-			(None, false, vec![packed.summary])
-		);
-	}
-
-	// Changes queued before the one that ended a compacted session still
-	// carry its full record, and so does the ending itself.
-	#[test]
-	fn every_queued_change_of_a_session_compacted_as_it_ended_carries_its_record() {
-		let registry = registry_on(&open_memory_core_db());
-		let feed = Arc::new(RecordingFeed::default());
-		assert!(registry.install_platform(Arc::new(SilentPlatform)));
-		registry.install_feed(feed.clone());
-		let ended = FundingSession {
-			stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
-			..session("fs_1", NOW)
-		};
-		registry.lock_ending().insert("fs_1".to_string(), ended.clone());
-		{
-			let mut announcements = registry.lock_announcements();
-			announcements.pending.push_back((
-				"fs_1".to_string(),
-				HostFundingStatusSubscribeItem::InProgress { expires_at: None },
-			));
-			announcements.pending.push_back(("fs_1".to_string(), ended.wire_item()));
-		}
-
-		registry.announce();
-
-		assert_eq!(
-			(feed.sessions("fs_1"), registry.lock_ending().is_empty()),
-			(vec![true, true], true)
-		);
-	}
-
-	// A session compacted as it ends still reaches its watchers and the
-	// host in full, so the host shows the ending with the whole record.
-	#[test]
-	fn a_session_compacted_as_it_ends_reaches_the_host_in_full() {
-		let registry = registry_on(&open_memory_core_db());
-		let feed = Arc::new(RecordingFeed::default());
-		assert!(registry.install_platform(Arc::new(SilentPlatform)));
-		registry.install_feed(feed.clone());
-		insert(&registry, session("fs_1", NOW - DAY_MS + 1));
-		feed.clear();
-
-		block_on(registry.sweep(NOW + 1)).expect("expired");
-
-		assert_eq!((registry.get("fs_1"), feed.sessions("fs_1")), (None, vec![true]));
-	}
-
-	// A product that reloads after the host recorded its session must still
-	// learn how it ended, not read it as a session that never existed.
-	#[test]
-	fn a_recorded_session_still_answers_its_owner_after_a_restart() {
-		let db = open_memory_core_db();
-		let before = registry_on(&db);
-		insert(&before, session("fs_1", NOW - DAY_MS));
-		block_on(before.sweep(NOW)).expect("expired");
-		assert!(block_on(before.acknowledge(NOW, "fs_1")).expect("recorded"));
-		let expired = HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired };
-
-		let after = registry_on(&db);
-		block_on(after.sweep(NOW)).expect("loaded");
-		let replay = after.subscribe("fs_1").expect("recorded session kept");
-
-		assert_eq!(
-			(
-				block_on(replay.collect::<Vec<_>>()),
-				after.get("fs_1").is_some_and(|session| session.needs_handoff()),
-				after.subscribe("fs_9").is_none()
-			),
-			(vec![expired], false, true)
-		);
-	}
-
-	// A compacted session keeps what its history row shows: the provider,
-	// the quote it was chosen on, how it ended, the payout and the provider's
-	// references, across a restart.
-	#[test]
-	fn a_compacted_withdrawal_keeps_its_history_details_after_a_restart() {
-		let db = open_memory_core_db();
-		let before = registry_on(&db);
-		let mut sent = FundingSession {
-			direction: FundingDirection::Out,
-			acknowledged: true,
-			..session("fs_sent", NOW - 1)
-		};
-		assert!(sent.assign(
-			&ProductId::for_test("ramp.dot"),
-			crate::host_logic::funding::test_choice(),
-			NOW - 1
-		));
-		sent.choice = Some(crate::host_logic::funding::FundingChoice {
-			quote: truapi::latest::FundingQuote {
-				quote_id: "q".into(),
-				send_amount: 100,
-				receive_amount: 95,
-				provider_fee: 5,
-				network_fee: 0,
-				eta_secs: None,
-				expires_at: None,
-				asset_decimals: 2,
-			},
-			rail: truapi::latest::FundingRail::Bank,
-			asset: "EUR".into(),
-			network: None,
-		});
-		for update in [
-			FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-				payment_id: [4; 32],
-				amount: 100,
-			}),
-			FundingUpdate::Details {
-				transaction_id: Some("tx-1".into()),
-				reference: Some("ref-1".into()),
-			},
-			FundingUpdate::Out(FundingOutboundUpdate::Payout {
-				outcome: truapi::latest::FundingPayout::PaidOut,
-			}),
-		] {
-			sent.updates
-				.push(crate::host_logic::funding::FundingUpdateRecord { update, at_ms: NOW - 1 });
-		}
-		assert!(sent.settle(100, NOW - 1));
-		let newer = |n: u64| FundingSession {
-			acknowledged: true,
-			stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW + n },
-			..session(&format!("fs_{n}"), NOW)
-		};
-		block_on(before.commit(NOW, |sessions| {
-			sessions.insert("fs_sent".to_string(), sent);
-			for n in 0..3 {
-				sessions.insert(format!("fs_{n}"), newer(n));
-			}
-			((), Vec::new())
-		}))
-		.expect("stored");
-
-		let after = registry_on(&db);
-		block_on(after.sweep(NOW)).expect("loaded");
-		let row = after.history().into_iter().find(|row| row.intent == "fs_sent");
-
-		assert_eq!(
-			(
-				after.get("fs_sent").is_none(),
-				row.map(|row| (
-					row.provider_id,
-					row.choice.map(|choice| (choice.rail, choice.asset, choice.quote.send_amount)),
-					row.status,
-					row.payout,
-					row.transaction_id,
-					row.reference
-				))
-			),
-			(
-				true,
-				Some((
-					Some(ProductId::for_test("ramp.dot")),
-					Some((truapi::latest::FundingRail::Bank, "EUR".to_string(), 100)),
-					crate::host_logic::funding::FundingStatus::Sent,
-					Some(truapi::latest::FundingPayout::PaidOut),
-					Some("tx-1".to_string()),
-					Some("ref-1".to_string())
-				))
-			)
-		);
-	}
-
-	// An ended session is compacted, not dropped: after a restart its owner
-	// still reads how it ended, and history still lists every ended session.
-	#[test]
-	fn a_compacted_session_still_answers_its_owner_after_a_restart() {
-		let db = open_memory_core_db();
-		let before = registry_on(&db);
-		let recorded = |n: u64| FundingSession {
-			acknowledged: true,
-			stage: FundingStage::Delivered { credited: u128::from(n) + 1, settled_at_ms: NOW + n },
-			..session(&format!("fs_{n}"), NOW)
-		};
-		block_on(before.commit(NOW, |sessions| {
-			for n in 0..=2 {
-				sessions.insert(format!("fs_{n}"), recorded(n));
-			}
-			((), Vec::new())
-		}))
-		.expect("stored");
-
-		let after = registry_on(&db);
-		block_on(after.sweep(NOW)).expect("loaded");
-		let replay = after.subscribe("fs_0").expect("compacted session kept");
-
-		assert_eq!(
-			(
-				after.get("fs_0"),
-				block_on(replay.collect::<Vec<_>>()),
-				after.owner("fs_0"),
-				after.get("fs_1").is_some(),
-				after.history(),
-			),
-			(
-				None,
-				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
-				Some(Some(ProductId::for_test("wallet.dot"))),
-				false,
-				(0..=2).rev().map(|n| recorded(n).summary()).collect::<Vec<_>>(),
-			)
-		);
-	}
-
-	// Showing a session in the overlay stores nothing, so it cannot fail on a
-	// store that is down and leaves the stored set as it was.
-	#[test]
-	fn holding_a_session_in_the_overlay_writes_nothing() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_1", NOW));
-		block_on(fail_writes(&db, true));
-
-		let presented = block_on(registry.present(NOW, session("fs_2", NOW)));
-
-		assert_eq!(
-			(presented, block_on(stored_sessions(&db))),
-			(Ok(true), vec![session("fs_1", NOW)])
-		);
-	}
-
-	// An intent names one session for good, so one held in full, presented or
-	// compacted cannot be presented again.
-	#[test]
-	fn a_held_intent_cannot_be_presented_again() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_1", NOW));
-		registry.lock_pack().insert(
-			"fs_packed".to_string(),
-			PackedSession::from(&FundingSession {
-				stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW },
-				..session("fs_packed", NOW)
-			}),
-		);
-
-		assert_eq!(
-			[
-				block_on(registry.present(NOW, session("fs_1", NOW))),
-				block_on(registry.present(NOW, session("fs_packed", NOW))),
-				block_on(registry.present(NOW, session("fs_new", NOW))),
-				block_on(registry.present(NOW, session("fs_new", NOW))),
-			],
-			[Ok(false), Ok(false), Ok(true), Ok(false)]
-		);
-	}
-
-	// A product watching a session the user then dismissed hears that it
-	// ended, rather than waiting on a session that is gone.
-	#[test]
-	fn a_discarded_session_ends_its_watchers_as_cancelled() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		assert_eq!(block_on(registry.present(NOW, session("fs_1", NOW))), Ok(true));
-		let watch = registry.subscribe("fs_1").expect("presented session watchable");
-
-		block_on(registry.discard("fs_1"));
-
-		assert_eq!(
-			(block_on(watch.collect::<Vec<_>>()), registry.get("fs_1")),
-			(
-				vec![
-					HostFundingStatusSubscribeItem::InProgress { expires_at: Some(NOW + DAY_MS) },
-					HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
-				],
-				None,
-			)
-		);
-	}
-
-	// Sessions a newer app stored are left alone: every commit fails, and none
-	// writes over them.
-	#[test]
-	fn sessions_of_a_newer_format_make_the_registry_read_only() {
-		let db = open_memory_core_db();
-		block_on(put_session_row(&db, "fs_1", (u16::MAX, session("fs_1", NOW)).encode()));
-		let before = block_on(rows(&db, "funding_session"));
-		let registry = registry_on(&db);
-
-		let presented = block_on(registry.present(NOW, session("fs_2", NOW)));
-
-		assert_eq!(
-			(presented, registry.get("fs_2"), block_on(rows(&db, "funding_session"))),
-			(Err(FundingSessionError::NewerFormat { format: u16::MAX }), None, before)
-		);
-	}
-
-	#[test]
-	fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
-
-		assert_eq!(block_on(registry.cancel(NOW, "fs_1")), Ok(CancelOutcome::Refused));
-		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
-	}
-
-	// A row that does not decode is the core's only trace of that session, so
-	// no later commit writes over it or deletes it.
-	#[test]
-	fn a_row_that_does_not_decode_survives_later_commits() {
-		let db = open_memory_core_db();
-		block_on(put_session_row(&db, "fs_bad", vec![0xff]));
-		let registry = registry_on(&db);
-
-		insert(&registry, session("fs_1", NOW));
-		block_on(registry.sweep(NOW + DAY_MS)).expect("expired");
-
-		let bad = block_on(rows(&db, "funding_session"))
-			.into_iter()
-			.find(|(intent, _)| intent == "fs_bad");
-		assert_eq!((registry.get("fs_bad"), bad), (None, Some(("fs_bad".to_string(), vec![0xff]))));
-	}
-
-	// Compaction moves sessions out of the full record and into the pack in
-	// one write, so a failed write leaves both as they were.
-	#[test]
-	fn a_compaction_that_fails_to_store_keeps_every_session() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		insert(&registry, session("fs_0", NOW));
-		insert(&registry, session("fs_1", NOW));
-		block_on(fail_writes(&db, true));
-
-		let compacted = block_on(registry.commit(NOW, |sessions| {
-			for session in sessions.values_mut() {
-				session.stage = FundingStage::Delivered { credited: 1, settled_at_ms: NOW };
-			}
-			((), Vec::new())
-		}));
-
-		assert_eq!(
-			(
-				compacted.is_err(),
-				registry.get("fs_0").is_some_and(|session| !session.is_terminal()),
-				registry.history().len(),
-				block_on(rows(&db, "funding_session")).len(),
-				block_on(rows(&db, "funding_summary")).len(),
-			),
-			(true, true, 0, 2, 0)
-		);
-	}
+/// The sessions in `held` that reached the moment they count as taking
+/// longer by `now_ms` since the host last heard of them. A later report
+/// moves that moment, so the host hears of it again.
+fn now_taking_longer(held: &mut Held, now_ms: u64) -> Vec<FundingSession> {
+	let Held { sessions, told_longer, .. } = held;
+	told_longer.retain(|intent| {
+		sessions
+			.get(intent)
+			.and_then(FundingSession::longer_at_ms)
+			.is_some_and(|at_ms| at_ms <= now_ms)
+	});
+	sessions
+		.values()
+		.filter(|session| {
+			session.longer_at_ms().is_some_and(|at_ms| at_ms <= now_ms) &&
+				told_longer.insert(session.intent.clone())
+		})
+		.cloned()
+		.collect()
 }
+
+/// The provider whose worker session `intent` holds: its assigned provider
+/// while it still has work for it.
+fn held_for<'a>(
+	sessions: &'a HashMap<String, FundingSession>,
+	intent: &str,
+) -> Option<&'a ProductId> {
+	sessions
+		.get(intent)
+		.filter(|session| session.serves_provider())
+		.and_then(|session| session.provider_id.as_ref())
+}
+
+#[cfg(test)]
+mod tests;

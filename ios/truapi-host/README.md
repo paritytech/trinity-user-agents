@@ -358,7 +358,9 @@ report the user's rail, asset, network and country with
 and amount range for it come back through `fundingOptionsChanged`), price it
 with `getFundingQuote(intent:ask:)` (the quote list arrives through
 `fundingQuotesChanged` with the request id the call returned, `pending` rows
-first, and again at each refresh), hand it to the chosen provider with
+first; the core asks again every minute, each row keeping its answer until the
+provider answers again, until the session is handed over or the overlay
+closes, and a new `getFundingQuote` replaces the ask), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
 `.started`. Answering `.dismissed` discards the session. A provider that needs
 one of its own screens asks through `presentProviderFrame`, answered `.closed`

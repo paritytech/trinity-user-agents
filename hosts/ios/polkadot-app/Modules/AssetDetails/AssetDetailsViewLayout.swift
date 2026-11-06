@@ -21,6 +21,10 @@ struct AssetDetailsView: View {
         @State private var testDataMode = CoinageTestDataMode.live
         /// Plain or varied coins, while the two are being compared. Debug builds only.
         @State private var coinSet = CoinageScene.CoinSet.shipped
+        /// The light and the coins held still by the dials, for looking at the depiction from a
+        /// chosen angle. Debug builds only.
+        @State private var fixedLight: CoinageTilt.Turn?
+        @State private var fixedLean: CoinageTilt.Turn?
     #endif
 
     init(
@@ -101,7 +105,9 @@ struct AssetDetailsView: View {
                         PurseTotalPanel(
                             breakdown: testDataMode.applied(to: viewModel.coinageBreakdown ?? .testDataPlaceholder),
                             topInset: Self.panelTuck,
-                            coinSet: coinSet
+                            coinSet: coinSet,
+                            fixedLight: fixedLight,
+                            fixedLean: fixedLean
                         )
                     }
                 #else
@@ -126,6 +132,8 @@ struct AssetDetailsView: View {
                 CoinageTestDataSwitch(mode: $testDataMode)
 
                 CoinageCoinSetSwitch(set: $coinSet)
+
+                CoinageLightPad(turn: $fixedLight, lean: $fixedLean)
             #endif
 
             #if TESTNET_FEATURE
@@ -258,6 +266,9 @@ private struct PurseTotalPanel: View {
     var topInset: CGFloat = 0
     /// Plain or varied coins, while the two are being compared.
     var coinSet: CoinageScene.CoinSet = .shipped
+    /// The light and the coins held by the debug dials; nil follows the phone.
+    var fixedLight: CoinageTilt.Turn?
+    var fixedLean: CoinageTilt.Turn?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -278,7 +289,14 @@ private struct PurseTotalPanel: View {
 
             // Nothing held, nothing to draw: no strip to reserve height for and no split to show.
             if !breakdown.strip.isEmpty {
-                CoinageCoinsView(coins: breakdown.strip, isExpanded: false, coinSet: coinSet, metrics: $coinMetrics)
+                CoinageCoinsView(
+                    coins: breakdown.strip,
+                    isExpanded: false,
+                    fixedLight: fixedLight,
+                    fixedLean: fixedLean,
+                    coinSet: coinSet,
+                    metrics: $coinMetrics
+                )
                     .frame(height: CoinageStripLayout.Options().height, alignment: .top)
                     .clipped()
 
