@@ -3,11 +3,13 @@ import SubstrateSdk
 import TrUAPIHost
 
 /// The payment balance as the funding screens show it: amounts cross the FFI
-/// as decimal strings of the asset's smallest unit, and are drawn as dollars
-/// followed by the asset's symbol.
+/// as decimal strings of the asset's smallest unit, and are drawn in the fiat
+/// currency the asset tracks, followed by the asset's symbol.
 struct FundingCash: Equatable {
     let symbol: String
     let precision: Int16
+    /// The fiat currency the asset is pegged to, whose sign leads each figure.
+    var fiat: Currency = .usd
 
     /// Nil when `units` is not a number.
     func decimal(_ units: U128) -> Decimal? {
@@ -30,9 +32,10 @@ struct FundingCash: Equatable {
         return NSDecimalNumber(decimal: max(rounded, 0)).stringValue
     }
 
-    /// "$50.20", with cents only when there are any.
+    /// "$50.20" for a dollar-pegged asset, with cents only when there are any.
     func figure(_ value: Decimal) -> String {
-        "$" + Self.figureFormatter(for: value).string(from: NSDecimalNumber(decimal: value)).orEmpty
+        let digits = Self.figureFormatter(for: value).string(from: NSDecimalNumber(decimal: value))
+        return (fiat.symbol ?? fiat.code) + digits.orEmpty
     }
 
     /// "$50.20 CASH".

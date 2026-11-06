@@ -1,18 +1,19 @@
 import Foundation
 import TrUAPIHost
 
-/// What the app shows for a user's cancel: after asking, after answering the
-/// provider's offer, and while the cancel is with the provider.
-enum FundingCancelPresentation {
+// What the app shows for a user's cancel: after asking, after answering the
+// provider's offer, and while the cancel is with the provider.
+
+extension CancelOutcome {
     /// What follows a cancel: the overlay closes when the session ended,
     /// otherwise a toast says where the cancel stands.
-    enum AfterCancel: Equatable {
+    enum FollowUp: Equatable {
         case close
         case toast(String)
     }
 
-    static func after(_ outcome: CancelOutcome) -> AfterCancel {
-        switch outcome {
+    var followUp: FollowUp {
+        switch self {
         case .ended: .close
         case .requested,
              .pending: .toast(String(localized: .Funding.activityCancelRequested))
@@ -20,11 +21,13 @@ enum FundingCancelPresentation {
         case .refused: .toast(String(localized: .Funding.errorCancelRefused))
         }
     }
+}
 
+extension CancelConfirmation {
     /// The toast after answering the provider's offer; none when the user
     /// kept going.
-    static func after(_ answer: CancelConfirmation) -> String? {
-        switch answer {
+    var toast: String? {
+        switch self {
         case .accepted: String(localized: .Funding.offerAccepted)
         case .declined: nil
         case .lapsed: String(localized: .Funding.offerLapsed)
@@ -32,23 +35,24 @@ enum FundingCancelPresentation {
         case .tooLate: String(localized: .Funding.offerTooLate)
         }
     }
+}
 
+extension FundingStatus {
     /// Whether a withdrawal whose cancel the user accepted was paid out
     /// anyway: the payout landed before the provider could stop it.
-    static func cancelCameTooLate(_ status: FundingStatus) -> Bool {
-        if case .paidOutAfterCancel = status { return true }
+    var cancelCameTooLate: Bool {
+        if case .paidOutAfterCancel = self { return true }
         return false
     }
 
     /// The line for a session whose cancel is with the provider, and whether
     /// it reads as a warning. `compact` leaves out a refusal's reason, for a
     /// list row.
-    static func line(
-        for status: FundingStatus,
+    func cancelLine(
         direction: FundingDirection = .in,
         compact: Bool = false
     ) -> (text: String, isWarning: Bool)? {
-        switch status {
+        switch self {
         case .cancelRequested:
             (String(localized: .Funding.activityCancelRequested), false)
         case .cancelOffered:
@@ -68,12 +72,12 @@ enum FundingCancelPresentation {
         }
     }
 
-    /// Whether the user can cancel a session in `status`, given the core's
+    /// Whether the user can cancel a session in this status, given the core's
     /// `FundingProgress.moneyMoved`. Before money moved a second cancel ends the
     /// session, so a provider that went silent cannot hold it; after, a cancel
     /// already with the provider waits for its answer.
-    static func canCancel(_ status: FundingStatus, moneyMoved: Bool) -> Bool {
-        switch status {
+    func canCancel(moneyMoved: Bool) -> Bool {
+        switch self {
         case .cancelRequested: !moneyMoved
         case .cancelOffered,
              .cancelling:
@@ -85,8 +89,8 @@ enum FundingCancelPresentation {
 
     /// The cancel action's title: a second cancel, which ends the session at
     /// once, reads differently from the first.
-    static func cancelTitle(_ status: FundingStatus) -> String {
-        if case .cancelRequested = status {
+    var cancelTitle: String {
+        if case .cancelRequested = self {
             String(localized: .Funding.cancelAnyway)
         } else {
             String(localized: .Funding.depositCancel)
