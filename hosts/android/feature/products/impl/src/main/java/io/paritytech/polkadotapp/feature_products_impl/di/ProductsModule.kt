@@ -74,6 +74,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.AssetBundledProductFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
@@ -382,6 +384,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindFundingProductsWarmUp(impl: RealFundingProductsWarmUp): FundingProductsWarmUp
+
+    @Binds
+    fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles
 
     @Binds
     @Singleton
