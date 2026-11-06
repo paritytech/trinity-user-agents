@@ -23,6 +23,9 @@ struct RingVrfErrorWrappingTests {
         arguments: [
             (CreateProofError.ringNotFound, RingVrfError.ringNotFound),
             (CreateProofError.notMember, RingVrfError.notMember),
+            (CreateProofError.keyNotRegistered, RingVrfError.keyNotRegistered),
+            (CreateProofError.keyNotInRing, RingVrfError.keyNotInRing),
+            (CreateProofError.notAllowlisted, RingVrfError.notAllowlisted),
             (CreateProofError.rejected, RingVrfError.rejected),
             (CreateProofError.unknown("boom"), RingVrfError.unknown("boom"))
         ]
@@ -36,6 +39,8 @@ struct RingVrfErrorWrappingTests {
         arguments: [
             (GetAliasError.ringNotFound, RingVrfError.ringNotFound),
             (GetAliasError.notMember, RingVrfError.notMember),
+            (GetAliasError.keyNotRegistered, RingVrfError.keyNotRegistered),
+            (GetAliasError.keyNotInRing, RingVrfError.keyNotInRing),
             (GetAliasError.rejected, RingVrfError.rejected),
             (GetAliasError.unknown("boom"), RingVrfError.unknown("boom"))
         ]

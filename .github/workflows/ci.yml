@@ -218,7 +218,7 @@ jobs:
         run: cargo install wasm-pack --locked
 
       - name: wasm-pack test --headless --chrome
-        run: wasm-pack test --headless --chrome rust/crates/truapi-provider --no-default-features --features "js smoldot"
+        run: wasm-pack test --headless --chrome rust/crates/truapi-provider --no-default-features --features "js smoldot networks"
 
   licenses:
     name: Dependency licenses

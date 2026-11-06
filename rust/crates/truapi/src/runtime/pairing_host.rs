@@ -2,6 +2,9 @@
 
 mod remote_calls;
 
+#[cfg(test)]
+mod tests;
+
 use std::{
 	collections::HashMap,
 	sync::{Arc, Mutex, Weak},
@@ -310,75 +313,6 @@ impl PairingHost {
 		}
 	}
 
-	#[cfg(test)]
-	pub async fn has_auto_signing_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		product_id: &str,
-	) -> Result<bool, AuthorityError> {
-		self.auto_signing_key(session, &crate::platform::ProductId::for_test(product_id))
-			.await
-			.map(|key| key.is_some())
-	}
-
-	#[cfg(test)]
-	pub async fn remember_auto_signing_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		product_id: &str,
-		expected_product_subtree_public_key: [u8; 32],
-		secret: [u8; 64],
-		ring_vrf_domain_entropy: [u8; 32],
-	) -> Result<(), AuthorityError> {
-		self.remember_auto_signing_key(
-			session,
-			lifecycle_epoch,
-			&crate::platform::ProductId::for_test(product_id),
-			expected_product_subtree_public_key,
-			secret,
-			ring_vrf_domain_entropy,
-		)
-		.await
-	}
-
-	/// Register fixture material in the actual durable registry.
-	#[cfg(test)]
-	pub async fn register_ring_vrf_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		handle: latest::ProductAccountId,
-		ring: latest::RingLocation,
-		public_key: [u8; 32],
-	) -> Result<(), RingVrfError> {
-		self.ring_vrf_registry
-			.register(session.public_key, handle, ring, public_key)
-			.await
-	}
-
-	/// Cache sizes for lifecycle regression checks.
-	#[cfg(test)]
-	pub fn capability_cache_sizes_for_tests(&self) -> (usize, usize, usize, usize) {
-		(
-			self.statement_store_allowances
-				.lock()
-				.expect("statement-store allowance cache mutex poisoned")
-				.len(),
-			self.bulletin_allowances
-				.lock()
-				.expect("bulletin allowance cache mutex poisoned")
-				.len(),
-			self.product_subtrees
-				.lock()
-				.expect("product subtree cache mutex poisoned")
-				.len(),
-			self.auto_signing_keys
-				.lock()
-				.expect("AutoSigning key cache mutex poisoned")
-				.len(),
-		)
-	}
-
 	fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
 		key.matches(&self.session_state)
 	}
@@ -416,7 +350,7 @@ impl PairingHost {
 	///
 	/// A stale or missing session resolves as `false` so a broken state falls
 	/// through to the resolution's own error rather than a spurious prompt.
-	pub async fn subtree_reaches_account_holder(
+	async fn subtree_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
 		product_id: &ProductId,
@@ -432,7 +366,7 @@ impl PairingHost {
 	}
 
 	/// Load a retained public subtree without contacting the account holder.
-	pub async fn known_product_subtree(
+	async fn known_product_subtree(
 		&self,
 		session: &SessionInfo,
 		cache_key: (SsoSessionKey, ProductId),
@@ -451,7 +385,7 @@ impl PairingHost {
 	}
 
 	/// Restore a public subtree only into the selected live session.
-	pub async fn stored_product_subtree(
+	async fn stored_product_subtree(
 		&self,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
@@ -475,7 +409,7 @@ impl PairingHost {
 	/// and leaves the next launch to re-ask the wallet, which is what happens
 	/// today. Losing the pairing mid-write is not, so the storage entry is
 	/// rolled back rather than left addressing a session that has gone.
-	pub async fn persist_product_subtree_if_current(
+	async fn persist_product_subtree_if_current(
 		&self,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
@@ -512,7 +446,7 @@ impl PairingHost {
 	}
 
 	/// Cache a public subtree only for the selected live session.
-	pub fn cache_product_subtree_if_current(
+	fn cache_product_subtree_if_current(
 		&self,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
@@ -738,7 +672,7 @@ impl PairingHost {
 	}
 
 	/// Drop the cached and persisted Bulletin allowance key for one product.
-	pub async fn evict_bulletin_allowance_key(
+	async fn evict_bulletin_allowance_key(
 		&self,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
@@ -768,7 +702,7 @@ impl PairingHost {
 
 	/// Drop memory-cached statement-store allowance keys, scoped to `session`
 	/// when given, otherwise all.
-	pub fn clear_statement_store_allowance_keys(&self, session: Option<&SessionInfo>) {
+	fn clear_statement_store_allowance_keys(&self, session: Option<&SessionInfo>) {
 		let mut allowances = self
 			.statement_store_allowances
 			.lock()
@@ -786,7 +720,7 @@ impl PairingHost {
 
 	/// Drop memory-cached Bulletin allowance keys, scoped to `session` when
 	/// given, otherwise all.
-	pub fn clear_bulletin_allowance_keys(&self, session: Option<&SessionInfo>) {
+	fn clear_bulletin_allowance_keys(&self, session: Option<&SessionInfo>) {
 		let mut allowances = self
 			.bulletin_allowances
 			.lock()
@@ -1414,10 +1348,8 @@ impl PairingHost {
 			// against; where it cannot, the call fails rather than producing
 			// the prompt-and-signature an ungranted product would have got.
 			//
-			// The failure is not prompt. An unreachable genesis leaves the
-			// metadata read waiting on the chain, so the caller can sit on the
-			// authority request timeout before it sees anything — the cost of
-			// assembling locally is paid before the grant can be found wanting.
+			// The failure is not prompt: an unreachable genesis holds the
+			// metadata read until its deadline.
 			return Ok(build_local_transaction(
 				&self.chain,
 				&keypair,

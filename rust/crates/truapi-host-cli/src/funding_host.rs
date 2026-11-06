@@ -38,7 +38,10 @@ use std::{
 	sync::{Arc, Mutex, Weak},
 };
 
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::{
+	channel::mpsc,
+	stream::{self, BoxStream, StreamExt},
+};
 use truapi::{
 	FundingFeed, SigningHostRuntime,
 	host_logic::{
@@ -53,8 +56,9 @@ use truapi::{
 		HostPaymentTopUpStatusSubscribeItem,
 	},
 	platform::{
-		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteRow,
-		FundingQuoteState, PaymentPlatform, ProductContext, ProductId, TopUpPlatform,
+		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
+		FundingQuoteRow, FundingQuoteState, PaymentPlatform, ProductContext, ProductId,
+		TopUpPlatform,
 	},
 };
 
@@ -147,6 +151,8 @@ pub struct CliFundingHost {
 	asked: Mutex<HashSet<String>>,
 	/// The providers the core last offered each session.
 	candidates: Mutex<HashMap<String, Vec<ProductId>>>,
+	/// Where each open overlay takes the quote lists the core pushes.
+	quote_lists: Mutex<HashMap<String, mpsc::UnboundedSender<FundingQuoteList>>>,
 }
 
 impl CliFundingHost {
@@ -182,6 +188,7 @@ impl CliFundingHost {
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
 			candidates: Mutex::new(HashMap::new()),
+			quote_lists: Mutex::new(HashMap::new()),
 		});
 		runtime.set_funding_feed(host.clone());
 		runtime.set_funding_platform(host);
@@ -247,6 +254,37 @@ impl CliFundingHost {
 	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<ProductId>>> {
 		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
+
+	fn lock_quote_lists(
+		&self,
+	) -> std::sync::MutexGuard<'_, HashMap<String, mpsc::UnboundedSender<FundingQuoteList>>> {
+		self.quote_lists.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+	}
+
+	/// Ask for session `intent`'s quotes and wait for the first list in
+	/// which every provider has answered, as a user waits on the list.
+	async fn answered_quotes(
+		&self,
+		runtime: &SigningHostRuntime,
+		intent: &str,
+		ask: FundingQuoteAsk,
+	) -> Vec<FundingQuoteRow> {
+		let (lists, mut received) = mpsc::unbounded();
+		self.lock_quote_lists().insert(intent.to_string(), lists);
+		let request_id = runtime.request_funding_quotes(intent, ask);
+		let mut rows = Vec::new();
+		while let Some(list) = received.next().await {
+			if list.request_id != request_id {
+				continue;
+			}
+			rows = list.rows;
+			if !rows.iter().any(|row| matches!(row.state, FundingQuoteState::Pending)) {
+				break;
+			}
+		}
+		self.lock_quote_lists().remove(intent);
+		rows
+	}
 }
 
 /// Where a provider's App is opened: the web host that serves dotNS
@@ -302,6 +340,12 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 
 #[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
+	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+		if let Some(lists) = self.lock_quote_lists().get(&intent) {
+			let _ = lists.unbounded_send(quotes);
+		}
+	}
+
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,
@@ -317,9 +361,12 @@ impl FundingPlatform for CliFundingHost {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
 		let candidates = self.lock_candidates().remove(&session.intent).unwrap_or_default();
-		let rows: Vec<FundingQuoteRow> = runtime
-			.get_funding_quote(&session.intent, default_ask(session.direction, session.amount))
-			.collect()
+		let rows = self
+			.answered_quotes(
+				&runtime,
+				&session.intent,
+				default_ask(session.direction, session.amount),
+			)
 			.await;
 		let mut chosen = None;
 		for row in &rows {
@@ -607,34 +654,4 @@ impl PaymentPlatform for CliPaymentHost {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	// The worker is told a top-up started only once the ledger holds it, as a
-	// start this host forgets would read as unknown after a restart and never
-	// settle.
-	#[test]
-	fn a_start_the_ledger_cannot_keep_is_refused() {
-		let directory = tempfile::tempdir().expect("temporary directory");
-		let host = CliPaymentHost { ledger: directory.path().join("missing").join("ledger.jsonl") };
-		let product = ProductContext::new_with_execution(
-			"ramp.dot".parse().expect("valid product"),
-			truapi::platform::ExecutableKind::Worker,
-		);
-
-		let started = futures::executor::block_on(host.top_up(
-			&product,
-			HostPaymentTopUpRequest {
-				into: None,
-				amount: 1,
-				source: truapi::latest::PaymentTopUpSource::ProductAccount {
-					derivation_index: truapi::latest::DerivationIndex::Index(0),
-				},
-				id: [1; 32],
-				funding: None,
-			},
-		));
-
-		assert!(matches!(started, Err(HostPaymentTopUpError::Unknown { .. })), "{started:?}");
-	}
-}
+mod tests;
