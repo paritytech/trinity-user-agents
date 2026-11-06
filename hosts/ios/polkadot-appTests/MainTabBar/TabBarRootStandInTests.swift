@@ -31,6 +31,17 @@ struct TabBarRootStandInTests {
 
         #expect(actions == [.ignore, .popToRoot(pushed)])
     }
+
+    @Test
+    func collectiblesIsTheTabRootAndIsLeftAloneWhenItsTabIsTappedAgain() {
+        let root = UIViewController()
+        let collectibles = CollectiblesViewController(product: StubSPAView())
+        let navigation = UINavigationController(rootViewController: root)
+        navigation.setViewControllers([root, collectibles], animated: false)
+
+        #expect(TabBarHiddenPolicy.isTabRoot(in: [root, collectibles], showing: collectibles))
+        #expect(TabBarReselectionPolicy.action(for: navigation) == .ignore)
+    }
 }
 
 private final class StandInScreen: UIViewController, TabBarRootStandIn {}
