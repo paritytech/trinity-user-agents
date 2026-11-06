@@ -116,7 +116,7 @@ struct PublicProfileAvatarViewModelFactoryTests {
     }
 
     @Test(arguments: [false, true])
-    func switchingToAStaticImageOrDismantlingCancelsMetadata(dismantle: Bool) async {
+    func switchingToAStaticImageOrDismantlingCancelsMetadata(dismantle: Bool) async throws {
         let gate = ProfileResolutionGate()
         let (started, didStart) = AsyncStream<Void>.makeStream()
         let (finished, didFinish) = AsyncStream<Bool>.makeStream()
@@ -136,21 +136,18 @@ struct PublicProfileAvatarViewModelFactoryTests {
         for await _ in started {
             break
         }
-        let replacement = dismantle ? nil : UIImage(systemName: "person.fill")
+        let replacement = try #require(UIImage(data: testPicturePNG(size: CGSize(width: 7, height: 6))))
         if dismantle {
             AsyncImageView.dismantleUIView(imageView, coordinator: coordinator)
         } else {
-            coordinator.load(
-                StaticImageViewModel(image: replacement),
-                on: imageView,
-                settings: .originalImage,
-                animated: false
-            )
+            let staticImage = StaticImageViewModel(image: replacement)
+            coordinator.load(staticImage, on: imageView, settings: .originalImage, animated: false)
+            _ = await load(staticImage, on: imageView)
         }
         await gate.release()
         var completed = finished.makeAsyncIterator()
         #expect(await completed.next() == true)
-        #expect(imageView.image === replacement)
+        #expect(imageView.image?.cgImage?.width == (dismantle ? nil : 7))
     }
 
     @Test

@@ -20,7 +20,7 @@ struct PublicProfileAvatarImageDataProviderTests {
     func reopeningTheCacheAndChangingImageSizeReuseTheOriginalBytes() async throws {
         let name = UUID().uuidString
         let avatar = ProfileAvatar(cid: name, format: .png)
-        let bytes = testPicturePNG(size: CGSize(width: 30, height: 20))
+        let bytes = testPicturePNG(size: CGSize(width: 40, height: 20))
         let resolver = MockPublicProfileAvatarResolver(result: .success(bytes))
         let cache = PublicProfileAvatarImageCache(name: name)
         defer { try? cache.clear() }
@@ -39,7 +39,9 @@ struct PublicProfileAvatarImageDataProviderTests {
                 for: ImageViewModelSettings(targetSize: CGSize(width: 10, height: 10)), animated: false
             )
         )
-        #expect(await (resized.image.size, resolver.imageRequests) == (CGSize(width: 10, height: 10), [avatar]))
+        let observed = await (resized.image.size, resolver.imageRequests)
+        let pixels = [resized.image.cgImage?.width, resized.image.cgImage?.height]
+        #expect(observed == (CGSize(width: 10, height: 10), [avatar]), "CG pixel dimensions: \(pixels)")
         #expect(try await second.data() == bytes)
     }
 
