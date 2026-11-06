@@ -1687,7 +1687,9 @@ fn native_chain_provider_rejects_an_early_close_and_allows_a_later_retry() {
 	let closed = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32]));
 	assert_eq!(
 		closed.map(|_| ()),
-		Err(ProviderError::Host { reason: "chain connection closed during setup".to_string() })
+		Err(ProviderError::Transport {
+			reason: "chain connection closed during setup".to_string()
+		})
 	);
 	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
 
