@@ -10,7 +10,7 @@ struct SearchContactPresenterAvatarTests {
     func eachSearchSectionResolvesTheUsernameOfItsContact() async throws {
         let suffix = UUID().uuidString
         let usernames = ["recent-\(suffix)", "stored-\(suffix)", "remote-\(suffix)"]
-        let resolver = MockPublicProfileAvatarResolver(result: .success(nil))
+        let resolver = MockPublicProfileAvatarResolver(result: .failure(.Unavailable(reason: "no profile avatar")))
         let presenter = makePresenter(resolver: resolver)
         let view = MockSearchContactView()
         presenter.view = view
@@ -40,7 +40,9 @@ struct SearchContactPresenterAvatarTests {
 
     @Test
     func anUnnamedContactDoesNotGetAnAvatarLoader() throws {
-        let presenter = makePresenter(resolver: MockPublicProfileAvatarResolver(result: .success(nil)))
+        let presenter = makePresenter(
+            resolver: MockPublicProfileAvatarResolver(result: .failure(.Unavailable(reason: "no profile avatar")))
+        )
         let view = MockSearchContactView()
         presenter.view = view
         let sections = AccountSearchSections<ContactSearchPayload, ContactSearchPayload>(
@@ -61,7 +63,7 @@ private extension SearchContactPresenterAvatarTests {
             interactor: StubSearchContactInteractor(),
             wireframe: SearchContactWireframe(),
             publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory { username, force in
-                try await resolver.resolveAvatar(username: username, force: force)
+                try await resolver.loadAvatar(username: username, force: force)
             }
         )
     }

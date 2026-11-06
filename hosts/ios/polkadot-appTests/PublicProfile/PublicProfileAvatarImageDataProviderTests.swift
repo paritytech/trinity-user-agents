@@ -2,6 +2,7 @@ import Foundation
 import Kingfisher
 import PolkadotUI
 import Testing
+import TrUAPIHost
 import UIKit
 @testable import polkadot_app
 
@@ -20,10 +21,10 @@ struct PublicProfileAvatarImageDataProviderTests {
 
     @Test
     func noAvatarLeavesThePlaceholderAndCanBeRetried() async throws {
-        let resolver = MockPublicProfileAvatarResolver(result: .success(nil))
+        let resolver = MockPublicProfileAvatarResolver(result: .failure(.Unavailable(reason: "no profile avatar")))
         let provider = makeProvider(username: "alice.01", resolver: resolver)
 
-        await #expect(throws: PublicProfileAvatarImageError.unavailable) {
+        await #expect(throws: ImageError.Unavailable(reason: "no profile avatar")) {
             try await provider.data()
         }
 
@@ -36,10 +37,10 @@ struct PublicProfileAvatarImageDataProviderTests {
 
     @Test
     func lookupFailureLeavesThePlaceholderAndCanBeRetried() async throws {
-        let resolver = MockPublicProfileAvatarResolver(result: .failure(.offline))
+        let resolver = MockPublicProfileAvatarResolver(result: .failure(.Unavailable(reason: "offline")))
         let provider = makeProvider(username: "alice.01", resolver: resolver)
 
-        await #expect(throws: MockPublicProfileAvatarResolver.Failure.offline) {
+        await #expect(throws: ImageError.Unavailable(reason: "offline")) {
             try await provider.data()
         }
 
@@ -52,9 +53,15 @@ struct PublicProfileAvatarImageDataProviderTests {
 
     @Test
     func cacheKeysShareOneUsernameWithoutMixingDifferentPeople() {
-        let first = PublicProfileAvatarImageDataProvider(username: "alice.01", resolveAvatar: { _, _ in nil })
-        let repeated = PublicProfileAvatarImageDataProvider(username: "alice.01", resolveAvatar: { _, _ in nil })
-        let other = PublicProfileAvatarImageDataProvider(username: "bob.02", resolveAvatar: { _, _ in nil })
+        let first = PublicProfileAvatarImageDataProvider(username: "alice.01") { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
+        let repeated = PublicProfileAvatarImageDataProvider(username: "alice.01") { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
+        let other = PublicProfileAvatarImageDataProvider(username: "bob.02") { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
 
         #expect(first.cacheKey == repeated.cacheKey)
         #expect(first.cacheKey != other.cacheKey)
@@ -65,7 +72,7 @@ struct PublicProfileAvatarImageDataProviderTests {
     func aForcedLoadRereadsTheProfileUnderTheSameCacheKey() async throws {
         let resolver = MockPublicProfileAvatarResolver(result: .success(Data([1, 2, 3])))
         let forced = PublicProfileAvatarImageDataProvider(username: "alice.01", force: true) { username, force in
-            try await resolver.resolveAvatar(username: username, force: force)
+            try await resolver.loadAvatar(username: username, force: force)
         }
 
         _ = try await forced.data()
@@ -125,7 +132,7 @@ private extension PublicProfileAvatarImageDataProviderTests {
         resolver: MockPublicProfileAvatarResolver
     ) -> PublicProfileAvatarImageDataProvider {
         PublicProfileAvatarImageDataProvider(username: username) { username, force in
-            try await resolver.resolveAvatar(username: username, force: force)
+            try await resolver.loadAvatar(username: username, force: force)
         }
     }
 }

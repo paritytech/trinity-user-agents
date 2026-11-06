@@ -1,6 +1,7 @@
 import Foundation
 import PolkadotUI
 import Testing
+import TrUAPIHost
 import UIKit
 @testable import polkadot_app
 
@@ -13,7 +14,7 @@ struct PublicProfileAvatarViewModelFactoryTests {
             result: .success(testPicturePNG(size: CGSize(width: 3, height: 2)))
         )
         let factory = PublicProfileAvatarViewModelFactory { username, force in
-            try await resolver.resolveAvatar(username: username, force: force)
+            try await resolver.loadAvatar(username: username, force: force)
         }
         let imageView = UIImageView()
         let viewModel = factory.createViewModel(for: username, refresh: false)
@@ -28,7 +29,9 @@ struct PublicProfileAvatarViewModelFactoryTests {
     @Test
     func missingAvatarClearsThePreviousPersonsImage() async {
         let imageView = UIImageView(image: UIImage(systemName: "person.fill"))
-        let factory = PublicProfileAvatarViewModelFactory(resolveAvatar: { _, _ in nil })
+        let factory = PublicProfileAvatarViewModelFactory { _, _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        }
         let viewModel = factory.createViewModel(for: "missing-\(UUID().uuidString)", refresh: false)
 
         let succeeded = await load(viewModel, on: imageView)
@@ -93,7 +96,7 @@ struct PublicProfileAvatarViewModelFactoryTests {
         )
         let factory = makeFactory(resolver: resolver)
         _ = await load(factory.createViewModel(for: username, refresh: false), on: UIImageView())
-        await resolver.setResult(.failure(.offline))
+        await resolver.setResult(.failure(.Unavailable(reason: "offline")))
         let viewModel = factory.createViewModel(for: username, refresh: true)
         let imageView = UIImageView()
         var whileLoading: CGSize?
@@ -115,7 +118,7 @@ struct PublicProfileAvatarViewModelFactoryTests {
 private extension PublicProfileAvatarViewModelFactoryTests {
     func makeFactory(resolver: MockPublicProfileAvatarResolver) -> PublicProfileAvatarViewModelFactory {
         PublicProfileAvatarViewModelFactory { username, force in
-            try await resolver.resolveAvatar(username: username, force: force)
+            try await resolver.loadAvatar(username: username, force: force)
         }
     }
 

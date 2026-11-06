@@ -7,10 +7,10 @@ protocol PublicProfileAvatarViewModelMaking {
 }
 
 final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
-    private let resolveAvatar: @Sendable (String, Bool) async throws -> Data?
+    private let loadAvatar: @Sendable (String, Bool) async throws -> Data
 
-    init(resolveAvatar: @escaping @Sendable (String, Bool) async throws -> Data?) {
-        self.resolveAvatar = resolveAvatar
+    init(loadAvatar: @escaping @Sendable (String, Bool) async throws -> Data) {
+        self.loadAvatar = loadAvatar
     }
 
     convenience init(runtimeProvider: TrUAPIHostRuntimeProviding) {
@@ -23,7 +23,7 @@ final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMak
 
     func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol {
         let cached = LocalImageViewModel(
-            provider: PublicProfileAvatarImageDataProvider(username: username, resolveAvatar: resolveAvatar),
+            provider: PublicProfileAvatarImageDataProvider(username: username, loadAvatar: loadAvatar),
             optionsFactory: PublicProfileAvatarImageOptionsFactory(),
             keepsCurrentImageWhileLoading: false
         )
@@ -35,7 +35,7 @@ final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMak
             provider: PublicProfileAvatarImageDataProvider(
                 username: username,
                 force: true,
-                resolveAvatar: resolveAvatar
+                loadAvatar: loadAvatar
             ),
             optionsFactory: PublicProfileAvatarImageOptionsFactory(),
             cached: cached
