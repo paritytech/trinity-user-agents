@@ -11,7 +11,7 @@ class RealProductScriptResolver @Inject constructor(
     override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> {
         return resolveProductUseCase.resolve(productId).mapCatching { resolved ->
             resolved.executables.worker
-                ?: error("Product ${productId.value} exposes no worker executable")
+                ?: throw ProductHasNoWorker(productId)
         }
     }
 }

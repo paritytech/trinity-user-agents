@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHost
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationResult
+import kotlin.coroutines.CoroutineContext
 
 /**
  * WebViewClient for browser environments (SPA + Explore).
@@ -25,7 +26,8 @@ class BrowserWebViewClient(
     private val navigationPolicy: NavigationPolicy,
     mainDocumentResponseHeaders: Map<String, String>,
     private val firstPartyOrigin: String?,
-) : DotNsWebViewClient(dotNsResolver, dotNsTldProvider, servingHostResolver, mainDocumentResponseHeaders) {
+    loadContext: () -> CoroutineContext,
+) : DotNsWebViewClient(dotNsResolver, dotNsTldProvider, servingHostResolver, mainDocumentResponseHeaders, loadContext) {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val origin = view.url?.toUri()
         val destination = request.url

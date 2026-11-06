@@ -1,11 +1,17 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
 import android.net.Uri
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
 import io.paritytech.polkadotapp.test_shared.thenThrowUnsafe
 import io.paritytech.polkadotapp.test_shared.whenever
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -72,6 +78,29 @@ class RealProductContentWarmUpTest {
         val result = warmUp.warmUp(productId)
 
         assertEquals(failure, result.exceptionOrNull())
+    }
+
+    // A warm-up runs before the page it is for, so its fetch must not be reported as that page's open.
+    @Test
+    fun `the archive is fetched as a prewarm`() = runBlocking {
+        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
+        val triggers = mutableListOf<HostLoadTrigger?>()
+        val recording = object : DotNsResolver {
+            override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> {
+                triggers += currentCoroutineContext()[HostLoadContext]?.trigger
+                return Result.success(archive)
+            }
+
+            override suspend fun getMetadataEntry(dotNsName: String, key: String): Result<String?> = Result.success(null)
+
+            override fun getProgressByDomain(dotNsName: String): Flow<DotNsLoadProgress> = emptyFlow()
+
+            override suspend fun clearCache() = Unit
+        }
+
+        RealProductContentWarmUp(recording, servingHostResolver, runtimeSettings).warmUp(productId)
+
+        assertEquals(listOf<HostLoadTrigger?>(HostLoadTrigger.PREWARM), triggers)
     }
 
     @Test

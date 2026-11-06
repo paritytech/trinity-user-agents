@@ -41,6 +41,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
@@ -52,7 +53,6 @@ import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
@@ -85,6 +85,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val rpcConnectedTelemetry: HostRpcConnectedTelemetry,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -129,6 +130,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
+        rpcExecutable: HostRpcExecutable,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId)
@@ -242,12 +244,18 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
+        override fun chainConnect(genesisHash: ByteArray): UInt? =
+            chainProvider.connect(genesisHash)?.also { connectionId ->
+                rpcConnectedTelemetry.dialled(connectionId, rpcExecutable) { cachedChains.get().label(genesisHash) }
+            }
 
         override fun chainSend(connectionId: UInt, request: String) =
             chainProvider.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) {
+            chainProvider.close(connectionId)
+            rpcConnectedTelemetry.abandoned(connectionId)
+        }
 
         override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
             card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
@@ -268,7 +276,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
      *
      * A second call opens nothing and answers with the execution already
      * running: opening another would leak the first, along with its loopback
-     * listener and chain sockets.
+     * listener and chain sockets. [hostSessionId] files this execution's chain
+     * connects under the page's or worker's host session.
      */
     suspend fun attach(
         runtime: TrUAPIHostRuntime,
@@ -278,6 +287,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
+        hostSessionId: String? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -289,7 +299,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         return runCatching {
             cachedChains.set(chains)
             val opened = runtime.openProductExecution(
-                bridge = buildBridge(productId, navigationPolicy, card),
+                bridge = buildBridge(
+                    productId,
+                    navigationPolicy,
+                    card,
+                    HostRpcExecutable(productId, kind, hostSessionId),
+                ),
                 configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
                 game = gameBridge(productId),
@@ -298,8 +313,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
             chainProvider.attach(
-                onResponse = opened::notifyChainResponse,
-                onClosed = opened::notifyChainClosed,
+                onResponse = { connectionId, frame ->
+                    opened.notifyChainResponse(connectionId, frame)
+                    rpcConnectedTelemetry.responded(connectionId)
+                },
+                onClosed = { connectionId ->
+                    opened.notifyChainClosed(connectionId)
+                    rpcConnectedTelemetry.closedBeforeResponse(connectionId)
+                },
             )
             val endpoint = opened.startWsBridge()
             observeAppTheme()

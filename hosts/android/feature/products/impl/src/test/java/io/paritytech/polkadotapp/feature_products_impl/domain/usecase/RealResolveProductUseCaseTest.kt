@@ -1,8 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
-import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
@@ -14,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocket
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,6 +26,10 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import uniffi.truapi.ProductId
 
+private const val ASKED_AT = 1_000L
+private const val LOCKED_AT = 1_250L
+private const val RESOLVED_AT = 1_900L
+private val OPEN = HostLoadContext(HostLoadTrigger.OPEN, "session-1")
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
 class RealResolveProductUseCaseTest {
@@ -45,7 +53,7 @@ class RealResolveProductUseCaseTest {
         originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
         timeProvider = { 0L },
         capture = { event -> reportedOutcomes += event().tags["outcome"] },
-        sessions = HostSessionRegistry(),
+        cacheHits = HostCacheHits(),
     )
 
     private fun useCase() = RealResolveProductUseCase(
@@ -137,14 +145,48 @@ class RealResolveProductUseCaseTest {
     }
 
     @Test
-    fun `a resolution read from the chain is reported once, and the cached answer after it is not`() = runBlocking<Unit> {
+    fun `a resolution read from the chain is reported, then its cached answer once as a cache hit`() = runBlocking<Unit> {
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
         val useCase = useCase()
 
-        useCase.resolve(productId).getOrThrow()
-        useCase.resolve(productId).getOrThrow()
+        withContext(OPEN) { repeat(3) { useCase.resolve(productId).getOrThrow() } }
 
-        assertEquals(listOf("ok"), reportedOutcomes)
+        assertEquals(listOf("ok", "cache_hit"), reportedOutcomes)
+    }
+
+    // Icons and chat product names resolve the same products; counted, they would read as opens.
+    @Test
+    fun `a resolution asked for outside any load reports nothing`() = runBlocking<Unit> {
+        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        val useCase = useCase()
+
+        repeat(2) { useCase.resolve(productId).getOrThrow() }
+
+        assertEquals(emptyList<String?>(), reportedOutcomes)
+    }
+
+    // The resolve lock is global, so a product queued behind another product's chain reads looks slow
+    // for reasons that are not its own.
+    @Test
+    fun `a resolution reports how long it waited for the resolve lock`() = runBlocking<Unit> {
+        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        val events = mutableListOf<HostEvent>()
+        val times = ArrayDeque(listOf(ASKED_AT, LOCKED_AT, RESOLVED_AT))
+        val timed = HostProductResolvedTelemetry(
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            timeProvider = { times.removeFirst() },
+            capture = { event -> events += event() },
+            cacheHits = HostCacheHits(),
+        )
+
+        withContext(OPEN) {
+            RealResolveProductUseCase(dotNsResolver, manifestParser, productRepository, debugPocketCards, timed)
+                .resolve(productId)
+        }
+
+        val event = events.single()
+        assertEquals(LOCKED_AT - ASKED_AT, event.extras["queue_ms"])
+        assertEquals(RESOLVED_AT - LOCKED_AT, event.durationMs)
     }
 
     @Test
@@ -152,7 +194,7 @@ class RealResolveProductUseCaseTest {
         whenever(dotNsResolver.getMetadataEntry(base, "manifest"))
             .thenReturn(Result.failure(RuntimeException("registry down")))
 
-        useCase().resolve(productId)
+        withContext(OPEN) { useCase().resolve(productId) }
 
         assertEquals(listOf("error"), reportedOutcomes)
     }

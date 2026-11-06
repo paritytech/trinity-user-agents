@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.common.utils.Urls
 import io.paritytech.polkadotapp.common.utils.coerceToUnit
 import io.paritytech.polkadotapp.common.utils.flatMap
@@ -10,6 +12,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.withContext
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -23,9 +26,11 @@ class RealFundingProductsWarmUp @Inject constructor(
     private val dotNsResolver: DotNsResolver,
 ) : FundingProductsWarmUp {
     override suspend fun warmUp() {
-        fundingDomainProvider.getFundingProductIds()
-            .flatMap { productIds -> productIds.mapAsync { warmUp(it) }.flattenUnit() }
-            .logFailure("Failed to warm up funding products")
+        withContext(HostLoadContext(HostLoadTrigger.PREWARM, sessionId = null)) {
+            fundingDomainProvider.getFundingProductIds()
+                .flatMap { productIds -> productIds.mapAsync { warmUp(it) }.flattenUnit() }
+                .logFailure("Failed to warm up funding products")
+        }
     }
 
     private suspend fun warmUp(productId: ProductId): Result<Unit> {

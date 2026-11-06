@@ -257,6 +257,7 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
+            interactor.cardTapped(card.key)
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
             lookUpOpeningFace(card)
@@ -294,6 +295,7 @@ class PocketViewModel @Inject constructor(
     }
 
     fun dismissCard() {
+        interactor.cardClosed()
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null

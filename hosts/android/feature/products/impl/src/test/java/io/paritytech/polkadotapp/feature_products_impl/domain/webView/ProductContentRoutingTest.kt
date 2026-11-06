@@ -5,6 +5,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -18,6 +20,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -50,6 +53,22 @@ class ProductContentRoutingTest {
         assertEquals(File("/archive"), DotNsWebViewClient(dotNs, tldProvider, serving).resolveHostFile(url))
 
         coVerify(exactly = 1) { dotNs.resolveToLocalUri("app.coinflip.dot") }
+    }
+
+    // The page or worker the WebView serves is what its archive lookups report under.
+    @Test
+    fun `an archive lookup runs under the load the WebView serves`() {
+        val load = HostLoadContext(HostLoadTrigger.OPEN, "page-session")
+        val seen = mutableListOf<HostLoadContext?>()
+        coEvery { dotNs.resolveToLocalUri(any()) } coAnswers {
+            seen += currentCoroutineContext()[HostLoadContext]
+            Result.success(archiveUri)
+        }
+        val url: Uri = mockk { every { host } returns "coinflip.dot.li" }
+
+        DotNsWebViewClient(dotNs, tldProvider, loadContext = { load }).resolveHostFile(url)
+
+        assertEquals(listOf<HostLoadContext?>(load), seen)
     }
 
     @Test

@@ -3,9 +3,11 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 import android.net.Uri
 import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -62,6 +64,8 @@ class PocketViewModelTest {
         every { observeFace(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         coEvery { faceShownOnOpen(any()) } returns true
+        every { cardTapped(any()) } just Runs
+        every { cardClosed() } just Runs
     }
 
     private var collectiblesPage: Uri? = null
@@ -341,6 +345,23 @@ class PocketViewModelTest {
         settledCards(viewModel)
 
         coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
+    }
+
+    // The page's load reports the time since this tap, and a closed card must not lend its tap to
+    // whichever page loads next.
+    @Test
+    fun `selecting a card marks the tap and dismissing it forgets the tap`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(uiCard)
+        verify(exactly = 1) { interactor.cardTapped(card.key) }
+        verify(exactly = 0) { interactor.cardClosed() }
+
+        viewModel.dismissCard()
+        verify(exactly = 1) { interactor.cardClosed() }
     }
 
     // The cost of warming every card is what the privileged set exists to avoid: a user holding

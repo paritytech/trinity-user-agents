@@ -13,6 +13,7 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -22,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
 import uniffi.truapi.ProductId
+import kotlin.coroutines.EmptyCoroutineContext
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
@@ -52,6 +54,7 @@ class ChatWebViewProvider @AssistedInject constructor(
         dotNsTldProvider,
         servingHostResolver,
         frameEmbeddingResponseHeaders(allowIframes = false),
+        loadContext = { config.hostLoad ?: EmptyCoroutineContext },
     )
     private val chromeClient = productWebChromeClientFactory.create(
         logPrefix = "Script $productId",
@@ -120,4 +123,6 @@ class ChatWebViewProvider @AssistedInject constructor(
 data class ChatWebViewConfig(
     val productId: ProductId,
     val workerScript: WorkerScript,
+    /** The worker activation's load, which the archive lookups behind its requests report under. */
+    val hostLoad: HostLoadContext? = null,
 )

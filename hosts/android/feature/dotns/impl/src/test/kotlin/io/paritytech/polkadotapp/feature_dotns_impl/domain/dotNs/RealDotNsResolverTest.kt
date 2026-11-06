@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
-import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
 import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.CarFetcher
@@ -75,7 +75,7 @@ class RealDotNsResolverTest {
             originProvider = { error("no event is built") },
             timeProvider = { 0L },
             capture = { },
-            sessions = HostSessionRegistry(),
+            cacheHits = HostCacheHits(),
         ),
         dispatchers = testDispatchers(),
     )

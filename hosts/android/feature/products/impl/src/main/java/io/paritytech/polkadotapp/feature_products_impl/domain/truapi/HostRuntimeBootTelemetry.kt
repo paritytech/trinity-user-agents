@@ -6,33 +6,32 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.stepEvent
 import io.paritytech.polkadotapp.common.utils.logFailure
-import uniffi.truapi.ProductId
 import javax.inject.Inject
 
-class HostPageLoadedTelemetry @Inject internal constructor(
+/** The shared truAPI runtime's first build: the suffix lookup, the session secret and the core's database. */
+class HostRuntimeBootTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
     private val capture: HostEventCapture,
 ) {
-    fun openRequestedAtMillis(): Long = timeProvider.nowMillis()
+    fun nowMillis(): Long = timeProvider.nowMillis()
 
-    fun report(sessionId: String, productId: ProductId, openRequestedAtMillis: Long, loaded: Boolean) {
+    fun report(startedAtMillis: Long, booted: Boolean) {
         runCatching {
             capture.capture {
                 val now = timeProvider.nowMillis()
                 originProvider.current().stepEvent(
                     name = EVENT_NAME,
-                    outcome = if (loaded) HostEventOutcome.OK else HostEventOutcome.ERROR,
+                    outcome = if (booted) HostEventOutcome.OK else HostEventOutcome.ERROR,
                     monotonicMs = now,
-                    durationMs = now - openRequestedAtMillis,
-                    sessionId = sessionId,
-                    tags = mapOf("product.id" to productId.value),
+                    durationMs = now - startedAtMillis,
+                    sessionId = null,
                 )
             }
-        }.logFailure("Failed to capture native host page loaded event")
+        }.logFailure("Failed to capture native host runtime boot event")
     }
 
     companion object {
-        const val EVENT_NAME = "host.webview.page_loaded"
+        const val EVENT_NAME = "host.runtime.boot"
     }
 }
