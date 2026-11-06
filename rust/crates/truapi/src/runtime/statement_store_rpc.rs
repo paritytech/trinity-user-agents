@@ -84,10 +84,12 @@ impl StatementSubmitError {
 		matches!(self, Self::Rejected(answer) if answer["reason"] == "noAllowance")
 	}
 
-	/// Whether the People chain was unreachable, so the statement may be
-	/// sent again.
+	/// Whether the statement reached nobody, so it may be sent again: the
+	/// People chain was unreachable, or a light client found no peer to take
+	/// it.
 	pub fn is_unreachable(&self) -> bool {
-		matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
+		self.reached_no_peer() ||
+			matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
 	}
 
 	/// Whether the statement reached no peer, so it may be sent again. smoldot

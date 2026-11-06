@@ -31,8 +31,8 @@ enum Upstream {
 	Drops,
 	/// Answers every submission with this status.
 	Answers(&'static str),
-	/// Answers every submission with a JSON-RPC error.
-	Fails,
+	/// Answers every submission with a JSON-RPC error carrying this message.
+	Fails(&'static str),
 }
 
 /// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
@@ -97,10 +97,10 @@ impl JsonRpcConnection for PeopleChainConnection {
 				"id": request["id"],
 				"result": { "status": status, "reason": "noAllowance" },
 			}),
-			Upstream::Fails => json!({
+			Upstream::Fails(message) => json!({
 				"jsonrpc": "2.0",
 				"id": request["id"],
-				"error": { "code": -32602, "message": "invalid statement encoding" },
+				"error": { "code": -32602, "message": message },
 			}),
 		};
 		if let Some(sender) = sender.as_ref() {
@@ -183,7 +183,7 @@ fn an_sso_submit_reports_a_dropped_connection() {
 /// A JSON-RPC error is an answer, so it must not read as an unreachable chain.
 #[test]
 fn a_node_error_is_not_reported_as_unreachable() {
-	let chain = PeopleChain::new(vec![Upstream::Fails]);
+	let chain = PeopleChain::new(vec![Upstream::Fails("invalid statement encoding")]);
 	let statement_store = statement_store(&chain);
 
 	let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
@@ -193,6 +193,18 @@ fn a_node_error_is_not_reported_as_unreachable() {
 		Err(StatementSubmitError::Chain(failure))
 			if failure.kind() == RuntimeFailureKind::HostFailure
 	));
+}
+
+/// A light client reports a statement that reached no peer as a node error.
+/// Nothing reached the chain, so a signing host has to send it again.
+#[test]
+fn a_statement_that_reached_no_peer_is_reported_as_unreachable() {
+	let chain = PeopleChain::new(vec![Upstream::Fails(NO_PEERS)]);
+	let statement_store = statement_store(&chain);
+
+	let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
+
+	assert!(result.is_err_and(|error| error.is_unreachable()));
 }
 
 #[test]
