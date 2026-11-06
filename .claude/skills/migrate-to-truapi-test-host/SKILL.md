@@ -508,6 +508,10 @@ missed:
   `"ChainSubmit"`, and `grantPermission` with the old tag records a decision no
   request ever matches.
 - **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Declining a signature in one test.** From 0.30 (#1926), call `testHost.setConfirmUserActions(false)`
+  before the action and `true` after, rather than booting a second fixture
+  with `mock: { confirmUserActions: false }`. A permission the core has
+  already cached keeps its answer.
 - **Signed out is a boot option.** An empty `accounts` fails the page at boot,
   which a suite sees as the fixture timing out. Pass `loginBehavior: "manual"`.
   `simulateDisconnect` drops the chain connections and refuses new ones until
@@ -521,9 +525,11 @@ missed:
 - **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
   `getPreimages()` answers the seeded values only, as `Uint8Array[]`, with no
   `key`, `fromProduct` or `timestamp`. Statement entries carry `topics` and
-  `data` directly, not under `.statement`. A `Remote` permission log entry's
-  `value` is the tagged permission `{ tag: "Remote", value: { domains } }`, so
-  read `entry.value.value.domains`.
+  `data` directly, not under `.statement`. From 0.30 they also carry
+  `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
+  also takes (#1935). A `Remote` permission log entry's `value` is the tagged
+  permission `{ tag: "Remote", value: { domains } }`, so read
+  `entry.value.value.domains`.
 - **Removed members.** Some old `TestHostAPI` members have no equivalent, and a
   spec using one fails with `TS2339`: `clearChat`, `clearOperationLog`,
   `clearProductStorage`, `clearResourceAllocationLog`,
@@ -538,9 +544,14 @@ missed:
   rewrite those specs. `window.__TEST_HOST__` still exists, but it now names the
   same object as `window.__TRUAPI_TEST_HOST__`, with these names and the shapes
   above, and the old `getSentRpc` is `sentRpc` there.
-- **Deep links go in `productUrl`.** The host page's own path, query and hash
-  configure the host and do not reach the product, so a spec opening the
-  product at a route passes that route in `productUrl`.
+- **Deep links.** Up to 0.29 the host page's own path, query and hash configure
+  the host and do not reach the product, so a spec opening the product at a
+  route passes that route in `productUrl`. From 0.30 (#1932) the host page
+  passes its path, its hash and every query parameter it does not read itself
+  on to the product, as a real host does. With the fixture, call
+  `testHost.openDeepLink("/notes/1?view=raw#top")`, which loads the host page
+  again at that link. With the server alone, open `deepLinkUrl(server.url, link)`
+  from `@parity/truapi-host/testing/server`.
 - **Full-page navigation.** A product that navigates its whole document
   (`location.href = ...`) reconnects only when both `@parity/truapi-host` and
   the product's own `@parity/truapi` are 0.30 or later (#1895), since part of

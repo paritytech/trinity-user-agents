@@ -140,9 +140,12 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 - **Signed out.** An empty `accounts` fails at boot. Use `loginBehavior: "manual"`. `simulateDisconnect` now drops only
   the chain connection and doesn't sign the user out.
 - **Signing logs.** Don't assert exact signing-log counts. The new host can record more than one entry for a flow.
+- **Declining one signature.** From 0.30 call `testHost.setConfirmUserActions(false)` before the action and `true`
+  after, rather than booting a second fixture with `mock: { confirmUserActions: false }`.
 - **Statements and preimages.** `getSubmittedStatements` returns entries with `topics` and `data` directly, not under
   `.statement`. `seedPreimage` returns the key as bytes, not hex. `getPreimages` returns the values only, as
-  `Uint8Array[]`, with no `key`, `fromProduct` or `timestamp`.
+  `Uint8Array[]`, with no `key`, `fromProduct` or `timestamp`. From 0.30 statement entries also carry `channel`,
+  `expiry` (a bigint) and `decryptionKey`, which `injectStatement` also takes.
 - **Removed methods.** These old methods have no equivalent, so skip or rewrite specs that use them: `clearChat`,
   `clearOperationLog`, `clearProductStorage`, `clearResourceAllocationLog`, `clearUserConfirmationLog`,
   `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOpenOperations`, `getOperationLog`,
@@ -150,8 +153,9 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   `seedChatRoom`, `setDevicePermissionStatus`, `setFeatureSupport`, `setLocale`, `setNavigationBehavior`,
   `setNotificationBehavior`, `setResourceAllocationBehavior`, `setSupportedChains` and `setUserConfirmationBehavior`.
   `seedProductStorage` returns in 0.30.
-- **Deep links.** The host page's own path and query don't reach the product, so put the route in `productUrl`, with one
-  fixture per link.
+- **Deep links.** Up to 0.29 the host page's own path and query don't reach the product, so put the route in
+  `productUrl`, with one fixture per link. From 0.30 call `testHost.openDeepLink("/notes/1?view=raw#top")`, or open
+  `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server` when you start the server yourself.
 - **Smaller renames.** Themes are capitalised (`setTheme("Dark")`). `getNavigationLog()` returns URLs. `ChainConfig` and
   `Account` are no longer exported, so use `NetworkConfig` and `DevAccountName | DevAccount`.
 
@@ -167,9 +171,8 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   People chain refuses them under the default `allowances: "granted"`, so that store has to be your own.
 - **Full-page navigation.** A product that sets `location.href` reconnects only when both `@parity/truapi-host` and the
   product's own `@parity/truapi` are 0.30 or later. Until your product SDK brings truapi 0.30, skip those specs.
-- **Other gaps.** Approving a login, declining one signature, statements with chosen fields, and deep links without a
-  fixture per link are tracked in [#1388](https://github.com/paritytech/trinity-user-agents/issues/1388). Skip affected
-  specs and link the issue.
+- **Other gaps.** Approving a login is tracked in
+  [#1388](https://github.com/paritytech/trinity-user-agents/issues/1388). Skip affected specs and link the issue.
 
 ## 7. Keep the rest the same
 
