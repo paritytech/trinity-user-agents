@@ -73,10 +73,13 @@ use truapi::latest::{
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
-	host_logic::funding::{
-		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
-		UNACKNOWLEDGED_LIMIT, retained,
+	host_logic::{
+		funding::{
+			CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice,
+			FundingSession, FundingSessionError, FundingSessionSummary, Settlement, StartRecord,
+			StartedFunds, UNACKNOWLEDGED_LIMIT, retained,
+		},
+		funding_providers::FundingSelection,
 	},
 	platform::{
 		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
@@ -240,10 +243,11 @@ pub struct FundingRegistry {
 	/// that ending is handed to the host, so the host gets the full record
 	/// with it.
 	ending: Mutex<HashMap<String, FundingSession>>,
-	/// Sessions whose overlay is still up: live in memory, so the overlay can
-	/// quote and pick a provider for them, but not stored until the user
-	/// starts them.
-	presenting: Mutex<HashSet<String>>,
+	/// Sessions whose overlay is still up, with what the user picked in it so
+	/// far: live in memory, so the overlay can quote and pick a provider for
+	/// them, but not stored until the user starts them. Closing the overlay
+	/// drops its selection with it.
+	presenting: Mutex<HashMap<String, Option<FundingSelection>>>,
 	subscribers: Mutex<Subscribers>,
 	announcements: Mutex<Announcements>,
 	/// Sessions past the moment they count as taking longer whose host has
@@ -593,12 +597,26 @@ impl FundingRegistry {
 
 	/// Whether session `intent`'s overlay is up.
 	pub fn is_presenting(&self, intent: &str) -> bool {
-		self.lock_presenting().contains(intent)
+		self.lock_presenting().contains_key(intent)
 	}
 
 	/// The sessions whose overlay is up.
 	pub fn presenting(&self) -> Vec<String> {
-		self.lock_presenting().iter().cloned().collect()
+		self.lock_presenting().keys().cloned().collect()
+	}
+
+	/// Record what the user picked in session `intent`'s overlay. Returns
+	/// whether its overlay is up; a closed one keeps nothing.
+	pub fn select(&self, intent: &str, selection: FundingSelection) -> bool {
+		self.lock_presenting()
+			.get_mut(intent)
+			.map(|held| *held = Some(selection))
+			.is_some()
+	}
+
+	/// What the user picked so far in session `intent`'s overlay.
+	pub fn selection(&self, intent: &str) -> Option<FundingSelection> {
+		self.lock_presenting().get(intent).cloned().flatten()
 	}
 
 	/// Whether a provider still works on any session: one in flight, or a
@@ -692,8 +710,9 @@ impl FundingRegistry {
 		let target = intent.to_string();
 		let (outcome, provider) = self
 			.commit(now_ms, move |sessions| {
-				let Some(session) =
-					sessions.get_mut(&target).filter(|_| !self.lock_presenting().contains(&target))
+				let Some(session) = sessions
+					.get_mut(&target)
+					.filter(|_| !self.lock_presenting().contains_key(&target))
 				else {
 					return ((CancelOutcome::Refused, None), Vec::new());
 				};
@@ -792,7 +811,7 @@ impl FundingRegistry {
 				{
 					return (false, Vec::new());
 				}
-				self.lock_presenting().insert(session.intent.clone());
+				self.lock_presenting().insert(session.intent.clone(), None);
 				sessions.insert(session.intent.clone(), session);
 				(true, Vec::new())
 			})
@@ -837,6 +856,7 @@ impl FundingRegistry {
 	/// cancelled: the user never started it.
 	async fn discard(&self, intent: &str) -> bool {
 		let _writes = self.writes.lock().await;
+		self.lock_presenting().remove(intent);
 		if self
 			.lock_sessions()
 			.get(intent)
@@ -845,10 +865,8 @@ impl FundingRegistry {
 			// Its provider may be working on it and it is stored, so it runs
 			// as started instead of staying hidden under an overlay that is
 			// gone.
-			self.lock_presenting().remove(intent);
 			return false;
 		}
-		self.lock_presenting().remove(intent);
 		self.lock_sessions().remove(intent);
 		let cancelled =
 			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled };
@@ -922,8 +940,8 @@ impl FundingRegistry {
 			// its provider's reports are stored before they are answered. A
 			// session only shown in the overlay is not stored, so holding one
 			// changes nothing worth writing.
-			let stored = |presenting: &HashSet<String>, session: &FundingSession| {
-				!presenting.contains(&session.intent) || session.provider_id.is_some()
+			let stored = |presenting: &HashMap<String, _>, session: &FundingSession| {
+				!presenting.contains_key(&session.intent) || session.provider_id.is_some()
 			};
 			let (put, removed) = {
 				let presenting = self.lock_presenting();
@@ -1446,7 +1464,7 @@ impl FundingRegistry {
 	/// Queue `session`'s current stage for the host, which hears of a session
 	/// once the user starts it.
 	fn tell_host(&self, session: &FundingSession) {
-		if self.platform.get().is_some() && !self.lock_presenting().contains(&session.intent) {
+		if self.platform.get().is_some() && !self.lock_presenting().contains_key(&session.intent) {
 			self.lock_announcements()
 				.pending
 				.push_back((session.intent.clone(), session.wire_item()));
@@ -1542,7 +1560,7 @@ impl FundingRegistry {
 		lock(&self.pack)
 	}
 
-	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
+	fn lock_presenting(&self) -> MutexGuard<'_, HashMap<String, Option<FundingSelection>>> {
 		lock(&self.presenting)
 	}
 
@@ -2190,7 +2208,6 @@ impl RuntimeServices {
 		// worker: its hold for the session is taken before the overlay's go.
 		registry.hold_workers(&self);
 		drop(warm);
-		self.forget_funding_selection(&session.intent);
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
 				registry
@@ -3324,6 +3341,29 @@ mod tests {
 
 		assert_eq!(block_on(registry.cancel(NOW, "fs_1")), Ok(CancelOutcome::Refused));
 		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
+	}
+
+	// A selection is the overlay's own: closing the overlay drops it, and one
+	// the host reports as the overlay closes is not kept for a session that
+	// no longer has one.
+	#[test]
+	fn a_selection_goes_with_its_overlay() {
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		let picked = FundingSelection {
+			rail: truapi::latest::FundingRail::Card,
+			asset: Some("EUR".to_string()),
+			network: None,
+			country: None,
+		};
+		block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+		let while_up = (registry.select("fs_1", picked.clone()), registry.selection("fs_1"));
+		block_on(registry.start(NOW, "fs_1")).expect("started");
+
+		assert_eq!(
+			(while_up, registry.select("fs_1", picked.clone()), registry.selection("fs_1")),
+			((true, Some(picked)), false, None)
+		);
 	}
 
 	// A row that does not decode is the core's only trace of that session, so

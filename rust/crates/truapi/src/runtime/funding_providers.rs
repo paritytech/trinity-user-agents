@@ -60,8 +60,6 @@ pub struct FundingProviders {
 	/// order and none lands before the stored records are in; the flag
 	/// records whether they are.
 	learned_store: AsyncMutex<bool>,
-	/// What the user has picked in each open overlay, by session.
-	selections: Mutex<HashMap<String, FundingSelection>>,
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
 	changed: Mutex<Vec<oneshot::Sender<()>>>,
@@ -199,11 +197,9 @@ impl RuntimeServices {
 	/// the host the options it leads to. A session whose overlay is not up
 	/// offers nothing to pick, so its selection is ignored.
 	pub fn select_funding_options(self: &Arc<Self>, intent: &str, selection: FundingSelection) {
-		if !self.funding().is_presenting(intent) {
-			return;
+		if self.funding().select(intent, selection) {
+			self.send_funding_options(intent);
 		}
-		lock(&self.funding_providers().selections).insert(intent.to_string(), selection);
-		self.send_funding_options(intent);
 	}
 
 	/// Send the host what session `intent`'s overlay offers for the user's
@@ -215,7 +211,7 @@ impl RuntimeServices {
 			return;
 		};
 		let providers = self.funding_providers();
-		let selection = lock(&providers.selections).get(intent).cloned();
+		let selection = self.funding().selection(intent);
 		let candidates = providers.candidates(session.direction);
 		let limits_on = |selection: &FundingSelection, network: Option<&str>| {
 			providers.amount_limits(LimitScope {
@@ -274,12 +270,6 @@ impl RuntimeServices {
 			intent.to_string(),
 			FundingOptions { candidates, countries, limits, networks },
 		);
-	}
-
-	/// Forget what the user picked in session `intent`'s overlay, once it
-	/// closes.
-	pub fn forget_funding_selection(&self, intent: &str) {
-		lock(&self.funding_providers().selections).remove(intent);
 	}
 
 	/// Read every host provider's manifest that is not already being read. A
