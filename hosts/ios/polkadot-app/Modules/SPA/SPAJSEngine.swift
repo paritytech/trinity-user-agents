@@ -245,12 +245,16 @@ extension SPAJSEngine: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
-        if navigationResponse.isForMainFrame {
-            mainFrameStatusFailed = (navigationResponse.response as? HTTPURLResponse)
-                .map { $0.statusCode >= Self.firstFailingHTTPStatus } ?? false
-        }
-
+        noteResponse(navigationResponse.response, isForMainFrame: navigationResponse.isForMainFrame)
         decisionHandler(.allow)
+    }
+
+    /// A main-frame HTTP error still finishes loading, so it is remembered for `didFinish`.
+    func noteResponse(_ response: URLResponse, isForMainFrame: Bool) {
+        guard isForMainFrame else { return }
+
+        mainFrameStatusFailed = (response as? HTTPURLResponse)
+            .map { $0.statusCode >= Self.firstFailingHTTPStatus } ?? false
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
