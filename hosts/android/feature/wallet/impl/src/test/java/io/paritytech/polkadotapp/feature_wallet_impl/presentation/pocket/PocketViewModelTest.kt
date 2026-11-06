@@ -1,21 +1,18 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
 import android.net.Uri
-import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.spyk
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -70,7 +67,7 @@ class PocketViewModelTest {
         coEvery { resolveUrl() } answers { Result.success(collectiblesPage) }
     }
 
-    private val hostSession = spyk(FakeSpaHostSession())
+    private val hostSession = mockk<SpaHostSession>(relaxed = true)
     private val spaHost: SpaHost = mockk {
         every {
             context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(any(), any()) }
@@ -85,15 +82,6 @@ class PocketViewModelTest {
     private val dispatchers = TestCoroutineDispatchers(testDispatcher)
 
     private val cardRequests = PocketCardRequests()
-
-    private class FakeSpaHostSession : SpaHostSession {
-        override val webView = MutableStateFlow<WebView?>(null)
-        override val currentUrl = MutableStateFlow("")
-        override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
-        override val title = MutableStateFlow("")
-        override fun pauseConnections() = Unit
-        override fun resumeConnections() = Unit
-    }
 
     // The card list is shared eagerly in the view model's own scope, which outlives the test unless
     // it is cancelled.
