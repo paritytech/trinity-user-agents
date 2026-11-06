@@ -92,6 +92,26 @@ final class CollectiblesBookView: UIView {
         CATransaction.commit()
     }
 
+    /// Unhides the book, and swings its cover closed on its left edge.
+    func closeCover(then completion: @escaping () -> Void) {
+        isHidden = false
+        cover.isHidden = false
+        tiltView.layer.sublayerTransform.m34 = -1 / CollectiblesBookTiming.coverCameraDistance
+        cover.layer.isDoubleSided = false
+        cover.layer.transform = CATransform3DIdentity
+
+        let swing = CABasicAnimation(keyPath: "transform.rotation.y")
+        swing.fromValue = CollectiblesBookTiming.coverAngle
+        swing.toValue = 0
+        swing.duration = CollectiblesBookTiming.coverDuration
+        swing.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        cover.layer.add(swing, forKey: "cover")
+        CATransaction.commit()
+    }
+
     /// Moves the whole book by `offset` from where it sits. Zero puts it back in place.
     func setFlightOffset(_ offset: CGPoint) {
         transform = CGAffineTransform(translationX: offset.x, y: offset.y)

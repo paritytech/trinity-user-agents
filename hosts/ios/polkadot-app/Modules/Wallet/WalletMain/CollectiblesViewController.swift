@@ -20,6 +20,8 @@ final class CollectiblesViewController: UIViewController {
     private var opening = CollectiblesOpening()
     private var hasStartedOpening = false
     private var pageExpanded = false
+    private var isBookAnimating = false
+    private var pendingClose: (() -> Void)?
     private var loadObservation: NSKeyValueObservation?
     private var loadTimeout: Task<Void, Never>?
     private let frameWatch = FrameIntervalWatch()
@@ -59,6 +61,19 @@ final class CollectiblesViewController: UIViewController {
         }
     }
 
+    // Only the back button closes the screen, so the book can fly back to the Pocket.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        setSystemBackSwipesEnabled(false)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        setSystemBackSwipesEnabled(true)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
@@ -73,9 +88,8 @@ final class CollectiblesViewController: UIViewController {
 
         guard parent == nil else { return }
 
-        loadObservation = nil
-        loadTimeout?.cancel()
-        frameWatch.cancel()
+        stopWatchingLoad()
+        origin?.setCollectiblesBookLanded()
     }
 }
 
@@ -85,9 +99,16 @@ extension CollectiblesViewController: TabBarRootStandIn {}
 
 extension CollectiblesViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
-        guard operation == .push, let origin else { return nil }
+        guard let origin else { return nil }
 
-        return CollectiblesBookFlight(screen: self, origin: origin)
+        switch operation {
+        case .push:
+            return CollectiblesBookFlight(screen: self, origin: origin)
+        case .pop:
+            return CollectiblesBookReturn(screen: self, origin: origin)
+        default:
+            return nil
+        }
     }
 }
 
@@ -108,6 +129,17 @@ extension CollectiblesViewController {
     /// Moves the book `offset` away from its place. Zero puts it back.
     func moveBook(by offset: CGPoint) {
         book.setFlightOffset(offset)
+    }
+
+    /// Winds the opening back to the book: the page shrinks and the cover closes if opened, then the book lifts.
+    func close(then completion: @escaping () -> Void) {
+        stopWatchingLoad()
+
+        guard !isBookAnimating else {
+            pendingClose = completion
+            return
+        }
+        closeFromCurrentState(then: completion)
     }
 }
 
@@ -147,8 +179,11 @@ private extension CollectiblesViewController {
 
     func openBook() {
         skeleton.startSweep()
+        isBookAnimating = true
         book.lift { [weak self] in
-            self?.openCover()
+            guard let self, !runPendingClose() else { return }
+
+            openCover()
         }
     }
 
@@ -160,7 +195,10 @@ private extension CollectiblesViewController {
         )
 
         book.openCover { [weak self] in
-            self?.coverDidOpen()
+            guard let self, !runPendingClose() else { return }
+
+            isBookAnimating = false
+            coverDidOpen()
         }
 
         let reveal = UIViewPropertyAnimator(duration: CollectiblesBookTiming.coverDuration, curve: .linear) { [self] in
@@ -188,6 +226,38 @@ private extension CollectiblesViewController {
             self?.apply(.loadTimedOut)
         }
         apply(.coverOpened)
+    }
+
+    /// Runs the close asked for while a book animation was in flight, in place of the rest of the opening.
+    func runPendingClose() -> Bool {
+        guard let completion = pendingClose else { return false }
+
+        pendingClose = nil
+        isBookAnimating = false
+        closeFromCurrentState(then: completion)
+        return true
+    }
+
+    /// Winds the opening back from the book's current state. An open cover closes first, then the book lifts.
+    func closeFromCurrentState(then completion: @escaping () -> Void) {
+        let coverOpened = book.isHidden
+        collapsePage { [self] in
+            guard coverOpened else {
+                book.lift(then: completion)
+                return
+            }
+
+            let fade = UIViewPropertyAnimator(
+                duration: CollectiblesBookTiming.coverDuration,
+                curve: .linear
+            ) { [self] in
+                pageView.alpha = 0
+            }
+            fade.startAnimation()
+            book.closeCover { [self] in
+                book.lift(then: completion)
+            }
+        }
     }
 
     func apply(_ event: CollectiblesOpening.Event) {
@@ -241,5 +311,38 @@ private extension CollectiblesViewController {
             .scaledBy(x: scale, y: scale)
             .translatedBy(x: width / 2, y: CollectiblesBookTiming.pageInset)
         pageView.layer.cornerRadius = CollectiblesBookTiming.pageCornerRadius / scale
+    }
+
+    /// Shrinks an expanded page back to its resting inset, then calls `completion`.
+    func collapsePage(then completion: @escaping () -> Void) {
+        guard pageExpanded else {
+            completion()
+            return
+        }
+
+        pageExpanded = false
+        let collapse = UIViewPropertyAnimator(
+            duration: CollectiblesBookTiming.pageExpandDuration,
+            curve: .easeIn
+        ) { [self] in
+            layoutRestingPage()
+        }
+        collapse.addCompletion { _ in
+            completion()
+        }
+        collapse.startAnimation()
+    }
+
+    func stopWatchingLoad() {
+        loadObservation = nil
+        loadTimeout?.cancel()
+        frameWatch.cancel()
+    }
+
+    func setSystemBackSwipesEnabled(_ enabled: Bool) {
+        navigationController?.interactivePopGestureRecognizer?.isEnabled = enabled
+        if #available(iOS 26, *) {
+            navigationController?.interactiveContentPopGestureRecognizer?.isEnabled = enabled
+        }
     }
 }

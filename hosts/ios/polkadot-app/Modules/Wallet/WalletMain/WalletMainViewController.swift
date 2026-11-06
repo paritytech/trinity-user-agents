@@ -38,6 +38,8 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
+        guard rootView.viewModel.collectiblesPeek != .lifted else { return }
+
         withTransaction(Transaction(animation: nil)) {
             rootView.viewModel.collectiblesPeek = .resting
         }
@@ -230,6 +232,19 @@ extension WalletMainViewController: CollectiblesOrigin {
     func setCollectiblesBookLifted() {
         withTransaction(Transaction(animation: nil)) {
             rootView.viewModel.collectiblesPeek = .lifted
+        }
+    }
+
+    func setCollectiblesBookLanded() {
+        guard rootView.viewModel.collectiblesPeek == .lifted else { return }
+
+        withTransaction(Transaction(animation: nil)) {
+            rootView.viewModel.collectiblesPeek = .colouring
+        }
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
+                self?.rootView.viewModel.collectiblesPeek = .resting
+            }
         }
     }
 }

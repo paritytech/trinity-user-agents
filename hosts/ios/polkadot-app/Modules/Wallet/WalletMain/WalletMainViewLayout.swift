@@ -175,6 +175,11 @@ private extension WalletView {
         }
         .buttonStyle(CollectiblesPressStyle())
         .accessibilityLabel(String(localized: .Products.collectibles))
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: {
+            viewModel.collectiblesFrame = $0
+        }
         .padding(.horizontal, PocketCardSize.sideMargin)
         .alignmentGuide(.bottom) { dimensions in
             switch viewModel.expandedSection {
@@ -187,11 +192,6 @@ private extension WalletView {
         }
         .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : collectiblesOpacity)
         .allowsHitTesting(collectiblesHitTest)
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .global)
-        } action: {
-            viewModel.collectiblesFrame = $0
-        }
     }
 
     private var collectiblesOpacity: Double {

@@ -2,12 +2,12 @@ import Testing
 import UIKit
 @testable import polkadot_app
 
-/// A Collectibles screen flies its book up from the Pocket's peek on a push. A pop, and a push with no peek to fly
-/// from, keep the system transition.
+/// A Collectibles screen flies its book up from the Pocket's peek on a push, and back down on a pop. A screen with no
+/// peek to fly from or to keeps the system transition.
 @MainActor
 struct CollectiblesBookFlightTests {
     @Test
-    func fliesOnlyAPushOntoAScreenWithAnOrigin() {
+    func fliesOnlyAScreenWithAnOrigin() {
         let navigation = AppNavigationController(rootViewController: UIViewController())
         let origin = FakeCollectiblesOrigin()
         let flying = CollectiblesViewController(product: StubSPAView(), origin: origin)
@@ -16,15 +16,12 @@ struct CollectiblesBookFlightTests {
         let pushes = [flying, originless].map { screen in
             navigation.navigationController(navigation, animationControllerFor: .push, from: navigation, to: screen)
         }
-        let pop = navigation.navigationController(
-            navigation,
-            animationControllerFor: .pop,
-            from: flying,
-            to: navigation
-        )
+        let pops = [flying, originless].map { screen in
+            navigation.navigationController(navigation, animationControllerFor: .pop, from: screen, to: navigation)
+        }
 
         #expect(pushes.map { $0 is CollectiblesBookFlight } == [true, false])
-        #expect(pop == nil)
+        #expect(pops.map { $0 is CollectiblesBookReturn } == [true, false])
         withExtendedLifetime(origin) {}
     }
 }
