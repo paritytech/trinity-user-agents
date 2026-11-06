@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKit
 
@@ -43,7 +44,8 @@ struct PocketCardOpening {
             Task { [weak screen] in
                 let shown = await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
-                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver),
+                    telemetry: IssueMonitoringFactory.createHostLoadTelemetry()
                 )
                 screen?.applyOpeningFace(shown: shown)
             }

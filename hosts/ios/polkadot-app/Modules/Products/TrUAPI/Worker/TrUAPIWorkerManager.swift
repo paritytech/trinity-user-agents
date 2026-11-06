@@ -1,6 +1,7 @@
 import Foundation
 import os
 import AsyncExtensions
+import IssueMonitoring
 import Products
 import StructuredConcurrency
 import TrUAPIHost
@@ -39,6 +40,10 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 
     func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol?
 
+    /// The host session of the product's worker activation, from its boot until it stops; nil while
+    /// none runs or nothing is reported.
+    func hostSessionId(of productId: ProductId) -> UUID?
+
     /// Stops every worker this manager is running. Called when the session
     /// it was built for ends.
     func shutdown() async
@@ -51,7 +56,8 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 protocol TrUAPIWorkerBuilding: Sendable {
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext
+        context: ProductWorkerContext,
+        boot: WorkerBootTrace?
     ) async throws -> TrUAPIWorkerRuntime
 }
 
@@ -104,6 +110,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private let startupWindow: Duration
     /// Where a worker's prompts present while no chat has given it a screen.
     private let presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
+    private let telemetry: HostLoadTelemetry
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
@@ -113,6 +120,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// Read from `context(of:)`, which a chat session calls before any worker
     /// exists, so it is held beside the actor's own state rather than in it.
     private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
+    private let hostSessions = OSAllocatedUnfairLock<[ProductId: UUID]>(initialState: [:])
 
     /// Transitions are booked one at a time, in the order the ledger sent them.
     /// Handing each to its own task leaves the order to the scheduler, where a
@@ -125,12 +133,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
         presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil,
+        telemetry: HostLoadTelemetry = .disabled,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.references = references
         self.startupWindow = startupWindow
         self.presentationFallback = presentationFallback
+        self.telemetry = telemetry
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -220,6 +230,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         executionSubject.value[productId]
     }
 
+    nonisolated func hostSessionId(of productId: ProductId) -> UUID? {
+        hostSessions.withLock { $0[productId] }
+    }
+
     private func apply(_ transition: WorkerTransition, to productId: ProductId) async {
         switch transition {
         case .start: start(productId)
@@ -240,14 +254,21 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func bringUp(_ productId: ProductId, as boot: Boot) async {
+        let trace = WorkerBootTrace(productId: productId, telemetry: telemetry)
+        if let trace {
+            hostSessions.withLock { $0[productId] = trace.hostSessionId }
+        }
+
         do {
             logger.debug("Starting worker for \(productId)...")
 
             let runtime = try await builder.makeRuntime(
                 productId: productId,
-                context: context(of: productId)
+                context: context(of: productId),
+                boot: trace
             )
             guard held[productId]?.belongsTo(boot) == true else {
+                trace?.finish(.abandoned)
                 await runtime.dispose()
                 return
             }
@@ -257,12 +278,18 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
                 self?.transitions.continuation.yield((productId, .reboot(boot)))
             }
 
-            guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
+            guard case let .running(worker)? = held[productId], worker.boot === boot else {
+                trace?.finish(.abandoned)
+                return
+            }
 
             executionSubject.send(executionSubject.value.merging([productId: runtime.execution]) { _, new in new })
+            trace?.finish(.ok)
 
             logger.debug("Started worker for \(productId)...")
         } catch {
+            trace?.finish(Self.bootOutcome(of: error))
+
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
             // clearing that would swallow a start the core never repeats.
@@ -273,6 +300,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // while the core keeps counting the reference the holder took and
             // so never sends another stop to clear it.
             await stop(productId)
+        }
+    }
+
+    private static func bootOutcome(of error: Error) -> HostEventOutcome {
+        switch error {
+        case is CancellationError: .abandoned
+        case is TrUAPIWorkerError: .noWorker
+        default: .error
         }
     }
 
@@ -294,7 +329,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private func stop(_ productId: ProductId) async {
         // A boot in flight is cleared here and disposes what it built when it
         // finds its claim gone, so there is nothing else to tear down yet.
-        guard case let .running(worker)? = held.removeValue(forKey: productId) else { return }
+        guard let removed = held.removeValue(forKey: productId) else { return }
+
+        hostSessions.withLock { _ = $0.removeValue(forKey: productId) }
+        guard case let .running(worker) = removed else { return }
 
         var executions = executionSubject.value
         executions[productId] = nil

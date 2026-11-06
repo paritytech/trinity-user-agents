@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 
@@ -19,6 +20,7 @@ actor TrUAPIWorkerRuntime {
     private let productUrl: URL
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
     private let engineFactory: @Sendable () -> JSEngineProtocol
+    private let boot: WorkerBootTrace?
     private let logger: LoggerProtocol
 
     private var engine: JSEngineProtocol?
@@ -30,11 +32,13 @@ actor TrUAPIWorkerRuntime {
         productUrl: URL,
         executionModel: RustRuntimeEnvironment.ExecutionModel,
         engineFactory: @escaping @Sendable () -> JSEngineProtocol,
+        boot: WorkerBootTrace? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productUrl = productUrl
         self.executionModel = executionModel
         self.engineFactory = engineFactory
+        self.boot = boot
         self.logger = logger
     }
 
@@ -45,8 +49,19 @@ actor TrUAPIWorkerRuntime {
     func start(onEngineLost: @escaping @Sendable () -> Void) async throws {
         try checkNotDisposed()
 
+        let bridgeStartedAt = boot?.now()
         let bootstrap = try executionModel.startBridge()
-        let scripts = try RustRuntimeScriptsFactory(bootstrapScript: bootstrap).makeScripts()
+        boot?.add(.executionOpen, since: bridgeStartedAt)
+
+        let scripts = try RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrap,
+            hostTelemetry: boot.flatMap { boot in
+                IssueMonitoringFactory.createNativeHostTelemetry(
+                    hostSessionID: boot.hostSessionId,
+                    truapiHostVersion: truapiHostVersion()
+                )
+            }
+        ).makeScripts()
         let jsEngine = try await bootEngine(scripts: scripts, onEngineLost: onEngineLost)
         try checkNotDisposed()
 
@@ -88,6 +103,7 @@ actor TrUAPIWorkerRuntime {
         scripts: [JSEngineScript],
         onEngineLost: @escaping @Sendable () -> Void
     ) async throws -> JSEngineProtocol {
+        let createStartedAt = boot?.now()
         let jsEngine = engineFactory()
         do {
             await jsEngine.registerJSDeviceCapabilityHandler(
@@ -96,8 +112,13 @@ actor TrUAPIWorkerRuntime {
                 )
             )
             await jsEngine.onTermination(onEngineLost)
+            boot?.add(.webViewCreate, since: createStartedAt)
             try checkNotDisposed()
+
+            // The web view itself is built inside `initialize`, with the blank page it loads.
+            let initializeStartedAt = boot?.now()
             try await jsEngine.initialize(with: scripts)
+            boot?.add(.blankReady, since: initializeStartedAt)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }
             try checkNotDisposed()
         } catch {

@@ -60,13 +60,22 @@ public actor ProductResolver: ProductResolving {
     }
 
     public func resolveProductManifest(_ productId: ProductId) async throws -> ProductManifest {
-        let unprefixed = try productIdOwner(productId: productId)
+        let startedAt = telemetry.loadStepStart()
+        let baseName: ProductId
 
-        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
-            throw ProductResolutionError.productNotOnNetwork(unprefixed)
+        do {
+            baseName = try await resolveBaseName(of: productId)
+        } catch {
+            if !(error is CancellationError) {
+                reportResolved(productId, outcome: .error, startedAt: startedAt)
+            }
+            throw error
         }
 
         if let cached = cache[baseName] {
+            if telemetry.isFirstCacheHit(of: Self.resolvedStep, productID: baseName.rawValue) {
+                reportResolved(baseName, outcome: .cacheHit, startedAt: startedAt)
+            }
             return cached
         }
 
@@ -75,7 +84,7 @@ public actor ProductResolver: ProductResolving {
             return try await running.value
         }
 
-        let task = Task { [self] in try await resolveFromChainReporting(baseName) }
+        let task = Task { [self] in try await resolveFromChainReporting(baseName, startedAt: startedAt) }
         inFlight[baseName] = task
 
         defer { inFlight[baseName] = nil }
@@ -94,9 +103,19 @@ private struct ResolvedExecutable: Sendable {
 }
 
 private extension ProductResolver {
-    func resolveFromChainReporting(_ baseName: ProductId) async throws -> ProductManifest {
-        let startedAt = telemetry.now()
+    static let resolvedStep = "host.product.resolved"
 
+    func resolveBaseName(of productId: ProductId) async throws -> ProductId {
+        let unprefixed = try productIdOwner(productId: productId)
+
+        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
+            throw ProductResolutionError.productNotOnNetwork(unprefixed)
+        }
+
+        return baseName
+    }
+
+    func resolveFromChainReporting(_ baseName: ProductId, startedAt: Int?) async throws -> ProductManifest {
         do {
             let manifest = try await resolveFromChain(baseName)
             reportResolved(baseName, outcome: .ok, startedAt: startedAt)
@@ -110,14 +129,15 @@ private extension ProductResolver {
     }
 
     func reportResolved(_ baseName: ProductId, outcome: HostEventOutcome, startedAt: Int?) {
-        guard let startedAt else { return }
+        guard let startedAt, let context = telemetry.context else { return }
 
         telemetry.record { origin, now in
             .productResolved(
                 productID: baseName.rawValue,
                 outcome: outcome,
+                trigger: context.trigger,
                 durationMilliseconds: now - startedAt,
-                hostSessionID: telemetry.sessionID(forProductOrSubname: baseName.rawValue),
+                hostSessionID: context.sessionID,
                 origin: origin,
                 monotonicMilliseconds: now
             )

@@ -141,7 +141,9 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     }
 
     func didFinishPageLoad(loaded: Bool) {
-        Task { [runtime] in await runtime?.didFinishPageLoad(loaded: loaded) }
+        guard let runtime, let finishedAt = runtime.pageLoadTimestamp() else { return }
+
+        Task { await runtime.didFinishPageLoad(loaded: loaded, at: finishedAt) }
     }
 }
 

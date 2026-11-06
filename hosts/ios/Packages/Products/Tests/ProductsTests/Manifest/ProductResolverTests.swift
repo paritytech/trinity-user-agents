@@ -181,51 +181,109 @@ struct ProductResolverTests {
         #expect(resolved.displayName == "HackM3")
     }
 
-    /// Only a read that reaches the chain is reported; the answer the resolver already holds is not.
-    @Test func reportsTheChainReadOnceUnderTheProductsSession() async throws {
+    /// A read that reaches the chain is `ok`; the answer the resolver already holds is a cache hit,
+    /// reported once per session however often it is asked for.
+    @Test func reportsTheChainReadAndTheFirstCacheHitUnderTheCallersSession() async throws {
         let recorder = RecordingHostEventRecorder()
-        let sessions = HostSessionRegistry()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
         let session = UUID()
-        sessions.open(productID: "hackm3.dot", sessionID: session)
-        let resolver = makeResolver(
-            StubProductMetadataRepository(),
-            telemetry: .recording(into: recorder, sessions: sessions)
-        )
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
 
-        _ = try await resolver.resolve(ProductId("hackm3.dot"))
-        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        try await telemetry.withContext(session: session, trigger: .open) {
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        }
 
-        #expect(recorder.events.count == 1)
+        #expect(recorder.events.map(\.name) == ["host.product.resolved", "host.product.resolved"])
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
         let event = try #require(recorder.events.first)
-        #expect(event.name == "host.product.resolved")
         #expect(event.tags["product.id"] == "hackm3.dot")
-        #expect(event.tags["outcome"] == "ok")
+        #expect(event.tags["trigger"] == "open")
         #expect(event.extras["duration_ms"] == .integer(10))
         #expect(event.extras["event.monotonic_ms"] == .integer(20))
+        #expect(event.tags["host.session_id"] == session.uuidString.lowercased())
         #expect(event.extras["host.session_id"] == .string(session.uuidString.lowercased()))
+    }
+
+    /// A refresh or prewarm that lands while a page is open is not that page's load.
+    @Test func aRefreshInsideAnOpenCarriesNoSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
+
+        try await telemetry.withContext(session: UUID(), trigger: .open) {
+            try await telemetry.withContext(session: nil, trigger: .refresh) {
+                _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+
+        #expect(recorder.events.map { $0.tags["trigger"] } == ["refresh"])
+        #expect(recorder.events.first?.tags["host.session_id"] == nil)
+    }
+
+    @Test func aLookupOutsideAnyLoadReportsNothing() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: .recording(into: recorder))
+
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+
+        #expect(recorder.events.isEmpty)
     }
 
     @Test func reportsAFailedChainReadAsAnError() async throws {
         let stub = StubProductMetadataRepository()
         stub.readError = URLError(.notConnectedToInternet)
         let recorder = RecordingHostEventRecorder()
-        let resolver = makeResolver(stub, telemetry: .recording(into: recorder))
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(stub, telemetry: telemetry)
 
-        _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
 
         #expect(recorder.events.map(\.name) == ["host.product.resolved"])
         #expect(recorder.events.first?.tags["outcome"] == "error")
-        #expect(recorder.events.first?.extras["host.session_id"] == nil)
+        #expect(recorder.events.first?.tags["host.session_id"] == nil)
+    }
+
+    @Test func reportsANetworkThatCannotBeReadAsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), tld: FailingTldProvider(), telemetry: telemetry)
+
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
+        #expect(recorder.events.first?.tags["product.id"] == "hackm3.dot")
+    }
+
+    @Test func aCancelledReadReportsNothing() async throws {
+        let stub = StubProductMetadataRepository()
+        stub.readError = CancellationError()
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(stub, telemetry: telemetry)
+
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.isEmpty)
     }
 }
 
 private func makeResolver(
     _ stub: StubProductMetadataRepository,
+    tld: DotNsTldProviding = StubTldProvider(),
     telemetry: HostLoadTelemetry = .disabled
 ) -> ProductResolver {
     ProductResolver(
         metadataRepository: stub,
-        hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
+        hostProvider: ProductHostFactory(tldProvider: tld),
         logger: SilentLogger(),
         screening: .passingThrough,
         telemetry: telemetry

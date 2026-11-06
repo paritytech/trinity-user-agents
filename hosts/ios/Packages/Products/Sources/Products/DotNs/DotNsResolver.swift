@@ -50,7 +50,12 @@ public final class DotNsResolver: DotNsResolverProtocol {
     }
 
     public func resolveToLocalURL(dotNsName: String) async throws -> URL {
+        let startedAt = telemetry.loadStepStart()
+
         if let applied = appliedContentDirectory(of: dotNsName) {
+            if telemetry.isFirstCacheHit(of: Self.fetchStep, productID: dotNsName) {
+                report(BulletinFetch.applied(domain: dotNsName, startedAt: startedAt), outcome: .cacheHit, bytes: nil)
+            }
             return applied
         }
 
@@ -67,11 +72,25 @@ public final class DotNsResolver: DotNsResolverProtocol {
         dotNsName: String,
         onPhase: @escaping ProductLoadPhaseHandler = { _ in }
     ) async throws -> DotNsResolvedContent {
-        let lookupStartedAt = telemetry.now()
-        let contentHashBytes = try await contractApi.resolveContentHash(dotNsName: dotNsName)
-        let hexHash = contentHashBytes.toHex()
+        let lookupStartedAt = telemetry.loadStepStart()
+        let contentHashBytes: Data
 
-        let fetch = BulletinFetch(domain: dotNsName, lookupStartedAt: lookupStartedAt, startedAt: telemetry.now())
+        do {
+            contentHashBytes = try await contractApi.resolveContentHash(dotNsName: dotNsName)
+        } catch {
+            if !(error is CancellationError) {
+                let failed = BulletinFetch.failedLookup(domain: dotNsName, lookupStartedAt: lookupStartedAt)
+                report(failed, outcome: .error, bytes: nil)
+            }
+            throw error
+        }
+
+        let hexHash = contentHashBytes.toHex()
+        let fetch = BulletinFetch.afterLookup(
+            domain: dotNsName,
+            lookupStartedAt: lookupStartedAt,
+            startedAt: lookupStartedAt == nil ? nil : telemetry.now()
+        )
 
         if let cachedDir = contentStorage.getContentDirectory(contentHash: hexHash) {
             report(fetch, outcome: .cacheHit, bytes: nil)
@@ -117,31 +136,54 @@ public final class DotNsResolver: DotNsResolverProtocol {
 }
 
 private struct BulletinFetch {
-    let domain: String
-    let contentHashMilliseconds: Int
-    let startedAt: Int
+    enum ContentHashRead {
+        case took(Int)
+        case failedAtReport
+        case notRead
+    }
 
-    init?(domain: String, lookupStartedAt: Int?, startedAt: Int?) {
+    let domain: String
+    let startedAt: Int
+    let contentHashRead: ContentHashRead
+
+    static func afterLookup(domain: String, lookupStartedAt: Int?, startedAt: Int?) -> BulletinFetch? {
         guard let lookupStartedAt, let startedAt else { return nil }
 
-        self.domain = domain
-        contentHashMilliseconds = startedAt - lookupStartedAt
-        self.startedAt = startedAt
+        return BulletinFetch(domain: domain, startedAt: startedAt, contentHashRead: .took(startedAt - lookupStartedAt))
+    }
+
+    static func failedLookup(domain: String, lookupStartedAt: Int?) -> BulletinFetch? {
+        lookupStartedAt.map { BulletinFetch(domain: domain, startedAt: $0, contentHashRead: .failedAtReport) }
+    }
+
+    static func applied(domain: String, startedAt: Int?) -> BulletinFetch? {
+        startedAt.map { BulletinFetch(domain: domain, startedAt: $0, contentHashRead: .notRead) }
+    }
+
+    func contentHashMilliseconds(at now: Int) -> Int? {
+        switch contentHashRead {
+        case let .took(milliseconds): milliseconds
+        case .failedAtReport: now - startedAt
+        case .notRead: nil
+        }
     }
 }
 
 private extension DotNsResolver {
+    static let fetchStep = "host.bulletin.fetch"
+
     func report(_ fetch: BulletinFetch?, outcome: HostEventOutcome, bytes: Int64?) {
-        guard let fetch else { return }
+        guard let fetch, let context = telemetry.context else { return }
 
         telemetry.record { origin, now in
             .bulletinFetch(
                 domain: fetch.domain,
                 outcome: outcome,
+                trigger: context.trigger,
                 durationMilliseconds: now - fetch.startedAt,
-                contentHashMilliseconds: fetch.contentHashMilliseconds,
+                contentHashMilliseconds: fetch.contentHashMilliseconds(at: now),
                 bytes: bytes.map { Int($0) },
-                hostSessionID: telemetry.sessionID(forProductOrSubname: fetch.domain),
+                hostSessionID: context.sessionID,
                 origin: origin,
                 monotonicMilliseconds: now
             )

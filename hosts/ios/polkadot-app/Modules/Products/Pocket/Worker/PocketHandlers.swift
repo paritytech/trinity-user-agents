@@ -2,6 +2,7 @@ import struct TrUAPIHost.ProductId
 import Foundation
 import os
 import AsyncExtensions
+import IssueMonitoring
 import Products
 
 /// The Pocket handlers running right now: one per product holding a card its
@@ -13,26 +14,32 @@ import Products
 final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
     private let workers: any TrUAPIWorkerManaging
     private let published: any PublishedPocketCardsResolving
+    private let telemetry: HostLoadTelemetry
     private let logger: LoggerProtocol
 
     private let running = OSAllocatedUnfairLock(initialState: Running())
     /// Sent on every change so a card already on screen can wait for the
     /// handler that will draw it, rather than being told there is none.
     private let announced = AsyncCurrentValueSubject<[ProductId: TrUAPIPocketHandler]>([:])
+    /// Telemetry only: products no worker will draw for as of the last look.
+    private let unserved = AsyncCurrentValueSubject<Set<ProductId>>([])
 
     private struct Running {
         var handlers: [ProductId: TrUAPIPocketHandler] = [:]
         var settling: Task<Void, Never>?
         var stopped = false
+        var unserved: Set<ProductId> = []
     }
 
     init(
         workers: any TrUAPIWorkerManaging,
         published: any PublishedPocketCardsResolving,
+        telemetry: HostLoadTelemetry = .disabled,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.workers = workers
         self.published = published
+        self.telemetry = telemetry
         self.logger = logger
     }
 
@@ -50,6 +57,17 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
         }
 
         return nil
+    }
+
+    func workerStatus(of productId: ProductId) -> PocketWorkerStatus {
+        PocketWorkerStatus(
+            hostSessionId: workers.hostSessionId(of: productId),
+            isRunning: workers.currentExecution(of: productId) != nil
+        )
+    }
+
+    func unservedProducts() -> AnyAsyncSequence<Set<ProductId>> {
+        unserved.eraseToAnyAsyncSequence()
     }
 
     /// Reconciles beside the collection rather than in front of the next
@@ -119,6 +137,8 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
         // read only values that can no longer change.
         let wanted = offered
         let unanswered = unread
+        let refused = Set(cards.map(\.key.productId)).subtracting(offered).subtracting(unread)
+        markServed(wanted, unserved: refused)
 
         let (started, stopped) = running.withLock { running -> ([ProductId], [TrUAPIPocketHandler]) in
             guard !running.stopped else { return ([], []) }
@@ -181,6 +201,7 @@ private extension PocketHandlers {
                 return dropped
             }
             dropped?.dispose()
+            markServed([], unserved: [productId])
         }
     }
 
@@ -191,9 +212,20 @@ private extension PocketHandlers {
         case unanswered
     }
 
+    func markServed(_ served: Set<ProductId>, unserved refused: Set<ProductId>) {
+        guard telemetry.isEnabled else { return }
+
+        running.withLock { running in
+            running.unserved = running.unserved.subtracting(served).union(refused)
+            unserved.send(running.unserved)
+        }
+    }
+
     func offer(of key: PocketCardKey) async -> Offer {
         do {
-            _ = try await published.find(productId: key.productId, cardId: key.cardId)
+            _ = try await telemetry.withContext(session: nil, trigger: .open) {
+                try await published.find(productId: key.productId, cardId: key.cardId)
+            }
             return .offered
         } catch let refusal as PocketPublishError {
             logger.debug("[pocket] \(key.cardId.value): \(refusal); it keeps the face it has")

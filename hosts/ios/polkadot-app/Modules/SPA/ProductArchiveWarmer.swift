@@ -1,6 +1,7 @@
 import struct TrUAPIHost.ProductId
 import enum TrUAPIHost.ExecutableKind
 import Foundation
+import IssueMonitoring
 @preconcurrency import Products
 
 /// Fetches the archive a product's surface is served from, before anything
@@ -11,17 +12,25 @@ import Foundation
 struct ProductArchiveWarmer: Sendable {
     private let products: any ProductResolving
     private let dotNsResolver: any DotNsResolverProtocol
+    private let telemetry: HostLoadTelemetry
 
-    init(products: any ProductResolving, dotNsResolver: any DotNsResolverProtocol) {
+    init(
+        products: any ProductResolving,
+        dotNsResolver: any DotNsResolverProtocol,
+        telemetry: HostLoadTelemetry = .disabled
+    ) {
         self.products = products
         self.dotNsResolver = dotNsResolver
+        self.telemetry = telemetry
     }
 
     /// Warms the archive `kind` is served from, which is not the same name for
     /// every surface: a Pocket card opens the widget where a tab opens the app.
     func warm(_ productId: ProductId, serving kind: ExecutableKind) async throws {
-        let contentId = try await products.resolve(productId).contentId(for: kind)
+        try await telemetry.withContext(session: nil, trigger: .prewarm) {
+            let contentId = try await products.resolve(productId).contentId(for: kind)
 
-        _ = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
+        }
     }
 }

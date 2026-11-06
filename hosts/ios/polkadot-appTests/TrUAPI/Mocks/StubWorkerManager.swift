@@ -107,6 +107,8 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         return execution
     }
 
+    func hostSessionId(of _: ProductId) -> UUID? { nil }
+
     func shutdown() async {}
 
     func reload(productId _: ProductId) async {}

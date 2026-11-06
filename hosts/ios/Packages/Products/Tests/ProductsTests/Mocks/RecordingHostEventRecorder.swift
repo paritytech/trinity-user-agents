@@ -16,14 +16,13 @@ final class RecordingHostEventRecorder: HostEventRecording, @unchecked Sendable 
 extension HostLoadTelemetry {
     static func recording(
         into recorder: RecordingHostEventRecorder,
-        sessions: HostSessionRegistry = HostSessionRegistry(),
         clockStep: Int = 10
     ) -> HostLoadTelemetry {
         let ticks = OSAllocatedUnfairLock(initialState: 0)
 
         return HostLoadTelemetry(
             recorder: recorder,
-            sessions: sessions,
+            cacheHits: HostCacheHitLedger(),
             monotonicMilliseconds: {
                 ticks.withLock { tick in
                     tick += clockStep

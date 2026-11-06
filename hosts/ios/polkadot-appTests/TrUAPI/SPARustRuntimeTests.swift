@@ -50,7 +50,6 @@ private func makeRuntime(
     configuration: SPAConfiguration,
     contentLoader: ProductContentLoading = StubProductContentLoader(),
     hostEventRecorder: HostEventRecording = NoopHostEventRecorder(),
-    sessions: HostSessionRegistry = HostSessionRegistry(),
     monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
 ) -> SPARustRuntime {
     SPARustRuntime(
@@ -61,7 +60,6 @@ private func makeRuntime(
         logger: Logger.shared,
         telemetry: HostLoadTelemetry(
             recorder: hostEventRecorder,
-            sessions: sessions,
             monotonicMilliseconds: monotonicMilliseconds
         )
     )
@@ -111,7 +109,7 @@ struct SPARustRuntimeTests {
     }
 
     /// The first page the session loads is reported once, under the session id its WebView was created
-    /// with, timed from the runtime opening the session.
+    /// with, timed from the runtime opening the session to the moment WebKit reported the page.
     @Test func firstFinishedPageIsReportedOnceUnderItsSession() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let configuration = try makeConfiguration(contentSource: .directURL(directURL))
@@ -124,19 +122,21 @@ struct SPARustRuntimeTests {
         )
 
         _ = try await runtime.start(with: MockJSEngine())
-        await runtime.didFinishPageLoad(loaded: true)
-        await runtime.didFinishPageLoad(loaded: false)
+        let finishedAt = try #require(runtime.pageLoadTimestamp())
+        await runtime.didFinishPageLoad(loaded: true, at: finishedAt)
+        await runtime.didFinishPageLoad(loaded: false, at: finishedAt)
 
         let events = recorder.events
         #expect(events.map(\.name) == ["host.webview.created", "host.webview.page_loaded"])
 
         let created = try #require(events.first)
         let pageLoaded = try #require(events.last)
-        #expect(pageLoaded.extras["host.session_id"] == created.extras["host.session_id"])
+        #expect(pageLoaded.tags["host.session_id"] == created.tags["host.session_id"])
+        #expect(pageLoaded.tags["host.session_id"] != nil)
         #expect(pageLoaded.tags["outcome"] == "ok")
         #expect(pageLoaded.tags["product.id"] == "test.dot")
-        #expect(pageLoaded.extras["event.monotonic_ms"] == .integer(1_500))
         #expect(pageLoaded.extras["duration_ms"] == .integer(500))
+        #expect(pageLoaded.extras["event.monotonic_ms"] == .integer(1_750))
 
         await runtime.dispose()
     }
@@ -150,7 +150,7 @@ struct SPARustRuntimeTests {
         )
 
         _ = try await runtime.start(with: MockJSEngine())
-        await runtime.didFinishPageLoad(loaded: false)
+        await runtime.didFinishPageLoad(loaded: false, at: 0)
 
         #expect(recorder.events.last?.name == "host.webview.page_loaded")
         #expect(recorder.events.last?.tags["outcome"] == "error")
@@ -168,35 +168,95 @@ struct SPARustRuntimeTests {
             hostEventRecorder: recorder
         )
 
-        await runtime.didFinishPageLoad(loaded: true)
+        await runtime.didFinishPageLoad(loaded: true, at: 0)
         _ = try await runtime.start(with: MockJSEngine())
         await runtime.dispose()
-        await runtime.didFinishPageLoad(loaded: true)
+        await runtime.didFinishPageLoad(loaded: true, at: 0)
 
-        #expect(recorder.events.map(\.name) == ["host.webview.created"])
+        #expect(recorder.events.map { $0.tags["outcome"] } == [nil, "abandoned"])
     }
 
-    /// The product's dotNS reads run before its page starts, so the session opens with the runtime
-    /// and serves the product's subnames too; it closes when the runtime is disposed.
-    @Test func theSessionIsOpenForTheProductAndItsSubnamesUntilDisposed() async throws {
+    /// Closed before its first page finished, so the user waited and gave up.
+    @Test func aPageDisposedBeforeItFinishedIsAbandoned() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let recorder = RecordingHostEventRecorder()
-        let sessions = HostSessionRegistry()
         let runtime = try makeRuntime(
             configuration: makeConfiguration(contentSource: .directURL(directURL)),
-            hostEventRecorder: recorder,
-            sessions: sessions
+            hostEventRecorder: recorder
         )
 
-        let openSession = try #require(sessions.sessionID(forProductOrSubname: "test.dot"))
-        #expect(sessions.sessionID(forProductOrSubname: "app.test.dot") == openSession)
-
         _ = try await runtime.start(with: MockJSEngine())
-        #expect(recorder.events.first?.extras["host.session_id"] == .string(openSession.uuidString.lowercased()))
+        await runtime.dispose()
+
+        #expect(recorder.events.map(\.name) == ["host.webview.created", "host.webview.page_loaded"])
+        #expect(recorder.events.last?.tags["outcome"] == "abandoned")
+    }
+
+    @Test func anOpenThatFailedBeforeItsPageIsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let loader = StubProductContentLoader()
+        loader.failOpens(with: URLError(.notConnectedToInternet))
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            contentLoader: loader,
+            hostEventRecorder: recorder
+        )
+
+        await #expect(throws: URLError.self) { try await runtime.start(with: MockJSEngine()) }
+        await runtime.dispose()
+
+        #expect(recorder.events.map(\.name) == ["host.webview.page_loaded"])
+        #expect(recorder.events.first?.tags["outcome"] == "error")
+    }
+
+    @Test func aCancelledOpenIsAbandonedNotFailed() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let loader = StubProductContentLoader()
+        loader.failOpens(with: CancellationError())
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            contentLoader: loader,
+            hostEventRecorder: recorder
+        )
+
+        await #expect(throws: CancellationError.self) { try await runtime.start(with: MockJSEngine()) }
+        await runtime.dispose()
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["abandoned"])
+    }
+
+    @Test func aRuntimeNeverStartedReportsNoPage() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .directURL(directURL)),
+            hostEventRecorder: recorder
+        )
 
         await runtime.dispose()
 
-        #expect(sessions.sessionID(forProductOrSubname: "test.dot") == nil)
+        #expect(recorder.events.isEmpty)
+    }
+
+    /// The product's dotNS reads run before its page starts, inside the page's session, so they join
+    /// its page in Sentry.
+    @Test func theContentLoadRunsUnderThePageSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let loader = StubProductContentLoader()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            contentLoader: loader,
+            hostEventRecorder: recorder
+        )
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let session = try #require(recorder.events.first?.tags["host.session_id"])
+        let context = try #require(loader.openContexts.first ?? nil)
+        #expect(context.sessionID?.uuidString.lowercased() == session)
+        #expect(context.trigger == .open)
+
+        await runtime.dispose()
     }
 
     #if DEBUG

@@ -40,9 +40,12 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext
+        context: ProductWorkerContext,
+        boot: WorkerBootTrace?
     ) async throws -> TrUAPIWorkerRuntime {
-        let (source, files) = try await workerSource(for: productId)
+        let resolveStartedAt = boot?.now()
+        let (source, files) = try await resolveWorkerSource(for: productId, boot: boot)
+        boot?.add(.resolve, since: resolveStartedAt)
 
         let engine = try ChatProductEngineFactory.makeContext(
             source: source,
@@ -50,16 +53,31 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             logger: logger
         )
 
-        return try TrUAPIWorkerRuntime(
+        let executionStartedAt = boot?.now()
+        let executionModel = try environment().makeWorkerExecution(
+            productId: productId,
+            routers: context.routers,
+            chatMessaging: context.chat,
+            hostSessionId: boot?.hostSessionId
+        )
+        boot?.add(.executionOpen, since: executionStartedAt)
+
+        return TrUAPIWorkerRuntime(
             productUrl: engine.productUrl,
-            executionModel: environment().makeWorkerExecution(
-                productId: productId,
-                routers: context.routers,
-                chatMessaging: context.chat
-            ),
+            executionModel: executionModel,
             engineFactory: engine.engineFactory,
+            boot: boot,
             logger: logger
         )
+    }
+
+    private func resolveWorkerSource(
+        for productId: ProductId,
+        boot: WorkerBootTrace?
+    ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
+        guard let boot else { return try await workerSource(for: productId) }
+
+        return try await boot.withSession { try await workerSource(for: productId) }
     }
 
     /// The worker the app ships for the product, read from its own files with

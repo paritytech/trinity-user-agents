@@ -22,7 +22,7 @@ actor SPARustRuntime {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
     private let telemetry: HostLoadTelemetry
-    private let hostSessionId = UUID()
+    private let hostSessionId: UUID
     private let openedAt: Int?
 
     private var engine: JSEngineProtocol?
@@ -38,7 +38,8 @@ actor SPARustRuntime {
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        telemetry: HostLoadTelemetry
+        telemetry: HostLoadTelemetry,
+        hostSessionId: UUID = UUID()
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -46,9 +47,8 @@ actor SPARustRuntime {
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
         self.telemetry = telemetry
+        self.hostSessionId = hostSessionId
         openedAt = telemetry.now()
-        // Opened before the product resolves, so its dotNS reads carry this session.
-        telemetry.openSession(productID: configuration.productDomain.rawValue, sessionID: hostSessionId)
     }
 
     deinit {
@@ -68,6 +68,18 @@ extension SPARustRuntime: SPARuntimeProtocol {
         guard !started, !disposed else { throw CancellationError() }
         started = true
 
+        do {
+            return try await serveFirstPage(with: engine)
+        } catch {
+            // An open that failed before its page could load is the page failing.
+            if !(error is CancellationError) {
+                reportPageLoad(.error, at: telemetry.now())
+            }
+            throw error
+        }
+    }
+
+    private func serveFirstPage(with engine: JSEngineProtocol) async throws -> URL {
         let initialURL: URL =
             switch configuration.contentSource {
             case .dotNs:
@@ -132,7 +144,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // point observes it and unwinds.
         disposed = true
 
-        telemetry.closeSession(productID: configuration.productDomain.rawValue, sessionID: hostSessionId)
+        if started, !pageLoadReported {
+            reportPageLoad(.abandoned, at: telemetry.now())
+        }
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -153,8 +167,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
-        let served = try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
-            .archive
+        let served = try await telemetry.withContext(session: hostSessionId, trigger: .open) {
+            try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
+        }.archive
         try checkNotDisposed()
 
         guard served != servedContent else { return }
@@ -166,21 +181,15 @@ extension SPARustRuntime: SPARuntimeProtocol {
         servedContent
     }
 
-    /// Only the first page counts: a reload or a later navigation is not the product opening.
-    func didFinishPageLoad(loaded: Bool) {
-        guard let openedAt, engine != nil, !disposed, !pageLoadReported else { return }
-        pageLoadReported = true
+    nonisolated func pageLoadTimestamp() -> Int? {
+        telemetry.now()
+    }
 
-        telemetry.record { origin, now in
-            .webViewPageLoaded(
-                hostSessionID: hostSessionId,
-                productID: configuration.productId.rawValue,
-                outcome: loaded ? .ok : .error,
-                durationMilliseconds: now - openedAt,
-                origin: origin,
-                monotonicMilliseconds: now
-            )
-        }
+    /// Only the first page counts: a reload or a later navigation is not the product opening.
+    func didFinishPageLoad(loaded: Bool, at finishedAt: Int) {
+        guard engine != nil, !disposed else { return }
+
+        reportPageLoad(loaded ? .ok : .error, at: finishedAt)
     }
 }
 
@@ -190,7 +199,9 @@ private extension SPARustRuntime {
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
+        let served = try await telemetry.withContext(session: hostSessionId, trigger: .open) {
+            try await contentLoader.open(domain, kind: .app, policy: .untilCancelled)
+        }.archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 
@@ -223,6 +234,22 @@ private extension SPARustRuntime {
         await schemeHandlerProxy.setHandler(schemeHandler)
 
         return productURL
+    }
+
+    func reportPageLoad(_ outcome: HostEventOutcome, at finishedAt: Int?) {
+        guard let openedAt, let finishedAt, !pageLoadReported else { return }
+        pageLoadReported = true
+
+        telemetry.record { origin, now in
+            .webViewPageLoaded(
+                hostSessionID: hostSessionId,
+                productID: configuration.productId.rawValue,
+                outcome: outcome,
+                durationMilliseconds: finishedAt - openedAt,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 
     func checkNotDisposed() throws {
