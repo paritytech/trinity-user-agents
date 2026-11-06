@@ -56,6 +56,13 @@ echo "==> requesting transactions while the connection is down"
   --stack "$state/stack.json" \
   --base-path "$state/host" \
   --auto-accept \
-  --script "$script"
+  --script "$script" 2>&1 | tee "$state/host.log"
+
+# A run where the cut never landed under a transaction proves nothing.
+[ -f "$state/proxy-port.cut" ] || { echo "the proxy never cut the connection" >&2; exit 1; }
+grep -q 'create_transaction.*retrying while the chain recovers' "$state/host.log" || {
+  echo "no transaction had to wait out the outage" >&2
+  exit 1
+}
 
 echo "==> transaction during outage e2e passed"

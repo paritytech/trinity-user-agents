@@ -10,7 +10,8 @@
 //   metadata closes everything under it, so the connection drops in the
 //   middle of a cold metadata download.
 //
-// After the window it proxies normally again.
+// After the window it proxies normally again. On the cut it writes
+// `<port-file>.cut`, so the caller can tell a cut happened.
 // Usage: bun tx-during-outage-proxy.ts <upstream-ws-url> <port-file> <trigger> <outage-ms> <close|header|metadata>
 import { writeFileSync } from "node:fs";
 
@@ -52,6 +53,7 @@ function parse(frame: string): Record<string, unknown> | undefined {
 
 function closeEverything(under: string) {
   downUntil = Date.now() + outageMs;
+  writeFileSync(`${portFile}.cut`, under);
   console.log(
     `proxy: closing ${links.size} connections ${under} and refusing new ones for ${outageMs} ms`,
   );

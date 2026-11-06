@@ -32,12 +32,12 @@ struct FailedRead {
 /// Why [`ChainRuntime::current_block`] could not read the chain.
 #[derive(Debug, PartialEq, Eq, Display)]
 pub enum CurrentBlockError {
-	/// No connection could be opened, for instance to a chain the host does
+	/// The host refused to open a connection, for instance to a chain it does
 	/// not serve.
 	#[display("{_0}")]
 	NoChainConnection(RuntimeFailure),
-	/// The chain stayed halted, the follow dropped, or the node did not answer
-	/// in time. A later call can succeed.
+	/// The chain stayed halted, its node could not be reached, the follow
+	/// dropped, or the node did not answer in time. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// A failure a retry cannot fix, such as metadata this host cannot use.
@@ -60,9 +60,20 @@ impl ChainRuntime {
 		genesis_hash: &[u8],
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
 		let never_cancelled = CancellationToken::default();
-		let no_connection = |failure: RuntimeFailure| FailedRead {
-			retryable: failure.kind() == RuntimeFailureKind::Unavailable,
-			error: CurrentBlockError::NoChainConnection(failure),
+		// A node that could not be reached may be reached later. A provider
+		// that refused will refuse again.
+		let no_connection = |failure: RuntimeFailure| {
+			if failure.kind() == RuntimeFailureKind::Unavailable {
+				FailedRead {
+					retryable: true,
+					error: CurrentBlockError::ChainUnavailable(failure.to_string()),
+				}
+			} else {
+				FailedRead {
+					retryable: false,
+					error: CurrentBlockError::NoChainConnection(failure),
+				}
+			}
 		};
 		let read_block = || async move {
 			debug_assert!(
@@ -427,6 +438,58 @@ mod tests {
 
 		read.join().unwrap().expect("the node is read once it can be reached");
 		assert_eq!(provider.attempts.load(Ordering::Relaxed), 3);
+	}
+
+	/// A node still out of reach after the last pause is `ChainUnavailable`,
+	/// so the product may retry.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_node_never_reached_is_unavailable_after_the_last_pause() {
+		struct Unreachable;
+
+		#[async_trait]
+		impl RuntimeChainProvider for Unreachable {
+			async fn connect(
+				&self,
+				_genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				Err(RuntimeFailure::unavailable("remote_chain_connect"))
+			}
+		}
+
+		let timer = Arc::new(ManualTimer::default());
+		let chain =
+			ChainRuntime::new(Arc::new(Unreachable), test_spawner()).with_timer(timer.clone());
+		let read = read_current_block(&chain);
+
+		for (pause_index, pause) in halt_schedule().into_iter().enumerate() {
+			wait_until(|| timer.sleeps() == pause_index + 2, "the next pause starts");
+			timer.advance(pause);
+		}
+
+		let error = read.join().unwrap().expect_err("the node is never reached");
+		assert!(matches!(error, CurrentBlockError::ChainUnavailable(_)), "{error:?}");
+	}
+
+	/// A phone that loses its network closes the connection under the read.
+	/// After a pause the read is tried again on a new connection.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_read_whose_connection_closes_under_it_is_read_again_on_a_new_one() {
+		let (provider, chain, timer) =
+			ScriptedChainHead { unanswered_headers: 1, ..ScriptedChainHead::default() }.serve();
+		let read = read_current_block(&chain);
+
+		wait_for_sent(&provider, |sent: &[String]| {
+			sent.iter().any(|request| request.contains("chainHead_v1_header"))
+		});
+		provider.sender.lock().unwrap().take();
+		wait_until(|| timer.sleeps() == 2, "the pause starts");
+		timer.advance(halt_schedule()[0]);
+
+		read.join().unwrap().expect("the read on the new connection is served");
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 2);
+		assert_eq!(sent_count(&provider, "chainHead_v1_header"), 2);
 	}
 
 	#[test]

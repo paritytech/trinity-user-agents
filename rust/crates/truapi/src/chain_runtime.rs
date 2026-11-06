@@ -337,9 +337,9 @@ impl RuntimeChainProvider for HostChainProvider {
 						format!("{err:?}"),
 					)
 				},
-				// The provider refused: it does not serve the chain, a host
-				// answered without a connection, or it is not set up to connect.
-				// Asking again gets the same answer.
+				// The provider refused: it does not serve the chain, is not set
+				// up to connect, or holds all the connections it allows. Asking
+				// again straight away gets the same answer.
 				_ => RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}")),
 			})
 	}
