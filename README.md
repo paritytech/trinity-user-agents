@@ -445,6 +445,8 @@ For avatars, `ImageReference::Username { username, force }` resolves a
 hosts cache records for one hour; `force` refreshes them. The Rust WASM resolver
 reads the chain on each call.
 
+Android contacts and chat views load avatars through the shared loader.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
