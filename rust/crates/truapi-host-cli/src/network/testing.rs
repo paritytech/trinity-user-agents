@@ -52,6 +52,16 @@ impl Stack {
 		}
 	}
 
+	/// The chain roles this network serves, each with its genesis hash.
+	pub fn served_roles(&self) -> [(ChainIdentifier, [u8; 32]); 3] {
+		let genesis = self.genesis();
+		[
+			(ChainIdentifier::People, genesis.people),
+			(ChainIdentifier::Bulletin, genesis.bulletin),
+			(ChainIdentifier::AssetHub, genesis.asset_hub),
+		]
+	}
+
 	/// This stack with its descriptor edited as JSON.
 	pub fn with_edit(&self, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
