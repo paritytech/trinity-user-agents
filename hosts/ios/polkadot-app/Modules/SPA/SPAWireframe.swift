@@ -55,11 +55,11 @@ final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
         view.controller.present(sheet.controller, animated: true)
     }
 
-    func minimize() {
-        UIApplication.shared.mainTabBarController?.minimizeSPA()
-    }
-
     func close(tabId: UUID) {
         UIApplication.shared.mainTabBarController?.closeSPA(tabId: tabId)
+    }
+
+    func dismiss(view: ControllerBackedProtocol?) {
+        view?.controller.presentingViewController?.dismiss(animated: true)
     }
 }

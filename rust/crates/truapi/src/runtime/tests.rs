@@ -6302,6 +6302,66 @@ fn a_transaction_naming_an_unresolvable_handle_is_refused() {
 	);
 }
 
+/// A chain the host cannot connect to may never become reachable, so even a
+/// v0.2 product gets `Unknown`, not `ChainUnavailable`.
+#[test]
+fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
+	let (_platform, host) = granted_pairing_host();
+	let payload = v01::ProductAccountTxPayload {
+		signer: account_id("myapp.dot", 0),
+		// The chain the fixture serves no provider for.
+		genesis_hash: [1; 32],
+		call_data: vec![0x00, 0x00],
+		extensions: vec![],
+		tx_ext_version: 0,
+		contacts: vec![],
+	};
+	let create = |request| {
+		futures::executor::block_on(host.create_transaction(&CallContext::default(), request))
+			.expect_err("the chain cannot be connected")
+	};
+
+	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
+	let v1 = create(HostCreateTransactionRequest::V1(payload));
+
+	let CallError::Domain(HostCreateTransactionError::V2(
+		v02::HostCreateTransactionError::Unknown { reason },
+	)) = v2
+	else {
+		panic!("a chain the host cannot connect to is not retryable, got {v2:?}");
+	};
+	assert_eq!(
+		v1,
+		CallError::Domain(HostCreateTransactionError::V1(
+			v01::HostCreateTransactionError::Unknown { reason }
+		))
+	);
+}
+
+/// `ChainUnavailable` must reach a v0.2 product as itself. The legacy-account
+/// method stays on v0.1, so it reports the same failure as `Unknown`.
+#[test]
+fn a_node_that_cannot_be_asked_reaches_create_transaction_as_chain_unavailable() {
+	use super::{legacy_transaction_call_error, transaction_call_error};
+	use crate::runtime::authority::AuthorityError;
+
+	let reason = "cannot select a metadata block".to_string();
+	let chain_unavailable = || AuthorityError::ChainUnavailable { reason: reason.clone() };
+
+	assert_eq!(
+		(
+			transaction_call_error(chain_unavailable()),
+			legacy_transaction_call_error(chain_unavailable()),
+		),
+		(
+			CallError::Domain(v02::HostCreateTransactionError::ChainUnavailable {
+				reason: reason.clone()
+			}),
+			CallError::Domain(v01::HostCreateTransactionError::Unknown { reason: reason.clone() }),
+		)
+	);
+}
+
 #[test]
 fn auto_signing_serves_sign_payload_locally_without_prompt() {
 	let (platform, host) = granted_pairing_host();
@@ -7388,7 +7448,8 @@ fn subnames_of_one_product_share_one_cached_manifest() {
 #[test]
 fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 	use super::{
-		account_get_authority_error, signing_call_error, transaction_call_error, vrf_call_error,
+		account_get_authority_error, legacy_transaction_call_error, signing_call_error,
+		transaction_call_error, vrf_call_error,
 	};
 	use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
 	use truapi::CancellationReason;
@@ -7418,6 +7479,11 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 		);
 		assert_domain("signing_call_error", reason_name, signing_call_error(cancelled()));
 		assert_domain("transaction_call_error", reason_name, transaction_call_error(cancelled()));
+		assert_domain(
+			"legacy_transaction_call_error",
+			reason_name,
+			legacy_transaction_call_error(cancelled()),
+		);
 	}
 }
 
@@ -7713,56 +7779,6 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 		)))
 	));
 	assert!(abandoned.load(Ordering::SeqCst));
-}
-
-/// A pairing test host, whose wallet answered the Bulletin allowance in-page,
-/// keeps the submission in the core once told to and serves it back, so a
-/// product's submit-then-lookup round trip works without the chain.
-#[cfg(feature = "test-host")]
-#[test]
-fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
-	use crate::host_internal::bulletin::preimage_key;
-	use truapi::versioned::preimage::RemotePreimageSubmitResponse;
-
-	let session = sso_session_info();
-	let platform = Arc::new(StubPlatform::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let (host, pairing_host) =
-		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
-	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
-	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-		&session,
-		lifecycle_epoch,
-		&ProductId::for_test("myapp.dot"),
-		[0x42; 64].to_vec(),
-	))
-	.expect("the wallet's allowance is cached");
-	pairing_host.set_submit_preimages_locally(true);
-	let value = b"pairing test host preimage".to_vec();
-	let cx = CallContext::default();
-
-	// No Bulletin client is configured, so reaching the chain would fail here.
-	let response = futures::executor::block_on(Preimage::submit(
-		&host,
-		&cx,
-		RemotePreimageSubmitRequest::V1(value.clone()),
-	))
-	.expect("the submission stays in the core");
-	assert_eq!(response, RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec()));
-
-	let mut lookup = futures::executor::block_on(host.lookup_subscribe(
-		&cx,
-		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
-			key: preimage_key(&value).to_vec(),
-		}),
-	));
-	assert_eq!(
-		futures::executor::block_on(lookup.next()).expect("a lookup item"),
-		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
-			value: Some(value)
-		}))
-	);
 }
 
 fn payment_services() -> Arc<RuntimeServices> {

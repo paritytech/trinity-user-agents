@@ -2,6 +2,7 @@
 // sets whichever combination it ships.
 //
 // FEATURE_PRIZES     — prize branding and the game reveal webview   (none).
+// FEATURE_PRODUCTS   — the browse tab                            (Debug).
 // FEATURE_SIGN_IN    — sign in with Polkadot: the `pair` deeplink
 //                      and the linked-devices settings row       (Debug, DevCI, Nightly).
 //
