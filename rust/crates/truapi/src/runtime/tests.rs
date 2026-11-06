@@ -36,7 +36,10 @@ use truapi::{
 			RemoteChainTransactionBroadcastResponse,
 		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
-		expanded_card::HostExpandedCardSetFaceShownRequest,
+		expanded_card::{
+			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
+			HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownRequest,
+		},
 		game::{
 			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
 			HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
@@ -2259,6 +2262,17 @@ fn set_face_shown(
 	))
 }
 
+fn set_back_shown(
+	host: &ProductRuntimeHost,
+	shown: bool,
+) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
+	futures::executor::block_on(ExpandedCard::set_back_shown(
+		host,
+		&CallContext::default(),
+		HostExpandedCardSetBackShownRequest::V1(v01::HostExpandedCardSetBackShownRequest { shown }),
+	))
+}
+
 /// The host must see exactly what the Widget asked for, in order, so a hide
 /// followed by a show never collapses into one state change.
 #[test]
@@ -2278,7 +2292,8 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
-/// filter, so only a Widget may move a face, and nothing else reaches the host.
+/// filter, so only a Widget may move a face or turn a card, and nothing else
+/// reaches the host.
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
@@ -2288,6 +2303,7 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
 		assert!(card.requested().is_empty());
 	}
 }
@@ -2300,6 +2316,18 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
+}
+
+/// This runtime cannot turn a card, so a Widget must read "not supported"
+/// rather than a failure, even under a card whose host moves its face.
+#[test]
+fn expanded_card_back_is_unsupported() {
+	let card =
+		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
+
+	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
+	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
