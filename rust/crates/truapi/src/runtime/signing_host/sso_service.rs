@@ -221,7 +221,7 @@ impl SigningHostSsoService {
 			.create_transaction(&cx.call, &cx.session, None, request)
 			.await
 			.map(|response| response.transaction)
-			.map_err(|err| err.to_string())
+			.map_err(AuthorityError::into_sso_reason)
 	}
 
 	async fn allocate(

@@ -149,6 +149,9 @@ pub mod latest {
 	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
 	/// Transaction creation failure.
 	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction creation failure for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountError =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountError>;
 	/// Transaction created for a legacy account.
 	pub type HostCreateTransactionWithLegacyAccountResponse =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
