@@ -93,11 +93,14 @@ internal class CardTurnState(initialAngle: Float = 0f) {
         if (side != sideAt(heading)) turnOver()
     }
 
-    /** Turns to the other side of where the card is going, so it reverses a turn under way. */
+    /**
+     * Turns to the other side of where the card is going, so it reverses a turn under way. It turns the way a
+     * right-to-left swipe does, the one a right thumb makes.
+     */
     suspend fun turnOver() {
         // Set now, not once the lock is taken, so a request queued behind this one sees where it goes.
-        heading = nearest(heading, HALF_TURN) + HALF_TURN
-        settle(heading, 0f, MutatePriority.Default)
+        heading = nearest(heading, HALF_TURN) - HALF_TURN
+        settle(heading, 0f, MutatePriority.Default, TURN_OVER_STIFFNESS)
     }
 
     /**
@@ -130,11 +133,16 @@ internal class CardTurnState(initialAngle: Float = 0f) {
         heading = angle
     }
 
-    private suspend fun settle(target: Float, velocity: Float, priority: MutatePriority) = animations.mutate(priority) {
+    private suspend fun settle(
+        target: Float,
+        velocity: Float,
+        priority: MutatePriority,
+        stiffness: Float = Spring.StiffnessMediumLow,
+    ) = animations.mutate(priority) {
         // A page's turn queued before a finger landed must not move the card under it.
         if (dragging && priority == MutatePriority.Default) return@mutate
         heading = target
-        animate(angle, target, velocity, spring(SETTLE_DAMPING, Spring.StiffnessMediumLow)) { value, _ -> angle = value }
+        animate(angle, target, velocity, spring(SETTLE_DAMPING, stiffness)) { value, _ -> angle = value }
     }
 
     private fun sideAt(degrees: Float) =
@@ -153,6 +161,10 @@ internal class CardTurnState(initialAngle: Float = 0f) {
         // Measured on device: side-on, the near side is drawn about 1.23 times the card's height.
         private const val SIDE_ON_SHRINK = 0.2f
         private const val SETTLE_DAMPING = 0.85f
+
+        // A turn nobody's finger drives is followed by eye, so it runs 25% longer: a spring's duration
+        // grows with 1 / sqrt(stiffness), and 1 / sqrt(0.64) = 1.25.
+        private const val TURN_OVER_STIFFNESS = Spring.StiffnessMediumLow * 0.64f
 
         val Saver: Saver<CardTurnState, Float> =
             Saver(save = { it.nearest(it.heading, HALF_TURN) }, restore = { CardTurnState(it) })
