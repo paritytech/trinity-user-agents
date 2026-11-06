@@ -23,7 +23,7 @@ pub const VERIFY_MULTI_SIGNATURE: &str = "VerifyMultiSignature";
 pub const CHECK_MORTALITY: &str = "CheckMortality";
 
 /// What the build knows when it fills well-known extensions.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct ChainValues {
 	/// The genesis hash the caller configured, never one a node reports.
 	pub genesis: H256,
@@ -38,7 +38,7 @@ pub struct ChainValues {
 }
 
 /// One extension's encoded values.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct EncodedExtensionValues {
 	/// What the extrinsic carries.
 	pub explicit: Vec<u8>,
@@ -47,7 +47,7 @@ pub struct EncodedExtensionValues {
 }
 
 /// An extension whose values are known before the build starts.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ConstantExtension<I, E> {
 	name: &'static str,
 	implicit: I,
@@ -76,41 +76,41 @@ where
 }
 
 /// `CheckSpecVersion`: the runtime's spec version, signed but not carried.
-pub fn check_spec_version(spec_version: u32) -> ConstantExtension<u32, ()> {
+fn check_spec_version(spec_version: u32) -> ConstantExtension<u32, ()> {
 	ConstantExtension { name: "CheckSpecVersion", implicit: spec_version, explicit: () }
 }
 
 /// `CheckTxVersion`: the runtime's transaction version, signed but not
 /// carried.
-pub fn check_tx_version(transaction_version: u32) -> ConstantExtension<u32, ()> {
+fn check_tx_version(transaction_version: u32) -> ConstantExtension<u32, ()> {
 	ConstantExtension { name: "CheckTxVersion", implicit: transaction_version, explicit: () }
 }
 
 /// `CheckGenesis`: the chain's genesis hash, signed but not carried.
-pub fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
+fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
 	ConstantExtension { name: "CheckGenesis", implicit: genesis, explicit: () }
 }
 
 /// `CheckMortality`'s value: the runtime wraps the era in a one-field struct,
 /// which `Era`'s own encoder does not look through.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct MortalityEra(pub Era);
 
 /// `CheckMortality`: the era, and the birth block's hash it is signed over.
-pub fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
+fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
 	let birth = mortality.birth();
 	let era = MortalityEra(Era::mortal(mortality.period(), birth.number));
 	ConstantExtension { name: CHECK_MORTALITY, implicit: birth.hash, explicit: era }
 }
 
 /// `CheckNonce`: the sender's nonce.
-pub fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
+fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
 	ConstantExtension { name: "CheckNonce", implicit: (), explicit: nonce }
 }
 
 /// `ChargeAssetTxPayment`'s value.
-#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct AssetTxPayment {
 	/// The tip to the block author.
@@ -120,18 +120,18 @@ pub struct AssetTxPayment {
 }
 
 /// `ChargeAssetTxPayment` with no tip, paid in the native asset.
-pub fn charge_asset_tx_payment() -> ConstantExtension<(), AssetTxPayment> {
+fn charge_asset_tx_payment() -> ConstantExtension<(), AssetTxPayment> {
 	let payment = AssetTxPayment { tip: 0, asset_id: None };
 	ConstantExtension { name: "ChargeAssetTxPayment", implicit: (), explicit: payment }
 }
 
 /// `ChargeTransactionPayment` with no tip.
-pub fn charge_transaction_payment() -> ConstantExtension<(), u128> {
+fn charge_transaction_payment() -> ConstantExtension<(), u128> {
 	ConstantExtension { name: "ChargeTransactionPayment", implicit: (), explicit: 0 }
 }
 
 /// `CheckMetadataHash`'s mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub enum MetadataHashMode {
 	/// The extrinsic does not commit to a metadata hash.
@@ -139,7 +139,7 @@ pub enum MetadataHashMode {
 }
 
 /// `CheckMetadataHash` disabled: no metadata hash in the signed content.
-pub fn check_metadata_hash_disabled() -> ConstantExtension<Option<[u8; 32]>, MetadataHashMode> {
+fn check_metadata_hash_disabled() -> ConstantExtension<Option<[u8; 32]>, MetadataHashMode> {
 	let mode = MetadataHashMode::Disabled;
 	ConstantExtension { name: "CheckMetadataHash", implicit: None, explicit: mode }
 }

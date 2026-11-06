@@ -22,7 +22,8 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store
+                         the statement store; its `image_loader` module reads the
+                         images hosts draw from Bulletin by CID and checks them
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
@@ -92,6 +93,9 @@ docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           run the CLI on both chain backends (rpc, light-client) and
+                           compare what each serves; `make e2e-cli-backends`
 scripts/bundle-size.mjs    measure the JS/WASM of the asset groups given (raw, gzip, brotli);
                            .github/actions/bundle-size takes them as `assets`, stores
                            main's snapshot and comments the comparison on PRs
@@ -323,6 +327,26 @@ rest.
 - Documentation explains contracts and non-obvious invariants, not a history
   of how the change was developed.
 
+## Rust docs
+
+- A doc comment is a one-line `///` summary, a blank `///` line, then a short
+  body that states the contract, units and failure conditions. A summary with
+  no body on a non-trivial item is a smell.
+- Item-level notes go in `///` on the item. Use `//` only for line-local
+  reasoning, since `//` does not show in rustdoc or IDE hover.
+- Do not repeat trait docs on impls.
+- Every `pub mod` has a `//!` block with its purpose and entry point.
+- Put identifiers in backticks and intra-doc links in brackets. Use `Self::`
+  for siblings.
+- A link target that exists only under some cfg is plain code, not a link, so
+  the link does not break in the other configurations.
+- After rewrapping doc prose, check line starts. `+ `, `- ` and `1. ` turn a
+  line into a list item, and `[x]:` at the start of a paragraph is parsed as a
+  link definition and dropped.
+- After API, rename or cfg changes, run
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for each cfg and feature
+  combination. Check, clippy and tests do not catch broken intra-doc links.
+
 ## Code is read by people and only incidentally run
 
 - Write so a reader needs no comment to follow it. No single-character names,
@@ -351,6 +375,36 @@ rest.
 - Fix the underlying cause instead of suppressing a diagnostic or adding a
   fallback that hides an error.
 
+- Do not derive `Copy`, `Clone`, `Debug`, `PartialEq` or `Eq`, and do not
+  require them as bounds, unless something uses them. Removing `Clone` is the
+  one change that can compile while changing behaviour: `.clone()` on a
+  reference clones the reference. Check every `.clone()` call site first.
+- Do not add a synthetic `Default` to a type with no natural default. Construct
+  the value at the boundary.
+- Do not add `#[inline]` to private or crate-internal functions. Use it only on
+  small public items that need cross-crate inlining.
+
+## Lints, unsafe and features
+
+- Treat warnings as errors. Fix the cause of a lint and never silence it with
+  `#[allow]` or `#[expect]`. A silencer keeps the defect and makes it look
+  intentional. The one exception is a signature fixed by a third-party trait,
+  such as tungstenite's callback, where the lint cannot be fixed in our code;
+  the allow then sits on that item with a comment naming the trait.
+- For cast lints, change the source type first, then widen the destination.
+  Prefer `try_from` over `as`.
+- After a bulk regex edit, reread every signature it touched.
+- Use a safe std API when one exists. Unsafe is a last resort.
+- Write one unsafe operation per `unsafe {}` block, each with its own
+  `// SAFETY:` comment that states the invariant and why it holds.
+- Do not mark a function `unsafe` if it can check its preconditions itself.
+- Cargo features are additive. A feature compiled in with no runtime opt-in
+  behaves like the feature off, because Cargo unifies features across the
+  build.
+- Build modes that change behaviour or ABI go behind `--cfg` (declared with
+  check-cfg), not a cargo feature.
+- Production builds carry no debug-only behaviour.
+
 ## Establish visibility through module hierarchy
 
 Do not use scoped visibility modifiers such as `pub(crate)`, `pub(super)`, or
@@ -374,6 +428,11 @@ belongs to an existing type rather than adding another free-standing export.
   does.
 - Prefer one `assert_eq!` over a whole value to several assertions on
   individual fields.
+- Put unit tests in a `#[cfg(test)] mod tests;` declaration backed by its own
+  file (`foo/tests.rs`), not inline in the production file.
+- Test private behaviour from that submodule. A `cfg(test)` hook in production
+  code is a last resort; keep it minimal.
+- Give test fixtures and helpers the narrowest visibility that works.
 - In the Android host (`hosts/android`), build test doubles with `mockk` where
   possible, rather than hand-written fakes or Mockito. Instrumentation tests
   get it through `mockk-android`.
