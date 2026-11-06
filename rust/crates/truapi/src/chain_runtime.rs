@@ -22,7 +22,7 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
@@ -31,7 +31,7 @@ use std::{
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::{Duration, Instant};
+use web_time::{Duration, SystemTime};
 
 use crate::platform::{ChainProvider, JsonRpcConnection};
 use derive_more::{Display, Error};
@@ -1775,7 +1775,7 @@ impl ChainConnection {
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
 		let report = at_budget && !already_reported;
 		let occupants = report.then(|| {
-			let now = Instant::now();
+			let now = SystemTime::now();
 			holding
 				.iter()
 				.map(|held| {
@@ -1958,13 +1958,14 @@ impl FollowState {
 	/// suspect, though a reader that only watches blocks makes no calls
 	/// either. A dropped receiver on a follow still here means the cleanup
 	/// that should have ended it missed this connection.
-	fn describe_activity(&self, now: Instant) -> String {
+	fn describe_activity(&self, now: SystemTime) -> String {
 		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
-		let since = |at: &Option<Instant>| match at {
-			Some(at) => format!("{} s ago", now.saturating_duration_since(*at).as_secs()),
+		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
+		let since = |at: &Option<SystemTime>| match at {
+			Some(at) => format!("{} s ago", elapsed(at)),
 			None => "never".to_string(),
 		};
-		let open = now.saturating_duration_since(*opened_at).as_secs();
+		let open = elapsed(opened_at);
 		let last_event = since(last_event_at);
 		let last_call = since(last_call_at);
 		let receiver = if self.sender.is_closed() { "dropped" } else { "open" };
@@ -1975,26 +1976,28 @@ impl FollowState {
 }
 
 /// When a follow was opened, when it last delivered an event, and how often
-/// and how recently a chainHead call was made on it.
+/// and how recently a chainHead call, an unpin included, was made on it.
+/// Wall-clock times, since a phone's monotonic clock stops while it sleeps and
+/// a follow left open across a screen-off would read as fresh.
 struct FollowActivity {
-	opened_at: Instant,
-	last_event_at: Option<Instant>,
+	opened_at: SystemTime,
+	last_event_at: Option<SystemTime>,
 	calls: u64,
-	last_call_at: Option<Instant>,
+	last_call_at: Option<SystemTime>,
 }
 
 impl FollowActivity {
 	fn new() -> Self {
-		Self { opened_at: Instant::now(), last_event_at: None, calls: 0, last_call_at: None }
+		Self { opened_at: SystemTime::now(), last_event_at: None, calls: 0, last_call_at: None }
 	}
 
 	fn saw_event(&mut self) {
-		self.last_event_at = Some(Instant::now());
+		self.last_event_at = Some(SystemTime::now());
 	}
 
 	fn saw_call(&mut self) {
 		self.calls += 1;
-		self.last_call_at = Some(Instant::now());
+		self.last_call_at = Some(SystemTime::now());
 	}
 }
 

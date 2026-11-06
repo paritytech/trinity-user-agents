@@ -2593,7 +2593,7 @@ fn is_call_end_for(item: &Option<RemoteChainHeadFollowItem>, operation: &str) ->
 /// was made on it, and whether its receiver is still open.
 #[test]
 fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_used() {
-	let opened = Instant::now();
+	let opened = SystemTime::now();
 	let at = |seconds| opened + Duration::from_secs(seconds);
 	let (sender, receiver) = mpsc::unbounded();
 	let mut follow = FollowState {
