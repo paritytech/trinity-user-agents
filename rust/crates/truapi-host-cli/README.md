@@ -1106,9 +1106,9 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. The product namespace (`HostChainSet.network` and the state directory) is the
-descriptor's `id` without a trailing `-fork`, except that the `polkadot-fork`
-namespace is its full `id`. Use a
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that

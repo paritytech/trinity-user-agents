@@ -1789,10 +1789,10 @@ descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
-state directory) is the descriptor's `id` without a trailing `-fork`, which must
-be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
-not share the `polkadot` namespace.
+`truapi-provider` bundles. `get_chain_info` reports the descriptor's
+`network`. The product namespace (the state directory) is the descriptor's `id`
+without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
+namespace is its full `id`, so it does not share the `polkadot` namespace.
 
 #### `network-check`
 
@@ -2020,9 +2020,9 @@ Deliberately unavailable methods:
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
 A successful `System/feature_supported` call resolves the queried chain against
-the host's chain set, the same set `Chain/get_chain_info` answers from, so it
-returns `true` for the network's People, Bulletin and Asset Hub genesis hashes and
-`false` for anything else. Success means the method is wired, not that every feature
+the chains the host serves, the People, Bulletin and Asset Hub of its stack, the
+same roles `Chain/get_chain_info` answers for, so it returns `true` for those
+genesis hashes and `false` for anything else. Success means the method is wired, not that every feature
 is present.
 
 ### 15.2 Platform-specific semantics

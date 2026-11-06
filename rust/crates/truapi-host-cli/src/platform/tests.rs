@@ -14,10 +14,10 @@ fn test_network() -> crate::network::Stack {
 /// registration and both create-transaction variants, and `AssetHub` for the
 /// other seventeen.
 ///
-/// `feature_supported` answers from the same set `supported_chains` serves, so
-/// the two cannot disagree. The negatives are the malformed inputs, a well-formed
-/// hash the host serves no role for, and the all-zero SSO sentinel — which the
-/// provider does route, to the People fallback, yet is still not a served role.
+/// `feature_supported` answers from the roles the stack serves, the same roles
+/// the core's `get_chain_info` answers for, so the two cannot disagree. The negatives are the
+/// malformed inputs, a well-formed hash the host serves no role for, and the all-zero SSO sentinel
+/// — which the provider does route, to the People fallback, yet is still not a served role.
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
@@ -34,11 +34,10 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 
 	// Every role the host serves answers supported. The reverse direction is the
 	// `unserved` assertion below, since every served role is now a real chain.
-	for entry in stack.host_chain_set().chains {
+	for (identifier, genesis_hash) in stack.served_roles() {
 		assert!(
-			supported(entry.genesis_hash.to_vec()),
-			"{:?} is served but reported unsupported",
-			entry.identifier
+			supported(genesis_hash.to_vec()),
+			"{identifier:?} is served but reported unsupported"
 		);
 	}
 
@@ -47,7 +46,7 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 	// bytes" and only the all-zero sentinel would notice.
 	let unserved = [0xab; 32];
 	assert!(
-		!stack.host_chain_set().chains.iter().any(|entry| entry.genesis_hash == unserved),
+		!stack.served_roles().iter().any(|(_, genesis_hash)| *genesis_hash == unserved),
 		"the stand-in must not be a served role"
 	);
 	assert!(!supported(unserved.to_vec()));
@@ -59,28 +58,6 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 	assert!(!supported(vec![0u8; 32]));
 }
 
-#[test]
-fn supported_chains_answers_the_configured_network() {
-	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
-	let set = futures::executor::block_on(platform.supported_chains())
-		.expect("the CLI host serves the preset's chains");
-
-	let stack = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
-	assert_eq!(set.network, stack.namespace());
-	let mut served = set
-		.chains
-		.iter()
-		.map(|entry| (entry.identifier, hex::encode(entry.genesis_hash)))
-		.collect::<Vec<_>>();
-	served.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
-	let mut expected = vec![
-		(api::ChainIdentifier::People, hex::encode(stack.genesis().people)),
-		(api::ChainIdentifier::Bulletin, hex::encode(stack.genesis().bulletin)),
-		(api::ChainIdentifier::AssetHub, hex::encode(stack.genesis().asset_hub)),
-	];
-	expected.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
-	assert_eq!(served, expected);
-}
 use tempfile::tempdir;
 
 #[test]

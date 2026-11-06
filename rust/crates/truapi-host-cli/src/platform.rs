@@ -167,8 +167,9 @@ impl CliStoragePaths {
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
 	chain: Arc<CliChainProvider>,
-	/// Chain roles this host serves, answered by `Features::supported_chains`.
-	chains: truapi::platform::HostChainSet,
+	/// Genesis hashes of the chains this host serves, which
+	/// `Features::feature_supported` answers from.
+	served_chains: Vec<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
@@ -256,7 +257,7 @@ impl CliPlatform {
 		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.genesis().bulletin);
 		Arc::new(Self {
 			chain,
-			chains: network.host_chain_set(),
+			served_chains: network.served_roles().map(|(_, genesis)| genesis).to_vec(),
 			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
@@ -806,15 +807,10 @@ impl Features for CliPlatform {
 	) -> Result<api::HostFeatureSupportedResponse, api::GenericError> {
 		let api::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
 		let supported = self
-			.chains
-			.chains
+			.served_chains
 			.iter()
-			.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+			.any(|served| served.as_slice() == genesis_hash.as_slice());
 		Ok(api::HostFeatureSupportedResponse { supported })
-	}
-
-	async fn supported_chains(&self) -> Result<truapi::platform::HostChainSet, api::GenericError> {
-		Ok(self.chains.clone())
 	}
 }
 
