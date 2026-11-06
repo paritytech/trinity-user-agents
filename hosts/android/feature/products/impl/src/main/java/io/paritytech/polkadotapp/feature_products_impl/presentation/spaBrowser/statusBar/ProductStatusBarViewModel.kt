@@ -89,8 +89,9 @@ class ProductStatusBarViewModel @Inject constructor(
     }
 
     override fun onCloseAppClick() {
+        val browserQuitsOnItsOwn = productSessionController.openTabs.value.singleOrNull()?.isActive == true
         productSessionController.closeActiveTab()
-        router.leaveBrowser()
+        if (!browserQuitsOnItsOwn) router.leaveBrowser()
     }
 
     private suspend fun isOpenedTab(tab: BrowserSessionInfo?): Boolean {

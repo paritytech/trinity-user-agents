@@ -10,6 +10,7 @@ import io.mockk.verify
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.statusBar.ProductStatusBarInteractor
@@ -329,6 +330,33 @@ class ProductStatusBarViewModelTest {
         verify(exactly = 0) { router.openChat(any()) }
     }
 
+    @Test
+    fun `close app leaves the browser itself unless it closes the only tab`() {
+        // Given
+        val openTabs = MutableStateFlow(listOf(tab(id = 1, active = true), tab(id = 2, active = false)))
+        every { productSessionController.openTabs } returns openTabs
+        every { productSessionController.closeActiveTab() } answers {
+            val remaining = openTabs.value.filterNot { it.isActive }
+            openTabs.value = if (remaining.size < openTabs.value.size) remaining.map { it.copy(isActive = true) } else remaining
+        }
+        var tap = 0
+        val tapsThatLeft = mutableListOf<Int>()
+        every { router.leaveBrowser() } answers { tapsThatLeft += tap }
+        val model = viewModel()
+
+        // When
+        tap = 1
+        model.onCloseAppClick()
+        tap = 2
+        model.onCloseAppClick()
+        openTabs.value = listOf(tab(id = 3, active = false))
+        tap = 3
+        model.onCloseAppClick()
+
+        // Then
+        assertEquals(listOf(1, 3), tapsThatLeft)
+    }
+
     private fun advance() = testDispatcher.scheduler.advanceUntilIdle()
 
     private fun viewModel(openedFor: SpaBrowserPayload? = null) = ProductStatusBarViewModel(
@@ -337,6 +365,8 @@ class ProductStatusBarViewModelTest {
         interactor = interactor,
         router = router,
     )
+
+    private fun tab(id: Long, active: Boolean) = TabInfo(id = id, title = "", host = null, iconUrl = null, isActive = active)
 
     private fun withChat(productId: ProductId, served: Boolean) {
         coEvery { interactor.includesChat(productId) } returns Result.success(served)
