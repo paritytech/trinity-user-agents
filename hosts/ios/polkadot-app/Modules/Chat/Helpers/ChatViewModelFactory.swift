@@ -25,6 +25,16 @@ protocol ChatViewModelMaking {
 }
 
 final class ChatViewModelFactory {
+    struct Dependencies {
+        let balanceFactory: TransferAmountViewModelFactoryProtocol
+        let customDecoders: [ChatMessageCustomDecoding]
+        let attachmentViewModelFactory: ChatAttachmentViewModelMaking
+        let productRepository: AnyDataProviderRepository<Product>
+        let productNameCache: ProductNameCaching
+        let flowState: SPAFlowState
+        let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
+    }
+
     private static let replyPreviewMaxLength = 50
 
     let initialMessageId = UUID().uuidString
@@ -40,30 +50,30 @@ final class ChatViewModelFactory {
     let productRepository: AnyDataProviderRepository<Product>
     let productNameCache: ProductNameCaching
     let flowState: SPAFlowState
+    let headerIconViewModelFactory: ChatHeaderIconViewModelFactory
     let logger: LoggerProtocol
 
     init(
+        dependencies: Dependencies,
         timeFormatter: TimestampFormatting = MessageTimestampFormatter(),
-        balanceFactory: TransferAmountViewModelFactoryProtocol,
         dateSeparatorFormatter: ChatDateSeparatorFormatter = ChatDateSeparatorFormatter(),
         layoutContextCalculator: MessageLayoutContextCalculator = MessageLayoutContextCalculator(),
-        customDecoders: [ChatMessageCustomDecoding],
-        attachmentViewModelFactory: ChatAttachmentViewModelMaking,
-        productRepository: AnyDataProviderRepository<Product>,
-        productNameCache: ProductNameCaching,
-        flowState: SPAFlowState,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.timeFormatter = timeFormatter
-        self.balanceFactory = balanceFactory
+        balanceFactory = dependencies.balanceFactory
         self.dateSeparatorFormatter = dateSeparatorFormatter
         self.layoutContextCalculator = layoutContextCalculator
-        self.attachmentViewModelFactory = attachmentViewModelFactory
-        self.productRepository = productRepository
-        self.productNameCache = productNameCache
-        self.flowState = flowState
+        attachmentViewModelFactory = dependencies.attachmentViewModelFactory
+        productRepository = dependencies.productRepository
+        productNameCache = dependencies.productNameCache
+        flowState = dependencies.flowState
+        headerIconViewModelFactory = ChatHeaderIconViewModelFactory(
+            productFactory: dependencies.flowState.iconViewModelFactory,
+            publicProfileFactory: dependencies.publicProfileAvatarViewModelFactory
+        )
         self.logger = logger
-        customDecodersById = customDecoders.reduce(into: [:]) {
+        customDecodersById = dependencies.customDecoders.reduce(into: [:]) {
             $0[$1.identifier.rawValue] = $1
         }
     }
@@ -77,7 +87,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
         let headerConfiguration = metadata.chatMetadata.chatContactInfo(
-            iconViewModelFactory: flowState.iconViewModelFactory
+            icon: headerIconViewModelFactory.viewModel(for: metadata.chatMetadata.peerMetadata.icon)
         )
 
         let inputConfiguration = makeInputConfiguration(for: metadata.chatMetadata, actions: actions)

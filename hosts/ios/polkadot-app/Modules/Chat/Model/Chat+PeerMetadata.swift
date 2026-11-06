@@ -67,5 +67,6 @@ extension Chat.PeerMetadata {
         case bot
         /// The icon the product's manifest declares, loaded on demand.
         case product(domain: ProductId)
+        case publicProfile(username: String)
     }
 }
