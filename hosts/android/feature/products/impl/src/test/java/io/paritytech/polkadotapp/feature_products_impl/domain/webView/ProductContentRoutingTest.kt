@@ -21,7 +21,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolvePro
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ProductId
 import java.io.File
@@ -84,15 +83,6 @@ class ProductContentRoutingTest {
         coEvery { products.resolve(productId) } returns Result.failure(failure)
 
         assertEquals(failure, warmUp.warmUp(productId).exceptionOrNull())
-
-        coVerify(exactly = 0) { dotNs.resolveToLocalUri(any()) }
-    }
-
-    @Test
-    fun `a missing widget never warms the base archive`() = runBlocking {
-        coEvery { products.resolve(productId) } returns Result.success(resolved(app = "app.coinflip.dot"))
-
-        assertTrue(warmUp.warmUp(productId).isFailure)
 
         coVerify(exactly = 0) { dotNs.resolveToLocalUri(any()) }
     }

@@ -71,13 +71,12 @@ class ProductServingHostResolverTest {
         assertEquals("widget.coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).getOrThrow())
     }
 
-    // A product with cards but no widget has faces that do not open; serving its app there instead
-    // would run app code as a Widget.
+    // A product with no widget, such as the one behind the Humanity card, still opens under its card.
     @Test
-    fun `a card of a product with no widget is not served the app`() = runBlocking {
+    fun `a card of a product with no widget is served the app`() = runBlocking {
         stubResolution(appHost = "app.coinflip.dot")
 
-        assertTrue(resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).isFailure)
+        assertEquals("app.coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET).getOrThrow())
     }
 
     @Test
