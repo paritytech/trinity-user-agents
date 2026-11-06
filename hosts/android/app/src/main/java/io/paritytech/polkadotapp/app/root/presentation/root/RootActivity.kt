@@ -43,7 +43,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotificationHost
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.notification.error
@@ -53,6 +52,7 @@ import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.observe
 import io.paritytech.polkadotapp.common.utils.observeWhenCreated
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -297,11 +297,16 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     private fun recordProductNotificationTap(intent: Intent) {
-        if (!intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) return
-        val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID) ?: return
+        if (!FeatureOption.HOST_TELEMETRY.isEnabled) return
+
+        // Reading extras unparcels an intent any app can send this exported activity.
         runCatching {
-            hostEventCapture.capture {
-                hostEventOriginProvider.current().productNotificationTapped(productId)
+            if (intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) {
+                intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)?.let { productId ->
+                    hostEventCapture.capture {
+                        hostEventOriginProvider.current().productNotificationTapped(productId)
+                    }
+                }
             }
         }.logFailure("Failed to capture product notification tapped event")
     }
