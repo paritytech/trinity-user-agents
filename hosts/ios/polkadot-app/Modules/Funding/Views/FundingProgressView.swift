@@ -92,13 +92,10 @@ private extension FundingProgressView {
 
     /// The line under the steps: where a cancel stands, else the band's.
     var note: (text: String, color: Color)? {
-        if let status = model.progress?.status, let line = FundingCancelPresentation.line(
-            for: status,
-            direction: model.direction
-        ) {
+        if let line = model.progress?.status.cancelLine(direction: model.direction) {
             return (line.text, line.isWarning ? .fgWarning : .fgSecondary)
         }
-        if let status = model.progress?.status, FundingCancelPresentation.cancelCameTooLate(status) {
+        if model.progress?.status.cancelCameTooLate == true {
             return (String(localized: .Funding.cancelCameTooLate), .fgWarning)
         }
         return band.map { ($0.text, $0.isWarning ? .fgWarning : .fgSecondary) }
