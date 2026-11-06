@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.design.components.avatar.AVATAR_REFRESH_PARAMETER
+import io.paritytech.polkadotapp.design.components.avatar.AvatarNotFoundException
 import io.paritytech.polkadotapp.feature_chats_api.domain.profile.isPublicProfileAvatarUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 
@@ -27,7 +28,7 @@ internal class PublicProfileAvatarInterceptor(
             ?: return ErrorResult(
                 drawable = request.error,
                 request = request,
-                throwable = profile.exceptionOrNull() ?: NoSuchElementException("No avatar for $username"),
+                throwable = profile.exceptionOrNull() ?: AvatarNotFoundException(),
             )
 
         return chain.proceed(

@@ -117,7 +117,7 @@ runtime.load_image(ImageReference::Bulletin {
 This returns `Result<LoadedImage, ImageError>`. The core reads the bytes from Bulletin
 and checks the CID, format and image policy. The host stores a successful result under
 its CID. Unsupported references, rejected images and unavailable bytes remain image
-loader errors. Profile and image errors leave the host's placeholder visible.
+loader errors. Initial profile and image errors leave the host's placeholder visible.
 
 The core derives `namehash(<username>.<tld>)` and reads `text(node, "profile")`
 on the `contentResolver` contract registered by the dotNS protocol registry.
@@ -164,6 +164,11 @@ a changed CID selects its own cached image or fetches it if absent. A profile wi
 an avatar shows the letter tile even if bytes for its previous CID remain cached.
 Failures do not create profile or image cache entries. dotNS emits no text-change
 event, so a displayed avatar changes on a later lookup, not at the expiry instant.
+
+On Android, chat entry first resolves without `force` and displays the cached avatar,
+then forces a profile refresh in the background. The displayed image stays visible
+until its replacement is ready, including when refresh fails. A successful lookup
+without an avatar restores the letter tile. Leaving the view cancels its requests.
 
 ```text
 Native avatar adapter            Core + SQLite                    dotNS

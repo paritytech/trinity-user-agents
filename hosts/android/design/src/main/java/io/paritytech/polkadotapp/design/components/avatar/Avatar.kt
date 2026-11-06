@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.design.components.avatar
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toOffset
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
@@ -86,19 +90,59 @@ private fun ImageAvatar(
     ) {
         val letter = placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
         val context = LocalContext.current
-        val model = remember(context, url, refresh) {
+        val model = remember(context, url) {
             ImageRequest.Builder(context)
                 .data(url)
-                .setParameter(AVATAR_REFRESH_PARAMETER, refresh, memoryCacheKey = null)
                 .build()
         }
 
-        AsyncImage(
-            model = model,
-            contentDescription = "",
-            contentScale = ContentScale.Crop,
-            transform = { state -> state.withLetter(letter) }
-        )
+        if (refresh) {
+            key(url) { RefreshingAvatar(model, letter) }
+        } else {
+            AsyncImage(
+                model = model,
+                contentDescription = "",
+                contentScale = ContentScale.Crop,
+                transform = { state -> state.withLetter(letter) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RefreshingAvatar(model: ImageRequest, letter: Painter?) {
+    SubcomposeAsyncImage(
+        model = model,
+        contentDescription = "",
+        contentScale = ContentScale.Crop,
+        transform = { state -> state.withLetter(letter) }
+    ) {
+        val resultRequest = when (val state = painter.state) {
+            is AsyncImagePainter.State.Success -> state.result.request
+            is AsyncImagePainter.State.Error -> state.result.request
+            else -> null
+        }
+        if (resultRequest == null) {
+            SubcomposeAsyncImageContent()
+        } else {
+            val refreshRequest = remember(model, resultRequest.sizeResolver) {
+                model.newBuilder()
+                    .size(resultRequest.sizeResolver)
+                    .setParameter(AVATAR_REFRESH_PARAMETER, true, memoryCacheKey = null)
+                    .build()
+            }
+            val refreshed = rememberAsyncImagePainter(
+                model = refreshRequest,
+                contentScale = ContentScale.Crop,
+                transform = { state -> state.withLetter(letter) }
+            )
+            val displayed = when (val state = refreshed.state) {
+                is AsyncImagePainter.State.Success -> refreshed
+                is AsyncImagePainter.State.Error -> if (state.result.throwable is AvatarNotFoundException) refreshed else painter
+                else -> painter
+            }
+            SubcomposeAsyncImageContent(painter = displayed)
+        }
     }
 }
 
