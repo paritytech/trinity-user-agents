@@ -297,8 +297,8 @@ private struct PurseTotalPanel: View {
                     coinSet: coinSet,
                     metrics: $coinMetrics
                 )
-                    .frame(height: CoinageStripLayout.Options().height, alignment: .top)
-                    .clipped()
+                .frame(height: CoinageStripLayout.Options().height, alignment: .top)
+                .clipped()
 
                 CoinageSplitBar(clearing: breakdown.amounts.gainingPrivacy, total: breakdown.amounts.total)
 
