@@ -343,6 +343,64 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// The key [`sign_test_descriptor`] signs with.
+pub const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
+
+/// A descriptor for a stack on `tld` over a relay and these chains, ready for
+/// [`sign_test_descriptor`].
+pub fn test_descriptor(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: Option<[u8; 32]>,
+) -> serde_json::Value {
+	let mut chains = vec![
+		test_descriptor_chain("Relay", [0x01; 32], None),
+		test_descriptor_chain("People", people, Some(1004)),
+		test_descriptor_chain("Bulletin", bulletin, Some(1010)),
+	];
+	chains.extend(asset_hub.map(|genesis| test_descriptor_chain("AssetHub", genesis, Some(1000))));
+	serde_json::json!({
+		"$v": 1,
+		"sequence": 1,
+		"generation": "test",
+		"id": "test",
+		"name": "Test",
+		"network": "paseo",
+		"tld": tld,
+		"chains": chains,
+		"services": [],
+	})
+}
+
+/// One `chains` entry of a test descriptor.
+pub fn test_descriptor_chain(
+	role: &str,
+	genesis: [u8; 32],
+	para_id: Option<u32>,
+) -> serde_json::Value {
+	let mut chain = serde_json::json!({
+		"role": role,
+		"genesisHash": format!("0x{}", hex::encode(genesis)),
+		"rpc": ["wss://rpc.test.invalid"],
+	});
+	if let Some(para_id) = para_id {
+		chain["paraId"] = para_id.into();
+	}
+	chain
+}
+
+/// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
+/// verifies it.
+pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
+	let bytes = serde_json::to_vec(descriptor).expect("a JSON value serialises");
+	let signed = trinity_stack::sign(&bytes, &TEST_STACK_SECRET).expect("test descriptor is valid");
+	let key = format!("0x{}", hex::encode(trinity_stack::public_key(&TEST_STACK_SECRET)));
+	let pointer = trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", Some(&key))
+		.expect("test pointer is valid");
+	(pointer.to_link(trinity_stack::DEFAULT_LINK_BASE), signed)
+}
+
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
