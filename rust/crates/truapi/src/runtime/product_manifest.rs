@@ -19,7 +19,7 @@ use truapi::v01;
 use crate::{
 	chain::EvmContractError,
 	chain_runtime::ChainRuntime,
-	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, protocol_registry, read_view, tld_node},
 	host_internal::{
 		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
@@ -27,8 +27,8 @@ use crate::{
 	},
 	host_logic::{
 		dotns_gateway::{
-			ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
-			DotnsTransport, discover_pop_controller, namehash_under,
+			ContentResolver, DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport,
+			namehash_under,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -114,16 +114,25 @@ async fn fetch_text_record(
 	let mut lookup =
 		DotnsLookup::pinned_to_best_block(chain, asset_hub_chain_genesis_hash, kind).await?;
 
-	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
+	read_text_record(&mut lookup, product_id, subname, key).await
+}
+
+async fn read_text_record<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	product_id: &ProductId,
+	subname: Option<&str>,
+	key: &str,
+) -> Result<Option<String>, DotnsError> {
+	let Some(protocol_registry) = protocol_registry(transport).await? else {
 		return Ok(None);
 	};
 
-	let tld = network_tld(&mut lookup, &protocol_registry).await?;
+	let tld = network_tld(transport, &protocol_registry).await?;
 	let node = record_node(&tld, product_id, subname);
 
-	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
+	let registry = protocol_component(transport, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, DotnsRegistry::resolverCall { node: node.into() })
+		read_view(transport, &registry, DotnsRegistry::resolverCall { node: node.into() })
 			.await
 			.map_err(DotnsError::Resolver)?;
 	if resolver.is_zero() {
@@ -131,7 +140,7 @@ async fn fetch_text_record(
 	}
 
 	let manifest = match read_view(
-		&mut lookup,
+		transport,
 		&resolver.into_array(),
 		ContentResolver::textCall { node: node.into(), key: key.to_string() },
 	)
@@ -141,37 +150,12 @@ async fn fetch_text_record(
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
 		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => return Ok(None),
-		Err(error) => return Err(DotnsError::ManifestText(error)),
+		Err(error) => return Err(DotnsError::TextRecord(error)),
 	};
 	if manifest.is_empty() {
 		return Ok(None);
 	}
 	Ok(Some(manifest))
-}
-
-/// The deployment's `DotnsProtocolRegistry`, read from the controller.
-/// `Ok(None)` when the gateway is not deployed.
-///
-/// [`discover_pop_controller`] resolves the controller, because
-/// `DotnsGateway.DispatcherAddress` holds either the controller or a
-/// `RootGatewayDispatcher` that fronts it, and both are in service. Calling
-/// `protocolRegistry()` on the stored address directly reverts on a chain that
-/// still keeps its dispatcher, which would refuse every grant on that chain
-/// while username resolution kept working.
-async fn protocol_registry<T: DotnsTransport + ?Sized>(
-	transport: &mut T,
-) -> Result<Option<[u8; 20]>, DotnsError> {
-	let Some(controller) = discover_pop_controller(transport).await? else {
-		warn!(
-			"DotnsGateway.DispatcherAddress is unset, so no product manifest resolves and \
-			 trustedProducts grants are refused until the dispatcher is set"
-		);
-		return Ok(None);
-	};
-	read_view(transport, &controller, DotnsPopController::protocolRegistryCall {})
-		.await
-		.map(|registry| Some(registry.into_array()))
-		.map_err(DotnsError::ProtocolRegistry)
 }
 
 #[cfg(test)]

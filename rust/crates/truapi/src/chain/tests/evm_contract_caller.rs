@@ -502,12 +502,20 @@ fn a_runtime_call_failure_preserves_the_rpc_error() {
 }
 
 /// Answers one runtime API call with its scripted result.
-struct ScriptedRuntimeApi(Option<Result<Vec<u8>, subxt::Error>>);
+struct ScriptedRuntimeApi(VecDeque<Result<Vec<u8>, subxt::Error>>);
 
 #[async_trait::async_trait]
 impl RuntimeApiCaller for ScriptedRuntimeApi {
 	async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
-		self.0.take().expect("unexpected runtime API call")
+		self.0.pop_front().expect("unexpected runtime API call")
+	}
+
+	async fn call_batch(
+		&mut self,
+		_function: &str,
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, subxt::Error>> {
+		self.0.drain(..inputs.len()).collect()
 	}
 }
 
@@ -532,11 +540,52 @@ fn only_a_contract_revert_reads_as_reverted() {
 		(Ok(vec![0xff]), "ReviveApi_call output is not a ContractResult"),
 	] {
 		let result = block_on(EvmContractCaller::read(
-			&mut ScriptedRuntimeApi(Some(answer)),
+			&mut ScriptedRuntimeApi(VecDeque::from([answer])),
 			&CONTRACT,
 			INPUT,
 		));
 
 		assert_eq!(result.map_err(|error| error.to_string()), Err(expected.to_string()));
 	}
+}
+
+#[test]
+fn a_contract_read_batch_keeps_successes_and_each_failure_in_request_order() {
+	let answers = VecDeque::from([
+		Ok(simulation_result(Ok(ExecReturnValue { flags: 0, data: vec![1] }))),
+		Ok(simulation_result(Ok(ExecReturnValue { flags: 1, data: Vec::new() }))),
+		Err(subxt::Error::other_str("runtime unavailable")),
+		Ok(simulation_result(Err(RawDispatchError(vec![0])))),
+		Ok(vec![0xff]),
+		Ok(simulation_result(Ok(ExecReturnValue { flags: 0, data: vec![6] }))),
+	]);
+	let inputs = vec![INPUT.to_vec(); answers.len()];
+	let results = {
+		let mut runtime = ScriptedRuntimeApi(answers);
+		let contract = CONTRACT;
+		block_on(crate::evm_contract::read_batch(&mut runtime, &contract, inputs))
+	};
+	let outcomes: Vec<_> = results
+		.map(|result| {
+			result.map_err(|error| match error {
+				EvmContractError::Reverted { .. } => "reverted",
+				EvmContractError::Simulation(_) => "simulation",
+				EvmContractError::Dispatch { .. } => "dispatch",
+				EvmContractError::Malformed(_) => "malformed",
+				other => panic!("unexpected read failure: {other:?}"),
+			})
+		})
+		.collect();
+
+	assert_eq!(
+		outcomes,
+		vec![
+			Ok(vec![1]),
+			Err("reverted"),
+			Err("simulation"),
+			Err("dispatch"),
+			Err("malformed"),
+			Ok(vec![6])
+		]
+	);
 }
