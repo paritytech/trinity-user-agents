@@ -192,6 +192,16 @@ enum ProviderCall {
 	Cancel(String, CancelCall),
 }
 
+/// How to reach the reconciler task, and when it asked to run again.
+#[derive(Default)]
+struct Reconciler {
+	/// Wakes the task, once one runs.
+	wake: Option<mpsc::UnboundedSender<()>>,
+	/// The earliest time a background step asked to be tried again, in Unix
+	/// milliseconds.
+	retry_at: Option<u64>,
+}
+
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
 struct Announcements {
@@ -262,11 +272,11 @@ pub struct FundingRegistry {
 	/// Sessions past the moment they count as taking longer whose host has
 	/// heard so, as nothing else changes in them then.
 	told_longer: Mutex<HashSet<String>>,
-	/// Held across every load and write; the flag records whether persisted
-	/// sessions have been loaded.
-	writes: AsyncMutex<bool>,
-	/// Whether persisted sessions have been loaded, readable without the
-	/// write lock.
+	/// Held across every load and write, so persisted snapshots land in
+	/// order.
+	writes: AsyncMutex<()>,
+	/// Whether persisted sessions have been loaded. Set under
+	/// [`Self::writes`], and readable without it.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
 	feed: OnceLock<Arc<dyn FundingFeed>>,
@@ -287,11 +297,8 @@ pub struct FundingRegistry {
 	/// Recorded funds the host has not taken, by id, with when the reconciler
 	/// may next ask the engine about them: `u64::MAX` while it is asking.
 	resolving: Mutex<HashMap<[u8; 32], u64>>,
-	/// Wakes the reconciler task, once one runs.
-	reconciler: Mutex<Option<mpsc::UnboundedSender<()>>>,
-	/// The earliest time a background step asked to be tried again, in Unix
-	/// milliseconds.
-	retry_at: Mutex<Option<u64>>,
+	/// The reconciler task's handle and when it is next due.
+	reconciler: Mutex<Reconciler>,
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
@@ -896,9 +903,9 @@ impl FundingRegistry {
 		now_ms: u64,
 		edit: impl FnOnce(&mut HashMap<String, FundingSession>) -> (R, Vec<String>),
 	) -> Result<R, FundingSessionError> {
-		let mut loaded = self.writes.lock().await;
+		let writes = self.writes.lock().await;
 		let db = self.db()?;
-		if !*loaded {
+		if !self.loaded.load(Ordering::Acquire) {
 			// Held as stored, so a commit writes only the rows it changes.
 			let (sessions, summaries) = store::load(db).await?;
 			self.lock_sessions()
@@ -906,7 +913,6 @@ impl FundingRegistry {
 			self.lock_pack().extend(
 				summaries.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
 			);
-			*loaded = true;
 			self.loaded.store(true, Ordering::Release);
 		}
 		let presenting_before = self.lock_presenting().clone();
@@ -1017,7 +1023,7 @@ impl FundingRegistry {
 				self.tell_host(&session);
 			}
 		}
-		drop(loaded);
+		drop(writes);
 		for (provider, call) in lapsed {
 			self.call(&provider, vec![call]);
 		}
@@ -1034,11 +1040,11 @@ impl FundingRegistry {
 			return;
 		};
 		let mut reconciler = self.lock_reconciler();
-		if reconciler.as_ref().is_some_and(|wake| wake.unbounded_send(()).is_ok()) {
+		if reconciler.wake.as_ref().is_some_and(|wake| wake.unbounded_send(()).is_ok()) {
 			return;
 		}
 		let (wake, woken) = mpsc::unbounded();
-		*reconciler = Some(wake);
+		reconciler.wake = Some(wake);
 		drop(reconciler);
 		(services.spawner)(Box::pin(reconcile(Arc::downgrade(&services), woken)));
 	}
@@ -1046,8 +1052,8 @@ impl FundingRegistry {
 	/// Ask the reconciler to run again by `at_ms`, in Unix milliseconds.
 	fn retry_by(&self, at_ms: u64) {
 		{
-			let mut retry_at = self.lock_retry_at();
-			*retry_at = Some(retry_at.map_or(at_ms, |held| held.min(at_ms)));
+			let mut reconciler = self.lock_reconciler();
+			reconciler.retry_at = Some(reconciler.retry_at.map_or(at_ms, |held| held.min(at_ms)));
 		}
 		self.wake();
 	}
@@ -1275,10 +1281,10 @@ impl FundingRegistry {
 	/// or dropped.
 	fn next_wake(&self, now_ms: u64) -> Option<u64> {
 		let retry = {
-			let mut retry_at = self.lock_retry_at();
-			let held = *retry_at;
+			let mut reconciler = self.lock_reconciler();
+			let held = reconciler.retry_at;
 			if held.is_some_and(|at_ms| at_ms <= now_ms) {
-				*retry_at = None;
+				reconciler.retry_at = None;
 			}
 			held
 		};
@@ -1551,12 +1557,8 @@ impl FundingRegistry {
 		lock(&self.announcements)
 	}
 
-	fn lock_reconciler(&self) -> MutexGuard<'_, Option<mpsc::UnboundedSender<()>>> {
+	fn lock_reconciler(&self) -> MutexGuard<'_, Reconciler> {
 		lock(&self.reconciler)
-	}
-
-	fn lock_retry_at(&self) -> MutexGuard<'_, Option<u64>> {
-		lock(&self.retry_at)
 	}
 
 	fn lock_starting(&self) -> MutexGuard<'_, HashSet<[u8; 32]>> {
@@ -1693,7 +1695,7 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 				let mut reconciler = services.funding().lock_reconciler();
 				let queued = woken.try_recv().is_ok();
 				if !queued {
-					*reconciler = None;
+					reconciler.wake = None;
 				}
 				queued
 			},
@@ -1705,7 +1707,7 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 }
 
 /// `future`'s output, or `None` once `limit` passed first.
-async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
+pub(crate) async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
 	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
 		Either::Left((output, _)) => Some(output),
 		Either::Right(_) => None,
@@ -2011,7 +2013,7 @@ impl RuntimeServices {
 				},
 			};
 			if let Some(moved) = moved {
-				let mut retry_in = FOLLOW_RETRY_FIRST;
+				let mut pauses = Backoff::new(FOLLOW_RETRY_FIRST, FOLLOW_RETRY_LONGEST);
 				loop {
 					let settling = intent.clone();
 					let settled = registry
@@ -2030,9 +2032,9 @@ impl RuntimeServices {
 					let Err(error) = settled else {
 						break;
 					};
+					let retry_in = pauses.next_pause();
 					tracing::warn!(%error, ?retry_in, "settling a funding session failed");
 					futures_timer::Delay::new(retry_in).await;
-					retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
 				}
 			}
 			registry.lock_following().remove(&intent);
@@ -2114,7 +2116,7 @@ impl RuntimeServices {
 		direction: FundingDirection,
 		funds: &StartedFunds,
 	) -> Option<u128> {
-		let mut retry_in = FOLLOW_RETRY_FIRST;
+		let mut pauses = Backoff::new(FOLLOW_RETRY_FIRST, FOLLOW_RETRY_LONGEST);
 		loop {
 			let read = match direction {
 				FundingDirection::In => {
@@ -2137,8 +2139,7 @@ impl RuntimeServices {
 			if read.is_some() {
 				return read;
 			}
-			futures_timer::Delay::new(retry_in).await;
-			retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
+			futures_timer::Delay::new(pauses.next_pause()).await;
 			if self
 				.funding()
 				.get(intent)

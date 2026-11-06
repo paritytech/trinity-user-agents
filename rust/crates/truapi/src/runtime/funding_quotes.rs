@@ -23,14 +23,17 @@ use std::{
 use core::time::Duration;
 
 use futures::{
-	future::{self, AbortHandle, AbortRegistration, Abortable, Either},
+	future::{self, AbortHandle, AbortRegistration, Abortable},
 	stream::{self, StreamExt},
 };
 use truapi::latest::{
 	FundingDirection, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
 };
 
-use super::{funding::lock, services::RuntimeServices};
+use super::{
+	funding::{lock, within},
+	services::RuntimeServices,
+};
 use crate::{
 	host_logic::{
 		funding::FundingChoice,
@@ -366,11 +369,7 @@ impl RuntimeServices {
 				failed = Some(link);
 			}
 		};
-		let timeout = futures_timer::Delay::new(deadline);
-		let answer = match future::select(Box::pin(asked), timeout).await {
-			Either::Left((answer, _)) => Some(answer),
-			Either::Right(_) => None,
-		};
+		let answer = within(deadline, asked).await;
 		drop(hold);
 		let now_ms = current_unix_millis();
 		let state = match answer {
