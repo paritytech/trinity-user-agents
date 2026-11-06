@@ -80,6 +80,13 @@ struct LedgerState {
 	draining: bool,
 }
 
+impl LedgerState {
+	/// Queue asking the host to move `product_id`'s worker by `transition`.
+	fn request(&mut self, product_id: &ProductId, transition: WorkerTransition) {
+		self.pending.push_back(LedgerEvent::Transition(product_id.clone(), transition));
+	}
+}
+
 /// Reference counts for every product worker the host tracks, keyed by
 /// product id. A product with no references has no entry.
 #[derive(Default)]
@@ -108,9 +115,7 @@ impl WorkerLedger {
 			if let Some(run) = state.crashes.get_mut(product_id) {
 				run.restart_pending = false;
 			}
-			state
-				.pending
-				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Start));
+			state.request(product_id, WorkerTransition::Start);
 		}
 		self.drain();
 	}
@@ -131,9 +136,7 @@ impl WorkerLedger {
 			// The last one: an entry is dropped rather than left at zero, so
 			// every stored count is at least one and none of this can wrap.
 			state.references.remove(product_id);
-			state
-				.pending
-				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Stop));
+			state.request(product_id, WorkerTransition::Stop);
 		}
 		self.drain();
 	}
@@ -177,10 +180,7 @@ impl WorkerLedger {
 				state.pending.push_back(LedgerEvent::Crashing(product_id.clone(), crashes));
 			}
 			if wait_ms.is_none() {
-				state.pending.push_back(LedgerEvent::Transition(
-					product_id.clone(),
-					WorkerTransition::Start,
-				));
+				state.request(product_id, WorkerTransition::Start);
 			}
 			wait_ms
 		};
@@ -201,9 +201,7 @@ impl WorkerLedger {
 			if !core::mem::take(&mut run.restart_pending) || !held {
 				return;
 			}
-			state
-				.pending
-				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Start));
+			state.request(product_id, WorkerTransition::Start);
 		}
 		self.drain();
 	}
