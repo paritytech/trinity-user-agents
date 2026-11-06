@@ -40,7 +40,8 @@ struct BundledProductsTests {
     }
 
     /// Funding is served by a manifest whose `includes` has a `funding`
-    /// section; a null one serves nothing.
+    /// section; a null one serves nothing, and one that is not a manifest is
+    /// reported rather than skipped.
     @Test func servesFundingOnlyWithAFundingSection() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -55,7 +56,8 @@ struct BundledProductsTests {
         #expect(try products.product(ProductId("ramp.dot"))?.fundingWorkerManifest() == funding)
         #expect(try products.product(ProductId("null.dot"))?.fundingWorkerManifest() == nil)
         #expect(try products.product(ProductId("chat.dot"))?.fundingWorkerManifest() == nil)
-        #expect(try products.product(ProductId("broken.dot"))?.fundingWorkerManifest() == nil)
+        let broken = try #require(products.product(ProductId("broken.dot")))
+        #expect(throws: DecodingError.self) { try broken.fundingWorkerManifest() }
     }
 
     /// A build made without the bundle still runs, with nothing bundled.

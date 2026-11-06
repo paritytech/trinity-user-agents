@@ -183,12 +183,12 @@ struct FundingQuote {
 }
 ```
 
-An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. The host's list marks the
+An ask unanswered after 10 seconds shows as timed out. The host's list marks the
 best quote among providers a session can be handed to, the least to pay inbound or the most to receive outbound, and
 the host selects it until the user picks another. While the user has not chosen, the core asks every provider again
-each minute. Each request for quotes has an id that every list it produces carries. A list stops at once, mid round
-too, when the session is handed to a provider or ends, the host asks again, or the host stops it, so a late answer
-for an amount the user already changed never reaches the host.
+each minute, and a row keeps its answer until the provider answers again. Each request for quotes has an id that every
+list it produces carries. A list stops at once, mid round too, when the session is handed to a provider, ends or leaves
+the overlay, or the host asks again, so a late answer for an amount the user already changed never reaches the host.
 
 Until the user picks a country, an ask carries the one the host detects without asking for a permission: the device's
 coarse location if already permitted, then its SIM or network country, then its locale's region. Only an ISO 3166-1

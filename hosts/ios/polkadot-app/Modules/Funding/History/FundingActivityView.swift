@@ -248,7 +248,7 @@ private extension FundingActivityRowContent {
         let moment = FundingActivityDate.moment(item.date, now: now, calendar: calendar)
         switch item.status {
         case let .inProgress(status):
-            return FundingWording.inFlight(status, direction: item.direction)
+            return FundingWording.inFlight(status, direction: item.direction) ?? moment
         case .toppedUp,
              .sent:
             return moment

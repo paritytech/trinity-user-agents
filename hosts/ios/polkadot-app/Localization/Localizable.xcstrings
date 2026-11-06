@@ -2230,28 +2230,6 @@
         }
       }
     },
-    "network.status.connecting" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connecting..."
-          }
-        }
-      }
-    },
-    "network.status.waiting" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for network"
-          }
-        }
-      }
-    },
     "no.message" : {
       "comment" : "Displayed as a placeholder when there is no message for the request",
       "extractionState" : "manual",
@@ -3188,13 +3166,24 @@
         }
       }
     },
+    "spa.action.closeApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close app"
+          }
+        }
+      }
+    },
     "spa.action.openChat" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Open chat"
+            "value" : "Proceed in Chat"
           }
         }
       }
@@ -3216,7 +3205,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Refresh"
+            "value" : "Reload"
           }
         }
       }
@@ -3658,17 +3647,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Purse"
-          }
-        }
-      }
-    },
-    "wallet.main.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pocket"
           }
         }
       }

@@ -18,7 +18,6 @@ protocol FundingFlowServiceProtocol: Sendable {
     /// Asks every provider to quote `ask`, and returns the core's id for the
     /// request.
     func requestQuote(_ ask: FundingQuoteAsk, intent: String) async -> UInt64
-    func stopQuotes(intent: String) async
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool
     func cancel(intent: String) async throws -> CancelOutcome
     func confirmCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
@@ -59,10 +58,6 @@ actor FundingFlowService: FundingFlowServiceProtocol {
         runtime.getFundingQuote(intent: intent, ask: ask)
     }
 
-    func stopQuotes(intent: String) {
-        runtime.stopFundingQuotes(intent: intent)
-    }
-
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool {
         try await runtime.selectFundingProvider(intent: intent, providerId: providerId, quoteId: quoteId)
     }
@@ -101,6 +96,15 @@ final class FundingCoreCallQueue {
         latest = Task { [service] in
             await previous?.value
             await apply(call(service))
+        }
+    }
+
+    /// Returns once every call made so far, and every call their answers
+    /// made, has answered.
+    func idle() async {
+        while let current = latest {
+            await current.value
+            if latest == current { return }
         }
     }
 }

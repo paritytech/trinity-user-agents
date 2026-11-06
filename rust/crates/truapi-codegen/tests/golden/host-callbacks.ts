@@ -400,8 +400,8 @@ export interface FundingQuoteList {
   best?: ProductId;
 
   /**
-   * When the core asks every provider again, in Unix milliseconds. The
-   * rows go back to `Pending` then.
+   * When the core asks every provider again, in Unix milliseconds. Each
+   * row keeps its answer until the provider answers again.
    */
   refreshAtMs: bigint;
 }

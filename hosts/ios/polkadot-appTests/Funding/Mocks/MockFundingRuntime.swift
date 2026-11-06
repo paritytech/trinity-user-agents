@@ -11,7 +11,6 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     private struct State: Sendable {
         var selections: [FundingSelection] = []
         var asks: [FundingQuoteAsk] = []
-        var stoppedQuotes = 0
         var selectedProviders: [ProductId] = []
         var acknowledged: [String] = []
         var failsNextAcknowledgement = false
@@ -38,7 +37,6 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
 
     var selections: [FundingSelection] { state.withLock { $0.selections } }
     var asks: [FundingQuoteAsk] { state.withLock { $0.asks } }
-    var stoppedQuotes: Int { state.withLock { $0.stoppedQuotes } }
     var selectedProviders: [ProductId] { state.withLock { $0.selectedProviders } }
     var acknowledged: [String] { state.withLock { $0.acknowledged } }
     /// The id of the latest quote request, which counts them from 1.
@@ -68,10 +66,6 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
             state.asks.append(ask)
             return UInt64(state.asks.count)
         }
-    }
-
-    func stopFundingQuotes(intent _: String) {
-        state.withLock { $0.stoppedQuotes += 1 }
     }
 
     func selectFundingProvider(intent _: String, providerId: ProductId, quoteId _: String) async throws -> Bool {
