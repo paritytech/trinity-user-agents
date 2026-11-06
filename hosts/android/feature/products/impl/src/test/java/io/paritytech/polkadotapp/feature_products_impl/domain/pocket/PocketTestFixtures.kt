@@ -4,6 +4,13 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
+import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
+import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
+import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +29,25 @@ internal fun faceOf(text: String): RendererNode = RendererNode.String(text)
 internal fun pinnedCard(productId: ProductId, cardId: String) = CachedPocketCard(
     card = PocketCard(cardKey(productId, cardId), title = cardId, privileged = true),
     face = faceOf("pinned $cardId"),
+)
+
+/** [gameProduct] publishing the `loyalty` card, with [back] if given. */
+internal fun publishingLoyalty(back: PocketCardPreview? = null) = ResolvedProduct(
+    product = Product(id = gameProduct, name = "Game", icon = null),
+    description = null,
+    executables = Executables(
+        app = null,
+        widget = null,
+        worker = ProductExecutable.Worker(
+            scriptUrl = "https://worker.game.dot/index.js",
+            appVersion = SemVer.ZERO,
+            includesChat = false,
+            includesPocket = true,
+            pocketCards = listOf(
+                PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true, back = back),
+            ),
+        ),
+    ),
 )
 
 internal fun addedCard(productId: ProductId, cardId: String) = CachedPocketCard(

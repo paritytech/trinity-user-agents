@@ -4,17 +4,11 @@ import android.net.Uri
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
-import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
-import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
@@ -53,7 +47,6 @@ class RealPocketFaceSourceTest {
         }
     }
 
-
     private class NoImages : ProductImageResolver {
         override suspend fun resolve(productId: ProductId, source: JsImageSource): Result<Uri> =
             Result.failure(IllegalStateException("unused"))
@@ -74,24 +67,6 @@ class RealPocketFaceSourceTest {
         NoImages(),
         PublishedPocketCards(resolver),
         PocketPreviewLoader(ProductWorkerArchive(mockk()), shippedBacks),
-    )
-
-    private fun publishing(back: PocketCardPreview?) = ResolvedProduct(
-        product = Product(id = gameProduct, name = "Game", icon = null),
-        description = null,
-        executables = Executables(
-            app = null,
-            widget = null,
-            worker = ProductExecutable.Worker(
-                scriptUrl = "https://worker.game.dot/index.js",
-                appVersion = SemVer.ZERO,
-                includesChat = false,
-                includesPocket = true,
-                pocketCards = listOf(
-                    PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true, back = back),
-                ),
-            ),
-        ),
     )
 
     private fun TestScope.backsShown(): MutableList<JsWidget?> {
@@ -153,7 +128,7 @@ class RealPocketFaceSourceTest {
 
     @Test
     fun `with no kept back, the shipped back shows until the product draws one`() = runTest {
-        lookup = { Result.success(publishing(back = PocketCardPreview.Url("back.json"))) }
+        lookup = { Result.success(publishingLoyalty(back = PocketCardPreview.Url("back.json"))) }
 
         val shown = backsShown()
         runCurrent()
@@ -166,7 +141,7 @@ class RealPocketFaceSourceTest {
     // A read that did not land, typically a device briefly offline, says nothing about the card's back.
     @Test
     fun `the back file still shows when the first lookup does not land`() = runTest {
-        val answers = ArrayDeque(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing(back = PocketCardPreview.Url("back.json")))))
+        val answers = ArrayDeque(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishingLoyalty(back = PocketCardPreview.Url("back.json")))))
         lookup = { answers.removeFirst() }
 
         val shown = backsShown()
@@ -180,7 +155,7 @@ class RealPocketFaceSourceTest {
     @Test
     fun `a card published without a back has none, whatever was kept`() = runTest {
         repository.faces[loyalty.card.key to PocketCardSide.BACK] = faceOf("kept back")
-        lookup = { Result.success(publishing(back = null)) }
+        lookup = { Result.success(publishingLoyalty(back = null)) }
 
         val shown = backsShown()
         runCurrent()

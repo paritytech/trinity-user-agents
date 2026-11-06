@@ -138,7 +138,7 @@ published worker**:
 | Pocket card id | the id your worker answers `onRender` for, e.g. `loyalty` |
 | Pocket card title | what the approval sheet calls the card |
 | Pocket card face URL | `http://127.0.0.1:5173/faces/loyalty.json` |
-| Pocket card back face URL | optional, `http://127.0.0.1:5173/faces/loyalty-back.json`; gives the card a back the opened card turns over to |
+| Pocket card back face URL | optional, `http://127.0.0.1:5173/faces/loyalty-back.json` |
 | App URL | optional, `http://127.0.0.1:<port>/...` only; the page the card opens over, in place of the product's published app |
 | Open with the face away | off by default; on, the card opens with its face out of the way |
 
