@@ -765,6 +765,7 @@ fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<Str
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn get_optional_bytes32_at(
 	value: &JsValue,
 	name: &str,
@@ -788,11 +789,13 @@ fn get_optional_bytes32_at(
 	})
 }
 
+#[cfg(feature = "test-host")]
 fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u8; 32], JsValue> {
 	get_optional_bytes32_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
