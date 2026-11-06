@@ -35,8 +35,7 @@ pub enum Network {
 	PaseoNextV2,
 	/// Built-in stack, read from the descriptor its operator publishes. Its id is
 	/// the id the playground and dotli already use for this network
-	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so the network `get_chain_info`
-	/// reads the same string a product sees everywhere else.
+	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`).
 	#[value(name = "previewnet")]
 	Previewnet,
 	/// Polkadot mainnet (People, Bulletin, Asset Hub). Identities are real:
@@ -610,6 +609,7 @@ fn stack_config(descriptor: &Descriptor, id: &'static str) -> Result<NetworkConf
 	roles.ensure_distinct_genesis()?;
 	Ok(NetworkConfig {
 		id,
+		network: leak_str(&descriptor.network),
 		network_suffix,
 		identity_backend_base,
 		people_ws: roles.people.ws,
@@ -900,6 +900,7 @@ const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 
 const POLKADOT: NetworkConfig = NetworkConfig {
 	id: "polkadot",
+	network: "polkadot",
 	network_suffix: "dot",
 	identity_backend_base: None,
 	people_ws: POLKADOT_PEOPLE.ws,
@@ -917,9 +918,12 @@ const POLKADOT: NetworkConfig = NetworkConfig {
 /// Resolved RPC/backend/genesis values for one network.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
-	/// The product namespace: the network `get_chain_info` reports and where
-	/// the CLI stores this network's state.
+	/// The product namespace, where the CLI stores this network's state.
 	pub id: &'static str,
+	/// The ecosystem `get_chain_info` reports: the stack descriptor's `network`,
+	/// such as `paseo`, so the CLI reports what an app bundling the same stack
+	/// does.
+	pub network: &'static str,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
 	/// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
@@ -1009,11 +1013,14 @@ impl NetworkConfig {
 		]
 	}
 
-	/// The stack the core runs on: [`Self::served_roles`], the network `id`
-	/// `get_chain_info` reports, and the TLD. The CLI resolved and checked these
-	/// values itself, from a descriptor, the local-network file or Polkadot's
-	/// pinned values, so it hands them to the core as parts. Only Polkadot may
-	/// use Polkadot's reserved values.
+	/// The stack the core runs on: [`Self::served_roles`], the
+	/// [`Self::network`] `get_chain_info` reports, and the TLD. The CLI resolved
+	/// and checked these values itself, from a descriptor, the local-network
+	/// file or Polkadot's pinned values, so it hands them to the core as parts.
+	///
+	/// Only a network whose identities are real may use Polkadot's reserved
+	/// values. Every stack read from a descriptor has disposable identities,
+	/// so its id cannot grant them.
 	pub fn stack(&self) -> Result<Stack, StackError> {
 		let chains = StackChains {
 			relay: None,
@@ -1022,10 +1029,10 @@ impl NetworkConfig {
 			bulletin: self.bulletin_genesis,
 		};
 		Stack::new(
-			self.id.to_string(),
+			self.network.to_string(),
 			self.network_suffix.to_string(),
 			chains,
-			self.id == POLKADOT.id,
+			!self.disposable_identities,
 		)
 	}
 

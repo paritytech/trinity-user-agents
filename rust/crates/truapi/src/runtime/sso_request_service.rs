@@ -299,7 +299,7 @@ impl SsoRequestService {
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
+			self.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.await;
@@ -356,7 +356,7 @@ impl SsoRequestService {
 		};
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
+			self.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.await;
@@ -611,7 +611,7 @@ impl SsoRequestService {
 
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
+			self.host_config.stack.chains().asset_hub,
 			current.clone(),
 		)
 		.await;

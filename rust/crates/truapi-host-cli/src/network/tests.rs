@@ -961,25 +961,43 @@ fn test_refresh_expired_error() {
 	assert!(refresh(&sign_copy(10, "g1"), Fetched::Document(&published)).is_err());
 }
 
-/// The core answers `get_chain_info` from the stack the CLI builds, so the
-/// stack carries the network id products see and each served role's genesis.
+/// A product sees the same network, TLD and chains from the CLI as from an app
+/// bundling the same stack: the descriptor's `network`, not the CLI's product
+/// namespace for it. The CLI serves no Relay, so it names none.
 #[test]
-fn the_stack_names_the_configured_network() {
-	let config = Network::default().config();
-	let stack = config.stack().expect("the default network is a valid stack");
+fn the_stack_reports_what_an_app_bundling_it_reports() {
+	let stacks = |network: Network| {
+		let built_in = network.built_in_stack()?;
+		let bundled = Stack::bundled(built_in.link.trim(), built_in.bundle, false)
+			.expect("the bundled copy starts an app");
+		let cli = network.config().stack().expect("the CLI's stack starts");
+		Some((network, cli, bundled))
+	};
+
+	for (network, cli, bundled) in Network::value_variants().iter().copied().filter_map(stacks) {
+		let expected = Stack::new(
+			bundled.network().to_string(),
+			bundled.tld().to_string(),
+			StackChains { relay: None, ..bundled.chains().clone() },
+			false,
+		);
+		assert_eq!(Ok(cli), expected, "{}", network.id());
+	}
+}
+
+/// Only Polkadot's pinned values may use Polkadot's genesis hashes and `dot`.
+/// A stack read from a descriptor has disposable identities whatever its id
+/// says, so the core holds it to the reserved values.
+#[test]
+fn a_descriptor_stack_cannot_claim_polkadot_reserved_values() {
+	let dot = edit_stack(|descriptor| {
+		descriptor["id"] = "polkadot-fork".into();
+		descriptor["tld"] = "dot".into();
+	});
 
 	assert_eq!(
-		(stack.network(), stack.tld(), stack.chains().clone()),
-		(
-			config.id,
-			config.network_suffix,
-			truapi::platform::StackChains {
-				relay: None,
-				asset_hub: Some(config.asset_hub_genesis),
-				people: config.people_genesis,
-				bulletin: config.bulletin_genesis,
-			}
-		),
+		stack_network_config(&dot).unwrap().stack(),
+		Err(StackError::Reserved { value: "tld dot".to_string() })
 	);
 }
 

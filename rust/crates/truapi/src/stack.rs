@@ -51,7 +51,7 @@ pub struct StackChains {
 }
 
 /// Why a stack was refused.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Debug, PartialEq, derive_more::Display, derive_more::Error)]
 pub enum StackError {
 	/// The pointer is not a stack link.
 	#[display("stack pointer is not a stack link: {_0}")]

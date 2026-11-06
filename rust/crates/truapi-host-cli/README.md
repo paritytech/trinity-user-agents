@@ -1112,7 +1112,7 @@ role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
 `tld` the core does not serve (`paseo`, `testnet`), is unreachable or is past
-`expiresAt` is an error. The product namespace (the network `get_chain_info` reports and the
+`expiresAt` is an error. `get_chain_info` reports the descriptor's `network`. The product namespace (the
 state directory) is the descriptor's `id` without a trailing `-fork`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI

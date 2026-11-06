@@ -10,5 +10,6 @@ pointer without a key, a descriptor without a People or Bulletin chain, and a re
 `getChainInfo` answers from the descriptor's `chains` and `network`, so the `supportedChains` host callback and the
 `HostChainSet` and `HostChainEntry` types are removed. The test host runs a stack built from its parts:
 `mockRuntimeConfig()` returns a `testStack` over the `MOCK_GENESIS` chains, which only the `wasm/testing` bundle reads,
-`fromNetworks` and `liveChain` build it from their chains, and `MockHostConfig.servedChains` replaces `supportedChains`
-as the genesis hashes `featureSupported` answers from under `onlyServedChains`.
+`startTestHost` and `createMockClient` take `Partial<MockRuntimeConfig>` overrides, `fromNetworks` and `liveChain` build
+it from their chains, and `MockHostConfig.servedChains` replaces `supportedChains` as the genesis hashes
+`featureSupported` answers from under `onlyServedChains`.

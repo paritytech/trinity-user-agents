@@ -36,11 +36,12 @@ const LOOKUP_BUDGET: Duration = Duration::from_secs(45);
 
 /// Fills in missing usernames by querying the dotNS contracts on Asset Hub.
 /// Returns the session unchanged when it already carries a username. Also
-/// returns it unchanged when no Asset Hub is configured.
+/// returns it unchanged when `asset_hub_chain_genesis_hash` is `None`, for a
+/// stack that names no Asset Hub.
 #[instrument(skip_all, fields(runtime.method = "session.identity.resolve_with_chain"))]
 pub async fn resolve_session_identity_with_chain(
 	chain: &ChainRuntime,
-	asset_hub_chain_genesis_hash: [u8; 32],
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 	session: SessionInfo,
 ) -> SessionInfo {
 	if session.has_username() {
@@ -57,18 +58,16 @@ pub async fn resolve_session_identity_with_chain(
 
 /// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
 /// usernames it already carries. The identity account is tried first, then the
-/// root key when the identity account holds no username. Returns `None` when no
-/// Asset Hub is configured, neither account holds a username, or the lookup
-/// fails.
+/// root key when the identity account holds no username. Returns `None` when
+/// `asset_hub_chain_genesis_hash` is `None`, neither account holds a username,
+/// or the lookup fails.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
 pub async fn lookup_session_identity(
 	chain: &ChainRuntime,
-	asset_hub_chain_genesis_hash: [u8; 32],
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 	session: &SessionInfo,
 ) -> Option<DotnsIdentity> {
-	if asset_hub_chain_genesis_hash == [0; 32] {
-		return None;
-	}
+	let asset_hub_chain_genesis_hash = asset_hub_chain_genesis_hash?;
 
 	let budget = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
 	pin_mut!(budget);
