@@ -3,6 +3,9 @@
 
 use core::{ops::ControlFlow, time::Duration};
 
+use futures::{FutureExt, pin_mut};
+use truapi::CancellationToken;
+
 use super::{RealTimer, Timer};
 
 /// Runs `attempt` until it returns `Break`, sleeping between attempts.
@@ -34,6 +37,33 @@ where
 		match attempt().await {
 			ControlFlow::Break(done) => return done,
 			ControlFlow::Continue(failure) => timer.sleep(pause_after(failure)).await,
+		}
+	}
+}
+
+/// [`retry_on`] that stops when `cancel` fires during a pause, returning
+/// the failure that started it. It never drops an attempt in flight, which
+/// could leave something open, such as a subscription.
+pub async fn retry_until_cancelled<Done, Failure, AttemptFuture>(
+	timer: &dyn Timer,
+	cancel: &CancellationToken,
+	mut attempt: impl FnMut() -> AttemptFuture,
+	mut pause_after: impl FnMut(&Failure) -> Duration,
+) -> Result<Done, Failure>
+where
+	AttemptFuture: Future<Output = ControlFlow<Done, Failure>>,
+{
+	loop {
+		let failure = match attempt().await {
+			ControlFlow::Break(done) => return Ok(done),
+			ControlFlow::Continue(failure) => failure,
+		};
+		let paused = timer.sleep(pause_after(&failure)).fuse();
+		let cancelled = cancel.cancelled().fuse();
+		pin_mut!(paused, cancelled);
+		futures::select_biased! {
+			_ = cancelled => return Err(failure),
+			() = paused => {},
 		}
 	}
 }

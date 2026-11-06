@@ -32,7 +32,7 @@ class ProductsNavigator @Inject constructor(
     )
 
     override fun leaveBrowser() {
-        if (isCurrentDestination(R.id.spaBrowserFragment)) back()
+        back()
     }
 
     override fun openProductChat(productId: ProductId) {

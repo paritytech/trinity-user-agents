@@ -351,6 +351,18 @@ where
 	unreachable!("the bounded SSO submit loop always returns")
 }
 
+/// Parts of smoldot's messages for a statement that reached no peer
+/// (`StatementSubmitError::NotSent` in smoldot-light's statement service).
+const NO_PEER_MESSAGES: [&str; 2] =
+	["No connected peers to broadcast the statement", "connected peers accepted the statement"];
+
+/// Whether a [`submit`] failure says the statement reached no peer. smoldot
+/// uses one error code for all statement-store failures, so this matches the
+/// message.
+pub fn reached_no_peer(reason: &str) -> bool {
+	NO_PEER_MESSAGES.iter().any(|message| reason.contains(message))
+}
+
 /// Whether a [`submit`] failure is a `noAllowance` rejection.
 pub fn is_no_allowance_rejection(reason: &str) -> bool {
 	reason.contains("noAllowance")

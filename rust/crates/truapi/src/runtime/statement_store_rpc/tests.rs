@@ -11,7 +11,9 @@ use serde_json::json;
 
 use futures::executor::{block_on, block_on_stream};
 
-use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection};
+use super::{
+	LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection, reached_no_peer,
+};
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::statement_store::{
@@ -179,6 +181,22 @@ fn identifies_no_allowance_submit_rejections() {
 	assert!(!is_no_allowance_rejection(
 		r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
 	));
+}
+
+/// smoldot's two messages for a statement that reached no peer.
+const NO_PEERS: &str = "Statement store error: No connected peers to broadcast the statement to";
+const NO_PEER_ACCEPTED: &str =
+	"Statement store error: none of the 3 connected peers accepted the statement";
+
+/// Only a statement that reached no peer is resent. Other rejections,
+/// such as a bad proof, would fail again.
+#[test]
+fn only_a_statement_that_reached_no_peer_is_unsent() {
+	let reasons = [NO_PEERS, NO_PEER_ACCEPTED, "statement_submit not accepted: badProof"];
+
+	let unsent: Vec<bool> = reasons.iter().map(|reason| reached_no_peer(reason)).collect();
+
+	assert_eq!(unsent, vec![true, true, false]);
 }
 
 /// A statement store whose subscription connection answers with `frames`.
