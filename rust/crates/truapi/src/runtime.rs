@@ -583,6 +583,11 @@ impl ProductConnection {
 		self.services.worker_ledger.release(&self.product.product_id);
 	}
 
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	}
+
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
 	async fn begin_operation_with_host(
 		&self,

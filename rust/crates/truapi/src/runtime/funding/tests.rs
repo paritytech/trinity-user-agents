@@ -150,7 +150,7 @@ fn waiting_for_a_provider_that_never_connects_leaves_no_trail() {
 		assert!(futures::FutureExt::now_or_never(asked).is_none());
 	}
 
-	assert_eq!(registry.lock_links().waiters[&ramp].0.len(), 1);
+	assert_eq!(registry.lock_links().waiters[&ramp].listeners.lock().len(), 1);
 }
 
 // A deadline already past belongs to funds whose call is still in

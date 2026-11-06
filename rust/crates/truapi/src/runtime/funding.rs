@@ -88,6 +88,7 @@ use crate::{
 	runtime::payment_id::host_payment_id,
 	time::{Backoff, retry},
 	unix_time::current_unix_millis,
+	wake::WakeSignal,
 };
 
 /// Wait before retrying an expiry sweep whose write failed.
@@ -167,7 +168,7 @@ struct Links {
 	/// Each provider's worker connection, by product id.
 	by_provider: HashMap<ProductId, Link>,
 	/// Callers waiting for a provider's worker to connect, by product id.
-	waiters: HashMap<ProductId, Signal>,
+	waiters: HashMap<ProductId, WakeSignal>,
 }
 
 /// Whether a worker connection has been handed every session it serves.
@@ -525,8 +526,8 @@ impl FundingRegistry {
 				.filter(|held| held.catch_up == CatchUp::Connecting)
 				.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
 				.is_some();
-			if let Some(mut waiters) = links.waiters.remove(provider_id) {
-				waiters.fire();
+			if let Some(waiters) = links.waiters.remove(provider_id) {
+				waiters.wake();
 			}
 			readied
 		};
@@ -545,7 +546,7 @@ impl FundingRegistry {
 		besides: Option<&Arc<dyn FundingProviderLink>>,
 	) -> Arc<dyn FundingProviderLink> {
 		loop {
-			let connected = {
+			let mut connected = {
 				let mut links = self.lock_links();
 				if let Some(held) = links.by_provider.get(provider_id).filter(|held| {
 					held.catch_up != CatchUp::Connecting &&
@@ -553,9 +554,9 @@ impl FundingRegistry {
 				}) {
 					return held.link.clone();
 				}
-				links.waiters.entry(provider_id.clone()).or_default().wait()
+				links.waiters.entry(provider_id.clone()).or_default().subscribe()
 			};
-			let _ = connected.await;
+			connected.next().await;
 		}
 	}
 
@@ -1656,32 +1657,6 @@ impl FundingRegistry {
 /// funding modules guard stays valid between statements.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Callers waiting for one kind of change, each woken by the next
-/// [`Self::fire`]. A waiter that went away is dropped by the next
-/// [`Self::wait`], so a change that never comes holds no more than the
-/// callers still waiting for it.
-#[derive(Default)]
-pub struct Signal(Vec<oneshot::Sender<()>>);
-
-impl Signal {
-	/// Resolves at the next [`Self::fire`], or with `Canceled` should the
-	/// signal be dropped first.
-	pub fn wait(&mut self) -> oneshot::Receiver<()> {
-		self.0.retain(|waiter| !waiter.is_canceled());
-		let (waiter, fired) = oneshot::channel();
-		self.0.push(waiter);
-		fired
-	}
-
-	/// Wake every caller waiting.
-	pub fn fire(&mut self) {
-		for waiter in self.0.drain(..) {
-			// A caller that went away has nothing to hear.
-			let _ = waiter.send(());
-		}
-	}
 }
 
 /// Funds a provider's worker asks the host to move for a session.

@@ -13,14 +13,10 @@ use std::sync::{Arc, Mutex};
 
 use truapi::latest::{FundingDirection, FundingRail};
 
-use futures::{channel::oneshot, lock::Mutex as AsyncMutex};
+use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
 
-use super::{
-	funding::{Signal, lock},
-	product_manifest::worker_manifest,
-	services::RuntimeServices,
-};
+use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
 use crate::{
 	host_logic::{
 		funding::FundingSessionError,
@@ -33,6 +29,7 @@ use crate::{
 	},
 	platform::{CoreStorageKey, ProductId},
 	unix_time::current_unix_millis,
+	wake::WakeSignal,
 };
 
 /// A provider the host offers, with the Worker manifest it shipped already
@@ -75,14 +72,14 @@ pub struct FundingProviders {
 	learned_store: AsyncMutex<bool>,
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
-	changed: Mutex<Signal>,
+	changed: WakeSignal,
 }
 
 impl FundingProviders {
 	/// Resolves once the providers the core goes by next change: the host
 	/// lists others, or dotNS answers for one with what it serves.
-	pub fn on_change(&self) -> oneshot::Receiver<()> {
-		lock(&self.changed).wait()
+	pub fn on_change(&self) -> mpsc::Receiver<()> {
+		self.changed.subscribe()
 	}
 
 	/// Every provider serving `direction`, in the host's order. What their
@@ -412,7 +409,7 @@ impl RuntimeServices {
 	/// its options again, and every watched quote list asks again at once,
 	/// so a provider read after the overlay opened still shows and quotes.
 	fn funding_providers_changed(&self) {
-		lock(&self.funding_providers().changed).fire();
+		self.funding_providers().changed.wake();
 		for intent in self.funding().presenting() {
 			self.send_funding_options(&intent);
 		}
