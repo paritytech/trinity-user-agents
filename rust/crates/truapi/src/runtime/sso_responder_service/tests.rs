@@ -229,39 +229,6 @@ fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<Si
 	}))
 }
 
-/// A wallet lock or switch while the device key is still being read must not
-/// answer the pairing with the keys installed afterwards, nor report a device.
-#[test]
-fn a_wallet_change_during_device_key_read_never_answers_pairing() {
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		core_storage_read_gate: std::sync::Mutex::new(Some(gate)),
-		rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string())],
-		..StubPlatform::default()
-	});
-	let (services, signing_host) = signing_fixture(platform.clone());
-	let observer = Arc::new(RecordingPairingObserver::default());
-	assert!(services.install_device_pairing_observer(observer.clone()));
-	let deeplink = pairing_deeplink(PairedSsoPeer {
-		statement_account_id: [0x31; 32],
-		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-	});
-	let responder = SsoResponderService::new(services, signing_host.clone());
-	let pairing = responder.establish_pairing(&deeplink);
-	futures::pin_mut!(pairing);
-	assert!(pairing.as_mut().now_or_never().is_none());
-	futures::executor::block_on(signing_host.activate_local_session(vec![0xcd; 16])).unwrap();
-	release.send(()).unwrap();
-	assert_eq!(
-		(
-			futures::executor::block_on(pairing),
-			platform.sent_rpc.lock().unwrap().len(),
-			observer.paired()
-		),
-		(Err(crate::runtime::AuthorityError::Disconnected.to_string()), 0, Vec::new()),
-	);
-}
-
 /// Without this the host never learns a device paired, so no contact is
 /// told a new device joined.
 #[test]

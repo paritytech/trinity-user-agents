@@ -16,9 +16,8 @@ use super::{
 		AccountHolder, HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices,
 		SigningHostRole,
 		authority::{
-			AccountCaller, AccountInvocation, AuthorityError, AuthoritySession,
-			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
 	},
 	LocalActivation, TEST_NETWORK_SUFFIX,
@@ -135,20 +134,6 @@ fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
 	// `a_context_grant_lets_a_foreign_product_prove_with_the_owners_key`
 	// and its M14 pair.
 	assert!(!granted, "the closed default: no manifest reachable means no grant");
-}
-
-/// A call from `product`, bound by this host, into the wallet.
-fn local<'a>(
-	call: &'a CallContext,
-	session: &'a AuthoritySession,
-	product: &'a ProductContext,
-) -> AccountInvocation<'a> {
-	AccountInvocation { call, session, caller: AccountCaller::Local { product } }
-}
-
-/// The wallet activation installed now.
-fn active_session(authority: &SigningHostRole) -> AuthoritySession {
-	authority.wallet.current_session().expect("active session")
 }
 
 fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {

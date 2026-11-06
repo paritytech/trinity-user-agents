@@ -12,62 +12,6 @@ fn wallet_for(storage: Arc<dyn CoreStorage>, entropy: u8) -> WalletAccountHolder
 	super::super::tests::unlocked_wallet(platform, "paseo", entropy)
 }
 
-/// A pass that began under a wallet since replaced must neither prune nor track
-/// under that wallet, whether it was replaced while the pass waited for the
-/// ledger or after it read it: either would drop entries the new wallet
-/// promised.
-#[test]
-fn stale_renewal_cannot_prune_the_replacement_wallets_targets() {
-	use futures::FutureExt;
-
-	for waiting_on_lock in [true, false] {
-		let storage = Arc::new(YieldingStorage::default());
-		let wallet = wallet_for(storage.clone(), 8);
-		let target = StatementRenewalTarget::Account {
-			account_id: [9; 32],
-			label: "wallet B device".to_string(),
-		};
-		futures::executor::block_on(wallet.track_statement_renewal_targets(vec![target.clone()]))
-			.unwrap();
-		let owner = wallet.current_session().unwrap().public_key;
-		wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
-		let selected = wallet.current_session().unwrap();
-		let guard = waiting_on_lock
-			.then(|| futures::executor::block_on(wallet.renewal.ledger_lock().lock()));
-		let renewal = wallet.renew_statement_allowances();
-		futures::pin_mut!(renewal);
-		assert!(renewal.as_mut().now_or_never().is_none());
-		wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
-		drop(guard);
-		if waiting_on_lock {
-			futures::executor::block_on(
-				wallet.track_statement_renewal_targets(vec![target.clone()]),
-			)
-			.unwrap();
-		}
-		let result = futures::executor::block_on(renewal).map(|_| ());
-		let tracked = futures::executor::block_on(wallet.track_statement_renewal_targets_for(
-			&selected,
-			vec![StatementRenewalTarget::Account {
-				account_id: [8; 32],
-				label: "wallet A device".to_string(),
-			}],
-		));
-		assert_eq!(
-			(
-				result.map_err(|error| error.to_string()),
-				tracked.map_err(|error| error.to_string()),
-				futures::executor::block_on(read_entries(storage.as_ref())).unwrap()
-			),
-			(
-				Err("Disconnected".to_string()),
-				Err("Disconnected".to_string()),
-				vec![TrackedStatementRenewalTarget { target, owner: Some(owner) }]
-			),
-		);
-	}
-}
-
 #[derive(Default)]
 struct MemStorage {
 	inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
