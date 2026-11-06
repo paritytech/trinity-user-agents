@@ -359,6 +359,9 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
         chainStatusAnchorWidth?.update(offset: width)
+        #if !FEATURE_PRODUCTS
+            chromeController.setChainStatus(models)
+        #endif
     }
 
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?) {

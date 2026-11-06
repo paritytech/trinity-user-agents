@@ -4,6 +4,8 @@ use crate::{
 	platform::{AuthState, CoreStorageKey},
 	runtime::{
 		ProductRuntimeHost,
+		allowances::AllowanceResource,
+		authority::{Allowance, AutoSigningKey, StatementStoreAllowanceKey},
 		tests::{
 			auto_signing_test_platform, cache_test_product_subtree, install_pairing_session,
 			request_auto_signing, withdrawn_requests,
@@ -286,7 +288,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	futures::executor::block_on(remember_auto_key(
 		&pairing_host,
 		&session,
-		pairing_host.session().current_session_lifecycle_epoch(),
+		pairing_host.grant_revision(),
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
@@ -417,7 +419,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
+	let stale_revision = pairing_host.grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -433,26 +435,29 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	let auto_signing_error = futures::executor::block_on(remember_auto_key(
 		&pairing_host,
 		&session,
-		stale_epoch,
+		stale_revision,
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
 		[0x42; 32],
 	))
 	.expect_err("the old AutoSigning allocation completion must be rejected");
-	let statement_store_result =
-		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-			&session,
-			stale_epoch,
-			&ProductId::for_test("myapp.dot"),
-			subtree.secret.to_bytes().to_vec(),
-		));
+	let statement_store_result = futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::StatementStore,
+		&session,
+		stale_revision,
+		&ProductId::for_test("myapp.dot"),
+		subtree.secret.to_bytes().to_vec(),
+	));
 	let Err(statement_store_error) = statement_store_result else {
 		panic!("the old statement-store allocation completion must be rejected");
 	};
-	let bulletin_result = futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+	let bulletin_result = futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::Bulletin,
 		&session,
-		stale_epoch,
+		stale_revision,
 		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	));
@@ -495,7 +500,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	);
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
-	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
+	let stale_revision = pairing_host.grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -515,23 +520,27 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(remember_auto_key(
 			&pairing_host,
 			&session,
-			stale_epoch,
+			stale_revision,
 			product_id.as_str(),
 			subtree.public.to_bytes(),
 			subtree.secret.to_bytes(),
 			[0x42; 32],
 		))
 		.unwrap();
-		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
+		futures::executor::block_on(retain_allowance_key(
+			&pairing_host,
+			AllowanceResource::StatementStore,
 			&session,
-			stale_epoch,
+			stale_revision,
 			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
 		.unwrap();
-		futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+		futures::executor::block_on(retain_allowance_key(
+			&pairing_host,
+			AllowanceResource::Bulletin,
 			&session,
-			stale_epoch,
+			stale_revision,
 			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
@@ -542,8 +551,8 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		pairing_host.clear_product_state(&ProductId::for_test("myapp.dot")),
 	)
 	.unwrap();
-	let current_epoch = pairing_host.session().current_session_lifecycle_epoch();
-	assert_ne!(current_epoch, stale_epoch);
+	let current_revision = pairing_host.grant_revision();
+	assert_ne!(current_revision, stale_revision);
 	assert_eq!(cache_sizes(&pairing_host), (1, 1, 1, 1));
 	assert!(
 		!futures::executor::block_on(has_auto_key(&pairing_host, &session, "myapp.dot")).unwrap()
@@ -552,36 +561,44 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(has_auto_key(&pairing_host, &session, "other.dot")).unwrap()
 	);
 	assert!(
-		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
+		futures::executor::block_on(cached_allowance_key(
+			&pairing_host,
+			AllowanceResource::StatementStore,
 			&session,
-			current_epoch,
+			current_revision,
 			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
 	);
 	assert!(
-		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
+		futures::executor::block_on(cached_allowance_key(
+			&pairing_host,
+			AllowanceResource::StatementStore,
 			&session,
-			current_epoch,
+			current_revision,
 			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
 		.is_some()
 	);
 	assert!(
-		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
+		futures::executor::block_on(cached_allowance_key(
+			&pairing_host,
+			AllowanceResource::Bulletin,
 			&session,
-			current_epoch,
+			current_revision,
 			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
 	);
 	assert!(
-		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
+		futures::executor::block_on(cached_allowance_key(
+			&pairing_host,
+			AllowanceResource::Bulletin,
 			&session,
-			current_epoch,
+			current_revision,
 			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
@@ -592,7 +609,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(remember_auto_key(
 			&pairing_host,
 			&session,
-			stale_epoch,
+			stale_revision,
 			"myapp.dot",
 			first.public.to_bytes(),
 			first.secret.to_bytes(),
@@ -601,9 +618,11 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		Err(AuthorityError::Disconnected)
 	));
 	assert!(matches!(
-		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
+		futures::executor::block_on(retain_allowance_key(
+			&pairing_host,
+			AllowanceResource::StatementStore,
 			&session,
-			stale_epoch,
+			stale_revision,
 			&ProductId::for_test("myapp.dot"),
 			first.secret.to_bytes().to_vec(),
 		)),
@@ -629,7 +648,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
+	let grant_revision = pairing_host.grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -640,23 +659,27 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	futures::executor::block_on(remember_auto_key(
 		&pairing_host,
 		&session,
-		lifecycle_epoch,
+		grant_revision,
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
 		[0x42; 32],
 	))
 	.unwrap();
-	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
+	futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::StatementStore,
 		&session,
-		lifecycle_epoch,
+		grant_revision,
 		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
-	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+	futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::Bulletin,
 		&session,
-		lifecycle_epoch,
+		grant_revision,
 		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
@@ -687,7 +710,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	);
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
-	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
+	let grant_revision = pairing_host.grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -695,16 +718,20 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
-	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
+	futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::StatementStore,
 		&session,
-		lifecycle_epoch,
+		grant_revision,
 		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
-	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+	futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::Bulletin,
 		&session,
-		lifecycle_epoch,
+		grant_revision,
 		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
@@ -850,6 +877,38 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 		host.test_session_state().current().is_none(),
 		"disconnect must win over the earlier external activation"
 	);
+}
+
+/// A product reset concerns that product's grants, not which wallet is
+/// paired, so it keeps a session that is being activated.
+#[test]
+fn a_product_reset_during_activation_keeps_the_new_session() {
+	let (host, pairing_host) = ProductRuntimeHost::new_compat_with_pairing(
+		Arc::new(StubPlatform::default()),
+		test_spawner(),
+	);
+	let session = sso_session_info();
+	let blob = crate::host_logic::session::encode_persisted_session(&session);
+	let (activation_entered, resume_activation) =
+		pairing_host.session().pause_external_session_activation_for_tests();
+	let activation = std::thread::spawn({
+		let pairing_host = pairing_host.clone();
+		move || futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
+	});
+	futures::executor::block_on(activation_entered)
+		.expect("external activation reached the installation fence");
+
+	futures::executor::block_on(
+		pairing_host.clear_product_state(&ProductId::for_test("myapp.dot")),
+	)
+	.unwrap();
+	resume_activation.send(()).expect("external activation remains in flight");
+	activation
+		.join()
+		.expect("external activation thread panicked")
+		.expect("external activation completes");
+
+	assert_eq!(host.test_session_state().current(), Some(session));
 }
 
 #[test]
@@ -1106,12 +1165,73 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	);
 }
 
+/// A pairing test host, whose wallet answered the Bulletin allowance in-page,
+/// keeps the submission in the core once told to and serves it back, so a
+/// product's submit-then-lookup round trip works without the chain.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
+	use crate::host_internal::bulletin::preimage_key;
+	use truapi::{
+		api::Preimage,
+		versioned::preimage::{
+			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+			RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
+		},
+	};
+
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform::default());
+	let (host_config, product) = runtime_config("myapp.dot");
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+	install_pairing_session(&host, session.clone());
+	let grant_revision = pairing_host.grant_revision();
+	let allowance =
+		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0x42; 32]).unwrap();
+	futures::executor::block_on(retain_allowance_key(
+		&pairing_host,
+		AllowanceResource::Bulletin,
+		&session,
+		grant_revision,
+		&ProductId::for_test("myapp.dot"),
+		allowance.secret.to_bytes().to_vec(),
+	))
+	.expect("the wallet's allowance is cached");
+	pairing_host.set_submit_preimages_locally(true);
+	let value = b"pairing test host preimage".to_vec();
+	let cx = CallContext::default();
+
+	// No Bulletin client is configured, so reaching the chain would fail here.
+	let response = futures::executor::block_on(Preimage::submit(
+		&host,
+		&cx,
+		RemotePreimageSubmitRequest::V1(value.clone()),
+	))
+	.expect("the submission stays in the core");
+	assert_eq!(response, RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec()));
+
+	let mut lookup = futures::executor::block_on(host.lookup_subscribe(
+		&cx,
+		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+			key: preimage_key(&value).to_vec(),
+		}),
+	));
+	assert_eq!(
+		futures::executor::block_on(lookup.next()).expect("a lookup item"),
+		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
+			value: Some(value)
+		}))
+	);
+}
+
 async fn has_auto_key(
 	pairing_host: &PairingHost,
 	session: &SessionInfo,
 	product_id: &str,
 ) -> Result<bool, AuthorityError> {
 	pairing_host
+		.grants
 		.auto_signing_key(session, &crate::platform::ProductId::for_test(product_id))
 		.await
 		.map(|key| key.is_some())
@@ -1120,21 +1240,57 @@ async fn has_auto_key(
 async fn remember_auto_key(
 	pairing_host: &PairingHost,
 	session: &SessionInfo,
-	lifecycle_epoch: u64,
+	grant_revision: u64,
 	product_id: &str,
 	expected_product_subtree_public_key: [u8; 32],
 	secret: [u8; 64],
 	ring_vrf_domain_entropy: [u8; 32],
 ) -> Result<(), AuthorityError> {
 	pairing_host
+		.grants
 		.remember_auto_signing_key(
 			session,
-			lifecycle_epoch,
+			grant_revision,
 			&crate::platform::ProductId::for_test(product_id),
 			expected_product_subtree_public_key,
-			secret,
-			ring_vrf_domain_entropy,
+			AutoSigningKey::from_parts(secret, ring_vrf_domain_entropy),
 		)
+		.await
+}
+
+async fn retain_allowance_key(
+	pairing_host: &PairingHost,
+	resource: AllowanceResource,
+	session: &SessionInfo,
+	grant_revision: u64,
+	product_id: &ProductId,
+	secret: Vec<u8>,
+) -> Result<(), AuthorityError> {
+	let grant = match resource {
+		AllowanceResource::StatementStore => Allowance::StatementStore {
+			key: StatementStoreAllowanceKey::from_secret_bytes(secret)?,
+			period: None,
+		},
+		AllowanceResource::Bulletin => {
+			Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(secret)?)
+		},
+	};
+	pairing_host
+		.grants
+		.retain_allowance(session, grant_revision, product_id, &grant)
+		.await
+}
+
+async fn cached_allowance_key(
+	pairing_host: &PairingHost,
+	resource: AllowanceResource,
+	session: &SessionInfo,
+	grant_revision: u64,
+	product_id: &ProductId,
+) -> Result<Option<Allowance>, AuthorityError> {
+	pairing_host
+		.grants
+		.cached_allowance(session, grant_revision, product_id, resource)
 		.await
 }
 
@@ -1152,26 +1308,5 @@ async fn register_vrf_key(
 }
 
 fn cache_sizes(pairing_host: &PairingHost) -> (usize, usize, usize, usize) {
-	(
-		pairing_host
-			.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned")
-			.len(),
-		pairing_host
-			.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned")
-			.len(),
-		pairing_host
-			.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.len(),
-		pairing_host
-			.auto_signing_keys
-			.lock()
-			.expect("AutoSigning key cache mutex poisoned")
-			.len(),
-	)
+	pairing_host.grants.capability_cache_sizes_for_tests()
 }
