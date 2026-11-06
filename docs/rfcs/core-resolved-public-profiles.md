@@ -165,7 +165,7 @@ an avatar shows the letter tile even if bytes for its previous CID remain cached
 Failures do not create profile or image cache entries. dotNS emits no text-change
 event, so a displayed avatar changes on a later lookup, not at the expiry instant.
 
-On Android, chat entry first resolves without `force` and displays the cached avatar,
+On native hosts, chat entry first resolves without `force` and displays the cached avatar,
 then forces a profile refresh in the background. The displayed image stays visible
 until its replacement is ready, including when refresh fails. A successful lookup
 without an avatar restores the letter tile. Leaving the view cancels its requests.
