@@ -1,6 +1,6 @@
 //! View-function signature lookup and decoded-value cache of [`Metadata`].
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ViewFunctionDef {
 	pub id: [u8; 32],
 	pub inputs: usize,

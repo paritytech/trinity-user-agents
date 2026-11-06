@@ -87,7 +87,7 @@ fn build_offline(builder: ExtrinsicBuilder<'_>) -> Result<MortalExtrinsic, Extri
 }
 
 /// A value that is already encoded, written as it is whatever the type.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct PreencodedValue(Vec<u8>);
 
 impl EncodeAsType for PreencodedValue {
