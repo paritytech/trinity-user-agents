@@ -80,6 +80,18 @@ Every fact has a source tag:
   - **Observed**: the latest statements that this tab saw.
 - **Owner** records where the account came from in this tab, not a signature check: **This wallet** (derived here this
   session), **Reported only**, or **Unknown here**. Unknown does not mean "not this wallet".
+- An account's detail has a **Chat** line, a link to the Chat view's card, for each chat it is tied to:
+  - **host:** the host let it post for a request (`chatAccount`). The card is the conversation its product reports for
+    that request, or the request on its own.
+  - **reported:** a product's report names it as its account or the peer in a conversation. The host did not check it.
+  - An account tied to more than one chat has one line per chat. A notification account, or an account no one tied, has
+    none.
+- An account's **Channels** list its channels, with the latest observed statement and how many it replaced. Choosing one
+  narrows the account's statements to it, each marked **latest** or **replaced**. The chip under the list, choosing the
+  account again, or a link to the account alone shows every channel again. A channel belongs to its account: other
+  accounts' statements on the same channel id never show under it.
+- An account's or a topic's statements list the last 20 observed, the last observed first. A statement seen again moves
+  to the top, once. Each row shows when it was last observed, and how many times since it was first observed.
 - **Topics:** one row per topic. Names are given only when known: the host's day inbox
   (`Shared setup inbox · today UTC`, derived) or a name from a product report (reported). **Role**: Listening,
   Publishing (accepted or broadcast), Both, Tried (none known to have gone out), or Other observed.
@@ -95,7 +107,8 @@ Every fact has a source tag:
 ### Limits
 
 - Kept in memory: 800 events, 1,000 statements, 400 submissions, 200 subscriptions, 300 accounts and topics, 600
-  channels, 64 conversations, 200 requests. The view counts what it drops.
+  channels, 64 conversations, 200 requests. The view counts what it drops. Statements go by last observation: the one
+  observed longest ago goes first.
 - The observer keeps at most 256 unanswered requests and subscriptions per connection.
 - **Capture data** keeps statement bytes: 16 KiB each, 512 KiB in all. **Copy evidence** copies metadata only, as JSON.
 - Text from the node, light client or core has long hex replaced by its length and is cut at 200 characters.
@@ -109,6 +122,11 @@ Conversations that product workers report about themselves (`tools/chat/`), and 
   peers, topics, message counts and the statements per message.
 - **Tie:** "tied to" the product only when a claim or allowance of that product names the account. Else "reported only".
 - **Protocol details** are what only the protocol defines, as reported.
+- **Statements** (derived): per account the card names (own, the host's allowance when another, peers), the latest
+  observed statements per channel, the channels and the last time. Each opens the account in Statements. **Details** has
+  one **Channel** link per account and channel, which opens the account narrowed to that channel; the channel the
+  product says it posts on is marked reported, or listed as not observed. The accounts are the product's word unless the
+  Tie line says otherwise. It is this tab's observed traffic, not the network's.
 - The host reads no chat payload. Account and topic links open the Statements view. A stopped worker's card is stale.
 
 ## Products

@@ -114,6 +114,10 @@ export function mountTools(page: ToolsPage): Tools {
       showInspectorView("workers");
       workersView.select(name);
     },
+    showChat(key) {
+      showInspectorView("chat");
+      chatView.reveal(key);
+    },
   });
   const chatView = mountChatView(element("chat-inspector"), {
     ledger: page.statements,

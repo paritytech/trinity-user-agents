@@ -20,6 +20,7 @@ import {
   testBrowser,
   type RunningHost,
 } from "./support/fixtures.js";
+import type { StatementLedger } from "../tools/statements/ledger.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 120_000;
@@ -84,6 +85,11 @@ const VIEW_PAGE = `<!doctype html>
         network: () => "testnet",
         showTraces: (name) => shown.push("traces:" + name),
         inspectWorker: (name) => shown.push("worker:" + name),
+        showChat(key) {
+          shown.push("chat:" + key);
+          window.__showView("chat");
+          chat.reveal(key);
+        },
       });
       const chat = mountChatView(document.getElementById("chat-inspector"), {
         ledger,
@@ -215,7 +221,10 @@ const VIEW_PAGE = `<!doctype html>
 
 interface ViewWindow {
   __feed(): Promise<{ own: string }>;
-  __reveal(target: { account: string } | { topic: string }): void;
+  __reveal(
+    target: { account: string; channel?: string } | { topic: string },
+  ): void;
+  __ledger: StatementLedger;
   __borrow(): Promise<void>;
   __refuseHere(): Promise<void>;
   __showView(name: "chat" | "statements"): void;
@@ -345,15 +354,9 @@ describe("the Statements and Chat views", () => {
         expect(line("Per message")).toMatch(
           /\| derived \| derived 1\.00 stmts · \d+ B \(2 broadcast · 3 tried · 2 sent\)/,
         );
-        // Resources are Statements': none show in the Chat card.
-        for (const label of [
-          "Claim",
-          "Grant",
-          "Observed",
-          "Posts",
-          "Answers",
-          "Channel",
-        ])
+        // Resources are Statements': the card shows none, only what this
+        // tab observed of its accounts, as links there.
+        for (const label of ["Claim", "Grant", "Observed", "Posts", "Answers"])
           expect(line(label)).toBe("");
         expect(await card.locator(".si-why[open]").count()).toBe(0);
         await shot(page, "chat");
@@ -411,6 +414,13 @@ describe("the Statements and Chat views", () => {
           ),
           expect.stringContaining(
             "Allowance | host | host contact-chat.test · allowed for request 0x4444…4444",
+          ),
+        ]);
+        // The host's allowance ties it to that request's chat: one link,
+        // the host's, to the conversation the product reports for it.
+        expect(account.filter((entry) => entry.startsWith("Chat |"))).toEqual([
+          expect.stringContaining(
+            "Chat | host | host contact-chat.test · allowed for request 0x4444…4444",
           ),
         ]);
         // The list says each account in a few words under named columns;
@@ -701,6 +711,244 @@ describe("the Statements and Chat views", () => {
           "worker:contact-chat.test",
           "traces:contact-chat.test",
         ]);
+
+        // From the account, its Chat link opens the Chat view on that
+        // conversation's card, focused.
+        await card
+          .locator("dd", {
+            has: page.locator(".si-src", { hasText: "reported" }),
+          })
+          .locator(".si-link", { hasText: "0xa1a1" })
+          .first()
+          .click();
+        await page
+          .locator("#statements-inspector .si-detail [data-chat-link]")
+          .click();
+        await page
+          .locator('#chat-inspector .si-card[data-revealed="true"]')
+          .waitFor();
+        expect(
+          await page.evaluate(() => ({
+            chatShown: !document.getElementById("chat-inspector")!.hidden,
+            focused: (document.activeElement as HTMLElement | null)?.dataset
+              .key,
+            asked: (window as unknown as ViewWindow).__shown.at(-1),
+          })),
+        ).toEqual({
+          chatShown: true,
+          focused: "conversation:contact-chat.test:0x" + "c0".repeat(16),
+          asked: "chat:conversation:contact-chat.test:0x" + "c0".repeat(16),
+        });
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "Chat links each account it names, and each of its channels, to those statements in Statements, a channel scoped by its account",
+    async () => {
+      const { context, page } = await openView();
+      try {
+        const own = "0x" + "a1".repeat(32);
+        const peer = "0x" + "b2".repeat(32);
+        const channel = "0x" + "33".repeat(32);
+        const card = page.locator(
+          `#chat-inspector .si-card[data-key="conversation:contact-chat.test:0x${"c0".repeat(16)}"]`,
+        );
+        await card.locator("details.si-columns-about > summary").click();
+        const facts = await factsOf(
+          page,
+          "#chat-inspector .si-card:first-of-type",
+        );
+        // The host's allowance is the reported account: one link for it,
+        // one for the peer, each its latest observed per channel.
+        expect(
+          facts.filter((entry) => entry.startsWith("Statements |")),
+        ).toEqual([
+          expect.stringMatching(
+            /^Statements \| derived \| derived own 1 stmt · 1 ch · \d\d:\d\d peer 1 stmt · 1 ch · \d\d:\d\d\s*why ‖ .*does not show whose they are/,
+          ),
+        ]);
+        // Both post on the same channel id: under Details, one channel per
+        // account, and only the product's own says it posts there.
+        expect(facts.filter((entry) => entry.startsWith("Channel |"))).toEqual([
+          expect.stringMatching(
+            /^Channel \| derived \| derived own · 0x333333…3333 · latest \d\d:\d\d:\d\d · 1 replaced · posts here reported/,
+          ),
+          expect.stringMatching(
+            /^Channel \| derived \| derived peer · 0x333333…3333 · latest \d\d:\d\d:\d\d · 0 replaced ‖ $/,
+          ),
+        ]);
+
+        await shot(page, "chat-statements");
+        const detail = page.locator("#statements-inspector .si-detail");
+        const versions = () =>
+          detail
+            .locator(".si-statement")
+            .evaluateAll((boxes) =>
+              boxes.map((box) => (box as HTMLElement).dataset.version ?? ""),
+            );
+        const chip = detail.locator("[data-channel-filter]");
+        // The own account's channel opens Statements on that account, its
+        // statements narrowed to its channel, the last observed first: the
+        // latest and the one it replaced, none of the peer's on the same
+        // channel id.
+        await card
+          .locator(`[data-observed-channel="${own}:${channel}"]`)
+          .click();
+        await chip.waitFor();
+        expect({
+          asked: await page.evaluate(() =>
+            (window as unknown as ViewWindow).__shown.at(-1),
+          ),
+          account: await detail.getAttribute("data-key"),
+          picked: await detail
+            .locator(`[data-channel="${channel}"]`)
+            .getAttribute("aria-pressed"),
+          row: await detail
+            .locator(`[data-key="channel:${channel}"]`)
+            .innerText(),
+          heading: await detail.locator(".si-sub").last().innerText(),
+          versions: await versions(),
+        }).toEqual({
+          asked: "statements:" + JSON.stringify({ account: own, channel }),
+          account: `account:${own}`,
+          picked: "true",
+          row: expect.stringContaining("contact-chat.test posts here reported"),
+          heading: "Statements on this channel (last 20)",
+          versions: ["latest", "replaced"],
+        });
+        expect(
+          await detail.locator(".si-statement > summary").allInnerTexts(),
+        ).toEqual([
+          expect.stringMatching(
+            /^latest · 0x[0-9a-f]{6}…[0-9a-f]{4} · \d+ B · last \d\d:\d\d:\d\d · broadcast · observed once$/,
+          ),
+          expect.stringMatching(/^replaced · .* · observed once$/),
+        ]);
+        await shot(page, "account-channel");
+
+        // The chip shows every channel again.
+        await chip.click();
+        await detail
+          .locator(".si-sub", { hasText: "Statements observed (last 20)" })
+          .waitFor();
+        expect([await chip.count(), await versions()]).toEqual([0, ["", ""]]);
+
+        // Picking the channel in the list narrows it again; choosing the
+        // account row anew, or opening the account from Chat, does not keep it.
+        await detail.locator(`[data-channel="${channel}"]`).click();
+        await chip.waitFor();
+        const row = page.locator(
+          '#statements-inspector .si-list-row[aria-pressed="true"]',
+        );
+        await row.click();
+        await row.waitFor({ state: "detached" });
+        await page
+          .locator("#statements-inspector .si-list-row", { hasText: "0xa1a1" })
+          .click();
+        await detail.waitFor();
+        expect(await chip.count()).toBe(0);
+        await detail.locator(`[data-channel="${channel}"]`).click();
+        await chip.waitFor();
+        await page.evaluate(() =>
+          (window as unknown as ViewWindow).__showView("chat"),
+        );
+        await card.locator(`[data-observed-account="${own}"]`).click();
+        await detail
+          .locator(".si-sub", { hasText: "Statements observed (last 20)" })
+          .waitFor();
+        expect(await chip.count()).toBe(0);
+
+        // The peer's channel is the peer's: its one statement, its latest.
+        await page.evaluate(() =>
+          (window as unknown as ViewWindow).__showView("chat"),
+        );
+        await card
+          .locator(`[data-observed-channel="${peer}:${channel}"]`)
+          .click();
+        await page
+          .locator(
+            `#statements-inspector .si-detail[data-key="account:${peer}"]`,
+          )
+          .locator("[data-channel-filter]")
+          .waitFor();
+        expect(await versions()).toEqual(["latest"]);
+
+        // A channel this account never posted on, whoever else did, or an
+        // account this tab never saw, shows nothing, and says so.
+        const other = "0x" + "99".repeat(32);
+        await page.evaluate(
+          ([account, channel]) =>
+            (window as unknown as ViewWindow).__reveal({ account, channel }),
+          [other, channel],
+        );
+        await page
+          .locator(
+            `#statements-inspector .si-detail[data-key="account:${other}"]`,
+          )
+          .waitFor();
+        expect(
+          await factsOf(page, "#statements-inspector .si-detail"),
+        ).toContainEqual(
+          expect.stringContaining(
+            `Channel | inspector | inspector ${channel} · nothing observed`,
+          ),
+        );
+        await page.evaluate(
+          ([account, channel]) =>
+            (window as unknown as ViewWindow).__reveal({ account, channel }),
+          [peer, "0x" + "44".repeat(32)],
+        );
+        await detail.locator(".si-channel-missing").waitFor();
+        expect(await detail.locator(".si-statement").count()).toBe(0);
+
+        // A chat whose accounts were never observed says so, and its own
+        // reported channel shows as reported only: another account's
+        // statements on the same channel id are not its.
+        await page.evaluate(
+          ([account, peer, channel]) => {
+            const view = window as unknown as ViewWindow;
+            view.__ledger.diagnostics(
+              { name: "unseen.test", run: 1 },
+              {
+                conversations: [
+                  {
+                    id: "u1",
+                    protocol: "unseen/1",
+                    account,
+                    peers: [peer],
+                    post: { topics: [], channel },
+                  },
+                ],
+              },
+            );
+            view.__showView("chat");
+          },
+          ["0x" + "f1".repeat(32), "0x" + "f2".repeat(32), channel],
+        );
+        const unseen = page.locator(
+          '#chat-inspector .si-card[data-key="conversation:unseen.test:u1"]',
+        );
+        await unseen.waitFor();
+        await unseen.locator("details.si-columns-about > summary").click();
+        expect(
+          (
+            await factsOf(
+              page,
+              '#chat-inspector .si-card[data-key="conversation:unseen.test:u1"]',
+            )
+          ).filter((entry) => /^(Statements|Channel) \|/.test(entry)),
+        ).toEqual([
+          expect.stringContaining(
+            "Statements | derived | derived own not observed peer not observed",
+          ),
+          expect.stringContaining(
+            "Channel | reported | reported own · 0x333333…3333 · not observed",
+          ),
+        ]);
       } finally {
         await context.close();
       }
@@ -941,12 +1189,12 @@ describe("the Statements and Chat views", () => {
           (await inbox.locator(".si-statement > summary").allInnerTexts()).map(
             (text) => /signer [a-z ]+? ·/.exec(text)?.[0],
           ),
-        ).toEqual(["signer this wallet ·", "signer unknown here ·"]);
-        await inbox.locator(".si-statement > summary").last().click();
+        ).toEqual(["signer unknown here ·", "signer this wallet ·"]);
+        await inbox.locator(".si-statement > summary").first().click();
         expect(
           await inbox
             .locator(".si-statement")
-            .last()
+            .first()
             .locator("dd", { hasText: "Unknown here" })
             .innerText(),
         ).toContain("Unknown here");

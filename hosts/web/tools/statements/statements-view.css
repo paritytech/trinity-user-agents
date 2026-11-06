@@ -233,6 +233,11 @@
   opacity: 0.6;
 }
 
+/* The card another view linked to. */
+.si-card[data-revealed="true"] {
+  border-color: var(--si-on);
+}
+
 .si-card-head {
   display: flex;
   flex-wrap: wrap;
@@ -452,6 +457,12 @@
 
 .statements-inspector .si-link:hover {
   color: #f4f4f5;
+}
+
+/* The channel the account's statements are narrowed to. */
+.statements-inspector .si-link[aria-pressed="true"] {
+  color: #f4f4f5;
+  text-decoration-style: solid;
 }
 
 .si-statement {

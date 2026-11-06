@@ -13,6 +13,7 @@ import {
   ownership,
   short,
   type AccountRecord,
+  type ChatLink,
   type EventKind,
   type FactSource,
   type LedgerEvent,
@@ -57,6 +58,8 @@ export interface StatementsViewDeps {
   showTraces(productId: string): void;
   /** Show `name`'s worker in the Workers view. */
   inspectWorker(name: string): void;
+  /** Show the Chat view's card `key` (a {@link ChatLink}'s). */
+  showChat(key: string): void;
 }
 
 export interface StatementsView {
@@ -69,9 +72,13 @@ export interface StatementsView {
 
 type Tab = "accounts" | "topics" | "timeline";
 
-/** What another view asks the Statements view to show. */
+/**
+ * What another view asks the Statements view to show. With a channel, the
+ * account's statements narrow to that channel: a channel id is scoped by
+ * its account, never matched across accounts.
+ */
 export type StatementsTarget =
-  | { account: string }
+  | { account: string; channel?: string }
   | { topic: string }
   | { handle: string; label: string };
 
@@ -94,6 +101,9 @@ const KINDS: { value: EventKind; label: string }[] = [
 
 /** How often the view draws at most while shown. */
 const DRAW_MS = 250;
+
+/** How many statements a detail lists, the last observed first. */
+const RECENT = 20;
 
 function roleText(role: Role): string {
   switch (role.kind) {
@@ -442,6 +452,8 @@ export function mountStatementsView(
   let dirty = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let selectedAccount: string | null = null;
+  /** The selected account's channel its statements are narrowed to. */
+  let selectedChannel: string | null = null;
   let selectedTopic: string | null = null;
   /** A link opened the view: the selected row takes the focus after the draw. */
   let revealed = false;
@@ -583,10 +595,11 @@ export function mountStatementsView(
     timeline.focus = null;
   }
 
-  /** Select `account` on the Accounts tab. */
-  function openAccount(account: string): void {
+  /** Select `account` on the Accounts tab, its statements narrowed to `channel` when given. */
+  function openAccount(account: string, channel?: string): void {
     tab = "accounts";
     selectedAccount = account.toLowerCase();
+    selectedChannel = channel?.toLowerCase() ?? null;
     revealed = true;
     now();
   }
@@ -606,10 +619,15 @@ export function mountStatementsView(
     return link;
   }
 
-  /** The newest observed statements, each opening to its metadata and captured data. */
+  /**
+   * Observed statements, the last observed first, each opening to its
+   * metadata and captured data. Given a channel's latest observed hash, each says whether
+   * it is that one or one it replaced.
+   */
   function statementBoxes(
     statements: ObservedStatement[],
     withSigner: boolean,
+    latest?: string,
   ): HTMLElement[] {
     return statements.map((statement) => {
       const box = el("details", "si-statement");
@@ -620,7 +638,14 @@ export function mountStatementsView(
         withSigner && signer !== undefined
           ? ownership(ledger.accountRecord(signer))
           : null;
-      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B${owner === null ? "" : ` · signer ${OWNER_LABEL[owner.kind].toLowerCase()}`} · ${statement.via.map((via) => (via === "broadcast" ? transport.wentOut : via)).join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
+      const version =
+        latest === undefined
+          ? undefined
+          : statement.meta.hash === latest
+            ? "latest"
+            : "replaced";
+      if (version !== undefined) box.dataset.version = version;
+      head.textContent = `${version === undefined ? "" : `${version} · `}${short(statement.meta.hash)} · ${statement.meta.dataBytes} B · last ${clock(statement.lastAt)}${owner === null ? "" : ` · signer ${OWNER_LABEL[owner.kind].toLowerCase()}`} · ${statement.via.map((via) => (via === "broadcast" ? transport.wentOut : via)).join(", ")} · ${statement.sightings === 1 ? "observed once" : `observed ${statement.sightings}×, first ${clock(statement.firstAt)}`}`;
       box.append(head);
       const facts = el("dl", "si-facts");
       if (owner !== null && signer !== undefined)
@@ -719,6 +744,7 @@ export function mountStatementsView(
       row.addEventListener("click", () => {
         selectedAccount =
           account.account === selectedAccount ? null : account.account;
+        selectedChannel = null;
         now();
       });
       table.append(row);
@@ -726,6 +752,25 @@ export function mountStatementsView(
         table.append(accountDetail(account));
     }
     return [tools, ...missing, table];
+  }
+
+  /** A chat the account is tied to, as a link to its card in the Chat view. */
+  function chatFact(link: ChatLink): HTMLElement[] {
+    const open = button(
+      "si-link",
+      `${link.product} · ${link.text}`,
+      `Show this chat in the Chat view`,
+    );
+    open.dataset.chatLink = link.key;
+    open.addEventListener("click", () => deps.showChat(link.key));
+    return fact(
+      "Chat",
+      open,
+      link.source,
+      link.source === "host"
+        ? "The host let this account post for the chat that request set up. The Chat view shows the request in the conversation its product reports for it, or on its own."
+        : "The product reported this account in that conversation. The host did not check it.",
+    );
   }
 
   /** A linked account this session's ledger holds nothing of: said so, and nothing is read for it. */
@@ -744,6 +789,13 @@ export function mountStatementsView(
         "inspector",
         "This tab recorded no statement, claim, grant or role of it, or dropped them to keep its limits. A product may name an account it never used here.",
       ),
+      ...(selectedChannel === null
+        ? []
+        : fact(
+            "Channel",
+            `${selectedChannel} · nothing observed`,
+            "inspector",
+          )),
     );
     detail.append(facts);
     return detail;
@@ -758,6 +810,8 @@ export function mountStatementsView(
     facts.append(...ownerFact(ownership(account)));
     for (const role of usesOf(account))
       facts.append(...fact("Role", roleText(role), roleSource(role)));
+    for (const link of ledger.chatLinks(account.account))
+      facts.append(...chatFact(link));
     for (const role of account.roles)
       if (role.kind === "product-account")
         facts.append(...fact("Derived as", roleText(role), "core"));
@@ -857,12 +911,29 @@ export function mountStatementsView(
       const list = el("ul", "si-plain");
       for (const channel of channels) {
         const latest = ledger.statement(channel.latest);
-        const item = el(
-          "li",
-          undefined,
-          `${short(channel.channel)} · ${latest === undefined ? "latest dropped from list" : `${latest.meta.dataBytes} B · seen ${clock(latest.lastAt)}`} · ${channel.replacements} replaced`,
-        );
+        const item = el("li");
         item.dataset.key = `channel:${channel.channel}`;
+        const pick = button(
+          "si-link",
+          short(channel.channel),
+          `Show only this account's statements on channel ${channel.channel}`,
+        );
+        pick.dataset.channel = channel.channel;
+        pick.setAttribute(
+          "aria-pressed",
+          String(channel.channel === selectedChannel),
+        );
+        pick.addEventListener("click", () => {
+          selectedChannel =
+            channel.channel === selectedChannel ? null : channel.channel;
+          now();
+        });
+        item.append(
+          pick,
+          ` · ${latest === undefined ? "latest dropped from list" : `${latest.meta.dataBytes} B · seen ${clock(latest.lastAt)}`} · ${channel.replacements} replaced`,
+        );
+        for (const product of postsOn(account.account, channel.channel))
+          item.append(` · ${product} posts here `, tag("product"));
         item.append(
           more(
             `Latest observed ${channel.latest}${latest === undefined ? "" : `, expires ${expiryText(latest.meta)}`}. ${channel.older} older seen later${channel.priorityRefusals > 0 ? `, ${channel.priorityRefusals} answered lower priority` : ""}. Not what peers hold now.`,
@@ -872,16 +943,67 @@ export function mountStatementsView(
       }
       detail.append(list);
     }
-    const statements = ledger
-      .statementList()
-      .filter((statement) => statement.meta.signer === account.account)
-      .slice(-20);
-    if (statements.length > 0)
-      detail.append(
-        el("h4", "si-sub", "Statements observed (newest 20)"),
-        ...statementBoxes(statements, false),
+    if (selectedChannel !== null)
+      detail.append(...channelStatements(account.account, selectedChannel));
+    else {
+      const statements = ledger.recentStatements(
+        (statement) => statement.meta.signer === account.account,
+        RECENT,
       );
+      if (statements.length > 0)
+        detail.append(
+          el("h4", "si-sub", `Statements observed (last ${RECENT})`),
+          ...statementBoxes(statements, false),
+        );
+    }
     return detail;
+  }
+
+  /** Products whose report says `account` posts on `channel`, unchecked. */
+  function postsOn(account: string, channel: string): string[] {
+    const products = ledger
+      .conversationList()
+      .filter(
+        (record) =>
+          record.report.account === account &&
+          record.report.post?.channel === channel,
+      )
+      .map((record) => record.product);
+    return [...new Set(products)];
+  }
+
+  /** `account`'s statements narrowed to `channel`, with the way back to all of them. */
+  function channelStatements(account: string, channel: string): HTMLElement[] {
+    const all = button(
+      "si-chip si-focus",
+      `Channel ${short(channel)} ×`,
+      "Show the account's statements on every channel again",
+    );
+    all.setAttribute("aria-pressed", "true");
+    all.dataset.channelFilter = channel;
+    all.addEventListener("click", () => {
+      selectedChannel = null;
+      now();
+    });
+    const tools = el("div", "si-row-tools");
+    tools.append(all);
+    const record = ledger.channelRecord(account, channel);
+    const statements = ledger.channelStatements(account, channel, RECENT);
+    const missing =
+      record === undefined
+        ? "Nothing of this account on this channel in this session, or it was dropped to keep the limits."
+        : statements.length === 0
+          ? "Its statements left the list to keep the limits."
+          : null;
+    return [
+      tools,
+      ...(missing === null
+        ? [
+            el("h4", "si-sub", `Statements on this channel (last ${RECENT})`),
+            ...statementBoxes(statements, false, record?.latest),
+          ]
+        : [el("p", "si-note si-channel-missing", missing)]),
+    ];
   }
 
   async function readGrantsFor(accounts: string[]): Promise<void> {
@@ -1080,13 +1202,13 @@ export function mountStatementsView(
       ),
     );
     detail.append(actionsRow, facts);
-    const statements = ledger
-      .statementList()
-      .filter((statement) => statement.meta.topics.includes(record.topic))
-      .slice(-20);
+    const statements = ledger.recentStatements(
+      (statement) => statement.meta.topics.includes(record.topic),
+      RECENT,
+    );
     if (statements.length > 0)
       detail.append(
-        el("h4", "si-sub", "Statements observed (newest 20)"),
+        el("h4", "si-sub", `Statements observed (last ${RECENT})`),
         ...statementBoxes(statements, true),
       );
     if (view.subscriptions.length > 0) {
@@ -1310,6 +1432,7 @@ export function mountStatementsView(
     ledger.clear();
     openEvents.clear();
     selectedAccount = null;
+    selectedChannel = null;
     selectedTopic = null;
     say("Cleared.");
     now();
@@ -1323,7 +1446,7 @@ export function mountStatementsView(
     },
     reveal(target) {
       clearTimelineFilters();
-      if ("account" in target) openAccount(target.account);
+      if ("account" in target) openAccount(target.account, target.channel);
       else if ("topic" in target) openTopic(target.topic);
       else {
         tab = "timeline";
@@ -1338,6 +1461,7 @@ export function mountStatementsView(
       ledger.setCapture(false);
       openEvents.clear();
       selectedAccount = null;
+      selectedChannel = null;
       selectedTopic = null;
       timeline.focus = null;
       say("");

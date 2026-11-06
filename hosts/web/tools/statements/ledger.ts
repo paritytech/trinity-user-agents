@@ -488,6 +488,23 @@ const emptyCounters = (): Counters => ({
  * An account's latest observed statements: what this tab saw, not what the
  * node holds now. See {@link StatementLedger.latestObserved}.
  */
+/**
+ * Where the Chat view shows what ties an account to a chat: a card of that
+ * view, by its `data-key`, and who said so.
+ */
+export interface ChatLink {
+  /** The Chat view's card: `conversation:<product>:<id>` or `request:<handle>`. */
+  key: string;
+  product: string;
+  /**
+   * `host`: the host let this account post for that request.
+   * `product`: the product reported the account in that conversation, unchecked.
+   */
+  source: "host" | "product";
+  /** What ties them, for the link's text. */
+  text: string;
+}
+
 export interface LatestObserved {
   /** Statements counted: latest observed per channel, and those without a channel, not known expired. */
   statements: number;
@@ -1312,6 +1329,11 @@ export class StatementLedger {
       if (meta.signer !== undefined) this.account(meta.signer);
       if (meta.signer !== undefined && meta.channel !== undefined)
         this.channel(meta, meta.signer, meta.channel);
+    } else {
+      // The list runs in order of last observation: the bound then drops
+      // the statement observed longest ago, not the one first seen.
+      this.statements.delete(meta.hash);
+      this.statements.set(meta.hash, statement);
     }
     statement.lastAt = at;
     for (const topic of meta.topics) this.topic(topic).lastAt = at;
@@ -1895,13 +1917,58 @@ export class StatementLedger {
     return this.statements.get(hash);
   }
 
+  /** Every statement kept, the one observed longest ago first. */
   statementList(): ObservedStatement[] {
     return [...this.statements.values()];
+  }
+
+  /**
+   * The `limit` statements matching `match` that this tab observed most
+   * recently, the last observed first. Observations at the same moment keep
+   * the order they arrived in.
+   */
+  recentStatements(
+    match: (statement: ObservedStatement) => boolean,
+    limit: number,
+  ): ObservedStatement[] {
+    const recent: ObservedStatement[] = [];
+    for (const statement of [...this.statements.values()].reverse()) {
+      if (recent.length === limit) break;
+      if (match(statement)) recent.push(statement);
+    }
+    return recent;
   }
 
   channelList(signer?: string): ChannelRecord[] {
     const all = [...this.channels.values()];
     return signer === undefined ? all : all.filter((c) => c.signer === signer);
+  }
+
+  /** `account`'s record of `channel`. A channel id is the account's own: many accounts use the same one. */
+  channelRecord(account: string, channel: string): ChannelRecord | undefined {
+    return this.channels.get(
+      `${account.toLowerCase()}:${channel.toLowerCase()}`,
+    );
+  }
+
+  /**
+   * The `limit` statements still in the list that `account` signed on
+   * `channel`, the last observed first: the channel's latest and the ones
+   * it replaced or that came later with a lower expiry. Other accounts'
+   * statements on the same channel id are not among them.
+   */
+  channelStatements(
+    account: string,
+    channel: string,
+    limit: number,
+  ): ObservedStatement[] {
+    const signer = account.toLowerCase();
+    const id = channel.toLowerCase();
+    return this.recentStatements(
+      (statement) =>
+        statement.meta.signer === signer && statement.meta.channel === id,
+      limit,
+    );
   }
 
   accountList(): AccountRecord[] {
@@ -1930,6 +1997,58 @@ export class StatementLedger {
 
   requestRecord(handle: string): RequestRecord | undefined {
     return this.requests.get(handle);
+  }
+
+  /**
+   * The Chat view's cards that `account` is tied to, one per card, the
+   * host's ties first. The host ties an account to a chat only when it let
+   * the account post for a request (`chat-allowance`): the card is the
+   * conversation the request's product reports for it, else the request.
+   * A product's report that names the account in a conversation ties it to
+   * that conversation's card, marked as the product's word. A notification
+   * account, or an account no one tied, links to no chat.
+   */
+  chatLinks(account: string): ChatLink[] {
+    const record = this.accountRecord(account);
+    if (record === undefined) return [];
+    const reported = (product: string, handle: string) =>
+      this.conversationList().find(
+        (conversation) =>
+          conversation.product === product &&
+          conversation.report.request === handle,
+      );
+    const links = new Map<string, ChatLink>();
+    for (const role of record.roles)
+      if (role.kind === "chat-allowance") {
+        const conversation = reported(role.product, role.handle);
+        const key =
+          conversation === undefined
+            ? `request:${role.handle}`
+            : `conversation:${conversation.key}`;
+        if (!links.has(key))
+          links.set(key, {
+            key,
+            product: role.product,
+            source: "host",
+            text: `allowed for request ${short(role.handle, 4)}`,
+          });
+      }
+    for (const role of record.roles)
+      if (
+        role.kind === "conversation-account" ||
+        role.kind === "conversation-peer"
+      ) {
+        const conversation = `${role.product}:${role.conversation}`;
+        const key = `conversation:${conversation}`;
+        if (links.has(key) || !this.conversations.has(conversation)) continue;
+        links.set(key, {
+          key,
+          product: role.product,
+          source: "product",
+          text: `${role.kind === "conversation-account" ? "its account" : "the peer"} in conversation ${short(role.conversation, 4)}`,
+        });
+      }
+    return [...links.values()];
   }
 
   /**

@@ -26,6 +26,7 @@ function statement(
   ahead: number,
   data = 8,
   channel: Uint8Array | null = CHANNEL,
+  signer = SIGNER,
 ) {
   const encoded = encodeSigned(
     {
@@ -34,7 +35,7 @@ function statement(
       topics: [new Uint8Array(32).fill(1)],
       data: new Uint8Array(data).fill(ahead & 0xff),
     },
-    SIGNER,
+    signer,
     () => new Uint8Array(64),
   );
   return bytesToHex(encoded);
@@ -187,6 +188,87 @@ describe("the statement ledger", () => {
       dataBytes: 40,
       expired: 0,
     });
+  });
+
+  // Many accounts use the same channel id: a channel is one account's, so
+  // another signer's statements on it are never its versions.
+  test("scopes a channel's statements to its account, the latest and the ones it replaced", () => {
+    const { book, submit } = ledger({ statements: 3 });
+    const other = new Uint8Array(32).fill(8);
+    const otherHex = bytesToHex(other);
+    const channelHex = bytesToHex(CHANNEL);
+    submit(statement(100, 10), { status: "new" });
+    submit(statement(100, 11, CHANNEL, other), { status: "new" });
+    submit(statement(200, 12), { status: "new" });
+    const hashes = book.submitList().map((record) => record.meta!.hash);
+    const versions = (account: string) =>
+      book
+        .channelStatements(
+          account.toUpperCase().replace("0X", "0x"),
+          channelHex,
+          20,
+        )
+        .map((entry) => entry.meta.hash);
+    expect([versions(SIGNER_HEX), versions(otherHex)]).toEqual([
+      [hashes[2], hashes[0]],
+      [hashes[1]],
+    ]);
+    expect(book.channelRecord(SIGNER_HEX, channelHex)).toMatchObject({
+      latest: hashes[2],
+      replacements: 1,
+    });
+    expect(book.channelRecord(otherHex, channelHex)!.latest).toBe(hashes[1]);
+    // A channel this account never posted on has no record, whoever else did.
+    expect(
+      book.channelRecord(bytesToHex(new Uint8Array(32).fill(9)), channelHex),
+    ).toBeUndefined();
+    // Past the limit the oldest statement leaves the list; the channel keeps its latest.
+    submit(statement(300, 13, new Uint8Array(32).fill(4)), { status: "new" });
+    expect(versions(SIGNER_HEX)).toEqual([hashes[2]]);
+    expect(book.channelRecord(SIGNER_HEX, channelHex)!.latest).toBe(hashes[2]);
+  });
+
+  // A statement first seen long ago and observed again is what this tab saw
+  // last: it lists first, once, and the bound drops what was observed
+  // longest ago, not what was first seen.
+  test("lists statements by last observation, once each, and drops the one observed longest ago", () => {
+    const { book, submit, subscribe, page } = ledger({ statements: 3 });
+    const other = new Uint8Array(32).fill(8);
+    const otherHex = bytesToHex(other);
+    const channelHex = bytesToHex(CHANNEL);
+    const early = statement(100, 10);
+    const middle = statement(100, 11, new Uint8Array(32).fill(5));
+    const late = statement(100, 12, CHANNEL, other);
+    submit(early, { status: "new" });
+    submit(middle, { status: "new" });
+    submit(late, { status: "new" });
+    const [earlyHash, middleHash, lateHash] = book
+      .submitList()
+      .map((record) => record.meta!.hash);
+    subscribe(7);
+    page(7, [early]);
+    const recent = (limit: number) =>
+      book.recentStatements(() => true, limit).map((entry) => entry.meta.hash);
+    expect(recent(20)).toEqual([earlyHash, lateHash, middleHash]);
+    expect(book.statement(earlyHash)).toMatchObject({ sightings: 2 });
+    // The cap applies after the order, to the matching ones.
+    expect(recent(2)).toEqual([earlyHash, lateHash]);
+    expect(
+      book
+        .recentStatements((entry) => entry.meta.signer === SIGNER_HEX, 1)
+        .map((entry) => entry.meta.hash),
+    ).toEqual([earlyHash]);
+    // A channel's list is its account's alone, in the same order.
+    expect(
+      book.channelStatements(otherHex, channelHex, 20).map((e) => e.meta.hash),
+    ).toEqual([lateHash]);
+    // Past the limit, the statement observed longest ago goes: the middle
+    // one, not the early one seen again.
+    submit(statement(300, 13, null), { status: "new" });
+    expect(recent(20)).toHaveLength(3);
+    expect(recent(20)).not.toContain(middleHash);
+    expect(recent(20).slice(1)).toEqual([earlyHash, lateHash]);
+    expect(book.dropped()).toMatchObject({ statements: 1 });
   });
 
   // Silent eviction: what this tab saw is not what the node holds now, nor a
@@ -524,6 +606,100 @@ describe("the statement ledger", () => {
       product: "chat.paseo",
       handle,
     });
+  });
+
+  test("ties an account to a chat only where the host allowed it, or a product's report names it, one link per chat", () => {
+    const { book } = ledger();
+    const handle = "0x" + "11".repeat(16);
+    const other = "0x" + "22".repeat(16);
+    const own = "0x" + "ab".repeat(32);
+    const peer = "0x" + "cd".repeat(32);
+    const twice = "0x" + "ef".repeat(32);
+    const notification = "0x" + "99".repeat(32);
+    const allow = (product: string, at: string, account: string) =>
+      book.invitations({
+        type: "chat-account",
+        product,
+        handle: at,
+        index: "0x" + "01".repeat(32),
+        outcome: "allowed",
+        account,
+        until: 5,
+      });
+    book.invitations({ type: "request-sent", product: "kettle.paseo", handle });
+    book.invitations({
+      type: "delivery-account",
+      post: handle,
+      account: notification,
+      period: 1,
+    });
+    allow("kettle.paseo", handle, own);
+    // Allowed before any report: the host's request is the chat.
+    expect(book.chatLinks(own)).toEqual([
+      {
+        key: `request:${handle}`,
+        product: "kettle.paseo",
+        source: "host",
+        text: "allowed for request 0x1111…1111",
+      },
+    ]);
+    book.diagnostics(
+      { name: "kettle.paseo", run: 1 },
+      {
+        conversations: [
+          {
+            id: "c1",
+            protocol: "kettle/6",
+            request: handle,
+            account: own,
+            peers: [peer],
+          },
+          { id: "c2", protocol: "kettle/6", account: twice },
+        ],
+      },
+    );
+    // Reported for that request: the conversation, once, as the host's tie.
+    expect(book.chatLinks(own)).toEqual([
+      {
+        key: "conversation:kettle.paseo:c1",
+        product: "kettle.paseo",
+        source: "host",
+        text: "allowed for request 0x1111…1111",
+      },
+    ]);
+    // The peer only the product names: its word, marked so.
+    expect(book.chatLinks(peer)).toEqual([
+      {
+        key: "conversation:kettle.paseo:c1",
+        product: "kettle.paseo",
+        source: "product",
+        text: "the peer in conversation c1",
+      },
+    ]);
+    // An account tied to two chats lists both, the host's first.
+    book.invitations({
+      type: "request-sent",
+      product: "kettle.paseo",
+      handle: other,
+    });
+    allow("kettle.paseo", other, twice);
+    expect(
+      book.chatLinks(twice).map((link) => [link.key, link.source]),
+    ).toEqual([
+      [`request:${other}`, "host"],
+      ["conversation:kettle.paseo:c2", "product"],
+    ]);
+    // A notification account, or one no one tied, links to no chat.
+    expect([
+      book.chatLinks(notification),
+      book.chatLinks("0x" + "77".repeat(32)),
+    ]).toEqual([[], []]);
+    // A report another product sends for the same request is not that chat.
+    book.diagnostics(
+      { name: "other.paseo", run: 1 },
+      { conversations: [{ id: "x", protocol: "p", request: other }] },
+    );
+    expect(book.chatLinks(twice)[0]!.key).toBe(`request:${other}`);
   });
 
   test("keeps a product's reports as reported, and marks them stale once its worker stops", () => {

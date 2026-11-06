@@ -14,6 +14,7 @@ import {
   more,
   openDisclosures,
   reopenDisclosures,
+  tag,
 } from "../statements/ui.js";
 
 /**
@@ -25,9 +26,11 @@ import {
  * Resource facts (claims, grants, submissions, channels, subscriptions)
  * belong to the Statements view, which knows no protocol; each account and
  * topic here links to it, and the request to its timeline. A link only
- * navigates. An account a product names is joined with the host's facts,
- * here a cost per message, only when a claim or an allowance of that product
- * ties them.
+ * navigates. The Statements line counts what this tab saw signed by the
+ * accounts a card names, and links each account, and in Details each of its
+ * channels, to those statements in Statements. An account a product names
+ * is joined with the host's facts, here a cost per message, only when a
+ * claim or an allowance of that product ties them.
  */
 
 export interface ChatViewDeps {
@@ -42,6 +45,11 @@ export interface ChatViewDeps {
 
 export interface ChatView {
   show(visible: boolean): void;
+  /**
+   * Bring the card `key` (`conversation:<product>:<id>` or
+   * `request:<handle>`) into view and focus it, or say it is gone.
+   */
+  reveal(key: string): void;
 }
 
 /** How often the view draws at most while shown. */
@@ -55,6 +63,44 @@ const ACCOUNT_NOTE =
 
 const CONVERSATION_ID_NOTE =
   "The product's own local id for this conversation. Not an account, a key or a topic.";
+
+const OBSERVED_NOTE =
+  "Statements this tab saw signed by these accounts in this session: the latest per channel, and channels seen. The product names its own account and peers, and the host checks only an allowance (see Tie), so this does not show whose they are. Observed traffic, not what the network holds. Each opens its statements in Statements.";
+
+/** How many of one account's channels a card lists; Statements lists all. */
+const CHANNELS_PER_ACCOUNT = 6;
+
+/**
+ * An account a card names. `own`: the account the product says it posts
+ * as. `allowed`: the host's allowance for the request, when not that one.
+ * `peer`: an account the product says it reads.
+ */
+interface ChatAccount {
+  account: string;
+  role: "own" | "allowed" | "peer";
+}
+
+/** The accounts a card names, each once, in {@link ChatAccount} role order. */
+function chatAccounts(
+  own: string | undefined,
+  allowed: string | undefined,
+  peers: readonly string[],
+): ChatAccount[] {
+  const accounts: ChatAccount[] = [];
+  const add = (account: string | undefined, role: ChatAccount["role"]) => {
+    if (
+      account !== undefined &&
+      !accounts.some(
+        (entry) => entry.account.toLowerCase() === account.toLowerCase(),
+      )
+    )
+      accounts.push({ account, role });
+  };
+  add(own, "own");
+  add(allowed, "allowed");
+  for (const peer of peers) add(peer, "peer");
+  return accounts;
+}
 
 /** A conversation's title, from the host's request when the host holds it for the same product. */
 function titleOf(request: RequestRecord | undefined): string {
@@ -84,6 +130,8 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
 
   let visible = false;
   let dirty = true;
+  /** The card another view asked for, shown once drawn. */
+  let revealing: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const link = (text: string, target: StatementsTarget, label: string) => {
@@ -118,6 +166,97 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     const request = ledger.requestRecord(handle);
     return request?.product === record.product ? request : undefined;
   };
+
+  /**
+   * What this tab observed signed by the accounts a card names: one link per
+   * account to its statements in Statements, and in `channels` one link per
+   * channel to its statements alone. `postsOn` is the channel the product
+   * says its own account posts on.
+   */
+  function observed(
+    accounts: ChatAccount[],
+    postsOn?: string,
+  ): { row: HTMLElement[]; channels: HTMLElement[] } {
+    if (accounts.length === 0) return { row: [], channels: [] };
+    const peers = accounts.filter((entry) => entry.role === "peer").length;
+    const name = (entry: ChatAccount) =>
+      entry.role === "peer" && peers > 1
+        ? `peer ${short(entry.account, 4)}`
+        : entry.role;
+    const summaries = accounts.map((entry) => {
+      const seen = ledger.latestObserved(entry.account);
+      const channels = ledger.channelList(entry.account.toLowerCase()).length;
+      const node = button(
+        "si-link",
+        seen.lastObservedAt === null
+          ? `${name(entry)} not observed`
+          : `${name(entry)} ${seen.statements} stmt${seen.statements === 1 ? "" : "s"} · ${channels} ch · ${clock(seen.lastObservedAt).slice(0, 5)}`,
+        `Show the statements of ${entry.account} in Statements`,
+      );
+      node.dataset.observedAccount = entry.account;
+      node.addEventListener("click", () =>
+        deps.showStatements({ account: entry.account }),
+      );
+      return node;
+    });
+    const channels: HTMLElement[] = [];
+    for (const entry of accounts) {
+      const records = ledger.channelList(entry.account.toLowerCase());
+      const own = entry.role === "own" ? postsOn : undefined;
+      for (const record of records.slice(0, CHANNELS_PER_ACCOUNT)) {
+        const latest = ledger.statement(record.latest);
+        const node = button(
+          "si-link",
+          `${name(entry)} · ${short(record.channel)} · ${latest === undefined ? "latest dropped" : `latest ${clock(latest.lastAt)}`} · ${record.replacements} replaced`,
+          `Show the statements of ${entry.account} on channel ${record.channel} in Statements`,
+        );
+        node.dataset.observedChannel = `${entry.account}:${record.channel}`;
+        node.addEventListener("click", () =>
+          deps.showStatements({
+            account: entry.account,
+            channel: record.channel,
+          }),
+        );
+        channels.push(
+          ...fact(
+            "Channel",
+            record.channel === own
+              ? links([
+                  node,
+                  el("span", undefined, "· posts here"),
+                  tag("product"),
+                ])
+              : node,
+            "derived",
+          ),
+        );
+      }
+      if (records.length > CHANNELS_PER_ACCOUNT)
+        channels.push(
+          ...fact(
+            "Channel",
+            `${name(entry)} · ${records.length - CHANNELS_PER_ACCOUNT} more in Statements`,
+            "derived",
+          ),
+        );
+      if (
+        own !== undefined &&
+        !records.some((record) => record.channel === own)
+      )
+        channels.push(
+          ...fact(
+            "Channel",
+            `${name(entry)} · ${short(own)} · not observed`,
+            "product",
+            "The product says its account posts on this channel. This tab observed nothing of it.",
+          ),
+        );
+    }
+    return {
+      row: fact("Statements", links(summaries), "derived", OBSERVED_NOTE),
+      channels,
+    };
+  }
 
   function requestFacts(request: RequestRecord): HTMLElement[] {
     return [
@@ -285,6 +424,11 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
           "The accounts whose statements it says it reads. Reported, not who they belong to.",
         ),
       );
+    const seen = observed(
+      chatAccounts(report.account, request?.account, report.peers ?? []),
+      report.post?.channel,
+    );
+    facts.append(...seen.row);
     facts.append(
       ...topicRow(
         "Listens on",
@@ -332,6 +476,7 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     const idFacts = el("dl", "si-facts");
     idFacts.append(
       ...fact("Conversation ID", report.id, "product", CONVERSATION_ID_NOTE),
+      ...seen.channels,
     );
     details.append(el("summary", undefined, "Details"), idFacts);
     card.append(details);
@@ -359,7 +504,16 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     );
     const facts = el("dl", "si-facts");
     facts.append(...requestFacts(request));
+    const seen = observed(chatAccounts(undefined, request.account, []));
+    facts.append(...seen.row);
     card.append(facts);
+    if (seen.channels.length > 0) {
+      const details = el("details", "si-columns-about");
+      const channels = el("dl", "si-facts");
+      channels.append(...seen.channels);
+      details.append(el("summary", undefined, "Details"), channels);
+      card.append(details);
+    }
     return card;
   }
 
@@ -392,6 +546,21 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
       ...(conversations.length + requests.length === 0 ? [empty] : []),
     );
     reopenDisclosures(body, opened);
+    if (revealing !== null) {
+      const key = revealing;
+      revealing = null;
+      const card = [...body.querySelectorAll<HTMLElement>("[data-key]")].find(
+        (node) => node.dataset.key === key,
+      );
+      if (card === undefined) {
+        summary.textContent = `${summary.textContent} · that chat is no longer here`;
+        return;
+      }
+      card.dataset.revealed = "true";
+      card.tabIndex = -1;
+      card.scrollIntoView({ block: "nearest" });
+      card.focus({ preventScroll: true });
+    }
   };
 
   ledger.onChange(() => {
@@ -407,6 +576,11 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
         clearTimeout(timer);
         draw();
       }
+    },
+    reveal(key) {
+      revealing = key;
+      clearTimeout(timer);
+      draw();
     },
   };
 }
