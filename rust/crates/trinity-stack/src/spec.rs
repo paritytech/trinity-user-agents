@@ -19,7 +19,7 @@ impl Chain {
 			.ok_or_else(|| Error::MalformedSpec(format!("{} has no lightSpec", self.role)))?;
 		spec.check(bytes)?;
 		let implied = light_spec_genesis(bytes)?;
-		if implied == format::hex_bytes::<32>("genesisHash", &self.genesis_hash)? {
+		if implied == self.genesis() {
 			Ok(())
 		} else {
 			Err(Error::SpecGenesis(format::to_hex(&implied)))

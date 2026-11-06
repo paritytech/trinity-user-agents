@@ -24,6 +24,26 @@ fn test_bundled_stack_pointers() {
 	}
 }
 
+/// `stack bundle` writes the copy every command starts from, so a built-in
+/// network's copy the CLI cannot run on is not written; any other stack is
+/// bundled as fetched.
+#[test]
+fn test_built_in_runnable_check() {
+	let without_dub = super::super::testing::edit_stack(|descriptor| {
+		descriptor["services"]
+			.as_array_mut()
+			.unwrap()
+			.retain(|service| service["kind"] != "dub");
+	});
+	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+	let error = ensure_built_in_runnable(&paseo, &without_dub).unwrap_err();
+	assert!(error.to_string().contains("no dub service"));
+	ensure_built_in_runnable(&POLKADOT_REFERENCE_STACK.pointer(), &without_dub)
+		.expect("a stack other than a built-in network checked");
+	ensure_built_in_runnable(&paseo, &Network::PaseoNextV2.built_in_stack().bundled())
+		.expect("bundled paseo-next-v2 copy not runnable");
+}
+
 /// The hint tells the user which copy is in use and why, so a restart on
 /// the bundled copy points at the published descriptor that could not be
 /// fetched or was rejected.
@@ -138,6 +158,41 @@ fn test_refresh_tld_change_bundle() {
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&other_tld_copy)).unwrap();
 	assert_eq!(refresh.stack.descriptor().sequence, 10);
 	assert_eq!(refresh.stack.tld(), "paseo");
+	assert!(refresh.notice.is_none());
+	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
+}
+
+/// The id is the namespace every session and account is stored under, so a
+/// refresh that changes it would move them all.
+#[test]
+fn test_refresh_id_change_bundle() {
+	let renamed_copy = sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g1".into();
+		descriptor["id"] = "paseo-next".into();
+	});
+	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&renamed_copy)).unwrap();
+	assert_eq!(refresh.stack.descriptor().sequence, 10);
+	assert_eq!(refresh.stack.namespace(), "paseo-next-v2");
+	assert!(refresh.notice.is_none());
+	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
+}
+
+/// A published copy the CLI cannot run on, such as one without a `dub`
+/// service, leaves the network on the bundled copy instead of stopping every
+/// command until a release ships a fix.
+#[test]
+fn test_refresh_unrunnable_copy_bundle() {
+	let without_dub = sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g1".into();
+		descriptor["services"]
+			.as_array_mut()
+			.unwrap()
+			.retain(|service| service["kind"] != "dub");
+	});
+	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&without_dub)).unwrap();
+	assert_eq!(refresh.stack.descriptor().sequence, 10);
 	assert!(refresh.notice.is_none());
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }

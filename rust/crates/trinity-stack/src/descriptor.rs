@@ -227,10 +227,9 @@ impl Descriptor {
 		self.services.iter().find(|service| service.kind == kind)
 	}
 
-	/// The dotNS contract address under this `DotnsConstants` key, when the stack has one.
-	///
-	/// Panics when the address is not 20 bytes of lowercase hex, which a descriptor read through
-	/// [`Descriptor::from_json`] or deserialised rules out.
+	/// The dotNS contract address under this `DotnsConstants` key as bytes, when the stack has
+	/// one. Decodes hex that validation already checked, so it panics only on a descriptor that
+	/// skipped [`Descriptor::from_json`] and deserialisation.
 	pub fn dotns_address(&self, key: &str) -> Option<[u8; 20]> {
 		let address = self.dotns.as_ref()?.get(key)?;
 		Some(format::hex_bytes("dotns", address).expect("invalid dotns address in a descriptor"))
@@ -412,10 +411,8 @@ impl Descriptor {
 }
 
 impl Chain {
-	/// The genesis hash.
-	///
-	/// Panics when `genesisHash` is not 32 bytes of lowercase hex, which a descriptor read through
-	/// [`Descriptor::from_json`] or deserialised rules out.
+	/// The genesis hash as bytes. Decodes hex that validation already checked, so it panics only
+	/// on a chain that skipped [`Descriptor::from_json`] and deserialisation.
 	pub fn genesis(&self) -> [u8; 32] {
 		format::hex_bytes("genesisHash", &self.genesis_hash)
 			.expect("invalid genesisHash in a descriptor")

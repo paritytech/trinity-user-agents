@@ -7,7 +7,7 @@ use super::{
 };
 
 fn read_stack_option(descriptor: Descriptor) -> Result<Stack> {
-	Stack::from_stack_option(descriptor, ChainBackend::Rpc)
+	Stack::new(descriptor, ChainBackend::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -40,7 +40,7 @@ fn test_stack_from_descriptor() {
 	assert_eq!(stack.pop_controller(), [0xab; 20]);
 	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let people = ChainEndpoint { genesis: [0x11; 32], ws: "ws://127.0.0.1:9944".to_owned() };
-	assert_eq!(stack.chains(), Roles { people, ..paseo.chains() });
+	assert_eq!(*stack.chains(), Roles { people, ..paseo.chains().clone() });
 }
 
 /// Reserved identities derive under the TLD, and navigation accepts only the
@@ -123,27 +123,4 @@ fn test_stack_missing_dub_or_pop_controller_error() {
 	});
 	let error = read_stack_option(without_pop_controller).unwrap_err();
 	assert!(error.to_string().contains("no dotns.popController"));
-}
-
-/// A published copy that changes only fields the CLI does not read is no news
-/// to the user, while one that moves any chain's RPC list is, since the
-/// Polkadot fork check tries each node of the reference in order.
-#[test]
-fn test_stack_reads_same() {
-	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
-	let renamed = paseo.edited(|descriptor| {
-		descriptor["name"] = "Renamed".into();
-		descriptor["sequence"] = 1.into();
-	});
-	assert!(paseo.reads_same(&renamed));
-
-	let relay_moved = paseo.edited(|descriptor| {
-		for chain in descriptor["chains"].as_array_mut().unwrap() {
-			if chain["role"] == "Relay" {
-				chain["rpc"].as_array_mut().unwrap().push("wss://relay.example".into());
-			}
-		}
-	});
-	assert!(!paseo.reads_same(&relay_moved));
-	assert!(!paseo.reads_same(&paseo.with_dub("https://dub.example/")));
 }

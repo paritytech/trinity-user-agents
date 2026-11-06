@@ -82,15 +82,8 @@ pub const ROLE_NAMES: Roles<&str> =
 	Roles { people: "People", asset_hub: "AssetHub", bulletin: "Bulletin" };
 
 impl<T> Roles<T> {
-	pub fn map<U>(self, mut transform: impl FnMut(T) -> U) -> Roles<U> {
-		Roles {
-			people: transform(self.people),
-			asset_hub: transform(self.asset_hub),
-			bulletin: transform(self.bulletin),
-		}
-	}
-
-	/// [`Self::map`] with a fallible `transform`; fails with its first error.
+	/// Each role's value through a fallible `transform`; fails with its first
+	/// error.
 	pub fn try_map<U, E>(
 		self,
 		mut transform: impl FnMut(T) -> Result<U, E>,
@@ -106,6 +99,30 @@ impl<T> Roles<T> {
 	pub fn iter(&self) -> impl Iterator<Item = &T> {
 		[&self.people, &self.asset_hub, &self.bulletin].into_iter()
 	}
+}
+
+/// Whether `stack` and `other` agree in every field the CLI reads: `id`, which
+/// is the product namespace, the TLD, `generation`, the `dub` service,
+/// `dotns.popController`, and the genesis hash and full `rpc` list of People,
+/// Asset Hub and Bulletin. The full lists are compared because the Polkadot
+/// fork check connects to the reference's nodes in that order.
+pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
+	fn pop_controller(stack: &Descriptor) -> Option<&String> {
+		stack.dotns.as_ref()?.get("popController")
+	}
+	let role_chains_same =
+		ROLE_NAMES.iter().all(|role| match (stack.chain(role), other.chain(role)) {
+			(Some(chain), Some(other)) => {
+				chain.genesis_hash == other.genesis_hash && chain.rpc == other.rpc
+			},
+			(chain, other) => chain.is_none() && other.is_none(),
+		});
+	stack.id == other.id &&
+		stack.tld == other.tld &&
+		stack.generation == other.generation &&
+		stack.service("dub") == other.service("dub") &&
+		pop_controller(stack) == pop_controller(other) &&
+		role_chains_same
 }
 
 /// Why a descriptor URL served no descriptor.

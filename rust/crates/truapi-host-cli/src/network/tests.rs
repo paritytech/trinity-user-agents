@@ -6,15 +6,15 @@ use super::*;
 #[test]
 fn test_network_served_roles() {
 	for network in Network::value_variants() {
-		let config = network.bundled_stack(ChainBackend::Rpc);
+		let stack = network.bundled_stack(ChainBackend::Rpc);
 		let served: Vec<ChainIdentifier> =
-			config.host_chain_set().chains.iter().map(|entry| entry.identifier).collect();
+			stack.host_chain_set().chains.iter().map(|entry| entry.identifier).collect();
 
 		assert_eq!(
 			served,
 			vec![ChainIdentifier::People, ChainIdentifier::Bulletin, ChainIdentifier::AssetHub],
 			"{} serves an unexpected role set",
-			config.namespace()
+			stack.namespace()
 		);
 	}
 }
@@ -41,10 +41,9 @@ const TEST_NETWORK_HOSTS: &[&str] = &[
 #[test]
 fn test_built_in_network_hosts() {
 	for network in Network::value_variants() {
-		let config = network.bundled_stack(ChainBackend::Rpc);
-		let (backend, chains) = (config.identity_backend(), config.chains());
-		let mut routes = vec![backend.as_str()];
-		routes.extend(chains.iter().map(|chain| chain.ws.as_str()));
+		let stack = network.bundled_stack(ChainBackend::Rpc);
+		let mut routes = vec![stack.identity_backend()];
+		routes.extend(stack.chains().iter().map(|chain| chain.ws.as_str()));
 
 		for route in routes {
 			let host = reqwest::Url::parse(route)
@@ -83,9 +82,9 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 	let mut unreachable = Vec::new();
 
 	for network in Network::value_variants() {
-		let config = network.bundled_stack(ChainBackend::Rpc);
-		for entry in config.host_chain_set().chains {
-			let ws = &config
+		let stack = network.bundled_stack(ChainBackend::Rpc);
+		for entry in stack.host_chain_set().chains {
+			let ws = &stack
 				.endpoint_for_role(entry.identifier)
 				.expect("served role has no endpoint")
 				.ws;
@@ -123,20 +122,20 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 				drifted.push(format!(
 					"{} serves {:?} from {ws}, which calls itself {chain_name:?} and \
 					 contains none of {expected_in_name:?}",
-					config.namespace(),
+					stack.namespace(),
 					entry.identifier
 				));
 			} else if entry.genesis_hash == reported {
 				println!(
 					"{} {:?} {} matches {ws} ({chain_name})",
-					config.namespace(),
+					stack.namespace(),
 					entry.identifier,
 					hex::encode(entry.genesis_hash)
 				);
 			} else {
 				drifted.push(format!(
 					"{} advertises {:?} as {} but {ws} reports {}",
-					config.namespace(),
+					stack.namespace(),
 					entry.identifier,
 					hex::encode(entry.genesis_hash),
 					hex::encode(reported)

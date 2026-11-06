@@ -17,10 +17,11 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
-	chain::ChainBackend,
-	network::Stack,
+	network::built_in::ensure_built_in_runnable,
 	platform,
-	stack_descriptor::{FETCH_TIMEOUT, fetch, pointer_of, read_stack, refused, unix_now},
+	stack_descriptor::{
+		FETCH_TIMEOUT, fetch, pointer_of, read_stack, reads_same, refused, unix_now,
+	},
 	terminal_ui::qr_rows,
 };
 
@@ -263,6 +264,8 @@ async fn bundle(
 		eprintln!("warning: {} is past validUntil; its operator should republish", pointer.url());
 	}
 	let descriptor = &accepted.stack.descriptor;
+	ensure_built_in_runnable(&pointer, descriptor)
+		.map_err(|error| anyhow!("not bundled: {error}"))?;
 	if let Some(bytes) = previous.as_deref() {
 		let stored_document = Document::parse(bytes).map_err(|error| {
 			anyhow!(
@@ -283,15 +286,11 @@ async fn bundle(
 				out.display()
 			);
 		}
-		let read_as_stack = |descriptor| Stack::new(descriptor, ChainBackend::Rpc).ok();
 		let is_current = skip_same_projection &&
+			open(bytes, &pointer).is_ok() &&
+			reads_same(stored_descriptor, descriptor) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
-			stored_descriptor.valid_until == descriptor.valid_until &&
-			open(bytes, &pointer)
-				.ok()
-				.and_then(|stored| read_as_stack(stored.descriptor))
-				.and_then(|stored| Some(stored.reads_same(&read_as_stack(descriptor.clone())?)))
-				.unwrap_or(false);
+			stored_descriptor.valid_until == descriptor.valid_until;
 		if is_current {
 			println!(
 				"{} is current: {} sequence {} changes no field truapi-host reads",

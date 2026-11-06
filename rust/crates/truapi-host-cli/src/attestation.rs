@@ -269,7 +269,7 @@ pub async fn lite_username_available(
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
 	let response =
-		send_with_backend_auth(&client, &backend_base, auth_entropy, network.tld(), |token| {
+		send_with_backend_auth(&client, backend_base, auth_entropy, network.tld(), |token| {
 			client.post(&url).bearer_auth(token).json(&body)
 		})
 		.await
@@ -329,7 +329,7 @@ pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 	let asset_hub_signing_context =
 		signing_context_of(&chains, config.network.genesis().asset_hub, DOTNS_GATEWAY_PALLET)
 			.await?;
-	let verifier = fetch_verifier(&client, &backend_base).await?;
+	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
 		config.network.tld(),
@@ -482,7 +482,7 @@ async fn search_backend_prefix(
 			query.push(("cursor", cursor));
 		}
 		let response =
-			send_with_backend_auth(client, &backend_base, auth_entropy, network.tld(), |token| {
+			send_with_backend_auth(client, backend_base, auth_entropy, network.tld(), |token| {
 				client.get(&url).bearer_auth(token).query(&query)
 			})
 			.await
@@ -609,7 +609,7 @@ async fn submit_registration(
 	});
 	let response = send_with_backend_auth(
 		client,
-		&backend_base,
+		backend_base,
 		&config.entropy,
 		config.network.tld(),
 		|token| client.post(&url).bearer_auth(token).json(&body),

@@ -1691,16 +1691,18 @@ Every network comes from a Trinity stack descriptor
 | Reserved-identity suffix | `tld` |
 | `DotnsPopController` | `dotns.popController` |
 
-The fields the CLI reads are these, `generation`, and the role, genesis hash and
-full `rpc` list of every chain, which the Polkadot comparison below tries in
-order. A published copy that changes none of them makes no notice print
-(below).
+The fields the CLI reads are these, `id` (the product namespace), `generation`,
+and the full `rpc` list of People, Asset Hub and Bulletin; the full list is
+compared because the Polkadot comparison below contacts the reference's nodes.
+A published copy that changes none of them makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), has a `tld` the core
-does not serve (`dot`, `paseo`, `testnet`), or has no `dub` service or no
-`dotns.popController` is an error for every command. The CLI reads usernames
-through that controller and does not look it up on chain.
+does not serve (`dot`, `paseo`, `testnet`), has the id `polkadot`, or has no
+`dub` service or no `dotns.popController` is an error for every command. The
+CLI's own username reads (`register-name`, `identity-check`, `attest`) go
+through that controller without looking it up on chain; the signing host's
+core still discovers its controller on chain.
 
 The binary also ships real Polkadot's signed descriptor, from PCF's pointer, as
 `stacks/polkadot.json` with its link in `stacks/polkadot.link`. It is not a
@@ -1719,17 +1721,18 @@ hashes and may use the `dot` TLD, and runs like any other network. Before a
 command runs, every endpoint the network routes whose genesis is one of the
 shipped copy's, from a built-in or a `--stack`, is compared with real Polkadot,
 in parallel with the other
-checks. The endpoint and the first of the Polkadot descriptor's RPC nodes for
-the same chain that answers each report their finalized block number; at the
-lower of the two, both report their block hash. Equal hashes mean the endpoint
-serves Polkadot itself, which is an error that names it. The endpoint, or every
-Polkadot node, not answering within 3 seconds is an error too, since the
-endpoint is then not shown to be a fork. A fork made less than Polkadot's
-finality lag ago is therefore refused until Polkadot finalizes past the fork. An
-endpoint with no Polkadot genesis is not compared. `network-check`, which
-contacts no chain, does not compare.
+checks. Every RPC node the Polkadot descriptor lists for the same chain is
+contacted at once, and the first to answer is used. The endpoint and that node
+each report their finalized block number; at the lower of the two, both report
+their block hash. Equal hashes are an error that names the endpoint: it is
+Polkadot itself, or a fork that has not finalized past its fork point. The
+endpoint, or every Polkadot node, not answering within 3 seconds at a step is an
+error that names that side and node, since the endpoint is then not shown to be
+a fork. A fork made less than Polkadot's finality lag ago therefore cannot run
+until Polkadot finalizes past the fork. An endpoint with no Polkadot genesis is
+not compared. `network-check`, which contacts no chain, does not compare.
 
-A `--stack` with the id `polkadot` is refused, since earlier releases stored
+A stack with the id `polkadot` cannot run, since earlier releases stored
 `--network polkadot` sessions under that namespace.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
@@ -1743,8 +1746,10 @@ changes a field the CLI reads is used and reported in one line on
 stderr with both sequences, saying it is in use and that a later release ships
 it; the line says the stack restarted from genesis when its `generation`
 changed. A newer copy that changes none of them is used without a line. A
-published copy that changes the `tld` is not used, with a warning, since every
-account derives under it. A refused, rolled-back or
+published copy that changes the `tld` or the `id`, or that the CLI cannot run on
+(for instance one without a `dub` service), is not used: the shipped copy stays
+in use with a warning that names the published URL, since every account derives
+under the TLD and is stored under the namespace. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
 unreachable one does so without a message. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
@@ -1754,7 +1759,8 @@ after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundl
 no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
 shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
-`tld` of the copy at `--out`.
+`tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
+on.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
@@ -1762,7 +1768,8 @@ the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis is an error; for a built-in it reports that
 the stack restarted from genesis and which descriptor is in use: the published
 one and its URL, or the bundled one because the published copy at its URL could
-not be fetched or was rejected (refused, a rollback, a conflict or a TLD change).
+not be fetched or was rejected (refused, a rollback, a conflict, a TLD or id
+change, or a copy the CLI cannot run on).
 When the bundled copy is in use because the published one could not be fetched,
 a failed check first fetches the published descriptor again (10-second timeout);
 the checks repeat only when that fetch puts the published copy in use, and
@@ -1781,7 +1788,7 @@ stack; one past `validUntil` is used with a warning. Its endpoints and People's
 refused with `--stack`, since the light client syncs only the networks
 `truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
-be a lowercase label; a `polkadot-fork` stack keeps its full `id`, so it does
+be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
 not share the retired `polkadot` namespace.
 
 #### `network-check`
@@ -1789,7 +1796,12 @@ not share the retired `polkadot` namespace.
 A stack is the only source of a network's routing: a fork or a local network
 runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
 URLs are `ws://` and `http://` on loopback. An error about a stack names where
-it came from, `--stack` or `HOST_CLI_STACK`.
+it came from, `--stack` or `HOST_CLI_STACK`. Setting a routing env var earlier
+releases read (`HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`,
+`HOST_CLI_BULLETIN_WS`, `HOST_CLI_IDENTITY_BACKEND_BASE`,
+`HOST_CLI_DOTNS_POP_CONTROLLER`, `HOST_CLI_LOCAL_NETWORK_CONFIG`) to a non-blank
+value is an error, so a harness that still sets one does not run against
+another network than it describes.
 
 `network-check` resolves the network as any command does, fetching only the
 descriptor, and prints as JSON `schema_version`, `network` (the product
@@ -2120,7 +2132,8 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody; every network the CLI serves is a test network (§14.1).
+not production custody: every built-in network is a test network (§14.1), and
+a `--stack` is assumed to be one.
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts

@@ -316,7 +316,7 @@ fn test_bundle_skip_same_projection() {
 	let fallback_model = write_model(dir.path(), "Fallback", None);
 	let mut fallback_json: serde_json::Value =
 		serde_json::from_slice(&fs::read(&fallback_model).unwrap()).unwrap();
-	fallback_json["chains"][0]["rpc"]
+	fallback_json["chains"][1]["rpc"]
 		.as_array_mut()
 		.unwrap()
 		.push("ws://127.0.0.1:9945".into());
@@ -546,6 +546,26 @@ fn test_blank_stack_variable() {
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
 	assert!(!report["people"]["ws"].as_str().unwrap().starts_with("ws://127.0.0.1"));
+}
+
+/// A harness that still sets a routing variable earlier releases read would otherwise run against
+/// the built-in network instead of the chain it meant, so the command fails and prints the
+/// variable; a blank one is unset.
+#[test]
+fn test_removed_routing_variable_error() {
+	for name in [
+		"HOST_CLI_PEOPLE_WS",
+		"HOST_CLI_ASSET_HUB_WS",
+		"HOST_CLI_BULLETIN_WS",
+		"HOST_CLI_IDENTITY_BACKEND_BASE",
+		"HOST_CLI_DOTNS_POP_CONTROLLER",
+		"HOST_CLI_LOCAL_NETWORK_CONFIG",
+	] {
+		let output = host_with_env(&["network-check"], &[(name, "x")]);
+		assert!(!output.status.success());
+		assert!(stderr(&output).contains(&format!("{name} is no longer read")));
+		assert!(host_with_env(&["network-check"], &[(name, " ")]).status.success());
+	}
 }
 
 /// Runs `truapi-host <args>` with `env` set and no `HOST_CLI_STACK` inherited.

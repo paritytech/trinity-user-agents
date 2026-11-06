@@ -968,12 +968,13 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 ```
 
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
-stack, and one whose `tld` differs from the copy at `--out`, also when that copy
+stack, one whose `tld` differs from the copy at `--out`, also when that copy
 was signed with another key (every derived account would change; remove the copy to
-bundle a new TLD on purpose). With `--skip-same-projection`, which
-`scripts/update-stacks.sh` passes, a fetched copy that differs from the one at
-`--out` only in fields truapi-host does not read leaves it in place and reports it
-as current. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
+bundle a new TLD on purpose), and a built-in network's copy the CLI cannot run on.
+With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
+copy that differs from the one at `--out` only in fields truapi-host does not read
+leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
+has every option.
 
 ## Statement-store allowance
 
@@ -1059,8 +1060,10 @@ A command reaches its chains in one of two ways:
   descriptor changes a field the CLI reads, the CLI prints one line saying that it is
   in use and that a later release ships it; when the stack restarted from genesis the
   line reports that too. A newer copy that changes nothing the CLI reads is used
-  without a line. A published descriptor that changes the stack's `tld` is not used,
-  since every account derives under it. A stack past its `expiresAt` is an error.
+  without a line. A published descriptor that changes the stack's `tld` or `id`, or
+  that the CLI cannot run on, is not used: the bundled copy stays in use with a
+  warning, since every account derives under the TLD and is stored under the id. A
+  stack past its `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
   replaces `--network`, and the two cannot be combined; details below.
@@ -1074,11 +1077,16 @@ fetching the published descriptor once more when it could not be fetched before.
 within 3 seconds is logged and left to fail on first use.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
-Polkadot, whose signed descriptor the binary ships as a
-reference: at the lower of the endpoint's and Polkadot's finalized block, an equal block
-hash means it serves Polkadot itself and the command stops, and so it does when the
-endpoint, or every Polkadot node the reference lists, does not answer. A stack with the id
-`polkadot` (where earlier releases stored `--network polkadot` sessions) is refused.
+Polkadot, whose signed descriptor the binary ships as a reference, with every node the
+reference lists for that chain contacted at once. At the lower of the endpoint's and
+Polkadot's finalized block, an equal block hash stops the command: the endpoint is
+Polkadot itself, or a fork that has not finalized past its fork point. It also stops when
+the endpoint, or every Polkadot node, does not answer within 3 seconds at a step, and the
+error names that side. A stack with the id `polkadot` (where earlier releases stored
+`--network polkadot` sessions) cannot run. Setting `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS`, `HOST_CLI_IDENTITY_BACKEND_BASE`,
+`HOST_CLI_DOTNS_POP_CONTROLLER` or `HOST_CLI_LOCAL_NETWORK_CONFIG`, which earlier
+releases read, is an error that points at `--stack`.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
@@ -1098,10 +1106,11 @@ appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
 `tld` the core does not serve (`dot`, `paseo`, `testnet`), has no `dub` service or
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
-every command. The CLI reads usernames through that `popController` and does not
-look it up on chain. The product namespace (`HostChainSet.network` and the
-state directory) is the descriptor's `id` without a trailing `-fork`, except that a
-`polkadot-fork` stack keeps its full `id`. Use a
+every command. The CLI's own username reads go through that `popController` without
+looking it up on chain; the signing host's core still discovers its controller on
+chain. The product namespace (`HostChainSet.network` and the state directory) is the
+descriptor's `id` without a trailing `-fork`, except that the `polkadot-fork`
+namespace is its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that

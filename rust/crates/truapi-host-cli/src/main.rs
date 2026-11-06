@@ -659,7 +659,7 @@ async fn dispatch(
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(&source.cli_config().await?, &entropy).await
+			attestation::check_identity(&source.resolve_checked().await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -675,7 +675,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: source.cli_config().await?,
+				network: source.resolve_checked().await?,
 				entropy,
 				label,
 				link_lite,
@@ -684,13 +684,15 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, target, lookback, submit } => {
-			run_alloc_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
+			run_alloc_check(mnemonic, source.resolve_checked().await?, target, lookback, submit)
+				.await
 		},
 		Command::PgasCheck { mnemonic, target, lookback, submit } => {
-			run_pgas_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
+			run_pgas_check(mnemonic, source.resolve_checked().await?, target, lookback, submit)
+				.await
 		},
 		Command::Attest { mnemonic, username } => {
-			let network = source.cli_config().await?;
+			let network = source.resolve_checked().await?;
 			let attested = accounts::attest_mnemonic(&network, &mnemonic, &username).await?;
 			println!(
 				"{}",
@@ -706,17 +708,17 @@ async fn dispatch(
 	}
 }
 
-/// Prints `config`'s routing as the one JSON line `network-check` writes.
-fn print_network(config: &Stack) {
+/// Prints `stack`'s routing as the one JSON line `network-check` writes.
+fn print_network(stack: &Stack) {
 	let chain = |endpoint: &network::ChainEndpoint| serde_json::json!({ "ws": endpoint.ws, "genesis": format!("0x{}", hex::encode(endpoint.genesis)) });
-	let chains = config.chains();
+	let chains = stack.chains();
 	println!(
 		"{}",
 		serde_json::json!({
 			"schema_version": 1,
-			"network": config.namespace(),
-			"namespace": config.tld(),
-			"identity_backend_base": config.identity_backend(),
+			"network": stack.namespace(),
+			"namespace": stack.tld(),
+			"identity_backend_base": stack.identity_backend(),
 			"people": chain(&chains.people),
 			"asset_hub": chain(&chains.asset_hub),
 			"bulletin": chain(&chains.bulletin),
@@ -1291,7 +1293,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = source.cli_config().await?;
+	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
@@ -1414,7 +1416,7 @@ async fn run_signing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
-	let network = source.cli_config().await?;
+	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;

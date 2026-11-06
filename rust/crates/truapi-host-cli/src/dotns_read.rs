@@ -2,9 +2,10 @@
 //!
 //! The transport half of username resolution. This module supplies the two RPC
 //! primitives, over a connection from the CLI's chain provider.
-//! `truapi::host_logic::dotns_gateway` walks the contract
-//! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
-//! resolve identically.
+//! `truapi::host_logic::dotns_gateway` walks the contract chain over them,
+//! starting from the stack's `dotns.popController`. The signing host's core
+//! instead discovers its controller on chain, so the two resolve through
+//! different controllers when the stack and the chain disagree.
 
 use anyhow::{Context, Result};
 use serde_json::Value;

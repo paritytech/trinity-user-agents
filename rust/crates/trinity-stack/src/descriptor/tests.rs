@@ -15,8 +15,8 @@ fn deserialising_directly_applies_the_same_rules() {
 	assert_eq!(round_trip, valid);
 }
 
-/// The parsed views return what validation decoded, so a reader does not decode the strings a
-/// second time.
+/// The parsed views return the bytes and service in the descriptor's strings, so a reader does
+/// not decode the hex itself.
 #[test]
 fn test_parsed_views() {
 	let document: serde_json::Value =

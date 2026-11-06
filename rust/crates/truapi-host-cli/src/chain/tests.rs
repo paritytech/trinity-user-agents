@@ -171,7 +171,7 @@ async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 	assert!(light.is_connected(network.genesis().people));
 }
 
-/// The genesis check of an endpoint must ask that URL, whatever the
+/// The genesis check of an endpoint must connect to that URL, whatever the
 /// network's routing would do with the hash, and nothing else.
 #[test]
 fn an_endpoint_provider_reaches_only_its_endpoint() {

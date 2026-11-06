@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use clap::ValueEnum;
 
 use super::{
-	super::{Network, testing::serve_rpc},
+	super::{
+		Network,
+		testing::{serve_rpc, serve_silent},
+	},
 	*,
 };
 use crate::chain::ChainBackend;
@@ -33,11 +36,14 @@ async fn serve_node(chain: u8, finalized: u32) -> (String, Arc<Mutex<Vec<u32>>>)
 	(url, heights)
 }
 
-fn polkadot_chain(ws: &str, polkadot_rpc: &[&str]) -> PolkadotChain {
-	PolkadotChain {
-		endpoint: ChainEndpoint { genesis: [0x67; 32], ws: ws.to_owned() },
-		polkadot_rpc: polkadot_rpc.iter().map(|node| (*node).to_owned()).collect(),
-	}
+/// [`PolkadotChain::ensure_fork`] for an endpoint at `ws` with Polkadot's
+/// People genesis, against `polkadot_rpc`.
+async fn ensure_fork_at(ws: &str, polkadot_rpc: &[&str]) -> Result<()> {
+	let endpoint = ChainEndpoint { genesis: [0x67; 32], ws: ws.to_owned() };
+	let polkadot_rpc: Vec<String> = polkadot_rpc.iter().map(|node| (*node).to_owned()).collect();
+	PolkadotChain { endpoint: &endpoint, polkadot_rpc: &polkadot_rpc }
+		.ensure_fork()
+		.await
 }
 
 /// Only an endpoint with one of real Polkadot's genesis hashes, from the
@@ -49,15 +55,20 @@ fn test_polkadot_chains_from_reference() {
 	const SPEC: &str = include_str!("../../../SPEC.md");
 
 	for network in Network::value_variants() {
-		assert!(polkadot_chains(&network.bundled_stack(ChainBackend::Rpc).chains()).is_empty());
+		assert!(polkadot_chains(&network.bundled_stack(ChainBackend::Rpc)).is_empty());
 	}
-	let mut chains = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).chains();
-	hex::decode_to_slice(POLKADOT_PEOPLE_GENESIS, &mut chains.people.genesis).unwrap();
+	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
+		for chain in descriptor["chains"].as_array_mut().unwrap() {
+			if chain["role"] == "People" {
+				chain["genesisHash"] = format!("0x{POLKADOT_PEOPLE_GENESIS}").into();
+			}
+		}
+	});
 	let reference = polkadot_reference();
 	let people = reference.chain("People").expect("reference without People");
 	assert_eq!(
-		polkadot_chains(&chains),
-		[PolkadotChain { endpoint: chains.people.clone(), polkadot_rpc: people.rpc.clone() }]
+		polkadot_chains(&stack),
+		[PolkadotChain { endpoint: &stack.chains().people, polkadot_rpc: &people.rpc }]
 	);
 
 	for (row, genesis) in [
@@ -76,19 +87,32 @@ fn test_polkadot_chains_from_reference() {
 }
 
 /// An endpoint whose block at the lower finalized height is real Polkadot's
-/// is Polkadot itself, whether it is behind or ahead of the Polkadot node. A
-/// Polkadot node that is down leaves the next one to compare against.
+/// is Polkadot itself, or a fork not yet finalized past its fork point,
+/// whether it is behind or ahead of the Polkadot node. A Polkadot node that
+/// is down leaves another to compare against.
 #[tokio::test]
 async fn test_polkadot_itself_error() {
 	for (endpoint_finalized, polkadot_finalized) in [(500, 900), (900, 500)] {
 		let (endpoint, _) = serve_node(1, endpoint_finalized).await;
 		let (polkadot, _) = serve_node(1, polkadot_finalized).await;
-		let error = polkadot_chain(&endpoint, &["ws://127.0.0.1:1", &polkadot])
-			.ensure_fork()
+		let error = ensure_fork_at(&endpoint, &["ws://127.0.0.1:1", &polkadot])
 			.await
 			.expect_err("Polkadot itself accepted");
-		assert!(error.to_string().contains("serves Polkadot itself: its block 500"));
+		assert!(error.to_string().contains("its block 500 is Polkadot's"));
 	}
+}
+
+/// Polkadot's nodes are contacted at once, so a first node that accepts the
+/// connection and then stays silent does not use up the deadline before the
+/// next one answers.
+#[tokio::test]
+async fn test_silent_polkadot_node() {
+	let (endpoint, _) = serve_node(1, 500).await;
+	let (polkadot, _) = serve_node(1, 900).await;
+	let error = ensure_fork_at(&endpoint, &[&serve_silent().await, &polkadot])
+		.await
+		.expect_err("Polkadot itself accepted");
+	assert!(error.to_string().contains("its block 500 is Polkadot's"));
 }
 
 /// A fork's chain diverges from Polkadot's, so it runs. Both nodes are
@@ -99,27 +123,30 @@ async fn test_finalized_height() {
 	for (endpoint_finalized, polkadot_finalized) in [(500, 900), (900, 500)] {
 		let (endpoint, endpoint_heights) = serve_node(2, endpoint_finalized).await;
 		let (polkadot, polkadot_heights) = serve_node(1, polkadot_finalized).await;
-		polkadot_chain(&endpoint, &[&polkadot])
-			.ensure_fork()
-			.await
-			.expect("fork refused");
+		ensure_fork_at(&endpoint, &[&polkadot]).await.expect("fork refused");
 		assert_eq!(*endpoint_heights.lock().unwrap(), [500]);
 		assert_eq!(*polkadot_heights.lock().unwrap(), [500]);
 	}
 }
 
 /// The CLI cannot show an endpoint is not Polkadot when it, or every Polkadot
-/// node, does not answer, so the endpoint is an error.
+/// node, does not answer, so the endpoint is an error that prints the side
+/// and node.
 #[tokio::test]
 async fn test_unanswered_error() {
 	let (endpoint, _) = serve_node(2, 500).await;
 	let (polkadot, _) = serve_node(1, 900).await;
 	let closed = "ws://127.0.0.1:1";
-	for chain in [
-		polkadot_chain(closed, &[&polkadot]),
-		polkadot_chain(&endpoint, &[closed, "ws://127.0.0.1:2"]),
-	] {
-		let error = chain.ensure_fork().await.expect_err("unanswered check accepted");
-		assert!(error.to_string().contains("cannot tell"));
-	}
+	let error = ensure_fork_at(closed, &[&polkadot]).await.expect_err("unanswered endpoint");
+	assert!(
+		error
+			.to_string()
+			.contains(&format!("cannot tell {closed} from Polkadot ({closed}:"))
+	);
+	let error = ensure_fork_at(&endpoint, &[closed, "ws://127.0.0.1:2"])
+		.await
+		.expect_err("unanswered Polkadot nodes");
+	let message = error.to_string();
+	assert!(message.contains("Polkadot's nodes did not answer"));
+	assert!(message.contains(closed) && message.contains("ws://127.0.0.1:2"));
 }

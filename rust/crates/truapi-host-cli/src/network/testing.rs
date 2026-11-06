@@ -70,3 +70,18 @@ pub async fn serve_rpc(
 	});
 	url
 }
+
+/// A loopback node that accepts every connection and never answers.
+pub async fn serve_silent() -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("loopback bind failed");
+	let url = format!("ws://{}", listener.local_addr().expect("no listener address"));
+	tokio::spawn(async move {
+		let mut sockets = Vec::new();
+		while let Ok((socket, _)) = listener.accept().await {
+			sockets.push(socket);
+		}
+	});
+	url
+}

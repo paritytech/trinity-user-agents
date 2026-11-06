@@ -21,7 +21,7 @@ fn test_network() -> crate::network::Stack {
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
-	let config = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
+	let stack = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
 
 	let supported =
 		|genesis: Vec<u8>| {
@@ -34,7 +34,7 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 
 	// Every role the host serves answers supported. The reverse direction is the
 	// `unserved` assertion below, since every served role is now a real chain.
-	for entry in config.host_chain_set().chains {
+	for entry in stack.host_chain_set().chains {
 		assert!(
 			supported(entry.genesis_hash.to_vec()),
 			"{:?} is served but reported unsupported",
@@ -47,19 +47,15 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 	// bytes" and only the all-zero sentinel would notice.
 	let unserved = [0xab; 32];
 	assert!(
-		!config
-			.host_chain_set()
-			.chains
-			.iter()
-			.any(|entry| entry.genesis_hash == unserved),
+		!stack.host_chain_set().chains.iter().any(|entry| entry.genesis_hash == unserved),
 		"the stand-in must not be a served role"
 	);
 	assert!(!supported(unserved.to_vec()));
 
 	// A malformed genesis is unsupported, never a panic or a truncated match.
 	assert!(!supported(Vec::new()));
-	assert!(!supported(config.genesis().people[..31].to_vec()));
-	assert!(!supported([config.genesis().people.as_slice(), &[0u8]].concat()));
+	assert!(!supported(stack.genesis().people[..31].to_vec()));
+	assert!(!supported([stack.genesis().people.as_slice(), &[0u8]].concat()));
 	assert!(!supported(vec![0u8; 32]));
 }
 
@@ -69,8 +65,8 @@ fn supported_chains_answers_the_configured_network() {
 	let set = futures::executor::block_on(platform.supported_chains())
 		.expect("the CLI host serves the preset's chains");
 
-	let config = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
-	assert_eq!(set.network, config.namespace());
+	let stack = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
+	assert_eq!(set.network, stack.namespace());
 	let mut served = set
 		.chains
 		.iter()
@@ -78,9 +74,9 @@ fn supported_chains_answers_the_configured_network() {
 		.collect::<Vec<_>>();
 	served.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
 	let mut expected = vec![
-		(api::ChainIdentifier::People, hex::encode(config.genesis().people)),
-		(api::ChainIdentifier::Bulletin, hex::encode(config.genesis().bulletin)),
-		(api::ChainIdentifier::AssetHub, hex::encode(config.genesis().asset_hub)),
+		(api::ChainIdentifier::People, hex::encode(stack.genesis().people)),
+		(api::ChainIdentifier::Bulletin, hex::encode(stack.genesis().bulletin)),
+		(api::ChainIdentifier::AssetHub, hex::encode(stack.genesis().asset_hub)),
 	];
 	expected.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
 	assert_eq!(served, expected);
