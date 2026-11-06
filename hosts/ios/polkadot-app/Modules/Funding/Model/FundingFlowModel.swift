@@ -397,7 +397,6 @@ private extension FundingFlowModel {
         guard !hasStarted, !hasLeft else { return }
 
         hasLeft = true
-        coreCalls.run { [intent] service in await service.stopQuotes(intent: intent) }
         onOutcome?(.dismissed)
     }
 

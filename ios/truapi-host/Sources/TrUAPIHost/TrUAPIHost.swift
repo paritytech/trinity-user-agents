@@ -417,7 +417,8 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// The quote list requested with
     /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
     /// provider answers, and each time the core asks every provider again
-    /// at `refreshAtMs`. Called inline.
+    /// at `refreshAtMs`, each row keeping its answer until the provider
+    /// answers again. Called inline.
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
     /// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
@@ -1214,19 +1215,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Ask every provider to price `ask` for session `intent`. The list
     /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
-    /// and is asked for again every minute until a provider is chosen, the
-    /// session ends, another ask replaces it, or
-    /// ``stopFundingQuotes(intent:)``. Returns the request id every list
-    /// of this request carries; show only the latest request's lists.
+    /// and is asked for again every minute until the session is handed to a
+    /// provider, ends or leaves the overlay, or another ask replaces it.
+    /// Returns the request id every list of this request carries; show only
+    /// the latest request's lists.
     @discardableResult
     public func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64 {
         inner.getFundingQuote(intent: intent, ask: ask)
-    }
-
-    /// Stop asking again for session `intent`'s quotes, as when the user
-    /// leaves the provider list.
-    public func stopFundingQuotes(intent: String) {
-        inner.stopFundingQuotes(intent: intent)
     }
 
     /// Report the rail, asset, network and country the user has picked in

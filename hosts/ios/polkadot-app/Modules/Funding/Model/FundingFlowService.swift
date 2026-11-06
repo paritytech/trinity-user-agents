@@ -18,7 +18,6 @@ protocol FundingFlowServiceProtocol: Sendable {
     /// Asks every provider to quote `ask`, and returns the core's id for the
     /// request.
     func requestQuote(_ ask: FundingQuoteAsk, intent: String) async -> UInt64
-    func stopQuotes(intent: String) async
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool
     func cancel(intent: String) async throws -> CancelOutcome
     func confirmCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
@@ -57,10 +56,6 @@ actor FundingFlowService: FundingFlowServiceProtocol {
 
     func requestQuote(_ ask: FundingQuoteAsk, intent: String) -> UInt64 {
         runtime.getFundingQuote(intent: intent, ask: ask)
-    }
-
-    func stopQuotes(intent: String) {
-        runtime.stopFundingQuotes(intent: intent)
     }
 
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool {
