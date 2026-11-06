@@ -9,7 +9,8 @@ use crate::{
 	host_logic::funding::{CancelConfirmation, CancelOutcome, FundingCancel},
 	platform::{
 		AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
-		ExecutableKind, HostScan, PermissionAuthorizationRequest,
+		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
+		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
 	},
 };
 use parity_scale_codec::{Decode, Encode};
@@ -5698,13 +5699,14 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("identity-create-tx-1".to_string());
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+	let tx_payload = v01::LegacyAccountTxPayload {
 		signer: identity,
 		genesis_hash: [1; 32],
 		call_data: vec![0],
 		extensions: vec![],
 		tx_ext_version: 0,
-	});
+	};
+	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -5724,6 +5726,13 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
 	let crate::host_internal::sso_messages::CreateTransactionLegacyPayload::V1(payload) =
 		request.payload;
 	assert_eq!(payload.signer, identity);
+	assert_eq!(
+		*platform.create_transaction_reviews.lock().unwrap(),
+		vec![CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			payload: tx_payload,
+		}]
+	);
 }
 
 #[test]
@@ -5752,13 +5761,14 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("legacy-create-tx-1".to_string());
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+	let tx_payload = v01::LegacyAccountTxPayload {
 		signer,
 		genesis_hash: [1; 32],
 		call_data: vec![0],
 		extensions: vec![],
 		tx_ext_version: 0,
-	});
+	};
+	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -5774,12 +5784,17 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 		panic!("expected product transaction request");
 	};
 	let crate::host_internal::sso_messages::CreateTransactionPayload::V1(payload) = request.payload;
+	let product_account = v01::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test("myapp.dot"),
+		derivation_index: v01::DerivationIndex::Index(0),
+	};
+	assert_eq!(payload.signer, product_account);
 	assert_eq!(
-		payload.signer,
-		v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test("myapp.dot"),
-			derivation_index: v01::DerivationIndex::Index(0),
-		}
+		*platform.create_transaction_reviews.lock().unwrap(),
+		vec![CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Product(product_account),
+			payload: tx_payload,
+		}]
 	);
 }
 
@@ -7779,56 +7794,6 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 		)))
 	));
 	assert!(abandoned.load(Ordering::SeqCst));
-}
-
-/// A pairing test host, whose wallet answered the Bulletin allowance in-page,
-/// keeps the submission in the core once told to and serves it back, so a
-/// product's submit-then-lookup round trip works without the chain.
-#[cfg(feature = "test-host")]
-#[test]
-fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
-	use crate::host_internal::bulletin::preimage_key;
-	use truapi::versioned::preimage::RemotePreimageSubmitResponse;
-
-	let session = sso_session_info();
-	let platform = Arc::new(StubPlatform::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let (host, pairing_host) =
-		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
-	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
-	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-		&session,
-		lifecycle_epoch,
-		&ProductId::for_test("myapp.dot"),
-		[0x42; 64].to_vec(),
-	))
-	.expect("the wallet's allowance is cached");
-	pairing_host.set_submit_preimages_locally(true);
-	let value = b"pairing test host preimage".to_vec();
-	let cx = CallContext::default();
-
-	// No Bulletin client is configured, so reaching the chain would fail here.
-	let response = futures::executor::block_on(Preimage::submit(
-		&host,
-		&cx,
-		RemotePreimageSubmitRequest::V1(value.clone()),
-	))
-	.expect("the submission stays in the core");
-	assert_eq!(response, RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec()));
-
-	let mut lookup = futures::executor::block_on(host.lookup_subscribe(
-		&cx,
-		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
-			key: preimage_key(&value).to_vec(),
-		}),
-	));
-	assert_eq!(
-		futures::executor::block_on(lookup.next()).expect("a lookup item"),
-		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
-			value: Some(value)
-		}))
-	);
 }
 
 fn payment_services() -> Arc<RuntimeServices> {

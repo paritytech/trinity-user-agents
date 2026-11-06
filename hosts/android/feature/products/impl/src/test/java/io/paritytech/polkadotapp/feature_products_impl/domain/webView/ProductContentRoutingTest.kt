@@ -108,12 +108,13 @@ class ProductContentRoutingTest {
     }
 
     @Test
-    fun `a missing widget never warms the base archive`() = runBlocking {
+    fun `a missing widget warms the app archive, never the base archive`() = runBlocking {
         coEvery { products.resolve(productId) } returns Result.success(resolved(app = "app.coinflip.dot"))
 
-        assertTrue(warmUp.warmUp(productId, openSessionId = null).isFailure)
+        assertTrue(warmUp.warmUp(productId, openSessionId = null).isSuccess)
 
-        coVerify(exactly = 0) { dotNs.resolveToLocalUri(any()) }
+        coVerify(exactly = 1) { dotNs.resolveToLocalUri(any()) }
+        coVerify(exactly = 1) { dotNs.resolveToLocalUri("app.coinflip.dot") }
     }
 
     private fun resolved(app: String?) = ResolvedProduct(

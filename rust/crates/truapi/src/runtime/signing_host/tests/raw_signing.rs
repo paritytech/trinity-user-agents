@@ -6,7 +6,7 @@ use crate::{
 	host_internal::sso_messages::{
 		RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest, v1,
 	},
-	platform::SignRawReview,
+	platform::{LegacySigningAccount, SignRawReview},
 	runtime::{signing_host::sso_service::SigningHostSsoService, sso_service::Dispatch},
 };
 use parity_scale_codec::{Decode, Encode};
@@ -179,7 +179,8 @@ fn assert_review_watermark(platform: &StubPlatform, legacy: bool, watermarked: b
 		SignRawReview::Product { request, watermarked, .. } => {
 			(false, *watermarked, &request.payload)
 		},
-		SignRawReview::LegacyAccount { request, watermarked } => {
+		SignRawReview::LegacyAccount { account, request, watermarked } => {
+			assert_eq!(*account, LegacySigningAccount::Identity);
 			(true, *watermarked, &request.payload)
 		},
 	};
