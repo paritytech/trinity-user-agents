@@ -86,8 +86,8 @@ pub struct NetworkConfig {
 	/// holds it against the chain.
 	pub network_suffix: &'static str,
 	/// Identity backend base URL including `/api/v1`, from the stack's `dub`
-	/// service. `None` on a stack without one.
-	pub identity_backend_base: Option<String>,
+	/// service.
+	pub identity_backend_base: String,
 	/// Each role's endpoint. A genesis hash is both the role's identity in
 	/// [`NetworkConfig::host_chain_set`] and its routing key; Asset Hub's is
 	/// also the genesis the CLI's Asset Hub extrinsics sign in `CheckGenesis`.
@@ -96,10 +96,8 @@ pub struct NetworkConfig {
 	/// genesis, so a value the chain does not report sends that role's traffic
 	/// to the People chain.
 	pub chains: Roles<ChainEndpoint>,
-	/// `DotnsPopController` to use when on-chain discovery finds none, for a
-	/// network whose gateway dispatcher is not set yet. Discovery wins when it
-	/// answers.
-	pub dotns_pop_controller: Option<[u8; 20]>,
+	/// The `DotnsPopController` address, the stack's `dotns.popController`.
+	pub dotns_pop_controller: [u8; 20],
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub chain_backend: ChainBackend,
 }
@@ -128,17 +126,6 @@ impl Roles<ChainEndpoint> {
 }
 
 impl NetworkConfig {
-	/// The identity backend base URL, or an error when the stack has no `dub`
-	/// service.
-	pub fn identity_backend(&self) -> anyhow::Result<&str> {
-		self.identity_backend_base.as_deref().ok_or_else(|| {
-			anyhow::anyhow!(
-				"the {} stack has no identity backend: it lists no dub service",
-				self.id
-			)
-		})
-	}
-
 	/// The chain set this network serves, for `Features::supported_chains`.
 	pub fn host_chain_set(&self) -> HostChainSet {
 		HostChainSet {

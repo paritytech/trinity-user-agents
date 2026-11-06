@@ -33,8 +33,8 @@ fn test_stack_config_from_descriptor() {
 
 	assert_eq!(config.id, "staging");
 	assert_eq!(config.network_suffix, "testnet");
-	assert_eq!(config.identity_backend_base.as_deref(), Some("https://dub.example/api/v1"));
-	assert_eq!(config.dotns_pop_controller, Some([0xab; 20]));
+	assert_eq!(config.identity_backend_base, "https://dub.example/api/v1");
+	assert_eq!(config.dotns_pop_controller, [0xab; 20]);
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
 	let people = ChainEndpoint { genesis: [0x11; 32], ws: "ws://127.0.0.1:9944".to_owned() };
 	assert_eq!(config.chains, Roles { people, ..paseo.chains });
@@ -100,4 +100,25 @@ fn test_stack_missing_role_error() {
 	});
 	let error = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap_err();
 	assert!(error.to_string().contains("no Bulletin chain"));
+}
+
+/// The CLI registers usernames through the stack's `dub` service and resolves
+/// them through its `dotns.popController`, so a stack without either cannot
+/// run any command.
+#[test]
+fn test_stack_missing_dub_or_pop_controller_error() {
+	let without_dub = edit_stack(|descriptor| {
+		descriptor["services"]
+			.as_array_mut()
+			.unwrap()
+			.retain(|service| service["kind"] != "dub");
+	});
+	let error = stack_network_config(&without_dub, ChainBackend::Rpc).unwrap_err();
+	assert!(error.to_string().contains("no dub service"));
+
+	let without_pop_controller = edit_stack(|descriptor| {
+		descriptor["dotns"].as_object_mut().unwrap().remove("popController");
+	});
+	let error = stack_network_config(&without_pop_controller, ChainBackend::Rpc).unwrap_err();
+	assert!(error.to_string().contains("no dotns.popController"));
 }

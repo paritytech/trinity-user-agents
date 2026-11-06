@@ -43,7 +43,8 @@ pub fn stack_network_config(
 /// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
 /// dotNS `popController` under the product namespace `id`, read through its
 /// [`StackProjection`]. Fails when a role is missing, when two roles share a
-/// genesis hash, and when the TLD is not one the core serves.
+/// genesis hash, when the TLD is not one the core serves, and when the stack
+/// has no `dub` service or no `dotns.popController`.
 pub fn stack_config(
 	descriptor: &Descriptor,
 	id: String,
@@ -67,14 +68,19 @@ pub fn stack_config(
 				DOTNS_TLDS.join(", ")
 			)
 		})?;
-	let identity_backend_base =
-		projection.dub.map(|url| format!("{}/api/v1", url.trim_end_matches('/')));
-	let dotns_pop_controller = projection.pop_controller.map(|address| {
-		let mut bytes = [0u8; 20];
-		hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
-			.expect("invalid dotns address in a validated descriptor");
-		bytes
-	});
+	let dub = projection.dub.with_context(|| {
+		format!(
+			"the {} stack has no dub service, which the CLI uses as its identity backend",
+			descriptor.id
+		)
+	})?;
+	let identity_backend_base = format!("{}/api/v1", dub.trim_end_matches('/'));
+	let dotns_pop_controller = descriptor.dotns_address("popController").with_context(|| {
+		format!(
+			"the {} stack has no dotns.popController, which the CLI resolves usernames through",
+			descriptor.id
+		)
+	})?;
 	chains.ensure_distinct_genesis()?;
 	Ok(NetworkConfig {
 		id,

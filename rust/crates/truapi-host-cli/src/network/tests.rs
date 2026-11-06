@@ -42,7 +42,7 @@ const TEST_NETWORK_HOSTS: &[&str] = &[
 fn test_built_in_network_hosts() {
 	for network in Network::value_variants() {
 		let config = network.config(ChainBackend::Rpc);
-		let mut routes: Vec<&str> = config.identity_backend_base.as_deref().into_iter().collect();
+		let mut routes = vec![config.identity_backend_base.as_str()];
 		routes.extend(config.chains.iter().map(|chain| chain.ws.as_str()));
 
 		for route in routes {

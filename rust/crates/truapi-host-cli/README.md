@@ -1096,8 +1096,10 @@ People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
-`tld` the core does not serve (`dot`, `paseo`, `testnet`), is unreachable or is past
-`expiresAt` is an error. The product namespace (`HostChainSet.network` and the
+`tld` the core does not serve (`dot`, `paseo`, `testnet`), has no `dub` service or
+no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
+every command. The CLI reads usernames through that `popController` and does not
+look it up on chain. The product namespace (`HostChainSet.network` and the
 state directory) is the descriptor's `id` without a trailing `-fork`, except that a
 `polkadot-fork` stack keeps its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
@@ -1111,14 +1113,12 @@ without contacting a chain, so a harness can check it before starting a session:
 `tld`; `identity_backend_base`; and `ws` and `genesis` for `people`,
 `asset_hub` and `bulletin`.
 
-`HOST_CLI_IDENTITY_BACKEND_TOKEN`
-supplies its bearer token instead of the CLI minting one. For username
-registration, an injected token's subject must match the session's `uid.<tld>`
-candidate account. The automatically minted token uses that identity; and
-`HOST_CLI_DOTNS_POP_CONTROLLER` overrides on-chain `DotnsPopController`
-discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
-to opt into a TCP product-frame WebSocket; without it, the CLI creates and
-cleans up a unique temporary Unix socket.
+`HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
+instead of the CLI minting one. For username registration, an injected token's
+subject must match the session's `uid.<tld>` candidate account; the
+automatically minted token uses that identity. Both hosts also accept
+`--frame-listen <address>` to opt into a TCP product-frame WebSocket; without it,
+the CLI creates and cleans up a unique temporary Unix socket.
 
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,

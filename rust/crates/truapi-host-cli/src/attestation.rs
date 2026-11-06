@@ -264,7 +264,7 @@ pub async fn lite_username_available(
 	auth_entropy: &[u8],
 	username_base: &str,
 ) -> Result<bool> {
-	let backend_base = network.identity_backend()?;
+	let backend_base = network.identity_backend_base.as_str();
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
@@ -298,7 +298,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
-	let backend_base = config.network.identity_backend()?;
+	let backend_base = config.network.identity_backend_base.as_str();
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
 	let mut reader = AssetHubReader::connect(config.network).await?;
@@ -390,7 +390,7 @@ async fn signing_context_of(
 pub async fn registered_lite_username(network: &NetworkConfig, entropy: &[u8]) -> Result<String> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(network).await?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
@@ -406,7 +406,7 @@ pub async fn lookup_registered_username(
 ) -> Result<Option<String>> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(network).await?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
 	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
@@ -477,7 +477,7 @@ async fn search_backend_prefix(
 ) -> Result<Vec<String>> {
 	const PAGE_LIMIT: &str = "1000";
 
-	let backend_base = network.identity_backend()?;
+	let backend_base = network.identity_backend_base.as_str();
 	let url = format!("{backend_base}/usernames/search");
 	let prefix = initial.to_string();
 	let mut cursor = None;
@@ -550,7 +550,7 @@ pub async fn check_identity(network: &NetworkConfig, entropy: &[u8]) -> Result<(
 	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(IdentityDerivationError::from)?;
-	let mut reader = AssetHubReader::for_network(network).await?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
 
@@ -599,7 +599,7 @@ async fn submit_registration(
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {
-	let backend_base = config.network.identity_backend()?;
+	let backend_base = config.network.identity_backend_base.as_str();
 	let url = format!("{backend_base}/usernames");
 	let mut dotns = json!({
 		"signature": hex0x(&reg.dotns_signature),

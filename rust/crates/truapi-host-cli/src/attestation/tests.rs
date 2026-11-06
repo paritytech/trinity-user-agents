@@ -68,7 +68,7 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 	)?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
-	network.identity_backend_base = Some(backend_base);
+	network.identity_backend_base = backend_base;
 	let config = AttestConfig {
 		network: &network,
 		entropy: entropy.to_vec(),

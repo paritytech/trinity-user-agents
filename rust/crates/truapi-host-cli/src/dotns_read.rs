@@ -13,30 +13,17 @@ use truapi::{
 	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
 		DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, classify_labels,
-		discover_pop_controller, label_available, lite_label_owner_key, resolve_labels,
-		timestamp_now_key,
+		label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,
 	},
 };
 
 use crate::{chain::CliChainProvider, network::NetworkConfig};
 
-/// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
-/// discovery.
-///
-/// Discovery reads `DotnsGateway.DispatcherAddress`, which holds either a
-/// dispatcher or the controller itself, and resolves whichever it is; the
-/// override is for networks where that fails. A stack's descriptor carries its
-/// controller as `dotns.popController`. `DEPLOYMENTS.md` in paritytech/dotns is the
-/// authority per network.
-pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
-
 /// One Asset Hub RPC connection for a batch of dotNS reads.
 pub struct AssetHubReader {
 	rpc: RpcClient,
-	/// `DotnsPopController` once resolved; it does not change within a run.
-	pop_controller: Option<[u8; 20]>,
-	/// The network's controller, used only when discovery finds none.
-	pop_controller_fallback: Option<[u8; 20]>,
+	/// The stack's `DotnsPopController`.
+	pop_controller: [u8; 20],
 }
 
 impl AssetHubReader {
@@ -48,15 +35,7 @@ impl AssetHubReader {
 			.rpc_client(network.chains.asset_hub.genesis)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({location})"))?;
-		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
-	}
-
-	/// Connects to the network's Asset Hub, falling back to its known
-	/// `DotnsPopController` when the chain does not name one.
-	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
-		let mut reader = Self::connect(network).await?;
-		reader.pop_controller_fallback = network.dotns_pop_controller;
-		Ok(reader)
+		Ok(Self { rpc, pop_controller: network.dotns_pop_controller })
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is
@@ -89,7 +68,7 @@ impl AssetHubReader {
 	/// Usernames of `account` as recorded by the dotNS contracts, or `None`
 	/// when none of its labels is a username.
 	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<Option<DotnsIdentity>> {
-		let controller = self.pop_controller().await?;
+		let controller = self.pop_controller;
 		let labels = resolve_labels(self, &controller, account).await?;
 		Ok(classify_labels(self, &controller, labels).await?)
 	}
@@ -97,45 +76,8 @@ impl AssetHubReader {
 	/// Whether the registrar would still mint `label` under the network TLD.
 	/// `false` once the name is registered, whichever flow minted it.
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
-		let controller = self.pop_controller().await?;
+		let controller = self.pop_controller;
 		Ok(label_available(self, &controller, label).await?)
-	}
-
-	/// `DotnsPopController` address, resolved once per reader. The env override
-	/// wins, then on-chain discovery from `DotnsGateway.DispatcherAddress`, then
-	/// the network's own controller.
-	async fn pop_controller(&mut self) -> Result<[u8; 20]> {
-		if let Some(controller) = self.pop_controller {
-			return Ok(controller);
-		}
-		let controller = self.resolve_pop_controller().await?;
-		self.pop_controller = Some(controller);
-		Ok(controller)
-	}
-
-	async fn resolve_pop_controller(&mut self) -> Result<[u8; 20]> {
-		if let Ok(value) = std::env::var(DOTNS_POP_CONTROLLER_ENV) {
-			let trimmed = value.trim();
-			if !trimmed.is_empty() {
-				let bytes = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))
-					.with_context(|| format!("{DOTNS_POP_CONTROLLER_ENV} is not valid hex"))?;
-				return bytes.try_into().map_err(|bytes: Vec<u8>| {
-					anyhow::anyhow!(
-						"{DOTNS_POP_CONTROLLER_ENV} must be 20 bytes, got {}",
-						bytes.len()
-					)
-				});
-			}
-		}
-		discover_pop_controller(self)
-			.await?
-			.or(self.pop_controller_fallback)
-			.with_context(|| {
-				format!(
-					"dotNS gateway has no reachable controller; set \
-                     {DOTNS_POP_CONTROLLER_ENV} to the DotnsPopController H160"
-				)
-			})
 	}
 
 	/// One `state_getStorage` read at the best block.

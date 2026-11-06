@@ -1676,8 +1676,7 @@ uses Polkadot's `dot` TLD.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. A stack names it as its `dub` service, and
-the CLI reports the complete backend response when registration fails. A
-stack without one fails a command that needs it with an error saying so.
+the CLI reports the complete backend response when registration fails.
 
 #### Stacks
 
@@ -1690,14 +1689,16 @@ Every network comes from a Trinity stack descriptor
 | People, Asset Hub, Bulletin genesis | `genesisHash` of the same chain |
 | Identity backend | the `dub` service's first URL with `/api/v1` appended |
 | Reserved-identity suffix | `tld` |
-| `DotnsPopController` fallback | `dotns.popController`, when present |
+| `DotnsPopController` | `dotns.popController` |
 
 These fields and `generation` are the stack's projection. A published copy whose
 projection equals the shipped copy's makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
-genesis hash (the host routes each role by its genesis), or has a `tld` the core
-does not serve (`dot`, `paseo`, `testnet`) is an error.
+genesis hash (the host routes each role by its genesis), has a `tld` the core
+does not serve (`dot`, `paseo`, `testnet`), or has no `dub` service or no
+`dotns.popController` is an error for every command. The CLI reads usernames
+through that controller and does not look it up on chain.
 
 The binary also ships real Polkadot's signed descriptor, from PCF's pointer, as
 `stacks/polkadot.json` with its link in `stacks/polkadot.link`. It is not a
@@ -2363,7 +2364,6 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` supplies the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |

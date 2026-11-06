@@ -4143,7 +4143,7 @@ mod cli_tests {
 	async fn session_selection_retries_the_active_unfinished_profile() -> Result<()> {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
-		session.network.identity_backend_base = Some("invalid-backend-url".to_owned());
+		session.network.identity_backend_base = "invalid-backend-url".to_owned();
 		let runtime = session.runtime.clone();
 
 		let error = switch_session(&mut session, "pending".to_string())
@@ -4172,7 +4172,7 @@ mod cli_tests {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
 		let accounts = finish_session_account(&session)?;
-		session.network.identity_backend_base = Some("invalid-backend-url".to_owned());
+		session.network.identity_backend_base = "invalid-backend-url".to_owned();
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
 		let expected_key =
 			truapi::host_logic::product_account::derive_root_keypair_from_entropy(&[0; 16])
@@ -4307,7 +4307,7 @@ mod cli_tests {
 		let responder = tokio::spawn(std::future::pending::<()>());
 		let responder_abort = responder.abort_handle();
 		session.responders.insert([7; 32], responder);
-		session.network.identity_backend_base = Some("invalid-backend-url".to_owned());
+		session.network.identity_backend_base = "invalid-backend-url".to_owned();
 
 		session.catalog.ensure_profile("workbench.99")?;
 		for name in ["foo", "carol", "workbench.99", "another"] {

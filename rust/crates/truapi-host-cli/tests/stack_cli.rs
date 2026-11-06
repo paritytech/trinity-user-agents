@@ -397,6 +397,7 @@ fn local_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 		"$v": 1, "sequence": 1, "generation": "g1",
 		"id": "staging-fork", "name": "Staging", "network": "staging", "tld": "paseo",
 		"services": [{ "kind": "dub", "urls": ["https://dub.example/"] }],
+		"dotns": { "popController": format!("0x{}", "ab".repeat(20)) },
 		"chains": [
 			{ "role": "Relay", "genesisHash": genesis("01"), "rpc": ["ws://127.0.0.1:1"] },
 			{ "role": "People", "genesisHash": genesis("02"), "paraId": 1004, "rpc": ["ws://127.0.0.1:2"] },
