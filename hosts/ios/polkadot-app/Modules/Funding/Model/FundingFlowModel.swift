@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 import Observation
 import TrUAPIHost
@@ -72,11 +73,10 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     private let service: FundingFlowServiceProtocol
     private let coreCalls: FundingCoreCallQueue
     private let logger: LoggerProtocol
-    /// The lowest request id a quote list must carry to be shown. Each ask
-    /// raises it past every earlier list before the core returns the ask's id.
-    @ObservationIgnored private var quoteRequestId: UInt64?
-    /// Providers whose brand is being read.
-    @ObservationIgnored private var brandsLoading: Set<ProductId> = []
+    private let clock: any Clock<Duration>
+    @ObservationIgnored private var quoteRequest = FundingQuoteRequest()
+    /// Brands being read, by provider.
+    @ObservationIgnored private var brandReads: [ProductId: Task<Void, Never>] = [:]
     /// The deposit screen starts the session once every provider answered
     /// the ask it was opened on.
     @ObservationIgnored private var startsWhenQuoted = false
@@ -91,13 +91,19 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         service.branding
     }
 
-    init(context: Context, service: FundingFlowServiceProtocol, logger: LoggerProtocol) {
+    init(
+        context: Context,
+        service: FundingFlowServiceProtocol,
+        logger: LoggerProtocol,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
         intent = context.intent
         direction = context.direction
         cash = context.cash
         self.service = service
         coreCalls = FundingCoreCallQueue(service: service)
         self.logger = logger
+        self.clock = clock
         amountText = context.amount.flatMap { context.cash.decimal($0) }.map(Self.text(for:)) ?? ""
 
         let options = service.options(intent: context.intent)
@@ -127,6 +133,7 @@ extension FundingFlowModel {
         quoteOrder = []
         bestProviderId = nil
         ask = nil
+        quoteRequest.drop()
         reportSelection()
         amountChanged()
     }
@@ -345,13 +352,12 @@ extension FundingFlowModel {
         apply(service.options(intent: intent))
     }
 
-    /// Takes the core's quote list unless it answers an earlier ask. Request
-    /// ids only grow, and a list can arrive before the core's id for its
-    /// request does.
+    /// Takes the core's quote list when it answers the latest ask. The core
+    /// keeps refreshing the last ask after a rail change drops it, and a list
+    /// can arrive before the core's id for its ask does.
     func receive(quotes: FundingQuoteList) {
-        guard let latest = quoteRequestId, quotes.requestId >= latest else { return }
+        guard quoteRequest.shows(quotes) else { return }
 
-        quoteRequestId = quotes.requestId
         rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
         quoteOrder = quotes.rows.map(\.providerId)
         bestProviderId = quotes.best
@@ -363,6 +369,16 @@ extension FundingFlowModel {
 // MARK: - Quoting
 
 extension FundingFlowModel {
+    /// Returns once the quote waiting on the keypad pause, every core call
+    /// made so far and every brand read have finished.
+    func settled() async {
+        await quoteTask?.value
+        await coreCalls.idle()
+        for read in brandReads.values {
+            await read.value
+        }
+    }
+
     /// Called on every keypad change: quotes the new amount once the user
     /// pauses, so the screen can show a provider's limit before Continue.
     func amountChanged() {
@@ -370,7 +386,7 @@ extension FundingFlowModel {
         guard rail != .crypto, amount > 0 else { return }
 
         quoteTask = Task {
-            try? await Task.sleep(for: .milliseconds(600))
+            try? await clock.sleep(for: .milliseconds(600))
             guard !Task.isCancelled else { return }
 
             requestQuote()
@@ -429,12 +445,10 @@ private extension FundingFlowModel {
     }
 
     func loadBrands(_ providerIds: [ProductId]) {
-        for providerId in providerIds where brands[providerId] == nil {
-            guard brandsLoading.insert(providerId).inserted else { continue }
-
-            Task { [service] in
+        for providerId in providerIds where brands[providerId] == nil && brandReads[providerId] == nil {
+            brandReads[providerId] = Task { [service] in
                 brands[providerId] = await service.brand(for: providerId)
-                brandsLoading.remove(providerId)
+                brandReads[providerId] = nil
             }
         }
     }
@@ -484,13 +498,14 @@ private extension FundingFlowModel {
         bestProviderId = nil
         rows = Dictionary(uniqueKeysWithValues: candidates.map { ($0.providerId, .pending) })
         quoteOrder = []
-        quoteRequestId = quoteRequestId.map { $0 + 1 } ?? 0
+        let askNumber = quoteRequest.ask()
         reportSelection()
         coreCalls.run { [intent] service in
             await service.requestQuote(newAsk, intent: intent)
         } then: { [weak self] requestId in
-            guard let self else { return }
-            quoteRequestId = max(quoteRequestId ?? requestId, requestId)
+            guard let self, let early = quoteRequest.take(requestId, ofAsk: askNumber) else { return }
+
+            receive(quotes: early)
         }
     }
 }

@@ -5,7 +5,8 @@ import TrUAPIHost
 @testable import polkadot_app
 
 /// The bundled products listed with the core as funding providers: those
-/// whose shipped Worker manifest includes Funding, with that manifest.
+/// whose shipped Worker manifest includes Funding, with that manifest. One
+/// that cannot be read is left out and logged.
 struct BundledFundingProvidersTests {
     @Test
     func listsOnlyWorkersWhoseManifestIncludesFunding() throws {
@@ -23,16 +24,19 @@ struct BundledFundingProvidersTests {
         try write("not json", to: root, "broken.dot/worker-manifest.json")
         try write("export {}", to: root, "broken.dot/worker/index.js")
 
-        let providers = BundledProducts(root: root).fundingProviders
+        let logger = MockLogger()
+        let providers = BundledProducts(root: root).fundingProviders(logger: logger)
 
         #expect(try providers == [
             FundingProviderEntry(productId: ProductId("ramp.dot"), workerManifest: funding, origin: .bundled)
         ])
+        #expect(logger.errors.count == 1)
+        #expect(logger.errors.first?.contains("broken.dot") == true)
     }
 
     @Test
     func aBuildWithoutTheBundleListsNone() {
-        #expect(BundledProducts.none.fundingProviders.isEmpty)
+        #expect(BundledProducts.none.fundingProviders(logger: MockLogger()).isEmpty)
     }
 
     private func makeRoot() throws -> URL {

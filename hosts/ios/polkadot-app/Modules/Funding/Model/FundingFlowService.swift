@@ -98,4 +98,13 @@ final class FundingCoreCallQueue {
             await apply(call(service))
         }
     }
+
+    /// Returns once every call made so far, and every call their answers
+    /// made, has answered.
+    func idle() async {
+        while let current = latest {
+            await current.value
+            if latest == current { return }
+        }
+    }
 }

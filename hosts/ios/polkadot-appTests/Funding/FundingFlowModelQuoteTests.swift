@@ -1,3 +1,4 @@
+import Clocks
 import Foundation
 import Testing
 import TrUAPIHost
@@ -75,12 +76,61 @@ struct FundingFlowModelQuoteTests {
         model.back()
         model.amountText = "60"
         model.continueFromAmount()
-        try await waitUntil { runtime.asks.count == 2 }
-        try await Task.sleep(for: .milliseconds(100))
+        await model.settled()
+        #expect(runtime.asks.count == 2)
 
         model.receive(quotes: quotes(1, [("routed", quote("old", send: "1"))], best: "routed"))
+        #expect(model.selectedQuote == nil)
+
+        model.receive(quotes: quotes(2, [("routed", quote("new", send: "1"))], best: "routed"))
+        #expect(model.selectedQuote?.quoteId == "new")
+    }
+
+    /// Lists can reach the overlay before the core's id for their ask does:
+    /// none is shown until the id comes back, and then only the latest ask's.
+    @Test
+    func listsArrivingBeforeTheirAsksIdShowOnlyTheLatestAsk() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
+        model.selectRail(.card)
+        model.amountText = "50"
+        model.continueFromAmount()
+        model.back()
+        model.amountText = "60"
+        model.continueFromAmount()
+
+        model.receive(quotes: quotes(2, [("routed", quote("new", send: "1"))], best: "routed"))
+        model.receive(quotes: quotes(1, [("routed", quote("old", send: "1"))], best: "routed"))
+        #expect(model.selectedQuote == nil)
+
+        await model.settled()
+
+        #expect(runtime.asks.count == 2)
+        #expect(model.selectedQuote?.quoteId == "new")
+    }
+
+    /// The core keeps refreshing the last ask after the user changes rail;
+    /// those lists are not shown on the new rail.
+    @Test
+    func changingRailDropsTheRefreshesOfTheEarlierAsk() async throws {
+        let runtime = MockFundingRuntime(candidates: [
+            candidate("routed", routes: [route(.card)]),
+            candidate("crypto", routes: [cryptoRoute()])
+        ])
+        let model = makeModel(runtime)
+        model.selectRail(.card)
+        model.amountText = "50"
+        model.continueFromAmount()
+        await model.settled()
+        model.receive(quotes: quotes(runtime.lastRequestId, [("routed", quote("q1", send: "5200"))], best: "routed"))
+        #expect(model.selectedQuote?.quoteId == "q1")
+
+        model.back()
+        model.selectRail(.crypto)
+        model.receive(quotes: quotes(runtime.lastRequestId, [("routed", quote("q2", send: "5200"))], best: "routed"))
 
         #expect(model.selectedQuote == nil)
+        #expect(model.bestProviderId == nil)
     }
 
     @Test
@@ -91,14 +141,15 @@ struct FundingFlowModelQuoteTests {
 
         model.amountText = "50"
         model.amountChanged()
-        try await waitUntil { runtime.asks.count == 1 }
+        await model.settled()
+        #expect(runtime.asks.count == 1)
         model.continueFromAmount()
 
         model.back()
         model.amountText = "60"
         model.amountChanged()
         model.continueFromAmount()
-        try await Task.sleep(for: .milliseconds(800))
+        await model.settled()
 
         #expect(runtime.asks.map(\.amount) == ["50000000", "60000000"])
     }
@@ -172,9 +223,9 @@ struct FundingFlowModelQuoteTests {
 
         model.refreshOptions()
         model.refreshOptions()
-        try await waitUntil { model.brand(for: provider("routed")).name == "routed.dot" }
-        try await Task.sleep(for: .milliseconds(100))
+        await model.settled()
 
+        #expect(model.brand(for: provider("routed")).name == "routed.dot")
         #expect(branding.readProviders == [provider("routed")])
     }
 }
@@ -193,7 +244,8 @@ private extension FundingFlowModelQuoteTests {
                 cash: FundingCash(symbol: "CASH", precision: 6)
             ),
             service: FundingFlowService(runtime: runtime, book: runtime.book, branding: branding),
-            logger: MockLogger()
+            logger: MockLogger(),
+            clock: ImmediateClock()
         )
     }
 

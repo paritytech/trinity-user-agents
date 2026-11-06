@@ -58,11 +58,12 @@ enum FundingWording {
         }
     }
 
-    /// A history row's subtitle for a session in flight.
+    /// A history row's subtitle for a session in flight, or nil for a status
+    /// a session only reaches once it ended.
     static func inFlight( // swiftlint:disable:this cyclomatic_complexity
         _ status: FundingStatus,
         direction: FundingDirection
-    ) -> String {
+    ) -> String? {
         if let line = status.cancelLine(compact: true) {
             return line.text
         }
@@ -83,7 +84,7 @@ enum FundingWording {
             } else {
                 String(localized: .Funding.activityDelayed)
             }
-        default: ""
+        default: nil
         }
     }
 
