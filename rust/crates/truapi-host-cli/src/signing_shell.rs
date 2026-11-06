@@ -461,6 +461,11 @@ fn completions_for_scope(
 		let Some(argument) = input.strip_prefix("/profile ")
 	{
 		if let Some(path) = argument.strip_prefix("upload ") {
+			let arguments = shlex::split(path);
+			let path = match arguments.as_deref() {
+				Some([path]) => path,
+				_ => path,
+			};
 			return path_completions(path, "/profile upload")
 				.into_iter()
 				.filter_map(|mut completion| {

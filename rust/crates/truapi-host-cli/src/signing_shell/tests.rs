@@ -66,6 +66,26 @@ fn profile_completion_offers_upload_and_quotes_image_paths_with_spaces() {
 }
 
 #[test]
+fn profile_completion_can_continue_inside_a_quoted_directory() {
+	let directory = tempfile::tempdir().expect("create image directory");
+	let pictures = directory.path().join("my pictures");
+	fs::create_dir(&pictures).expect("create pictures directory");
+	let avatar = pictures.join("avatar.png");
+	fs::write(&avatar, []).expect("create image path");
+	let input = format!("/profile upload {}/my", directory.path().display());
+	let directories = completions_for_scope(&input, &[], CommandScope::SigningHost);
+	let images = completions_for_scope(&directories[0].value, &[], CommandScope::SigningHost);
+
+	assert_eq!(
+		images
+			.iter()
+			.map(|completion| parse_command(&completion.value))
+			.collect::<Vec<_>>(),
+		vec![Ok(ShellCommand::Profile(ProfileCommand::Upload(avatar)))]
+	);
+}
+
+#[test]
 fn script_actions_preserve_paths_with_spaces_and_option_like_filenames() {
 	let inputs = [
 		"/script",

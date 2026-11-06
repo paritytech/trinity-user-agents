@@ -310,8 +310,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` and `/profile upload` complete filesystem paths. Enter submits `/session <name>` as
-typed; use Tab first to insert a suggested exact session name.
+and `/script` and `/profile upload` complete filesystem paths. Profile uploads
+also complete quoted directories containing spaces. Enter submits `/session <name>`
+as typed; use Tab first to insert a suggested exact session name.
 Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
