@@ -1,6 +1,6 @@
 import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
-import { hostPageUrl } from "./host-page-url.js";
+import { deepLinkUrl, hostPageUrl, productUrlFor } from "./host-page-url.js";
 import { createTestHostServer } from "./server.js";
 
 describe("createTestHostServer host configuration", () => {
@@ -305,5 +305,70 @@ describe("how resource allocation is answered", () => {
       }),
     );
     expect(url.searchParams.get("allowances")).toBe("granted");
+  });
+});
+
+describe("deep links", () => {
+  const host = (url: string) => {
+    const { href, pathname, search, hash } = new URL(url);
+    return { href, pathname, search, hash };
+  };
+
+  it("hands the host page's path, query and hash to the product", () => {
+    const hostUrl = deepLinkUrl(
+      hostPageUrl("http://127.0.0.1:1234", {
+        productUrl: "http://localhost:5173",
+        accounts: ["alice"],
+      }),
+      "/notes/1?view=raw#top",
+    );
+    expect(productUrlFor("http://localhost:5173", host(hostUrl))).toBe(
+      "http://localhost:5173/notes/1?view=raw#top",
+    );
+  });
+
+  it("keeps the host's own configuration out of the product URL", () => {
+    const hostUrl = hostPageUrl("http://127.0.0.1:1234", {
+      productUrl: "http://localhost:5173",
+      accounts: ["alice"],
+      loginBehavior: "manual",
+      topology: "main-thread",
+    });
+    expect(productUrlFor("http://localhost:5173/", host(hostUrl))).toBe(
+      "http://localhost:5173/",
+    );
+    // The configuration survives the link, so the page boots the same host.
+    const linked = new URL(deepLinkUrl(hostUrl, "/a"));
+    expect(linked.searchParams.get("login")).toBe("manual");
+    expect(linked.searchParams.get("product")).toBe("http://localhost:5173");
+  });
+
+  it("appends to a product that is served under a path, and keeps its query", () => {
+    expect(
+      productUrlFor(
+        "http://localhost:5173/app/?lang=en#start",
+        host("http://127.0.0.1:1234/notes/1?view=raw"),
+      ),
+    ).toBe("http://localhost:5173/app/notes/1?lang=en&view=raw#start");
+  });
+
+  it("resolves a relative product URL against the host page", () => {
+    expect(productUrlFor("/product/", host("http://127.0.0.1:1234/"))).toBe(
+      "http://127.0.0.1:1234/product/",
+    );
+  });
+
+  it("refuses a link the product would not receive", () => {
+    const hostUrl = "http://127.0.0.1:1234/?product=http%3A%2F%2Fp.test";
+    expect(() => deepLinkUrl(hostUrl, "notes/1")).toThrow(/must start with/);
+    expect(() => deepLinkUrl(hostUrl, "/a?accounts=bob")).toThrow(
+      /carries `accounts`/,
+    );
+    expect(() => deepLinkUrl(hostUrl, "/wasm/web/x.js")).toThrow(
+      /serves itself/,
+    );
+    expect(() => deepLinkUrl(hostUrl, "/test-host.js")).toThrow(
+      /serves itself/,
+    );
   });
 });

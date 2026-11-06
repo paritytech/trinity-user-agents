@@ -23,7 +23,6 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
 protocol SPAPresenterProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func didTapMoreButton()
-    func didTapMinimize()
     func didTapClose()
     func didTapRefresh()
     func didBecomeVisible()
@@ -71,6 +70,5 @@ protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
         chatId: Chat.Id
     )
 
-    func minimize()
     func close(tabId: UUID)
 }
