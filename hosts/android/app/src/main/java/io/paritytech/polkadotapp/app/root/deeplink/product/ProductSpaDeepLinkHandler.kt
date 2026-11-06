@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.app.root.deeplink.product
 import android.net.Uri
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -24,6 +25,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     private val rootRouter: RootRouter,
     private val dotNsTldProvider: DotNsTldProvider,
     private val gate: ProductDeepLinkGate,
+    private val pageOpens: HostPocketTaps,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
@@ -35,17 +37,22 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     private fun Uri.productId(tld: DotNsTld): ProductId? = productIdFromUrl(this, tld).getOrNull()
 
     context(scope: ComputationalScope)
-    override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> =
-        withContext(coroutineDispatchers.io) {
+    override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> {
+        // Read before any hop: the product page's load is timed from here.
+        val link = pageOpens.linkHandled()
+        return withContext(coroutineDispatchers.io) {
             dotNsTldProvider.getTld().mapCatching { tld ->
                 accountRepository.awaitAccountsInitialized()
 
                 val normalized = DotNsUtils.normalize(data, tld)
                     ?: error("Not a $tld domain: $data")
+                val productId = normalized.productId(tld)
 
                 DeeplinkProcessingOutcome.Navigate {
+                    productId?.let { pageOpens.linked(it.value, link) }
                     rootRouter.openSpaBrowser(SpaBrowserPayload.ByUrl(normalized.toString()))
                 }
             }
         }
+    }
 }

@@ -69,9 +69,23 @@ class HostPageOpenTelemetryTest {
 
         val tapped = captured.single()
         assertEquals("host.pocket.card_tapped" to "opened", tapped.name to tapped.tags["outcome"])
+        assertEquals("pocket_card", tapped.tags["open.source"])
         assertEquals("session-42" to "humanity.dot", tapped.tags["host.session_id"] to tapped.tags["product.id"])
         assertEquals(OPEN_REQUESTED_AT - TAPPED_AT, tapped.durationMs)
         assertEquals(TAPPED_AT_EPOCH to "pocket_card", page.pageOrigin?.openedAtEpochMs to page.pageOrigin?.openSource)
+    }
+
+    @Test
+    fun `a page a link opened is handed the link's time as a deeplink open`() {
+        val link = taps.linkHandled()
+        taps.linked("humanity.dot", link)
+        val page = telemetry.open()
+
+        page.opened(HUMANITY, "session-42")
+
+        assertEquals(TAPPED_AT_EPOCH to "deeplink", page.pageOrigin?.openedAtEpochMs to page.pageOrigin?.openSource)
+        val tapped = captured.single()
+        assertEquals("opened" to "deeplink", tapped.tags["outcome"] to tapped.tags["open.source"])
     }
 
     // A held page shown again starts no load, so without this the tap would go unreported.

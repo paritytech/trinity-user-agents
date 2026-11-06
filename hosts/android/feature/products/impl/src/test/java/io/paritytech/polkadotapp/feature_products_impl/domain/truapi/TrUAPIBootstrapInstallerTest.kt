@@ -141,7 +141,7 @@ class TrUAPIBootstrapInstallerTest {
         whenever(context.packageManager).thenReturn(packageManager)
         whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
 
-        val tapped = hostTelemetryScript(context, "session", HostPageOrigin(1_793_880_000_000L, HostPageOrigin.POCKET_CARD))
+        val tapped = hostTelemetryScript(context, "session", HostPageOrigin(1_793_880_000_000L, "pocket_card"))
         val plain = hostTelemetryScript(context, "session")
 
         assertTrue(tapped.contains("\"openedAtEpochMs\":1793880000000"))
