@@ -46,8 +46,8 @@ final class FundingSessionBook: Sendable {
     /// Whether the provider's screen has done its part: the payment is seen
     /// or the session is over, which is when the frame closes itself.
     func paymentMoved(intent: String) -> Bool {
-        guard let session = session(intent: intent), session.stage.isOpen else { return true }
-        return progress(intent: intent)?.steps.contains { $0.reachedAtMs != nil && $0.step != .started } ?? false
+        guard let entry = state.withLock({ $0.entries[intent] }), entry.session.stage.isOpen else { return true }
+        return entry.progress?.steps.contains { $0.reachedAtMs != nil && $0.step != .started } ?? false
     }
 
     /// Every session the core pushed this run, in flight and ended.

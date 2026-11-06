@@ -323,7 +323,7 @@ private extension TrUAPIHostRuntimeProvider {
     /// config refresh changes them. Remote config usually lands after the
     /// runtime is built, so startup never waits for it.
     func followFundingProviders(on runtime: TrUAPIHostRuntime) {
-        let bundled = bundledProducts.fundingProviders
+        let bundled = bundledProducts.fundingProviders(logger: logger)
         let initial = Self.fundingProviders(configured: appliedConfig()?.fundingProviders ?? [], bundled: bundled)
         if !initial.isEmpty {
             apply(fundingProviders: initial, on: runtime)

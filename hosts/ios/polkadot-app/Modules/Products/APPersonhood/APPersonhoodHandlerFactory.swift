@@ -10,6 +10,7 @@ protocol APPersonhoodHandlerMaking: Sendable {
     func makeCreateProofHandler(callingProductId: ProductId?) -> APCreateProofHandling
     func makeAliasHandler(callingProductId: ProductId?) -> APAliasHandling
     func makeSignVrfHandler(callingProductId: ProductId?) -> APSignVrfHandling
+    func makeListRingVrfKeysHandler(callingProductId: ProductId?) -> APListRingVrfKeysHandling
 }
 
 /// Single wiring point for Accounts Protocol handlers, shared between
@@ -48,7 +49,7 @@ extension APPersonhoodHandlerFactory: APPersonhoodHandlerMaking {
     func makeCreateProofHandler(callingProductId: ProductId?) -> APCreateProofHandling {
         APCreateProofHandler(
             callingProductId: callingProductId,
-            options: makeOptions(),
+            builtInKeys: makeBuiltInPersonhoodKeys(),
             depsResolver: makeDepsResolver(),
             confirmationRequester: CreateProofConfirmationRequester(
                 router: routers.productsRouter
@@ -69,44 +70,45 @@ extension APPersonhoodHandlerFactory: APPersonhoodHandlerMaking {
     func makeAliasHandler(callingProductId: ProductId?) -> APAliasHandling {
         APAliasHandler(
             callingProductId: callingProductId,
-            options: makeOptions(),
+            builtInKeys: makeBuiltInPersonhoodKeys(),
             depsResolver: makeDepsResolver(),
-            accountAccessHandler: AccountAccessPermissionHandler(
-                repository: permissionRepository,
-                requester: ProductPermissionRequesterFactory.create(router: routers.productsRouter)
-            ),
+            accountAccessHandler: makeAccountAccessHandler(),
+            logger: logger
+        )
+    }
+
+    func makeListRingVrfKeysHandler(callingProductId: ProductId?) -> APListRingVrfKeysHandling {
+        APListRingVrfKeysHandler(
+            callingProductId: callingProductId,
+            builtInKeys: makeBuiltInPersonhoodKeys(),
+            accountAccessHandler: makeAccountAccessHandler(),
             logger: logger
         )
     }
 }
 
 private extension APPersonhoodHandlerFactory {
+    func makeAccountAccessHandler() -> AccountAccessPermissionHandling {
+        AccountAccessPermissionHandler(
+            repository: permissionRepository,
+            requester: ProductPermissionRequesterFactory.create(router: routers.productsRouter)
+        )
+    }
+
+    func makeBuiltInPersonhoodKeys() -> BuiltInPersonhoodKeysProviding {
+        BuiltInPersonhoodKeys(
+            chainRegistry: chainRegistry,
+            peopleChainId: AppConfig.Chains.peopleChain,
+            depsResolver: makeDepsResolver(),
+            tldProvider: tldProvider,
+            keyManagerFactory: BuiltInPersonhoodKeyManagerFactory(entropyManager: entropyManager)
+        )
+    }
+
     func makeDepsResolver() -> MembershipDepsResolving {
         MembershipDepsResolver(
             chainRegistry: chainRegistry,
             operationQueue: operationQueue
         )
-    }
-
-    // Priority order: the full-person ("PoP") key first, then lite.
-    func makeOptions() -> [CreateProofOrAliasOption] {
-        guard let tld = try? tldProvider.currentTldOrError(),
-              let fullKeyManager = try? BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager),
-              let liteKeyManager = try? BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager)
-        else {
-            logger.error("Personhood options unavailable: DotNs product identity not resolved")
-            return []
-        }
-
-        return [
-            CreateProofOrAliasOption(
-                collectionId: PeoplePallet.membersIdentifier,
-                keyManager: fullKeyManager
-            ),
-            CreateProofOrAliasOption(
-                collectionId: PeopleLitePallet.membersIdentifier,
-                keyManager: liteKeyManager
-            )
-        ]
     }
 }
