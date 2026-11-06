@@ -71,6 +71,41 @@ private func makeRuntime(
 
 // MARK: - Tests
 
+/// One expected `__trinityHostTelemetry` bootstrap. A named type with one-line-per-field literals keeps the
+/// `@Test(arguments:)` list cheap to type-check; a tuple array of concatenated literals did not compile in time.
+struct BootstrapCase: Sendable {
+    /// The three bootstraps are fixed at one session, origin and tap time, so each is a whole literal.
+    static let pocketCardJSON = #"""
+    {"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3",\#
+    "hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"pocket_card",\#
+    "openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1",\#
+    "truapiHostVersion":"0.9.0"}
+    """#
+
+    static let deeplinkJSON = #"""
+    {"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3",\#
+    "hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"deeplink",\#
+    "openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1",\#
+    "truapiHostVersion":"0.9.0"}
+    """#
+
+    static let noTapJSON = #"""
+    {"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3",\#
+    "hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","osVersion":"18.1","platform":"ios",\#
+    "schemaVersion":"1","truapiHostVersion":"0.9.0"}
+    """#
+
+    let openTap: HostOpenTap?
+    let json: String
+
+    init(source: HostOpenSource?, json: String) {
+        openTap = source.map {
+            HostOpenTap(source: $0, openedAtEpochMilliseconds: 1_793_900_000_123, monotonicMilliseconds: 0)
+        }
+        self.json = json
+    }
+}
+
 struct SPARustRuntimeTests {
     @Test func startWithDirectURLStartsBridgeAndInitializesEngine() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
@@ -523,30 +558,14 @@ struct SPARustRuntimeTests {
     /// The exact `__trinityHostTelemetry` a page and a worker read, pinned whole so Humanity can use them as
     /// fixtures. The tap fields are optional and additive, so the schema version stays 1.
     @Test(arguments: [
-        (
-            HostOpenTap(source: .pocketCard, openedAtEpochMilliseconds: 1_793_900_000_123, monotonicMilliseconds: 0)
-                as HostOpenTap?,
-            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
-                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"pocket_card","#
-                + #""openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1","#
-                + #""truapiHostVersion":"0.9.0"}"#
-        ),
-        (
-            HostOpenTap(source: .deeplink, openedAtEpochMilliseconds: 1_793_900_000_123, monotonicMilliseconds: 0),
-            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
-                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"deeplink","#
-                + #""openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1","#
-                + #""truapiHostVersion":"0.9.0"}"#
-        ),
+        BootstrapCase(source: .pocketCard, json: BootstrapCase.pocketCardJSON),
+        BootstrapCase(source: .deeplink, json: BootstrapCase.deeplinkJSON),
         // A page no tap opened, and every worker: a worker is never handed a tap.
-        (
-            nil,
-            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
-                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","osVersion":"18.1","platform":"ios","#
-                + #""schemaVersion":"1","truapiHostVersion":"0.9.0"}"#
-        )
+        BootstrapCase(source: nil, json: BootstrapCase.noTapJSON)
     ])
-    func theBootstrapIsExactly(tap: HostOpenTap?, json: String) throws {
+    func theBootstrapIsExactly(_ bootstrapCase: BootstrapCase) throws {
+        let tap = bootstrapCase.openTap
+        let json = bootstrapCase.json
         let origin = try HostEventOrigin(
             launchID: #require(UUID(uuidString: "18a5320e-3a4d-46df-ad7a-ebba4ef3ee3f")),
             osVersion: "18.1",
