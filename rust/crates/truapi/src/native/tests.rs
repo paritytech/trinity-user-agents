@@ -1826,9 +1826,10 @@ fn each_descriptor_chain_reaches_its_own_role() {
 
 #[test]
 fn runtime_config_refuses_a_stack_pointer_without_a_key() {
-	// The host refreshes its stack unseen, so only a signed stack may start.
+	// A copy the host fetches later is checked against the pointer's key, so
+	// only a signed stack may start.
 	let mut stack = native_host_runtime_config().stack;
-	stack.pointer = "polkadotapp://stack?url=https%3A%2F%2Fstack.test.invalid%2Fstack.json".into();
+	stack.pointer = crate::test_support::test_stack_link(None);
 	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
 		stack,
 		..native_host_runtime_config()

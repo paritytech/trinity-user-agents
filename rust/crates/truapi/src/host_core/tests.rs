@@ -1567,7 +1567,7 @@ fn the_device_pairing_observer_is_installed_once() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime =
@@ -1714,7 +1714,7 @@ fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime =
@@ -1758,7 +1758,7 @@ fn answer_sso_request_returns_a_correlated_response() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime =

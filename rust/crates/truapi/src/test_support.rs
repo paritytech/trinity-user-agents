@@ -356,6 +356,12 @@ pub fn test_stack(
 		.expect("test stack is valid")
 }
 
+/// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
+/// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
+pub fn paseo_test_stack() -> crate::platform::Stack {
+	test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32]))
+}
+
 /// The key [`sign_test_descriptor`] signs with.
 const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
 
@@ -431,7 +437,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+			paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -484,7 +490,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		paseo_test_stack(),
 		"polkadotapp".to_string(),
 	)
 	.expect("test pairing config is valid");
