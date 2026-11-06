@@ -5887,7 +5887,7 @@ dependencies = [
 
 [[package]]
 name = "trinity-stack"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "blake2b_simd",
