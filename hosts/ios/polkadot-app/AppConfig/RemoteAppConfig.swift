@@ -26,6 +26,10 @@ struct RemoteAppConfig {
     /// The payment asset's symbol and logo URLs from the `payment_asset_config` remote object.
     let paymentAsset: PaymentAssetConfig?
     let appSharingUrl: URL?
+    /// The dotNS names of the funding providers from the `funding_config`
+    /// remote object, the only published ones the overlay offers. Empty when
+    /// none are configured.
+    var fundingProviders: [String] = []
 }
 
 extension RemoteAppConfig {

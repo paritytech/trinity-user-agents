@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import UIKit
 import UIKitExt
@@ -47,11 +48,15 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let bundledProducts: BundledProducts
+    private let remoteConfig: RemoteConfigObserving?
+    private let appliedConfig: () -> RemoteAppConfig?
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
@@ -68,6 +73,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        bundledProducts: BundledProducts = .app,
+        remoteConfig: RemoteConfigObserving? = nil,
+        appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -76,7 +84,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
+        self.bundledProducts = bundledProducts
+        self.remoteConfig = remoteConfig
+        self.appliedConfig = appliedConfig
         self.logger = logger
+    }
+
+    deinit {
+        fundingProvidersObservation?.cancel()
     }
 
     @MainActor
@@ -175,6 +190,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
+        // Also before any execution opens: the core offers only the providers
+        // the host lists, the ones `funding_config` names, then the ones it ships.
+        followFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -193,6 +211,51 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
+    /// The providers the host lists with the core: the configured ones, read
+    /// from dotNS, first, then each bundled one the config does not name. A
+    /// configured name that is not a product id is skipped and logged.
+    static func fundingProviders(
+        configured names: [String],
+        bundled: [FundingProviderEntry],
+        logger: LoggerProtocol?
+    ) -> [FundingProviderEntry] {
+        var configuredIds = Set<ProductId>()
+        let published = names.compactMap { name -> FundingProviderEntry? in
+            do {
+                let productId = try ProductId(name)
+                guard configuredIds.insert(productId).inserted else { return nil }
+
+                return FundingProviderEntry(productId: productId, workerManifest: nil, origin: .published)
+            } catch {
+                logger?.error("[truapi] funding_config lists an unusable provider name \(name): \(error)")
+                return nil
+            }
+        }
+        return published + bundled.filter { !configuredIds.contains($0.productId) }
+    }
+
+    /// Hands `list` the providers of each remote config refresh that changes
+    /// them from the ones last listed, starting from `listed`. Returns when
+    /// the stream ends, which the app's remote config stream does not, or
+    /// when `list` answers false because the runtime is gone; throws when
+    /// the stream fails.
+    static func followRefreshes(
+        of configs: AnyAsyncSequence<RemoteAppConfig>,
+        listed initial: [FundingProviderEntry],
+        bundled: [FundingProviderEntry],
+        logger: LoggerProtocol?,
+        list: ([FundingProviderEntry]) -> Bool
+    ) async throws {
+        var listed = initial
+        for try await config in configs {
+            let providers = fundingProviders(configured: config.fundingProviders, bundled: bundled, logger: logger)
+            guard providers != listed else { continue }
+            guard list(providers) else { return }
+
+            listed = providers
+        }
+    }
+
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from
     /// the registry and must resolve; a missing hash fails explicitly rather
     /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
@@ -257,5 +320,51 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// List the providers known now, then list them again whenever a remote
+    /// config refresh changes them. Remote config usually lands after the
+    /// runtime is built, so startup never waits for it.
+    func followFundingProviders(on runtime: TrUAPIHostRuntime) {
+        let bundled = bundledProducts.fundingProviders(logger: logger)
+        let initial = Self.fundingProviders(
+            configured: appliedConfig()?.fundingProviders ?? [],
+            bundled: bundled,
+            logger: logger
+        )
+        if !initial.isEmpty {
+            apply(fundingProviders: initial, on: runtime)
+        }
+
+        guard let stream = remoteConfig?.remoteConfigStream() else { return }
+
+        fundingProvidersObservation?.cancel()
+        fundingProvidersObservation = Task { [weak self, weak runtime, logger] in
+            do {
+                try await Self.followRefreshes(
+                    of: stream,
+                    listed: initial,
+                    bundled: bundled,
+                    logger: logger
+                ) { providers in
+                    guard let self, let runtime, !Task.isCancelled else { return false }
+
+                    apply(fundingProviders: providers, on: runtime)
+                    return true
+                }
+            } catch {
+                self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
+            }
+        }
+    }
+
+    func apply(fundingProviders providers: [FundingProviderEntry], on runtime: TrUAPIHostRuntime) {
+        do {
+            try runtime.setFundingProviders(providers)
+        } catch {
+            logger.error("[truapi] the funding providers were refused: \(error)")
+        }
     }
 }

@@ -340,6 +340,45 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Funding
+
+A host with a funding overlay implements `FundingHostBridge` and installs it
+once with `runtime.setFunding(_:)`, before opening any product execution.
+Without it, Funding calls answer unsupported. Products and the host's own
+Balance card reach the same overlay: the card opens a session with
+`openFunding(direction:amount:)`, a product with its own Funding request, and
+either way the core calls `presentFunding`.
+
+The core owns the sessions and pushes what the host draws; the one thing the
+host reads back is `fundingHistory`, to rebuild a history it lost. Before
+`presentFunding` is called, `fundingOptionsChanged` carries the session's
+providers. While `presentFunding` waits, the session is live:
+report the user's rail, asset, network and country with
+`selectFundingOptions(intent:selection:)` whenever one changes (the countries
+and amount range for it come back through `fundingOptionsChanged`), price it
+with `getFundingQuote(intent:ask:)` (the quote list arrives through
+`fundingQuotesChanged` with the request id the call returned, `pending` rows
+first; the core asks again every minute, each row keeping its answer until the
+provider answers again, until the session is handed over or the overlay
+closes, and a new `getFundingQuote` replaces the ask), hand it to the chosen provider with
+`selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
+`.started`. Answering `.dismissed` discards the session. A provider that needs
+one of its own screens asks through `presentProviderFrame`, answered `.closed`
+when the screen closed itself, `.dismissed` when the user closed it and
+`.returned(url:)` when the page navigated to the request's `return_url`.
+
+`fundingSessionChanged` carries each started session's status, the session as
+the core holds it and its progress, so the host keeps the latest of each for
+its in-flight and history views. Each time funding resumes, every session in
+flight and every ended one the host has not recorded comes through again,
+`fundingHistory` carries the summaries of the recorded ones for rebuilding a
+lost history, and `fundingInProgressChanged` says whether a provider still
+works on any session, again whenever that changes. Ended sessions keep being
+handed over until the host records them with
+`acknowledgeFundingSession(intent:)`.
+`setFundingProviders(_:)` lists the providers the host ships with their Worker
+manifests; amounts cross as decimal strings of CASH units.
+
 ## Payments
 
 A host with a wallet serves top-ups, payments and the spendable balance by
