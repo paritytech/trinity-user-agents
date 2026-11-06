@@ -179,8 +179,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// The product's worker crashed `crashes` times in a row while it was
     /// needed: tell the user that product is not working. The core keeps
     /// starting it again, waiting longer each time, so this needs no answer.
-    /// Arrives on any thread. Defaults to a no-op for a host that runs no
-    /// workers.
+    /// Can arrive on any thread. Defaults to a no-op.
     func workerCrashing(productId: ProductId, crashes: UInt32)
 
     /// Begin a pending operation, whose id keeps the product's worker alive

@@ -10,7 +10,7 @@ enum FundingAmountIssue: Equatable {
 
 extension FundingFlowModel {
     func brand(for providerId: ProductId) -> FundingProviderBrand {
-        brands[providerId] ?? .placeholder(for: providerId)
+        brands.brand(for: providerId)
     }
 
     /// What the providers are asked to quote for the selection on screen.
@@ -156,6 +156,30 @@ extension FundingFlowModel {
 // MARK: - Quotes
 
 extension FundingFlowModel {
+    var rows: [ProductId: FundingQuoteState] {
+        quotes.rows
+    }
+
+    /// The providers of the core's latest quote list, in its order.
+    var quoteOrder: [ProductId] {
+        quotes.order
+    }
+
+    /// The provider the core marked as quoting best for the user.
+    var bestProviderId: ProductId? {
+        quotes.bestProviderId
+    }
+
+    /// What every provider was asked last.
+    var ask: FundingQuoteAsk? {
+        quotes.ask
+    }
+
+    /// When the core asks every provider again, and the prices on screen change.
+    var quotesRefreshAt: Date? {
+        quotes.refreshAt
+    }
+
     var quotedProviders: [(providerId: ProductId, quote: FundingQuote)] {
         rows.compactMap { providerId, state in state.quote.map { (providerId, $0) } }
     }
