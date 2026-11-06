@@ -17,7 +17,7 @@ use truapi::{
 	},
 };
 
-use crate::{chain::CliChainProvider, network::NetworkConfig};
+use crate::{chain::CliChainProvider, network::Stack};
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.
 pub struct AssetHubReader {
@@ -28,14 +28,14 @@ pub struct AssetHubReader {
 
 impl AssetHubReader {
 	/// Connects to the network's Asset Hub.
-	pub async fn connect(network: &NetworkConfig) -> Result<Self> {
+	pub async fn connect(network: &Stack) -> Result<Self> {
 		let chains = CliChainProvider::new(network);
-		let location = chains.location(network.chains.asset_hub.genesis);
+		let location = chains.location(network.genesis().asset_hub);
 		let rpc = chains
-			.rpc_client(network.chains.asset_hub.genesis)
+			.rpc_client(network.genesis().asset_hub)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({location})"))?;
-		Ok(Self { rpc, pop_controller: network.dotns_pop_controller })
+		Ok(Self { rpc, pop_controller: network.pop_controller() })
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is

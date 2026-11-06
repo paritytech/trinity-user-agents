@@ -11,16 +11,16 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use crossterm::style::Stylize;
 use trinity_stack::{
-	DEFAULT_LINK_BASE, Descriptor, Document, Fetched, Pointer, PublishState, Rendered, Status,
-	accept, open, render,
+	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, open,
+	render,
 };
 use zeroize::Zeroizing;
 
 use crate::{
+	chain::ChainBackend,
+	network::Stack,
 	platform,
-	stack_descriptor::{
-		FETCH_TIMEOUT, StackProjection, fetch, pointer_of, read_stack, refused, unix_now,
-	},
+	stack_descriptor::{FETCH_TIMEOUT, fetch, pointer_of, read_stack, refused, unix_now},
 	terminal_ui::qr_rows,
 };
 
@@ -283,16 +283,15 @@ async fn bundle(
 				out.display()
 			);
 		}
-		fn rpc_lists(stack: &Descriptor) -> impl Iterator<Item = &Vec<String>> {
-			stack.chains.iter().map(|chain| &chain.rpc)
-		}
-		// The Polkadot fork check falls back through every RPC node of the reference copy.
+		let read_as_stack = |descriptor| Stack::new(descriptor, ChainBackend::Rpc).ok();
 		let is_current = skip_same_projection &&
-			open(bytes, &pointer).is_ok() &&
-			StackProjection::of(stored_descriptor) == StackProjection::of(descriptor) &&
-			rpc_lists(stored_descriptor).eq(rpc_lists(descriptor)) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
-			stored_descriptor.valid_until == descriptor.valid_until;
+			stored_descriptor.valid_until == descriptor.valid_until &&
+			open(bytes, &pointer)
+				.ok()
+				.and_then(|stored| read_as_stack(stored.descriptor))
+				.and_then(|stored| Some(stored.reads_same(&read_as_stack(descriptor.clone())?)))
+				.unwrap_or(false);
 		if is_current {
 			println!(
 				"{} is current: {} sequence {} changes no field truapi-host reads",

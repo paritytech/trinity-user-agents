@@ -208,7 +208,7 @@ impl CliPlatform {
 	/// Build a platform whose chain provider connects to the network's People
 	/// chain and whose optional state directory backs product/core storage.
 	pub fn new(
-		network: &crate::network::NetworkConfig,
+		network: &crate::network::Stack,
 		storage: Option<CliStoragePaths>,
 		approval: ApprovalPolicy,
 		ui: Option<UiHandle>,
@@ -253,7 +253,7 @@ impl CliPlatform {
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
 		let chain = Arc::new(CliChainProvider::new(network));
-		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.chains.bulletin.genesis);
+		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.genesis().bulletin);
 		Arc::new(Self {
 			chain,
 			chains: network.host_chain_set(),

@@ -4,12 +4,13 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, ensure};
+use clap::ValueEnum;
 use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
-use super::{Network, NetworkConfig, stack::stack_config};
+use super::{Network, Stack};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FetchError, StackProjection, fetch, unix_now},
+	stack_descriptor::{FetchError, fetch, unix_now},
 };
 
 /// How long a built-in stack's published descriptor may take before the
@@ -77,43 +78,43 @@ impl Network {
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching anything.
 	#[cfg(test)]
-	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
-		stack_config(&self.built_in_stack().bundled(), self.id().to_owned(), chain_backend)
-			.expect("invalid bundled stack")
+	pub fn bundled_stack(self, chain_backend: ChainBackend) -> Stack {
+		Stack::new(self.built_in_stack().bundled(), chain_backend).expect("invalid bundled stack")
 	}
 
 	/// The published descriptor when it is newer than the bundled copy,
 	/// otherwise the bundled copy, with which of the two is in use. Logs a
 	/// notice when the published descriptor changes a field the CLI reads.
-	/// Fails when the descriptor in use is expired or lacks a role.
+	/// Fails when the descriptor in use is expired or is not a stack the CLI
+	/// can run on.
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
 		chain_backend: ChainBackend,
-	) -> Result<(NetworkConfig, BuiltInOrigin)> {
+	) -> Result<(Stack, BuiltInOrigin)> {
 		let built_in = self.built_in_stack();
-		let id = self.id();
+		let value = self.to_possible_value().expect("network without a --network value");
+		let name = value.get_name();
 		let pointer = built_in.pointer();
 		let url = pointer.url().as_str();
 		let fetched = fetch(url, fetch_timeout).await;
 		match &fetched {
 			Err(cause @ FetchError::Http(_)) => tracing::warn!(
-				"the {id} stack descriptor at {url} returned {cause}; using the bundled copy"
+				"the {name} stack descriptor at {url} returned {cause}; using the bundled copy"
 			),
-			Err(cause) => tracing::debug!("{id} stack descriptor is unreachable: {cause}"),
+			Err(cause) => tracing::debug!("{name} stack descriptor is unreachable: {cause}"),
 			Ok(_) => {},
 		}
 		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
 		let now = unix_now() as i64;
-		let refresh = refresh_stack(id, &pointer, built_in.bundle, fetched, now)?;
+		let refresh = refresh_stack(name, &pointer, built_in.bundle, fetched, now, chain_backend)?;
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
 			Some(notice) => tracing::info!("{notice}"),
 			None => {},
 		}
-		let origin = BuiltInOrigin { id, url: url.to_owned(), copy: refresh.copy };
-		let config = stack_config(&refresh.descriptor, id.to_owned(), chain_backend)?;
-		Ok((config, origin))
+		let origin = BuiltInOrigin { id: name.to_owned(), url: url.to_owned(), copy: refresh.copy };
+		Ok((refresh.stack, origin))
 	}
 }
 
@@ -133,8 +134,8 @@ pub enum BuiltInCopy {
 
 /// The descriptor a built-in stack runs on.
 pub struct BuiltInOrigin {
-	/// The built-in network's product namespace.
-	pub id: &'static str,
+	/// The built-in network's `--network` value.
+	pub id: String,
 	/// Where the published descriptor is fetched from.
 	pub url: String,
 	pub copy: BuiltInCopy,
@@ -161,9 +162,9 @@ impl BuiltInOrigin {
 	}
 }
 
-/// The descriptor a built-in stack runs on and the notice to print about it.
+/// The stack a built-in network runs on and the notice to print about it.
 struct StackRefresh {
-	descriptor: Descriptor,
+	stack: Stack,
 	notice: Option<StackNotice>,
 	copy: BuiltInCopy,
 }
@@ -199,16 +200,18 @@ impl std::fmt::Display for StackNotice {
 	}
 }
 
-/// The descriptor a built-in stack runs on: `fetched` when [`accept`] takes it
+/// The stack a built-in network runs on: `fetched` when [`accept`] takes it
 /// over `bundled` and it has the bundled copy's `tld`, otherwise `bundled`,
-/// with a notice when the descriptor in use changes a field the CLI reads.
-/// Fails when that descriptor is past `expiresAt`.
+/// with a notice when the stack in use differs from the bundled one in a field
+/// the CLI reads. Fails when that descriptor is past `expiresAt` or is not a
+/// stack the CLI can run on.
 fn refresh_stack(
 	id: &str,
 	pointer: &Pointer,
 	bundled: &[u8],
 	fetched: Fetched,
 	now_unix_seconds: i64,
+	chain_backend: ChainBackend,
 ) -> Result<StackRefresh> {
 	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
 		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
@@ -225,36 +228,40 @@ fn refresh_stack(
 			status.code()
 		),
 	}
-	let bundled_descriptor = &bundled_copy.stack.descriptor;
-	let is_same_tld = accepted.stack.descriptor.tld == bundled_descriptor.tld;
+	let bundled_tld = &bundled_copy.stack.descriptor.tld;
+	let is_same_tld = accepted.stack.descriptor.tld == *bundled_tld;
 	if !is_same_tld {
 		tracing::warn!(
-			"the published {id} stack descriptor changes the TLD from {} to {}, which would \
-			 change every account derived under it; using the bundled copy",
-			bundled_descriptor.tld,
+			"the published {id} stack descriptor changes the TLD from {bundled_tld} to {}, which \
+			 would change every account derived under it; using the bundled copy",
 			accepted.stack.descriptor.tld
 		);
 	}
-	let is_projection_change = is_same_tld &&
-		StackProjection::of(&accepted.stack.descriptor) !=
-			StackProjection::of(bundled_descriptor);
-	let notice = is_projection_change.then(|| StackNotice {
-		id: id.to_owned(),
-		bundle_sequence: bundled_descriptor.sequence,
-		remote_sequence: accepted.stack.descriptor.sequence,
-		new_generation: accepted.new_generation,
-	});
-	let (accepted, copy) = match (is_same_tld, &accepted.status) {
-		(true, Status::Updated | Status::Unchanged) => (accepted, BuiltInCopy::Published),
-		(true, Status::Unreachable) => (accepted, BuiltInCopy::Unreachable),
-		(true, _) => (accepted, BuiltInCopy::Rejected),
-		(false, _) => (bundled_copy, BuiltInCopy::Rejected),
-	};
-	ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
-	if accepted.stale {
+	let in_use = if is_same_tld { &accepted } else { &bundled_copy };
+	ensure!(!in_use.expired, "the {id} stack is past expiresAt; it has shut down");
+	if in_use.stale {
 		tracing::warn!("the {id} stack descriptor in use is past validUntil");
 	}
-	Ok(StackRefresh { descriptor: accepted.stack.descriptor, notice, copy })
+	let copy = match (is_same_tld, &accepted.status) {
+		(true, Status::Updated | Status::Unchanged) => BuiltInCopy::Published,
+		(true, Status::Unreachable) => BuiltInCopy::Unreachable,
+		_ => BuiltInCopy::Rejected,
+	};
+	let bundle_sequence = bundled_copy.stack.descriptor.sequence;
+	let bundled = Stack::new(bundled_copy.stack.descriptor, chain_backend)?;
+	if !is_same_tld {
+		return Ok(StackRefresh { stack: bundled, notice: None, copy });
+	}
+	let remote_sequence = accepted.stack.descriptor.sequence;
+	let new_generation = accepted.new_generation;
+	let stack = Stack::new(accepted.stack.descriptor, chain_backend)?;
+	let notice = (!stack.reads_same(&bundled)).then(|| StackNotice {
+		id: id.to_owned(),
+		bundle_sequence,
+		remote_sequence,
+		new_generation,
+	});
+	Ok(StackRefresh { stack, notice, copy })
 }
 
 #[cfg(test)]

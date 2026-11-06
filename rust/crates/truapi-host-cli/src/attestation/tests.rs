@@ -53,7 +53,7 @@ fn backend_search_uses_only_assigned_rows_for_the_candidate() -> Result<()> {
 #[tokio::test]
 async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 	let listener = TcpListener::bind("127.0.0.1:0").await?;
-	let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
+	let dub = format!("http://{}/", listener.local_addr()?);
 	let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
 	let entropy = [7u8; 16];
@@ -67,8 +67,9 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 		SigningContexts { people: None, asset_hub: None },
 	)?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-	let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
-	network.identity_backend_base = backend_base;
+	let network = crate::network::Network::default()
+		.bundled_stack(ChainBackend::Rpc)
+		.with_dub(&dub);
 	let config = AttestConfig {
 		network: &network,
 		entropy: entropy.to_vec(),

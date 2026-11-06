@@ -30,14 +30,29 @@ fn stderr(output: &Output) -> String {
 /// 2020-01-01T00:00:00Z, long past.
 const LONG_AGO: u32 = 1_577_836_800;
 
+/// A stack model the CLI can run on: every role, a `dub` service and a `popController`.
 fn write_model(dir: &Path, name: &str, expires_at: Option<u32>) -> String {
+	let chain = |role: &str, byte: &str, para_id: Option<u32>| {
+		let mut chain = serde_json::json!({
+			"role": role,
+			"genesisHash": format!("0x{}", byte.repeat(32)),
+			"rpc": [format!("ws://127.0.0.1:99{byte}")],
+		});
+		if let Some(para_id) = para_id {
+			chain["paraId"] = para_id.into();
+		}
+		chain
+	};
 	let mut model = serde_json::json!({
-		"id": "local", "name": name, "network": "local", "tld": "local", "services": [],
-		"chains": [{
-			"role": "Relay",
-			"genesisHash": format!("0x{}", "01".repeat(32)),
-			"rpc": ["ws://127.0.0.1:9944"],
-		}],
+		"id": "local", "name": name, "network": "local", "tld": "paseo",
+		"services": [{ "kind": "dub", "urls": ["http://127.0.0.1:8080/"] }],
+		"dotns": { "popController": format!("0x{}", "ab".repeat(20)) },
+		"chains": [
+			chain("Relay", "01", None),
+			chain("People", "02", Some(1004)),
+			chain("AssetHub", "03", Some(1000)),
+			chain("Bulletin", "04", Some(1010)),
+		],
 	});
 	if let Some(expires_at) = expires_at {
 		model["expiresAt"] = expires_at.into();

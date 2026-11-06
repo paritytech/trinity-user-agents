@@ -5,10 +5,9 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, ensure};
 
 use super::{
-	NetworkConfig, NetworkSource,
+	NetworkSource, Stack,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy},
 	checks::{ChainChecks, refuse_light_client},
-	stack,
 };
 use crate::{
 	chain::ChainBackend,
@@ -29,7 +28,7 @@ impl NetworkSource {
 	/// bundled copy; when that copy fails a check, the descriptor is fetched
 	/// once more and the checks repeat only when the published copy is then in
 	/// use.
-	pub async fn cli_config(&self) -> Result<NetworkConfig> {
+	pub async fn cli_config(&self) -> Result<Stack> {
 		let (config, checks) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
 		let Err(error) = checks.verify(&config).await? else { return Ok(config) };
 		if checks.copy_in_use() != Some(BuiltInCopy::Unreachable) {
@@ -46,24 +45,19 @@ impl NetworkSource {
 
 	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
 	/// fetched. An unreachable descriptor fails only for `--stack`.
-	pub async fn resolve(&self) -> Result<NetworkConfig> {
+	pub async fn resolve(&self) -> Result<Stack> {
 		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
 	}
 
 	/// The network and the [`ChainChecks`] to run against its chains. A
 	/// built-in stack's published descriptor gets `fetch_timeout`.
-	async fn resolve_routes(
-		&self,
-		fetch_timeout: Duration,
-	) -> Result<(NetworkConfig, ChainChecks)> {
+	async fn resolve_routes(&self, fetch_timeout: Duration) -> Result<(Stack, ChainChecks)> {
 		self.ensure_compatible()?;
 		let (config, built_in) = match &self.stack {
 			Some(stack) => {
 				let config = load_descriptor(&stack.value)
 					.await
-					.and_then(|descriptor| {
-						stack::stack_network_config(&descriptor, self.chain_backend)
-					})
+					.and_then(|descriptor| Stack::from_stack_option(descriptor, self.chain_backend))
 					.map_err(|error| anyhow!("{}: {error}", stack.source))?;
 				(config, None)
 			},

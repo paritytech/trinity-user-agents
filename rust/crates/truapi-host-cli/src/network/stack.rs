@@ -1,95 +1,78 @@
-//! A stack descriptor read as a [`NetworkConfig`].
+//! The checks that make a descriptor a [`Stack`] the CLI can run on.
 
 use anyhow::{Context, Result, ensure};
 use trinity_stack::Descriptor;
 use truapi::platform::DOTNS_TLDS;
 
-use super::{ChainEndpoint, NetworkConfig};
+use super::Stack;
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{ROLE_NAMES, StackProjection},
+	stack_descriptor::{ROLE_NAMES, Roles},
 };
 
 /// The namespace of `--network polkadot`, which earlier releases stored
 /// mainnet sessions under.
 const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
 
-/// A `--stack` descriptor's network, connected to over `chain_backend`, under
-/// the product namespace of the descriptor's `id` without a trailing `-fork`;
-/// a `polkadot-fork` stack runs under its own `id`. Fails for a stack with the
-/// id `polkadot`, the retired namespace of Polkadot mainnet sessions.
-pub fn stack_network_config(
-	descriptor: &Descriptor,
-	chain_backend: ChainBackend,
-) -> Result<NetworkConfig> {
-	ensure!(
-		descriptor.id != RETIRED_POLKADOT_NAMESPACE,
-		"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
-		 releases used for Polkadot mainnet; use a stack with another id"
-	);
-	let id = descriptor
-		.id
-		.strip_suffix("-fork")
-		.filter(|id| *id != RETIRED_POLKADOT_NAMESPACE)
-		.unwrap_or(&descriptor.id);
-	ensure!(
-		truapi::platform::is_dns_label(id),
-		"the stack id {:?} is not a lowercase label to use as the product namespace",
-		descriptor.id
-	);
-	stack_config(descriptor, id.to_owned(), chain_backend)
+/// The product namespace of the stack `id`: `id` without a trailing `-fork`,
+/// except that `polkadot-fork` stays whole rather than map to the retired
+/// `polkadot` namespace.
+pub fn namespace_of(id: &str) -> &str {
+	id.strip_suffix("-fork")
+		.filter(|source| *source != RETIRED_POLKADOT_NAMESPACE)
+		.unwrap_or(id)
 }
 
-/// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
-/// dotNS `popController` under the product namespace `id`, read through its
-/// [`StackProjection`]. Fails when a role is missing, when two roles share a
-/// genesis hash, when the TLD is not one the core serves, and when the stack
-/// has no `dub` service or no `dotns.popController`.
-pub fn stack_config(
-	descriptor: &Descriptor,
-	id: String,
-	chain_backend: ChainBackend,
-) -> Result<NetworkConfig> {
-	let projection = StackProjection::of(descriptor);
-	let chains = ROLE_NAMES.zip(projection.roles).try_map(|(role, chain)| {
-		let (ws, genesis_hash) =
-			chain.with_context(|| format!("the {} stack has no {role} chain", descriptor.id))?;
-		let mut genesis = [0u8; 32];
-		hex::decode_to_slice(genesis_hash.trim_start_matches("0x"), &mut genesis)
-			.expect("invalid genesisHash in a validated descriptor");
-		anyhow::Ok(ChainEndpoint { genesis, ws: ws.to_owned() })
-	})?;
-	let network_suffix =
-		DOTNS_TLDS.iter().find(|tld| **tld == projection.tld).with_context(|| {
-			format!(
-				"the {} stack's tld {} is not one the core serves ({})",
-				descriptor.id,
-				projection.tld,
-				DOTNS_TLDS.join(", ")
-			)
+impl Stack {
+	/// `descriptor` connected to over `chain_backend`. Fails when People,
+	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
+	/// when the TLD is not one the core serves, when the namespace is not a
+	/// lowercase label, and when the stack has no `dub` service or no
+	/// `dotns.popController`.
+	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
+		let id = &descriptor.id;
+		let Roles { people, asset_hub, bulletin } = ROLE_NAMES.try_map(|role| {
+			let chain = descriptor
+				.chain(role)
+				.with_context(|| format!("the {id} stack has no {role} chain"))?;
+			anyhow::Ok(chain.genesis())
 		})?;
-	let dub = projection.dub.with_context(|| {
-		format!(
-			"the {} stack has no dub service, which the CLI uses as its identity backend",
-			descriptor.id
-		)
-	})?;
-	let identity_backend_base = format!("{}/api/v1", dub.trim_end_matches('/'));
-	let dotns_pop_controller = descriptor.dotns_address("popController").with_context(|| {
-		format!(
-			"the {} stack has no dotns.popController, which the CLI resolves usernames through",
-			descriptor.id
-		)
-	})?;
-	chains.ensure_distinct_genesis()?;
-	Ok(NetworkConfig {
-		id,
-		network_suffix,
-		identity_backend_base,
-		chains,
-		dotns_pop_controller,
-		chain_backend,
-	})
+		ensure!(
+			people != asset_hub && people != bulletin && asset_hub != bulletin,
+			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each \
+			 role by its genesis"
+		);
+		ensure!(
+			DOTNS_TLDS.contains(&descriptor.tld.as_str()),
+			"the {id} stack's tld {} is not one the core serves ({})",
+			descriptor.tld,
+			DOTNS_TLDS.join(", ")
+		);
+		ensure!(
+			truapi::platform::is_dns_label(namespace_of(id)),
+			"the stack id {id:?} is not a lowercase label to use as the product namespace"
+		);
+		ensure!(
+			descriptor.service("dub").is_some(),
+			"the {id} stack has no dub service, which the CLI uses as its identity backend"
+		);
+		ensure!(
+			descriptor.dotns_address("popController").is_some(),
+			"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
+		);
+		Ok(Self { descriptor, chain_backend })
+	}
+
+	/// A `--stack` descriptor's network. Fails as [`Stack::new`] does, and for
+	/// the id `polkadot`, the retired namespace of Polkadot mainnet sessions.
+	pub fn from_stack_option(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
+		ensure!(
+			descriptor.id != RETIRED_POLKADOT_NAMESPACE,
+			"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
+			 releases used for Polkadot mainnet; use a stack with another id"
+		);
+		Self::new(descriptor, chain_backend)
+	}
 }
 
 #[cfg(test)]

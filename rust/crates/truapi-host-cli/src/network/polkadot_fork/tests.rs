@@ -49,9 +49,9 @@ fn test_polkadot_chains_from_reference() {
 	const SPEC: &str = include_str!("../../../SPEC.md");
 
 	for network in Network::value_variants() {
-		assert!(polkadot_chains(&network.config(ChainBackend::Rpc).chains).is_empty());
+		assert!(polkadot_chains(&network.bundled_stack(ChainBackend::Rpc).chains()).is_empty());
 	}
-	let mut chains = Network::PaseoNextV2.config(ChainBackend::Rpc).chains;
+	let mut chains = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).chains();
 	hex::decode_to_slice(POLKADOT_PEOPLE_GENESIS, &mut chains.people.genesis).unwrap();
 	let reference = polkadot_reference();
 	let people = reference.chain("People").expect("reference without People");

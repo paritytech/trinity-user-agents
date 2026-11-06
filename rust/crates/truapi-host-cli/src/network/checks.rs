@@ -7,11 +7,11 @@
 use anyhow::{Result, anyhow, ensure};
 
 use super::{
-	ChainEndpoint, NetworkConfig,
+	ChainEndpoint, Stack,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 };
-use crate::chain::ChainBackend;
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 /// What the CLI checks against the chains before a command runs.
 pub struct ChainChecks {
@@ -28,18 +28,23 @@ pub struct ChainChecks {
 impl ChainChecks {
 	/// The checks for `config`: a network reached over RPC has every endpoint
 	/// and People's `NetworkSuffix` checked.
-	pub fn plan(config: &NetworkConfig, built_in: Option<BuiltInOrigin>) -> Self {
-		let endpoints = match config.chain_backend {
-			ChainBackend::Rpc => config.chains.iter().cloned().collect(),
+	pub fn plan(config: &Stack, built_in: Option<BuiltInOrigin>) -> Self {
+		let chains = config.chains();
+		let polkadot_chains = polkadot_chains(&chains);
+		let endpoints = match config.chain_backend() {
+			ChainBackend::Rpc => {
+				let Roles { people, asset_hub, bulletin } = chains;
+				vec![people, asset_hub, bulletin]
+			},
 			ChainBackend::LightClient => Vec::new(),
 		};
-		Self { endpoints, built_in, polkadot_chains: polkadot_chains(&config.chains) }
+		Self { endpoints, built_in, polkadot_chains }
 	}
 
 	/// Fails when an endpoint with one of Polkadot's genesis hashes does not
 	/// show it serves a fork; otherwise the outcome of the endpoint checks,
 	/// which a fetch of the published descriptor may resolve.
-	pub async fn verify(&self, config: &NetworkConfig) -> Result<Result<()>> {
+	pub async fn verify(&self, config: &Stack) -> Result<Result<()>> {
 		let (endpoints, polkadot_forks) = futures::join!(
 			verify_endpoints(config, &self.endpoints, self.built_in.as_ref()),
 			futures::future::try_join_all(
@@ -60,25 +65,23 @@ impl ChainChecks {
 /// The light client knows only the networks `truapi-provider` bundles, by
 /// genesis hash, so it can serve neither another network nor a built-in stack
 /// that restarted after this build's chain specs.
-pub fn refuse_light_client(config: &NetworkConfig) -> Result<()> {
-	if config.chain_backend != ChainBackend::LightClient {
+pub fn refuse_light_client(config: &Stack) -> Result<()> {
+	if config.chain_backend() != ChainBackend::LightClient {
 		return Ok(());
 	}
+	let namespace = config.namespace();
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
-		.add_network(&config.id)
+		.add_network(namespace)
 		.map_err(|error| {
-			anyhow!("--chain-backend light-client has no chain specs for {}: {error}", config.id)
+			anyhow!("--chain-backend light-client has no chain specs for {namespace}: {error}")
 		})?;
+	let genesis = config.genesis();
 	ensure!(
 		(catalog.people, catalog.assethub, catalog.bulletin) ==
-			(
-				config.chains.people.genesis,
-				config.chains.asset_hub.genesis,
-				config.chains.bulletin.genesis
-			),
-		"this build's light-client chain specs for {} predate the stack's restart from genesis; \
-		 use --chain-backend rpc, or `truapi-host update` once a release ships the new specs",
-		config.id
+			(genesis.people, genesis.asset_hub, genesis.bulletin),
+		"this build's light-client chain specs for {namespace} predate the stack's restart from \
+		 genesis; use --chain-backend rpc, or `truapi-host update` once a release ships the new \
+		 specs"
 	);
 	Ok(())
 }
@@ -94,7 +97,7 @@ struct EndpointReport {
 /// The genesis `endpoint` reports and, with `read_suffix`, its
 /// `NetworkSuffix` over the same connection.
 async fn probe_endpoint(
-	config: &NetworkConfig,
+	config: &Stack,
 	endpoint: &ChainEndpoint,
 	read_suffix: bool,
 ) -> Result<EndpointReport, String> {
@@ -126,12 +129,13 @@ pub async fn within_check_timeout<T>(
 /// that does not answer, or a People chain without a readable suffix, is
 /// logged.
 async fn verify_endpoints(
-	config: &NetworkConfig,
+	config: &Stack,
 	endpoints: &[ChainEndpoint],
 	built_in: Option<&BuiltInOrigin>,
 ) -> Result<()> {
+	let people_genesis = config.genesis().people;
 	let checks = endpoints.iter().map(|endpoint| async move {
-		let read_suffix = endpoint.genesis == config.chains.people.genesis;
+		let read_suffix = endpoint.genesis == people_genesis;
 		let report = match within_check_timeout(probe_endpoint(config, endpoint, read_suffix)).await
 		{
 			Ok(report) => report,
@@ -145,7 +149,7 @@ async fn verify_endpoints(
 			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}{}",
 			endpoint.ws,
 			hex::encode(report.genesis),
-			config.id,
+			config.namespace(),
 			hex::encode(endpoint.genesis),
 			built_in
 				.map(|origin| format!("; {}", origin.restart_hint()))
@@ -154,7 +158,7 @@ async fn verify_endpoints(
 		let Some(suffix) = report.network_suffix else {
 			return Ok(());
 		};
-		let expected = config.network_suffix;
+		let expected = config.tld();
 		match suffix {
 			Ok(suffix) => ensure!(
 				suffix == expected.as_bytes(),
@@ -162,7 +166,7 @@ async fn verify_endpoints(
 				 derived under one would not match the other",
 				endpoint.ws,
 				String::from_utf8_lossy(&suffix),
-				config.id
+				config.namespace()
 			),
 			Err(error) => {
 				tracing::warn!("cannot read the NetworkSuffix of {}: {error}", endpoint.ws)

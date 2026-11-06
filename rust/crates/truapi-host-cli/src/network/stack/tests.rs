@@ -1,17 +1,20 @@
 use super::{
 	super::{
-		Network,
+		ChainEndpoint, Network,
 		testing::{edit_chain, edit_stack},
 	},
 	*,
 };
-use crate::stack_descriptor::Roles;
+
+fn read_stack_option(descriptor: Descriptor) -> Result<Stack> {
+	Stack::from_stack_option(descriptor, ChainBackend::Rpc)
+}
 
 /// A descriptor carries everything a network needs: the routes and genesis of
 /// each role, the identity backend, the TLD the CLI derives identities under,
 /// and the dotNS controller.
 #[test]
-fn test_stack_config_from_descriptor() {
+fn test_stack_from_descriptor() {
 	let people_genesis = format!("0x{}", "11".repeat(32));
 	let descriptor = edit_stack(|descriptor| {
 		descriptor["id"] = "staging-fork".into();
@@ -29,15 +32,15 @@ fn test_stack_config_from_descriptor() {
 		}
 	});
 
-	let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
+	let stack = read_stack_option(descriptor).unwrap();
 
-	assert_eq!(config.id, "staging");
-	assert_eq!(config.network_suffix, "testnet");
-	assert_eq!(config.identity_backend_base, "https://dub.example/api/v1");
-	assert_eq!(config.dotns_pop_controller, [0xab; 20]);
-	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
+	assert_eq!(stack.namespace(), "staging");
+	assert_eq!(stack.tld(), "testnet");
+	assert_eq!(stack.identity_backend(), "https://dub.example/api/v1");
+	assert_eq!(stack.pop_controller(), [0xab; 20]);
+	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let people = ChainEndpoint { genesis: [0x11; 32], ws: "ws://127.0.0.1:9944".to_owned() };
-	assert_eq!(config.chains, Roles { people, ..paseo.chains });
+	assert_eq!(stack.chains(), Roles { people, ..paseo.chains() });
 }
 
 /// Reserved identities derive under the TLD, and navigation accepts only the
@@ -45,7 +48,7 @@ fn test_stack_config_from_descriptor() {
 #[test]
 fn test_stack_unserved_tld_error() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let error = stack_network_config(&staging, ChainBackend::Rpc).unwrap_err();
+	let error = read_stack_option(staging).unwrap_err();
 	assert!(error.to_string().contains("staging"));
 }
 
@@ -53,10 +56,10 @@ fn test_stack_unserved_tld_error() {
 /// would send one role's traffic to the other's chain.
 #[test]
 fn test_stack_shared_genesis_error() {
-	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let shared = format!("0x{}", hex::encode(paseo.chains.people.genesis));
+	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let shared = format!("0x{}", hex::encode(paseo.genesis().people));
 	let descriptor = edit_chain("Bulletin", |chain| chain["genesisHash"] = shared.into());
-	assert!(stack_network_config(&descriptor, ChainBackend::Rpc).is_err());
+	assert!(read_stack_option(descriptor).is_err());
 }
 
 /// A stack id becomes a state directory name, so one that is not a plain
@@ -64,7 +67,7 @@ fn test_stack_shared_genesis_error() {
 #[test]
 fn test_stack_id_not_label() {
 	let descriptor = edit_stack(|descriptor| descriptor["id"] = "../elsewhere".into());
-	assert!(stack_network_config(&descriptor, ChainBackend::Rpc).is_err());
+	assert!(read_stack_option(descriptor).is_err());
 }
 
 /// Earlier releases stored Polkadot mainnet sessions under `polkadot`, so no
@@ -73,7 +76,7 @@ fn test_stack_id_not_label() {
 #[test]
 fn test_stack_namespace() {
 	let polkadot = edit_stack(|descriptor| descriptor["id"] = "polkadot".into());
-	let error = stack_network_config(&polkadot, ChainBackend::Rpc).unwrap_err();
+	let error = read_stack_option(polkadot).unwrap_err();
 	assert!(error.to_string().contains("the polkadot namespace"));
 
 	for (id, namespace) in [
@@ -85,8 +88,7 @@ fn test_stack_namespace() {
 			descriptor["id"] = id.into();
 			descriptor["tld"] = "dot".into();
 		});
-		let config = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap();
-		assert_eq!(config.id, namespace);
+		assert_eq!(read_stack_option(descriptor).unwrap().namespace(), namespace);
 	}
 }
 
@@ -98,7 +100,7 @@ fn test_stack_missing_role_error() {
 			.unwrap()
 			.retain(|chain| chain["role"] != "Bulletin");
 	});
-	let error = stack_network_config(&descriptor, ChainBackend::Rpc).unwrap_err();
+	let error = read_stack_option(descriptor).unwrap_err();
 	assert!(error.to_string().contains("no Bulletin chain"));
 }
 
@@ -113,12 +115,35 @@ fn test_stack_missing_dub_or_pop_controller_error() {
 			.unwrap()
 			.retain(|service| service["kind"] != "dub");
 	});
-	let error = stack_network_config(&without_dub, ChainBackend::Rpc).unwrap_err();
+	let error = read_stack_option(without_dub).unwrap_err();
 	assert!(error.to_string().contains("no dub service"));
 
 	let without_pop_controller = edit_stack(|descriptor| {
 		descriptor["dotns"].as_object_mut().unwrap().remove("popController");
 	});
-	let error = stack_network_config(&without_pop_controller, ChainBackend::Rpc).unwrap_err();
+	let error = read_stack_option(without_pop_controller).unwrap_err();
 	assert!(error.to_string().contains("no dotns.popController"));
+}
+
+/// A published copy that changes only fields the CLI does not read is no news
+/// to the user, while one that moves any chain's RPC list is, since the
+/// Polkadot fork check tries each node of the reference in order.
+#[test]
+fn test_stack_reads_same() {
+	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let renamed = paseo.edited(|descriptor| {
+		descriptor["name"] = "Renamed".into();
+		descriptor["sequence"] = 1.into();
+	});
+	assert!(paseo.reads_same(&renamed));
+
+	let relay_moved = paseo.edited(|descriptor| {
+		for chain in descriptor["chains"].as_array_mut().unwrap() {
+			if chain["role"] == "Relay" {
+				chain["rpc"].as_array_mut().unwrap().push("wss://relay.example".into());
+			}
+		}
+	});
+	assert!(!paseo.reads_same(&relay_moved));
+	assert!(!paseo.reads_same(&paseo.with_dub("https://dub.example/")));
 }

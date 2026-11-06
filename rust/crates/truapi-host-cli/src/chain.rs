@@ -24,7 +24,10 @@ use truapi_provider::{
 	ChainHealth, ChainLifecycle, ChainPhase, ChainSource, EmbeddedChainProvider, StallReason,
 };
 
-use crate::network::{ChainEndpoint, NetworkConfig};
+use crate::{
+	network::{ChainEndpoint, Stack},
+	stack_descriptor::Roles,
+};
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -72,22 +75,19 @@ enum Backend {
 
 impl CliChainProvider {
 	/// A provider for `network`'s chains over its chain backend.
-	pub fn new(network: &NetworkConfig) -> Self {
-		Self::with_endpoints(
-			network,
-			network.chains.iter().cloned().collect(),
-			network.chain_backend,
-		)
+	pub fn new(network: &Stack) -> Self {
+		let Roles { people, asset_hub, bulletin } = network.chains();
+		Self::with_endpoints(network, vec![people, asset_hub, bulletin], network.chain_backend())
 	}
 
 	/// A provider for `endpoint` alone, over RPC, so a check reaches exactly the
 	/// URL it names on the transport the routed chains use.
-	pub fn for_endpoint(network: &NetworkConfig, endpoint: &ChainEndpoint) -> Self {
+	pub fn for_endpoint(network: &Stack, endpoint: &ChainEndpoint) -> Self {
 		Self::with_endpoints(network, vec![endpoint.clone()], ChainBackend::Rpc)
 	}
 
 	fn with_endpoints(
-		network: &NetworkConfig,
+		network: &Stack,
 		routed_endpoints: Vec<ChainEndpoint>,
 		chain_backend: ChainBackend,
 	) -> Self {
@@ -96,17 +96,14 @@ impl CliChainProvider {
 				routed_endpoints
 					.iter()
 					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
-						let url = endpoint
-							.ws
-							.parse()
-							.expect("chain URLs are validated when the network config is resolved");
+						let url = endpoint.ws.parse().expect("invalid chain URL in the stack");
 						builder.chain(endpoint.genesis, ChainSource::rpc_node(url))
 					})
 					.build(),
 			)),
-			ChainBackend::LightClient => Backend::LightClient(network.id.clone()),
+			ChainBackend::LightClient => Backend::LightClient(network.namespace().to_owned()),
 		};
-		Self { people_genesis: network.chains.people.genesis, routed_endpoints, backend }
+		Self { people_genesis: network.genesis().people, routed_endpoints, backend }
 	}
 
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`

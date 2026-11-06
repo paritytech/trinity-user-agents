@@ -4,13 +4,18 @@ use super::{super::testing::edit_descriptor, *};
 
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network, or the check that tells a Polkadot fork from Polkadot,
-/// with nothing to start from when the published copy is unreachable.
+/// with nothing to start from when the published copy is unreachable. A
+/// built-in's descriptor `id` is its `--network` value, so the namespace a
+/// user selects is the one its state is stored under.
 #[test]
 fn test_bundled_stack_pointers() {
 	let built_ins = Network::value_variants()
 		.iter()
-		.map(|network| (network.built_in_stack(), network.id()))
-		.chain([(POLKADOT_REFERENCE_STACK, "polkadot")]);
+		.map(|network| {
+			let value = network.to_possible_value().unwrap();
+			(network.built_in_stack(), value.get_name().to_owned())
+		})
+		.chain([(POLKADOT_REFERENCE_STACK, "polkadot".to_owned())]);
 	for (built_in, id) in built_ins {
 		let bundled = trinity_stack::open(built_in.bundle, &built_in.pointer())
 			.unwrap_or_else(|error| panic!("{id}: {error}"));
@@ -25,7 +30,8 @@ fn test_bundled_stack_pointers() {
 #[test]
 fn test_restart_hint_by_copy() {
 	let url = "https://stack.example/s.json".to_owned();
-	let published = BuiltInOrigin { id: "previewnet", url, copy: BuiltInCopy::Published };
+	let published =
+		BuiltInOrigin { id: "previewnet".to_owned(), url, copy: BuiltInCopy::Published };
 	assert_eq!(
 		published.restart_hint(),
 		"the previewnet stack restarted from genesis after the published descriptor in use \
@@ -65,7 +71,7 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW)
+	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
 }
 
 const NOW: i64 = 1_800_000_000;
@@ -87,7 +93,7 @@ fn test_refresh_newer_notice() {
 		people["rpc"] = serde_json::json!(["wss://people.example"]);
 	});
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
-	assert_eq!(refresh.descriptor.sequence, 11);
+	assert_eq!(refresh.stack.descriptor().sequence, 11);
 	assert_eq!(refresh.copy, BuiltInCopy::Published);
 	let notice = refresh.notice.expect("newer copy not reported");
 	assert_eq!((notice.bundle_sequence, notice.remote_sequence), (10, 11));
@@ -102,7 +108,7 @@ fn test_refresh_newer_notice() {
 fn test_refresh_sequence_only_silent() {
 	let remote_copy = sign_copy(11, "g1");
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
-	assert_eq!(refresh.descriptor.sequence, 11);
+	assert_eq!(refresh.stack.descriptor().sequence, 11);
 	assert_eq!(refresh.copy, BuiltInCopy::Published);
 	assert!(refresh.notice.is_none());
 }
@@ -130,8 +136,8 @@ fn test_refresh_tld_change_bundle() {
 		descriptor["tld"] = "testnet".into();
 	});
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&other_tld_copy)).unwrap();
-	assert_eq!(refresh.descriptor.sequence, 10);
-	assert_eq!(refresh.descriptor.tld, "paseo");
+	assert_eq!(refresh.stack.descriptor().sequence, 10);
+	assert_eq!(refresh.stack.tld(), "paseo");
 	assert!(refresh.notice.is_none());
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }
@@ -141,7 +147,7 @@ fn test_refresh_tld_change_bundle() {
 fn test_refresh_rollback_bundle() {
 	let older = sign_copy(9, "g0");
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&older)).unwrap();
-	assert_eq!(refresh.descriptor.sequence, 10);
+	assert_eq!(refresh.stack.descriptor().sequence, 10);
 	assert!(refresh.notice.is_none());
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }
@@ -149,7 +155,7 @@ fn test_refresh_rollback_bundle() {
 #[test]
 fn test_refresh_unreachable_bundle() {
 	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Unreachable).unwrap();
-	assert_eq!(refresh.descriptor.sequence, 10);
+	assert_eq!(refresh.stack.descriptor().sequence, 10);
 	assert!(refresh.notice.is_none());
 	assert_eq!(refresh.copy, BuiltInCopy::Unreachable);
 }

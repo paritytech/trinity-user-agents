@@ -2,8 +2,8 @@ use super::*;
 use crate::chain::ChainBackend;
 
 /// The preset production builds from, so tests exercise the same config.
-fn test_network() -> crate::network::NetworkConfig {
-	crate::network::Network::default().config(ChainBackend::Rpc)
+fn test_network() -> crate::network::Stack {
+	crate::network::Network::default().bundled_stack(ChainBackend::Rpc)
 }
 
 /// Battery examples that preflight `getChainInfo` resolve the genesis they
@@ -21,7 +21,7 @@ fn test_network() -> crate::network::NetworkConfig {
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
-	let config = crate::network::Network::default().config(ChainBackend::Rpc);
+	let config = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
 
 	let supported =
 		|genesis: Vec<u8>| {
@@ -58,8 +58,8 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 
 	// A malformed genesis is unsupported, never a panic or a truncated match.
 	assert!(!supported(Vec::new()));
-	assert!(!supported(config.chains.people.genesis[..31].to_vec()));
-	assert!(!supported([config.chains.people.genesis.as_slice(), &[0u8]].concat()));
+	assert!(!supported(config.genesis().people[..31].to_vec()));
+	assert!(!supported([config.genesis().people.as_slice(), &[0u8]].concat()));
 	assert!(!supported(vec![0u8; 32]));
 }
 
@@ -69,8 +69,8 @@ fn supported_chains_answers_the_configured_network() {
 	let set = futures::executor::block_on(platform.supported_chains())
 		.expect("the CLI host serves the preset's chains");
 
-	let config = crate::network::Network::default().config(ChainBackend::Rpc);
-	assert_eq!(set.network, config.id);
+	let config = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
+	assert_eq!(set.network, config.namespace());
 	let mut served = set
 		.chains
 		.iter()
@@ -78,9 +78,9 @@ fn supported_chains_answers_the_configured_network() {
 		.collect::<Vec<_>>();
 	served.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
 	let mut expected = vec![
-		(api::ChainIdentifier::People, hex::encode(config.chains.people.genesis)),
-		(api::ChainIdentifier::Bulletin, hex::encode(config.chains.bulletin.genesis)),
-		(api::ChainIdentifier::AssetHub, hex::encode(config.chains.asset_hub.genesis)),
+		(api::ChainIdentifier::People, hex::encode(config.genesis().people)),
+		(api::ChainIdentifier::Bulletin, hex::encode(config.genesis().bulletin)),
+		(api::ChainIdentifier::AssetHub, hex::encode(config.genesis().asset_hub)),
 	];
 	expected.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
 	assert_eq!(served, expected);

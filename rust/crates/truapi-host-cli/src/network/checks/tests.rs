@@ -1,12 +1,10 @@
 use std::time::Duration;
 
 use clap::ValueEnum;
-use trinity_stack::Descriptor;
 
 use super::{
 	super::{
 		Network,
-		stack::stack_network_config,
 		testing::{edit_stack, serve_rpc},
 	},
 	*,
@@ -28,50 +26,43 @@ async fn serve_chain(genesis: [u8; 32], network_suffix: Option<&'static str>) ->
 }
 
 /// Every role on a loopback port nothing listens on.
-fn stack_on_closed_ports() -> Descriptor {
-	edit_stack(|descriptor| {
+fn stack_on_closed_ports() -> Stack {
+	let descriptor = edit_stack(|descriptor| {
 		for (port, chain) in (1..).zip(descriptor["chains"].as_array_mut().unwrap()) {
 			chain["rpc"] = serde_json::json!([format!("ws://127.0.0.1:{port}")]);
+		}
+	});
+	Stack::new(descriptor, ChainBackend::Rpc).unwrap()
+}
+
+/// The stack on closed ports with People served by `url`.
+fn stack_with_people_at(url: &str) -> Stack {
+	stack_on_closed_ports().edited(|descriptor| {
+		for chain in descriptor["chains"].as_array_mut().unwrap() {
+			if chain["role"] == "People" {
+				chain["rpc"] = serde_json::json!([url]);
+			}
 		}
 	})
 }
 
-/// The stack on closed ports with People served by `url`.
-fn stack_with_people_at(url: &str) -> NetworkConfig {
-	let mut descriptor = stack_on_closed_ports();
-	descriptor
-		.chains
-		.iter_mut()
-		.find(|chain| chain.role == "People")
-		.expect("People missing")
-		.rpc = vec![url.to_owned()];
-	stack_network_config(&descriptor, ChainBackend::Rpc).unwrap()
-}
-
 /// The stack on closed ports with a loopback People that reports its own
 /// genesis and `network_suffix`.
-async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> NetworkConfig {
-	let genesis = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc)
-		.unwrap()
-		.chains
-		.people
-		.genesis;
+async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> Stack {
+	let genesis = stack_on_closed_ports().genesis().people;
 	stack_with_people_at(&serve_chain(genesis, network_suffix).await)
 }
 
-async fn verify_stack_endpoints(
-	config: &NetworkConfig,
-	built_in: Option<&BuiltInOrigin>,
-) -> Result<()> {
-	let endpoints: Vec<_> = config.chains.iter().cloned().collect();
-	verify_endpoints(config, &endpoints, built_in).await
+async fn verify_stack_endpoints(config: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<()> {
+	let Roles { people, asset_hub, bulletin } = config.chains();
+	verify_endpoints(config, &[people, asset_hub, bulletin], built_in).await
 }
 
 /// An endpoint that does not answer is not evidence of a wrong stack, so it
 /// is left to fail on first use.
 #[tokio::test]
 async fn test_stack_endpoint_unreachable() {
-	let config = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
+	let config = stack_on_closed_ports();
 	verify_stack_endpoints(&config, None)
 		.await
 		.expect("unreachable endpoint rejected");
@@ -115,7 +106,7 @@ async fn test_stack_endpoint_genesis_mismatch() {
 async fn test_built_in_genesis_mismatch_hint() {
 	let config = stack_with_people_at(&serve_chain([0x5a; 32], None).await);
 	let origin = BuiltInOrigin {
-		id: "paseo-next-v2",
+		id: "paseo-next-v2".to_owned(),
 		url: "https://stack.example/s.json".to_owned(),
 		copy: BuiltInCopy::Published,
 	};
@@ -144,8 +135,7 @@ async fn test_network_suffix_mismatch_error() {
 async fn test_network_suffix_absent_or_unreachable() {
 	let absent = stack_with_people_suffix(None).await;
 	verify_stack_endpoints(&absent, None).await.expect("absent suffix rejected");
-	let closed_port_config =
-		stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
+	let closed_port_config = stack_on_closed_ports();
 	verify_stack_endpoints(&closed_port_config, None)
 		.await
 		.expect("unreachable People rejected");
@@ -155,9 +145,9 @@ async fn test_network_suffix_absent_or_unreachable() {
 /// light client, which does not use the RPC endpoints, has none.
 #[test]
 fn test_chain_checks_by_backend() {
-	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
+	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	assert_eq!(ChainChecks::plan(&paseo, None).endpoints.len(), 3);
-	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
+	let light_client = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient);
 	assert!(ChainChecks::plan(&light_client, None).endpoints.is_empty());
 }
 
@@ -165,15 +155,23 @@ fn test_chain_checks_by_backend() {
 /// the light client's bundled specs cannot sync.
 #[test]
 fn test_light_client_after_restart_error() {
-	let mut restarted = Network::PaseoNextV2.config(ChainBackend::LightClient);
-	restarted.chains.people.genesis = [0x5a; 32];
+	let restarted =
+		Network::PaseoNextV2
+			.bundled_stack(ChainBackend::LightClient)
+			.edited(|descriptor| {
+				for chain in descriptor["chains"].as_array_mut().unwrap() {
+					if chain["role"] == "People" {
+						chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
+					}
+				}
+			});
 	let error = refuse_light_client(&restarted).unwrap_err();
 	assert!(error.to_string().contains("--chain-backend rpc"));
 }
 
 #[test]
 fn test_light_client_unknown_network_error() {
-	let pcf_devnet = Network::PcfDevnet.config(ChainBackend::LightClient);
+	let pcf_devnet = Network::PcfDevnet.bundled_stack(ChainBackend::LightClient);
 	let error = refuse_light_client(&pcf_devnet).unwrap_err();
 	assert!(error.to_string().contains("no chain specs for pcf-devnet"));
 }
@@ -185,8 +183,8 @@ fn test_light_client_unknown_network_error() {
 fn test_light_client_catalog_match() {
 	let bundled: Vec<_> = Network::value_variants()
 		.iter()
-		.map(|network| network.config(ChainBackend::LightClient))
-		.filter(|config| truapi_provider::known_networks().any(|known| known == config.id))
+		.map(|network| network.bundled_stack(ChainBackend::LightClient))
+		.filter(|config| truapi_provider::known_networks().any(|known| known == config.namespace()))
 		.collect();
 	assert!(!bundled.is_empty());
 	for config in bundled {

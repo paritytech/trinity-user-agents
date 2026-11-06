@@ -1,5 +1,5 @@
 //! Reading Trinity stack descriptors: where a stack value points, fetching and
-//! loading its descriptor, and the fields of it a stack-derived network reads.
+//! loading its descriptor, and the roles a stack-derived network serves.
 
 use std::{
 	fs,
@@ -102,53 +102,9 @@ impl<T> Roles<T> {
 		})
 	}
 
-	pub fn zip<U>(self, other: Roles<U>) -> Roles<(T, U)> {
-		Roles {
-			people: (self.people, other.people),
-			asset_hub: (self.asset_hub, other.asset_hub),
-			bulletin: (self.bulletin, other.bulletin),
-		}
-	}
-
 	/// Each role's value, People first, then Asset Hub, then Bulletin.
 	pub fn iter(&self) -> impl Iterator<Item = &T> {
 		[&self.people, &self.asset_hub, &self.bulletin].into_iter()
-	}
-}
-
-/// The descriptor fields a stack-derived network is built from, and
-/// `generation`. Only a change to these makes the runtime notice print.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StackProjection<'a> {
-	pub generation: &'a str,
-	pub tld: &'a str,
-	/// `rpc[0]` and `genesisHash` of each role's chain, when present.
-	pub roles: Roles<Option<(&'a str, &'a str)>>,
-	pub dub: Option<&'a str>,
-	pub pop_controller: Option<&'a str>,
-}
-
-impl<'a> StackProjection<'a> {
-	pub fn of(descriptor: &'a Descriptor) -> Self {
-		Self {
-			generation: &descriptor.generation,
-			tld: &descriptor.tld,
-			roles: ROLE_NAMES.map(|role| {
-				let chain = descriptor.chain(role)?;
-				Some((chain.rpc[0].as_str(), chain.genesis_hash.as_str()))
-			}),
-			dub: descriptor
-				.services
-				.iter()
-				.find(|service| service.kind == "dub")
-				.and_then(|service| service.urls.first())
-				.map(String::as_str),
-			pop_controller: descriptor
-				.dotns
-				.as_ref()
-				.and_then(|dotns| dotns.get("popController"))
-				.map(String::as_str),
-		}
 	}
 }
 

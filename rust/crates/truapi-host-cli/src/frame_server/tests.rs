@@ -68,7 +68,7 @@ async fn start_tcp_server(
 }
 
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
-	let network = crate::network::Network::default().config(ChainBackend::Rpc);
+	let network = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
 	let platform = crate::platform::CliPlatform::new(
 		&network,
 		None,
@@ -83,10 +83,10 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.chains.people.genesis,
-		network.chains.bulletin.genesis,
-		network.chains.asset_hub.genesis,
-		network.network_suffix.to_string(),
+		network.genesis().people,
+		network.genesis().bulletin,
+		network.genesis().asset_hub,
+		network.tld().to_string(),
 	)?;
 	let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
 	Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
@@ -467,12 +467,10 @@ mod cross_product_storage {
 
 	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
 		// Every chain routes to a closed port, so nothing connects to live Paseo.
-		let mut network = crate::network::Network::default().config(ChainBackend::Rpc);
-		network.chains = network.chains.map(|chain| crate::network::ChainEndpoint {
-			ws: "ws://127.0.0.1:1".to_owned(),
-			..chain
-		});
-		let asset_hub_genesis = network.chains.asset_hub.genesis;
+		let network = crate::network::Network::default()
+			.bundled_stack(ChainBackend::Rpc)
+			.with_rpc("ws://127.0.0.1:1");
+		let asset_hub_genesis = network.genesis().asset_hub;
 		let platform = crate::platform::CliPlatform::new(
 			&network,
 			None,
@@ -487,10 +485,10 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.chains.people.genesis,
-			network.chains.bulletin.genesis,
-			network.chains.asset_hub.genesis,
-			network.network_suffix.to_string(),
+			network.genesis().people,
+			network.genesis().bulletin,
+			network.genesis().asset_hub,
+			network.tld().to_string(),
 		)?;
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),

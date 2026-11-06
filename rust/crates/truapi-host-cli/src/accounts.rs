@@ -16,7 +16,7 @@ use truapi::host_logic::product_account::{
 	derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 };
 
-use crate::{attestation, network::NetworkConfig};
+use crate::{attestation, network::Stack};
 use truapi::{statement_allowance as alloc, statement_allowance::collection::PersonhoodCollection};
 use zeroize::ZeroizeOnDrop;
 
@@ -96,7 +96,7 @@ pub struct ResolveSignerConfig<'a> {
 	/// Directory containing the local account store.
 	pub base_path: &'a Path,
 	/// Network whose identity backend and People chain should be used.
-	pub network: &'a NetworkConfig,
+	pub network: &'a Stack,
 	/// Explicit mnemonic. When present, the account store is not used.
 	#[debug("{:?}", mnemonic.as_ref().map(|_| "<redacted>"))]
 	pub mnemonic: Option<String>,
@@ -358,10 +358,9 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
 	let mut store = AccountStore::load(config.base_path)?;
 	if let Some(name) = config.account {
-		let record = store
-			.get(&config.network.id, &name)
-			.cloned()
-			.with_context(|| format!("account {name:?} not found for {}", config.network.id))?;
+		let record = store.get(config.network.namespace(), &name).cloned().with_context(|| {
+			format!("account {name:?} not found for {}", config.network.namespace())
+		})?;
 		let record = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -373,7 +372,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 	}
 
 	let period = current_statement_period()?;
-	if let Some(record) = store.auto_candidate(&config.network.id, period) {
+	if let Some(record) = store.auto_candidate(config.network.namespace(), period) {
 		let record = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -384,7 +383,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 		return resolved_from_record(record, true);
 	}
 
-	if let Some(record) = store.pending_auto_candidate(&config.network.id) {
+	if let Some(record) = store.pending_auto_candidate(config.network.namespace()) {
 		let refreshed = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -410,16 +409,13 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 ///
 /// This is deliberately read-only: it does not submit username registration
 /// and does not write the mnemonic until the caller has activated a new runtime.
-pub async fn inspect_imported_signer(
-	network: &NetworkConfig,
-	mnemonic: &str,
-) -> Result<ImportedSigner> {
+pub async fn inspect_imported_signer(network: &Stack, mnemonic: &str) -> Result<ImportedSigner> {
 	let mnemonic = Mnemonic::parse(mnemonic.trim()).context("invalid BIP-39 mnemonic")?.to_string();
-	let identity = identity_from_mnemonic(&mnemonic, network.network_suffix)?;
+	let identity = identity_from_mnemonic(&mnemonic, network.tld())?;
 	let username = attestation::lookup_registered_username(network, &identity.entropy)
 		.await
 		.with_context(|| {
-			format!("look up the mnemonic's optional dotNS username on {}", network.id)
+			format!("look up the mnemonic's optional dotNS username on {}", network.namespace())
 		})?;
 	let username = match username {
 		Some(username) => Some(username),
@@ -428,13 +424,16 @@ pub async fn inspect_imported_signer(
 			.with_context(|| {
 				format!(
 					"reverse-resolve the mnemonic's assigned identity-backend username on {}",
-					network.id
+					network.namespace()
 				)
 			})?,
 	};
 	wait_for_ring_membership(network, &identity.entropy).await.with_context(|| {
 		let account = username.as_deref().unwrap_or(&identity.address);
-		format!("verify personhood ring membership for account {account:?} on {}", network.id)
+		format!(
+			"verify personhood ring membership for account {account:?} on {}",
+			network.namespace()
+		)
 	})?;
 	let session_name = imported_session_name(username.as_deref(), &identity.public_key);
 	Ok(ImportedSigner {
@@ -452,10 +451,10 @@ pub async fn inspect_imported_signer(
 /// session's imported signer.
 pub fn persist_imported_signer(
 	base_path: &Path,
-	network: &NetworkConfig,
+	network: &Stack,
 	imported: &ImportedSigner,
 ) -> Result<ResolvedSigner> {
-	let network_id = network.id.as_str();
+	let network_id = network.namespace();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
 	let public_key_hex = format!("0x{}", hex::encode(imported.public_key));
@@ -494,10 +493,10 @@ pub fn persist_imported_signer(
 /// attestation or ring-membership checks.
 pub fn resolve_cached_signer(
 	base_path: &Path,
-	network: &NetworkConfig,
+	network: &Stack,
 	account: Option<&str>,
 ) -> Result<Option<ResolvedSigner>> {
-	let network_id = network.id.as_str();
+	let network_id = network.namespace();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let store = AccountStore::load(base_path)?;
 	let (record, auto_managed) = if let Some(name) = account {
@@ -536,14 +535,14 @@ pub fn current_statement_period() -> Result<u32> {
 
 async fn create_auto_account(
 	store: &mut AccountStore,
-	network: &NetworkConfig,
+	network: &Stack,
 	username_prefix: &str,
 	reserved_username: Option<&str>,
 ) -> Result<AccountRecord> {
 	let lite_username = lite_username_base(username_prefix)?;
-	let name = store.next_auto_name(&network.id);
+	let name = store.next_auto_name(network.namespace());
 	let mnemonic = Mnemonic::generate(12).context("generate BIP-39 mnemonic")?.to_string();
-	let identity = identity_from_mnemonic(&mnemonic, network.network_suffix)?;
+	let identity = identity_from_mnemonic(&mnemonic, network.tld())?;
 
 	if !attestation::lite_username_available(network, &identity.entropy, &lite_username)
 		.await
@@ -554,7 +553,7 @@ async fn create_auto_account(
 
 	let mut record = AccountRecord {
 		name,
-		network: network.id.clone(),
+		network: network.namespace().to_owned(),
 		mnemonic,
 		lite_username,
 		public_key_hex: format!("0x{}", hex::encode(identity.public_key)),
@@ -582,11 +581,11 @@ async fn create_auto_account(
 
 async fn ensure_record_ready(
 	store: &mut AccountStore,
-	network: &NetworkConfig,
+	network: &Stack,
 	record: &AccountRecord,
 	reserved_username: Option<&str>,
 ) -> Result<AccountRecord> {
-	let identity = identity_from_mnemonic(&record.mnemonic, network.network_suffix)?;
+	let identity = identity_from_mnemonic(&record.mnemonic, network.tld())?;
 	if record.origin == AccountOrigin::Imported {
 		wait_for_ring_membership(network, &identity.entropy).await?;
 		return Ok(record.clone());
@@ -621,7 +620,7 @@ async fn finish_account_readiness(
 }
 
 async fn attest_record(
-	network: &NetworkConfig,
+	network: &Stack,
 	record: &AccountRecord,
 	reserved_username: Option<&str>,
 ) -> Result<String> {
@@ -644,7 +643,7 @@ async fn attest_record(
 }
 
 fn attest_config<'a>(
-	network: &'a NetworkConfig,
+	network: &'a Stack,
 	entropy: Vec<u8>,
 	username_base: String,
 	reserved_username: Option<&str>,
@@ -683,12 +682,12 @@ pub fn collection_candidates(
 	]
 }
 
-async fn wait_for_ring_membership(network: &NetworkConfig, entropy: &[u8]) -> Result<()> {
+async fn wait_for_ring_membership(network: &Stack, entropy: &[u8]) -> Result<()> {
 	const MAX_ATTEMPTS: usize = 30;
 	const SLEEP: Duration = Duration::from_secs(4);
 
 	let chains = crate::chain::CliChainProvider::new(network);
-	let candidates = collection_candidates(entropy, network.network_suffix);
+	let candidates = collection_candidates(entropy, network.tld());
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 	let mut metadata = None;
 	for attempt in 1..=MAX_ATTEMPTS {
@@ -700,13 +699,13 @@ async fn wait_for_ring_membership(network: &NetworkConfig, entropy: &[u8]) -> Re
 			)),
 			crate::terminal_ui::ActivityState::Running,
 		);
-		let rpc = match chains.rpc_client(network.chains.people.genesis).await {
+		let rpc = match chains.rpc_client(network.genesis().people).await {
 			Ok(rpc) => alloc::rpc::RpcClient::new(rpc),
 			Err(err) => {
 				warn!(
 					attempt,
 					max_attempts = MAX_ATTEMPTS,
-					location = chains.location(network.chains.people.genesis),
+					location = chains.location(network.genesis().people),
 					error = %err,
 					"could not connect while checking personhood ring membership"
 				);
@@ -796,12 +795,12 @@ pub struct AttestedIdentity {
 /// Attest `mnemonic`'s `uid.<tld>` identity for `username_base` and wait until
 /// it is a personhood ring member. Nothing is written to the account store.
 pub async fn attest_mnemonic(
-	network: &NetworkConfig,
+	network: &Stack,
 	mnemonic: &str,
 	username_base: &str,
 ) -> Result<AttestedIdentity> {
 	let username_base = lite_username_base(username_base)?;
-	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
+	let identity = identity_from_mnemonic(mnemonic, network.tld())?;
 	let lite_username =
 		attestation::attest(&attest_config(network, identity.entropy.clone(), username_base, None))
 			.await?;

@@ -580,7 +580,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. With `--skip-same-projection`, a fetched copy whose projection (§14.1), every chain's `rpc` list, `expiresAt` and `validUntil` equal those of a `<file>` that verifies leaves `<file>` untouched and reports it as current; `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle a new TLD on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1691,8 +1691,10 @@ Every network comes from a Trinity stack descriptor
 | Reserved-identity suffix | `tld` |
 | `DotnsPopController` | `dotns.popController` |
 
-These fields and `generation` are the stack's projection. A published copy whose
-projection equals the shipped copy's makes no notice print (below).
+The fields the CLI reads are these, `generation`, and the role, genesis hash and
+full `rpc` list of every chain, which the Polkadot comparison below tries in
+order. A published copy that changes none of them makes no notice print
+(below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), has a `tld` the core
@@ -1736,11 +1738,11 @@ its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
 that answers with a non-2xx HTTP status is logged as a warning with the status
-and URL; a timeout or a failed connection is not. A published descriptor whose
-projection differs from the shipped copy's is used and reported in one line on
+and URL; a timeout or a failed connection is not. A published descriptor that
+changes a field the CLI reads is used and reported in one line on
 stderr with both sequences, saying it is in use and that a later release ships
 it; the line says the stack restarted from genesis when its `generation`
-changed. A newer copy with the same projection is used without a line. A
+changed. A newer copy that changes none of them is used without a line. A
 published copy that changes the `tld` is not used, with a warning, since every
 account derives under it. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
