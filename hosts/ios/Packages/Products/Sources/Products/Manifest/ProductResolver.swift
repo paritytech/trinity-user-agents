@@ -30,7 +30,7 @@ public actor ProductResolver: ProductResolving {
 
     // Successful resolutions only, so a transient read failure stays retryable.
     private var cache: [ProductId: ProductManifest] = [:]
-    private var inFlight: [ProductId: Task<ProductManifest, Error>] = [:]
+    private var inFlight: [ProductId: (read: Task<ProductManifest, Error>, context: HostLoadContext?)] = [:]
 
     public init(
         metadataRepository: ProductMetadataRepositoryProtocol,
@@ -81,11 +81,11 @@ public actor ProductResolver: ProductResolving {
 
         // Concurrent callers share one read: a product opens from several surfaces at once.
         if let running = inFlight[baseName] {
-            return try await running.value
+            return try await join(running.read, of: baseName, startedBy: running.context, startedAt: startedAt)
         }
 
         let task = Task { [self] in try await resolveFromChainReporting(baseName, startedAt: startedAt) }
-        inFlight[baseName] = task
+        inFlight[baseName] = (task, telemetry.context)
 
         defer { inFlight[baseName] = nil }
 
@@ -113,6 +113,28 @@ private extension ProductResolver {
         }
 
         return baseName
+    }
+
+    /// The shared read reports under the context that started it, so a caller from another load (a
+    /// tap joining a prewarm's read) reports its own wait.
+    func join(
+        _ read: Task<ProductManifest, Error>,
+        of baseName: ProductId,
+        startedBy owner: HostLoadContext?,
+        startedAt: Int?
+    ) async throws -> ProductManifest {
+        let ownWait = telemetry.context == owner ? nil : startedAt
+
+        do {
+            let manifest = try await read.value
+            reportResolved(baseName, outcome: .ok, startedAt: ownWait)
+            return manifest
+        } catch {
+            if !(error is CancellationError) {
+                reportResolved(baseName, outcome: .error, startedAt: ownWait)
+            }
+            throw error
+        }
     }
 
     func resolveFromChainReporting(_ baseName: ProductId, startedAt: Int?) async throws -> ProductManifest {

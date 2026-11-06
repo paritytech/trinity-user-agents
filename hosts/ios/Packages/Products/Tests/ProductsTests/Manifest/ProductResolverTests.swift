@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import os
 import IssueMonitoring
 import Testing
 @testable import Products
@@ -261,6 +262,43 @@ struct ProductResolverTests {
         #expect(recorder.events.first?.tags["product.id"] == "hackm3.dot")
     }
 
+    /// A tap that joins a prewarm's read waited on it too, so its session gets its own event.
+    @Test func aCallerJoiningAnotherLoadsReadReportsItsOwnWait() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let repository = GatedMetadataRepository()
+        let resolver = ProductResolver(
+            metadataRepository: repository,
+            hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
+            logger: SilentLogger(),
+            screening: .passingThrough,
+            telemetry: telemetry
+        )
+        let session = UUID()
+
+        let prewarm = Task {
+            try await telemetry.withContext(session: nil, trigger: .prewarm) {
+                try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+        await repository.firstReadStarted()
+        let open = Task {
+            try await telemetry.withContext(session: session, trigger: .open) {
+                try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        repository.release()
+        _ = try await (prewarm.value, open.value)
+
+        let prewarmed = recorder.events.first { $0.tags["trigger"] == "prewarm" }
+        let opened = recorder.events.first { $0.tags["trigger"] == "open" }
+        #expect(recorder.events.count == 2)
+        #expect(prewarmed?.tags["outcome"] == "ok")
+        #expect(opened?.tags["outcome"] == "ok")
+        #expect(opened?.tags["host.session_id"] == session.uuidString.lowercased())
+    }
+
     @Test func aCancelledReadReportsNothing() async throws {
         let stub = StubProductMetadataRepository()
         stub.readError = CancellationError()
@@ -288,6 +326,44 @@ private func makeResolver(
         screening: .passingThrough,
         telemetry: telemetry
     )
+}
+
+/// Holds every read until released, so a second caller can join the first one's read.
+private final class GatedMetadataRepository: ProductMetadataRepositoryProtocol, @unchecked Sendable {
+    private struct Gate {
+        var released = false
+        var waiting: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let started = AsyncStream<Void>.makeStream()
+    private let gate = OSAllocatedUnfairLock(initialState: Gate())
+
+    func firstReadStarted() async {
+        for await _ in started.stream {
+            return
+        }
+    }
+
+    func release() {
+        let waiting = gate.withLock { gate in
+            gate.released = true
+            defer { gate.waiting = [] }
+            return gate.waiting
+        }
+        waiting.forEach { $0.resume() }
+    }
+
+    func fetchMetadata(name _: String, key _: String) async throws -> String? {
+        started.continuation.yield(())
+        await withCheckedContinuation { continuation in
+            let released = gate.withLock { gate in
+                if !gate.released { gate.waiting.append(continuation) }
+                return gate.released
+            }
+            if released { continuation.resume() }
+        }
+        return nil
+    }
 }
 
 private enum Fixtures {
