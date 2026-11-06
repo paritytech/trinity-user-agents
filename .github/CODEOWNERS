@@ -21,6 +21,7 @@
 /ios/                   @paritytech/host-sdk-team @paritytech/hosts-team
 /hosts/android/         @paritytech/host-sdk-team @paritytech/hosts-team
 /android/               @paritytech/host-sdk-team @paritytech/hosts-team
+/hosts/web/             @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The client, the playground and the explorer.
 /js/                    @paritytech/host-sdk-team @paritytech/hosts-team
