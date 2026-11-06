@@ -185,7 +185,7 @@ private extension FirebaseApplicationService {
         return PaymentAssetConfig(json: json)
     }
 
-    func fundingProviders() -> [ProductId] {
+    func fundingProviders() -> [String] {
         FundingConfig.providers(in: remoteConfig[.fundingConfig].jsonValue as? [String: Any], logger: logger)
     }
 

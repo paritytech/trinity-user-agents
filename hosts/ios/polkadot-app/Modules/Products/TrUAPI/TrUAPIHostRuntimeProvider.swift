@@ -220,13 +220,25 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
 extension TrUAPIHostRuntimeProvider {
     /// The providers the host lists with the core: the configured ones, read
-    /// from dotNS, first, then each bundled one the config does not name.
+    /// from dotNS, first, then each bundled one the config does not name. A
+    /// configured name that is not a product id is skipped and logged.
     static func fundingProviders(
-        configured: [ProductId],
-        bundled: [FundingProviderEntry]
+        configured names: [String],
+        bundled: [FundingProviderEntry],
+        logger: LoggerProtocol?
     ) -> [FundingProviderEntry] {
-        let published = configured.map { FundingProviderEntry(productId: $0, workerManifest: nil, origin: .published) }
-        let configuredIds = Set(configured)
+        var configuredIds = Set<ProductId>()
+        let published = names.compactMap { name -> FundingProviderEntry? in
+            do {
+                let productId = try ProductId(name)
+                guard configuredIds.insert(productId).inserted else { return nil }
+
+                return FundingProviderEntry(productId: productId, workerManifest: nil, origin: .published)
+            } catch {
+                logger?.error("[truapi] funding_config lists an unusable provider name \(name): \(error)")
+                return nil
+            }
+        }
         return published + bundled.filter { !configuredIds.contains($0.productId) }
     }
 
@@ -239,11 +251,12 @@ extension TrUAPIHostRuntimeProvider {
         of configs: AnyAsyncSequence<RemoteAppConfig>,
         listed initial: [FundingProviderEntry],
         bundled: [FundingProviderEntry],
+        logger: LoggerProtocol?,
         list: ([FundingProviderEntry]) -> Bool
     ) async throws {
         var listed = initial
         for try await config in configs {
-            let providers = fundingProviders(configured: config.fundingProviders, bundled: bundled)
+            let providers = fundingProviders(configured: config.fundingProviders, bundled: bundled, logger: logger)
             guard providers != listed else { continue }
             guard list(providers) else { return }
 
@@ -324,7 +337,11 @@ private extension TrUAPIHostRuntimeProvider {
     /// runtime is built, so startup never waits for it.
     func followFundingProviders(on runtime: TrUAPIHostRuntime) {
         let bundled = bundledProducts.fundingProviders(logger: logger)
-        let initial = Self.fundingProviders(configured: appliedConfig()?.fundingProviders ?? [], bundled: bundled)
+        let initial = Self.fundingProviders(
+            configured: appliedConfig()?.fundingProviders ?? [],
+            bundled: bundled,
+            logger: logger
+        )
         if !initial.isEmpty {
             apply(fundingProviders: initial, on: runtime)
         }
@@ -332,9 +349,14 @@ private extension TrUAPIHostRuntimeProvider {
         guard let stream = remoteConfig?.remoteConfigStream() else { return }
 
         fundingProvidersObservation?.cancel()
-        fundingProvidersObservation = Task { [weak self, weak runtime] in
+        fundingProvidersObservation = Task { [weak self, weak runtime, logger] in
             do {
-                try await Self.followRefreshes(of: stream, listed: initial, bundled: bundled) { providers in
+                try await Self.followRefreshes(
+                    of: stream,
+                    listed: initial,
+                    bundled: bundled,
+                    logger: logger
+                ) { providers in
                     guard let self, let runtime, !Task.isCancelled else { return false }
 
                     apply(fundingProviders: providers, on: runtime)

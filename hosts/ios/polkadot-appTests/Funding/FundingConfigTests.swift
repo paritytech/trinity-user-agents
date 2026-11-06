@@ -17,17 +17,30 @@ struct FundingConfigTests {
             logger: nil
         )
 
-        #expect(try providers == [ProductId("ramp.dot"), ProductId("other.dot")])
+        #expect(providers == ["ramp.dot", "other.dot"])
     }
 
-    @Test("Skips entries that are not product ids and keeps the rest")
-    func skipsUnusableNames() throws {
+    @Test("Skips entries that are not names and keeps the rest")
+    func skipsEntriesThatAreNotNames() {
         let providers = FundingConfig.providers(
             in: ["providers": ["", 42, "ramp.dot"]],
             logger: nil
         )
 
-        #expect(try providers == [ProductId("ramp.dot")])
+        #expect(providers == ["ramp.dot"])
+    }
+
+    @Test("Skips configured names that are not product ids and lists the rest")
+    func skipsUnusableNames() throws {
+        let providers = TrUAPIHostRuntimeProvider.fundingProviders(
+            configured: ["not a product id", "ramp.dot"],
+            bundled: [],
+            logger: nil
+        )
+
+        #expect(try providers == [
+            FundingProviderEntry(productId: ProductId("ramp.dot"), workerManifest: nil, origin: .published)
+        ])
     }
 
     @Test("No object or no providers lists none")
@@ -46,7 +59,11 @@ struct FundingConfigTests {
             FundingProviderEntry(productId: fundtest, workerManifest: "{}", origin: .bundled)
         ]
 
-        let providers = TrUAPIHostRuntimeProvider.fundingProviders(configured: [ramp], bundled: bundled)
+        let providers = TrUAPIHostRuntimeProvider.fundingProviders(
+            configured: [ramp.rawValue],
+            bundled: bundled,
+            logger: nil
+        )
 
         #expect(providers == [
             FundingProviderEntry(productId: ramp, workerManifest: nil, origin: .published),
@@ -67,7 +84,8 @@ struct FundingConfigTests {
         try await TrUAPIHostRuntimeProvider.followRefreshes(
             of: stream(refreshes),
             listed: published([ramp]),
-            bundled: []
+            bundled: [],
+            logger: nil
         ) { providers in
             listed.append(providers)
             return true
@@ -84,7 +102,8 @@ struct FundingConfigTests {
         try await TrUAPIHostRuntimeProvider.followRefreshes(
             of: stream(ids.map { [$0] }),
             listed: [],
-            bundled: []
+            bundled: [],
+            logger: nil
         ) { _ in
             calls += 1
             return false
@@ -96,14 +115,14 @@ struct FundingConfigTests {
     private func stream(_ refreshes: [[ProductId]]) -> AnyAsyncSequence<RemoteAppConfig> {
         AsyncStream { continuation in
             for providers in refreshes {
-                continuation.yield(config(providers: providers))
+                continuation.yield(config(providers: providers.map(\.rawValue)))
             }
             continuation.finish()
         }
         .eraseToAnyAsyncSequence()
     }
 
-    private func config(providers: [ProductId]) -> RemoteAppConfig {
+    private func config(providers: [String]) -> RemoteAppConfig {
         RemoteAppConfig(
             identityBackendUrl: nil,
             ipfsGatewayUrl: nil,
