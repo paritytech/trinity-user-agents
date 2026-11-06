@@ -13,6 +13,7 @@ use crate::{
 			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
 			derive_root_keypair_from_entropy,
 		},
+		sso::pairing::{SsoStatementData, decrypt_session_statement_data},
 	},
 	platform::ProductId,
 };
@@ -45,13 +46,13 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 	);
 }
 use crate::{
-	host_logic::statement_store::decode_verified_statement_data,
+	host_logic::statement_store::{SUBMIT_STATEMENT_METHOD, decode_verified_statement_data},
 	platform::{
 		CreateTransactionReview, HostInfo, LegacySigningAccount, Platform, PlatformInfo,
 		SigningHostConfig,
 	},
 	runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
-	test_support::{StubPlatform, test_spawner},
+	test_support::{StubPlatform, recorded_rpc_method_count, test_spawner},
 };
 use std::sync::Arc;
 use truapi::latest as api;
@@ -203,10 +204,7 @@ impl DevicePairingObserver for RecordingPairingObserver {
 
 fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	signing_fixture(Arc::new(StubPlatform {
-		rpc_method_responses: vec![(
-			"statement_submit",
-			format!(r#"{{"status":"{submit_status}"}}"#),
-		)],
+		rpc_method_responses: submit_answers(submit_status, 1),
 		..Default::default()
 	}))
 }
@@ -215,10 +213,7 @@ fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<Si
 /// told a new device joined.
 #[test]
 fn a_paired_device_is_reported_to_the_host() {
-	let peer = PairedSsoPeer {
-		statement_account_id: [0x31; 32],
-		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-	};
+	let peer = paired_peer();
 	let (services, signing_host) = pairing_fixture("new");
 	let observer = Arc::new(RecordingPairingObserver::default());
 	assert!(services.install_device_pairing_observer(observer.clone()));
@@ -235,10 +230,7 @@ fn a_paired_device_is_reported_to_the_host() {
 /// announce a device over a session that does not exist.
 #[test]
 fn a_handshake_that_never_landed_reports_no_device() {
-	let peer = PairedSsoPeer {
-		statement_account_id: [0x31; 32],
-		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-	};
+	let peer = paired_peer();
 	// Neither "new" nor "known", so the submit is rejected.
 	let (services, signing_host) = pairing_fixture("ignored");
 	let observer = Arc::new(RecordingPairingObserver::default());
@@ -260,10 +252,7 @@ fn a_handshake_that_never_landed_reports_no_device() {
 
 #[test]
 fn pairing_without_an_observer_still_answers_the_handshake() {
-	let peer = PairedSsoPeer {
-		statement_account_id: [0x31; 32],
-		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-	};
+	let peer = paired_peer();
 	let (services, signing_host) = pairing_fixture("new");
 
 	futures::executor::block_on(
@@ -780,6 +769,195 @@ fn a_failing_subscription_lets_the_request_being_served_finish() {
 	assert_eq!(
 		(before_the_request_finished, once_it_finished),
 		(None, Some(Some(Err("subscription failed".to_string()))))
+	);
+}
+
+fn paired_peer() -> PairedSsoPeer {
+	PairedSsoPeer {
+		statement_account_id: [0x31; 32],
+		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
+	}
+}
+
+fn subtree_request() -> IncomingSsoRequest {
+	IncomingSsoRequest {
+		request_id: "stmt-1".to_string(),
+		expires_at_unix_secs: None,
+		messages: vec![RemoteMessage::request(
+			"subtree-1".to_string(),
+			sso_messages::ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
+		)],
+	}
+}
+
+/// Serve one product subtree request from [`paired_peer`] over `platform`.
+fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<ResponderExit>, String> {
+	deliver_subtree_request(platform, 1).remove(0)
+}
+
+/// Deliver one product subtree request from [`paired_peer`] `deliveries`
+/// times to one responder over `platform`.
+fn deliver_subtree_request(
+	platform: Arc<StubPlatform>,
+	deliveries: usize,
+) -> Vec<Result<Option<ResponderExit>, String>> {
+	let peer = paired_peer();
+	let replay_scope =
+		peer.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
+	let (services, signing_host) = signing_fixture(platform);
+	let service = SigningHostSsoService::new(signing_host.clone());
+	let responder = SsoResponderService::new(services, signing_host);
+	let session = responder_session(&ENTROPY, NETWORK_SUFFIX, peer).unwrap();
+	(0..deliveries)
+		.map(|_| {
+			futures::executor::block_on(serve_statement(
+				&responder,
+				&service,
+				&session,
+				replay_scope,
+				subtree_request(),
+			))
+		})
+		.collect()
+}
+
+/// The statement data the responder published on `platform`, oldest first.
+fn published_statement_data(platform: &StubPlatform) -> Vec<SsoStatementData> {
+	let session = responder_session(&ENTROPY, NETWORK_SUFFIX, paired_peer()).unwrap();
+	platform
+		.sent_rpc
+		.lock()
+		.unwrap()
+		.iter()
+		.map(|request| serde_json::from_str::<serde_json::Value>(request).unwrap())
+		.filter(|request| request["method"] == SUBMIT_STATEMENT_METHOD)
+		.map(|request| {
+			let statement_hex = request["params"][0].as_str().unwrap();
+			let statement = hex::decode(statement_hex.trim_start_matches("0x")).unwrap();
+			let verified = decode_verified_statement_data(&statement, None).unwrap();
+			decrypt_session_statement_data(&session, &verified.data).unwrap()
+		})
+		.collect()
+}
+
+fn submit_answers(status: &str, count: usize) -> Vec<(&'static str, String)> {
+	vec![(SUBMIT_STATEMENT_METHOD, format!(r#"{{"status":"{status}"}}"#)); count]
+}
+
+/// One refused connection must not end the session.
+#[test]
+fn a_failed_connect_does_not_end_the_session() {
+	let platform = Arc::new(StubPlatform {
+		chain_connect_failures: std::sync::Mutex::new(["Connection reset by peer"].into()),
+		// The ack, then the response.
+		rpc_method_responses: submit_answers("new", 2),
+		..StubPlatform::default()
+	});
+
+	let served = serve_subtree_request(platform.clone());
+
+	assert_eq!(
+		(served, recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+		(Ok(None), 2)
+	);
+}
+
+/// A request that ran is not run again, so its answer must outlast the
+/// ack's resend budget.
+#[test]
+fn an_answer_is_sent_until_the_people_chain_takes_it() {
+	let platform = Arc::new(StubPlatform {
+		chain_connect_failures: std::sync::Mutex::new(
+			vec!["Connection reset by peer"; MAX_RESENDS as usize + 1].into(),
+		),
+		rpc_method_responses: submit_answers("new", 1),
+		..StubPlatform::default()
+	});
+	let (services, signing_host) = signing_fixture(platform.clone());
+	let service = SigningHostSsoService::new(signing_host);
+	let session = responder_session(&ENTROPY, NETWORK_SUFFIX, paired_peer()).unwrap();
+
+	let answered = futures::executor::block_on(serve_request(
+		&services,
+		&service,
+		&session,
+		subtree_request(),
+		&mut Vec::new(),
+	));
+
+	assert_eq!(
+		(answered, recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+		(Ok(None), 1)
+	);
+}
+
+/// A rejection is the store's answer, so resending would only repeat it.
+#[test]
+fn a_rejected_ack_is_not_sent_again() {
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: submit_answers("ignored", MAX_RESENDS as usize + 1),
+		..StubPlatform::default()
+	});
+
+	let served = serve_subtree_request(platform.clone());
+
+	assert_eq!(
+		(served.is_err(), recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+		(true, 1)
+	);
+}
+
+/// A request that ran is not run again, so an answer the People chain
+/// refused has to be published when the request is delivered again.
+#[test]
+fn a_refused_answer_is_published_when_the_request_is_delivered_again() {
+	let platform = Arc::new(StubPlatform {
+		// Ack, refused answer, then the ack and answer for the redelivery.
+		rpc_method_responses: ["new", "ignored", "new", "new"]
+			.into_iter()
+			.flat_map(|status| submit_answers(status, 1))
+			.collect(),
+		..StubPlatform::default()
+	});
+
+	let [refused, redelivered] = deliver_subtree_request(platform.clone(), 2).try_into().unwrap();
+
+	let answers = published_statement_data(&platform)
+		.into_iter()
+		.filter(|data| matches!(data, SsoStatementData::Request { .. }))
+		.collect::<Vec<_>>();
+	let [refused_answer, published_answer] = answers.as_slice() else {
+		panic!("expected the answer and its republication, got {answers:?}");
+	};
+	assert_eq!((refused.is_err(), redelivered, published_answer), (true, Ok(None), refused_answer));
+}
+
+/// A request whose ack failed must run when it is delivered again, not be
+/// skipped as already handled.
+#[test]
+fn a_request_whose_ack_failed_is_answered_when_delivered_again() {
+	let core_storage = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+	let unreachable = Arc::new(StubPlatform {
+		chain_connect_error: Some("Connection reset by peer"),
+		local_storage: core_storage.clone(),
+		..StubPlatform::default()
+	});
+	let reconnected = Arc::new(StubPlatform {
+		rpc_method_responses: submit_answers("new", 2),
+		local_storage: core_storage,
+		..StubPlatform::default()
+	});
+
+	let failed_ack = serve_subtree_request(unreachable);
+	let redelivered = serve_subtree_request(reconnected.clone());
+
+	assert_eq!(
+		(
+			failed_ack.is_err(),
+			redelivered,
+			recorded_rpc_method_count(&reconnected.sent_rpc, SUBMIT_STATEMENT_METHOD)
+		),
+		(true, Ok(None), 2)
 	);
 }
 
