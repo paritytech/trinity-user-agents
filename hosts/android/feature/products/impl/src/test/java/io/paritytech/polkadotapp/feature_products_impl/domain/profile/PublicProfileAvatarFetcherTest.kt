@@ -131,7 +131,7 @@ class PublicProfileAvatarFetcherTest {
         }
         val loading = async { factory.create(avatar, options, imageLoader).fetch() }
         started.await()
-        loading.cancel()
+        pending.cancel()
         try {
             loading.await()
             error("Cancellation must propagate")

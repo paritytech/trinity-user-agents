@@ -17,6 +17,7 @@ import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.design.components.avatar.AVATAR_REFRESH_PARAMETER
 import io.paritytech.polkadotapp.feature_chats_api.domain.profile.publicProfileAvatarUri
@@ -46,7 +47,8 @@ class PublicProfileAvatarInterceptorTest {
     private val runtimeProvider: TrUAPIHostRuntimeProvider = mockk {
         coEvery { runtime() } returns Result.success(runtime)
     }
-    private val interceptor = PublicProfileAvatarInterceptor(runtimeProvider)
+    private val components = ComponentRegistry.Builder().also { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(it) }.build()
+    private val interceptor = components.interceptors.single()
 
     @Test
     fun `metadata is resolved before the image cache can answer`() = runTest {
@@ -59,7 +61,9 @@ class PublicProfileAvatarInterceptorTest {
             runtime.resolvePublicProfile("alice.01", false)
             chain.proceed(any())
         }
-        coVerify { chain.proceed(match { it.data == avatar && it.diskCacheKey == avatar.cid }) }
+        val proceeded = slot<ImageRequest>()
+        coVerify { chain.proceed(capture(proceeded)) }
+        assertEquals(avatar to avatar.cid, proceeded.captured.data to proceeded.captured.diskCacheKey)
     }
 
     @Test
@@ -70,11 +74,13 @@ class PublicProfileAvatarInterceptorTest {
         interceptor.intercept(chain)
 
         coVerify(exactly = 1) { runtime.resolvePublicProfile("alice.01", true) }
-        coVerify {
-            chain.proceed(match {
-                it.data == avatar && it.memoryCachePolicy == CachePolicy.ENABLED && it.diskCachePolicy == CachePolicy.ENABLED
-            })
-        }
+        val proceeded = slot<ImageRequest>()
+        coVerify { chain.proceed(capture(proceeded)) }
+        assertEquals(
+            Triple(avatar, CachePolicy.ENABLED, CachePolicy.ENABLED),
+            Triple(proceeded.captured.data, proceeded.captured.memoryCachePolicy, proceeded.captured.diskCachePolicy)
+        )
+        assertEquals(emptyMap<String, String>(), proceeded.captured.parameters.memoryCacheKeys())
     }
 
     @Test
@@ -114,7 +120,6 @@ class PublicProfileAvatarInterceptorTest {
         val changed = ProfileAvatar("next-cid", ImageFormat.PNG)
         val declarations = listOf(avatar, changed, ProfileAvatar(changed.cid, ImageFormat.JPEG))
         coEvery { runtime.resolvePublicProfile(any(), any()) } returnsMany declarations.map { PublicProfile(it) }
-        val components = ComponentRegistry.Builder().also { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(it) }.build()
         val keys = mutableListOf<String?>()
         val data = mutableListOf<Any>()
         repeat(declarations.size) {
@@ -151,7 +156,7 @@ class PublicProfileAvatarInterceptorTest {
         val chain = chain()
         val loading = async { interceptor.intercept(chain) }
         started.await()
-        loading.cancel()
+        pending.cancel()
         try {
             loading.await()
             error("Cancellation must propagate")
@@ -163,9 +168,8 @@ class PublicProfileAvatarInterceptorTest {
 
     @Test
     fun `other images keep their existing request`() = runTest {
-        val chain = chain(data = "https://example.com/icon.png")
         val expected = mockk<ImageResult>()
-        coEvery { chain.proceed(chain.request) } returns expected
+        val chain = chain(data = "https://example.com/icon.png") { expected }
 
         assertSame(expected, interceptor.intercept(chain))
         coVerify(exactly = 0) { runtimeProvider.runtime() }
