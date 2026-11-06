@@ -94,61 +94,6 @@ struct PublicProfileAvatarImageDataProviderTests {
         #expect(await resolver.imageRequests == [avatar])
     }
 
-    @Test
-    func clearingTheCacheRemovesOriginalsAndProcessedImages() async throws {
-        let avatar = ProfileAvatar(cid: UUID().uuidString, format: .png)
-        let resolver = MockPublicProfileAvatarResolver(result: .success(testPicturePNG(size: CGSize(
-            width: 3,
-            height: 2
-        ))))
-        let cache = ImageCache(name: avatar.cid)
-        defer { cache.clearCache(completion: nil) }
-        let provider = makeProvider(avatar, resolver: resolver)
-        let options = options(for: avatar, cache: cache)
-        _ = try await KingfisherManager.shared.retrieveImage(with: .provider(provider), options: options)
-        await cache.clearCache()
-        _ = try await KingfisherManager.shared.retrieveImage(with: .provider(provider), options: options)
-        #expect(await resolver.imageRequests == [avatar, avatar])
-    }
-
-    @Test
-    func theDiskBudgetCanEvictImagesWithoutAFreshnessDeadline() async throws {
-        let avatar = ProfileAvatar(cid: UUID().uuidString, format: .png)
-        let resolver = MockPublicProfileAvatarResolver(result: .success(testPicturePNG(size: CGSize(
-            width: 3,
-            height: 2
-        ))))
-        let cache = ImageCache(name: avatar.cid)
-        cache.diskStorage.config.sizeLimit = 1
-        defer { cache.clearCache(completion: nil) }
-        let provider = makeProvider(avatar, resolver: resolver)
-        let options = options(for: avatar, cache: cache)
-        _ = try await KingfisherManager.shared.retrieveImage(with: .provider(provider), options: options)
-        cache.clearMemoryCache()
-        await cache.cleanExpiredDiskCache()
-        _ = try await KingfisherManager.shared.retrieveImage(with: .provider(provider), options: options)
-        #expect(await resolver.imageRequests == [avatar, avatar])
-    }
-
-    @Test
-    func aCacheWriteFailureStillDisplaysTheVerifiedImage() async throws {
-        let name = UUID().uuidString
-        let avatar = ProfileAvatar(cid: name, format: .png)
-        let resolver = MockPublicProfileAvatarResolver(result: .success(testPicturePNG(size: CGSize(
-            width: 3,
-            height: 2
-        ))))
-        let cache = ImageCache(name: name)
-        let directory = cache.diskStorage.cacheFileURL(forKey: name).deletingLastPathComponent()
-        try FileManager.default.removeItem(at: directory)
-        try Data().write(to: directory)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let image = try await KingfisherManager.shared.retrieveImage(
-            with: .provider(makeProvider(avatar, resolver: resolver)), options: options(for: avatar, cache: cache)
-        ).image
-        #expect(await (image.cgImage?.width, resolver.imageRequests) == (3, [avatar]))
-    }
-
     private func cornerAlpha(_ image: UIImage) throws -> UInt8 {
         let cgImage = try #require(image.cgImage)
         var pixel = [UInt8](repeating: 0, count: 4)

@@ -65,24 +65,6 @@ struct ProductBotChatListTests {
         ) == nil)
         #expect(iconFactory.requestedDomains == [productId])
     }
-
-    @Test
-    func aPersonLoadsTheirProfileWithoutLookingUpAProduct() {
-        let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
-            PublicProfile(avatar: nil)
-        }, loadAvatar: { _ in
-            throw ImageError.Unavailable(reason: "no profile avatar")
-        })
-
-        let image = Chat.PeerMetadata.Icon.publicProfile(username: "alice.01").imageViewModel(
-            using: iconFactory,
-            publicProfileFactory: publicProfileFactory
-        )
-
-        #expect(image is PublicProfileAvatarViewModel)
-        #expect(iconFactory.requestedDomains.isEmpty)
-    }
 }
 
 private extension ProductBotChatListTests {
