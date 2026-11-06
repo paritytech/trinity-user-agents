@@ -14,7 +14,7 @@ pub struct HostExpandedCardSetFaceShownRequest {
 pub enum HostExpandedCardSetFaceShownError {
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face; the request had no effect.
+	/// The user is moving the face or turning the card; the request had no effect.
 	UserMoving,
 	/// Catch-all.
 	Unknown {
