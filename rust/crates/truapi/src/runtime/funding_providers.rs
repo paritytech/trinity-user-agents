@@ -9,10 +9,7 @@
 //! the manifest cache, so a provider whose publisher changed, withdrew or
 //! unpublished it is corrected within the cache lifetime.
 
-use std::{
-	collections::{HashMap, HashSet},
-	sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use truapi::latest::{FundingDirection, FundingRail};
 
@@ -39,24 +36,36 @@ use crate::{
 };
 
 /// A provider the host offers, with the Worker manifest it shipped already
-/// read.
+/// read and what dotNS says it publishes.
 #[derive(Clone)]
 struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
 	origin: FundingProviderOrigin,
+	/// What dotNS last said the provider publishes: its Worker manifest, or
+	/// `None` for nothing usable. `None` until dotNS has answered.
+	live: Option<Option<WorkerManifest>>,
+	/// Whether its manifest is being read.
+	reading: bool,
+}
+
+impl OfferedProvider {
+	/// The manifest the core goes by: the host's for a bundled provider;
+	/// otherwise dotNS's answer once it has one, the host's snapshot until
+	/// then.
+	fn manifest(&self) -> Option<WorkerManifest> {
+		match (&self.live, self.origin) {
+			(Some(live), FundingProviderOrigin::Published) => live.clone(),
+			_ => self.snapshot.clone(),
+		}
+	}
 }
 
 /// The host's funding providers and what each one serves.
 #[derive(Default)]
 pub struct FundingProviders {
-	/// The providers, in the host's order.
+	/// The providers, in the host's order, each once.
 	entries: Mutex<Vec<OfferedProvider>>,
-	/// What dotNS last said each provider publishes: its Worker manifest, or
-	/// `None` for nothing usable.
-	live: Mutex<HashMap<ProductId, Option<WorkerManifest>>>,
-	/// Providers whose manifest is being read.
-	refreshing: Mutex<HashSet<ProductId>>,
 	/// What providers' quote answers showed about what they serve, newest
 	/// per ask, persisted under [`CoreStorageKey::FundingSupport`].
 	learned: Mutex<Vec<LearnedSupport>>,
@@ -113,10 +122,47 @@ impl FundingProviders {
 	/// The host's providers in its order, each with the manifest the core
 	/// goes by.
 	fn providers(&self) -> Vec<(ProductId, Option<WorkerManifest>)> {
-		let entries = lock(&self.entries).clone();
-		entries
-			.iter()
-			.map(|entry| (entry.product_id.clone(), self.manifest(entry)))
+		manifests(&lock(&self.entries))
+	}
+
+	/// Make `offered` the providers, keeping what dotNS said of each one
+	/// listed before. Returns whether the providers the core goes by changed.
+	fn offer(&self, mut offered: Vec<OfferedProvider>) -> bool {
+		let mut entries = lock(&self.entries);
+		let before = manifests(&entries);
+		for entry in &mut offered {
+			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
+				entry.live = known.live.clone();
+				entry.reading = known.reading;
+			}
+		}
+		*entries = offered;
+		manifests(&entries) != before
+	}
+
+	/// Keep `manifest` as what dotNS says `product_id` publishes. A provider
+	/// the host no longer lists is left out. Returns whether the providers
+	/// the core goes by changed.
+	fn answered(&self, product_id: &ProductId, manifest: Option<WorkerManifest>) -> bool {
+		let mut entries = lock(&self.entries);
+		let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == *product_id) else {
+			return false;
+		};
+		let before = entry.manifest();
+		entry.live = Some(manifest);
+		entry.manifest() != before
+	}
+
+	/// Mark every published provider whose manifest is not being read as
+	/// being read, and return them.
+	fn start_reads(&self) -> Vec<ProductId> {
+		lock(&self.entries)
+			.iter_mut()
+			.filter(|entry| entry.origin == FundingProviderOrigin::Published && !entry.reading)
+			.map(|entry| {
+				entry.reading = true;
+				entry.product_id.clone()
+			})
 			.collect()
 	}
 
@@ -157,17 +203,28 @@ impl FundingProviders {
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)
 	}
+}
 
-	/// The manifest the core goes by for `entry`: the host's for a bundled
-	/// provider; otherwise dotNS's answer once it has one, the host's
-	/// snapshot until then.
-	fn manifest(&self, entry: &OfferedProvider) -> Option<WorkerManifest> {
-		if entry.origin == FundingProviderOrigin::Bundled {
-			return entry.snapshot.clone();
-		}
-		match lock(&self.live).get(&entry.product_id) {
-			Some(live) => live.clone(),
-			None => entry.snapshot.clone(),
+/// Each of `entries` with the manifest the core goes by, in order.
+fn manifests(entries: &[OfferedProvider]) -> Vec<(ProductId, Option<WorkerManifest>)> {
+	entries
+		.iter()
+		.map(|entry| (entry.product_id.clone(), entry.manifest()))
+		.collect()
+}
+
+/// A provider's manifest read in flight. Dropping it, as the read ends or
+/// its task is dropped, lets the next refresh read the manifest again.
+struct ManifestRead {
+	services: Arc<RuntimeServices>,
+	product_id: ProductId,
+}
+
+impl Drop for ManifestRead {
+	fn drop(&mut self) {
+		let mut entries = lock(&self.services.funding_providers().entries);
+		if let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == self.product_id) {
+			entry.reading = false;
 		}
 	}
 }
@@ -181,12 +238,7 @@ impl RuntimeServices {
 		entries: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
 		let offered = offered_providers(entries)?;
-		let providers = &self.funding_providers();
-		let before = providers.providers();
-		lock(&providers.live)
-			.retain(|product_id, _| offered.iter().any(|entry| &entry.product_id == product_id));
-		*lock(&providers.entries) = offered;
-		if providers.providers() != before {
+		if self.funding_providers().offer(offered) {
 			self.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
@@ -281,17 +333,10 @@ impl RuntimeServices {
 			let mut loaded = services.funding_providers().learned_store.lock().await;
 			services.load_learned_support(&mut loaded).await;
 		}));
-		let entries = lock(&self.funding_providers().entries).clone();
-		for entry in entries
-			.into_iter()
-			.filter(|entry| entry.origin == FundingProviderOrigin::Published)
-		{
-			if !lock(&self.funding_providers().refreshing).insert(entry.product_id.clone()) {
-				continue;
-			}
-			let services = self.clone();
+		for product_id in self.funding_providers().start_reads() {
+			let read = ManifestRead { services: self.clone(), product_id };
 			(self.spawner)(Box::pin(async move {
-				services.read_provider_manifest(&entry.product_id).await;
+				read.services.read_provider_manifest(&read.product_id).await;
 			}));
 		}
 	}
@@ -355,15 +400,11 @@ impl RuntimeServices {
 	/// Read `product_id`'s Worker manifest into what the core goes by.
 	async fn read_provider_manifest(&self, product_id: &ProductId) {
 		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		let providers = &self.funding_providers();
-		if let Ok(manifest) = read {
-			let before = providers.providers();
-			lock(&providers.live).insert(product_id.clone(), manifest);
-			if providers.providers() != before {
-				self.funding_providers_changed();
-			}
+		if let Ok(manifest) = read &&
+			self.funding_providers().answered(product_id, manifest)
+		{
+			self.funding_providers_changed();
 		}
-		lock(&providers.refreshing).remove(product_id);
 	}
 
 	/// The providers the core goes by changed, often because dotNS answered
@@ -400,7 +441,13 @@ fn offered_providers(
 			});
 		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
-			offered.push(OfferedProvider { product_id, snapshot, origin: entry.origin });
+			offered.push(OfferedProvider {
+				product_id,
+				snapshot,
+				origin: entry.origin,
+				live: None,
+				reading: false,
+			});
 		}
 	}
 	Ok(offered)
@@ -576,10 +623,8 @@ mod tests {
 			}])
 			.expect("offered"),
 		);
-		lock(&providers.live).extend([
-			(ProductId::for_test("listed.dot"), None),
-			(ProductId::for_test("bundled.dot"), None),
-		]);
+		providers.answered(&ProductId::for_test("listed.dot"), None);
+		providers.answered(&ProductId::for_test("bundled.dot"), None);
 
 		assert_eq!(
 			ids(providers.candidates(FundingDirection::In)),
@@ -614,11 +659,9 @@ mod tests {
 			("unshipped.dot", None),
 		]);
 		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-		lock(&providers.live).extend([
-			(ProductId::for_test("withdrawn.dot"), None),
-			(ProductId::for_test("changed.dot"), live(CRYPTO_OUT)),
-			(ProductId::for_test("unshipped.dot"), live(CARD_IN)),
-		]);
+		providers.answered(&ProductId::for_test("withdrawn.dot"), None);
+		providers.answered(&ProductId::for_test("changed.dot"), live(CRYPTO_OUT));
+		providers.answered(&ProductId::for_test("unshipped.dot"), live(CARD_IN));
 
 		assert_eq!(
 			(
@@ -626,6 +669,37 @@ mod tests {
 				ids(providers.candidates(FundingDirection::Out)),
 			),
 			(vec![ProductId::for_test("unshipped.dot")], vec![ProductId::for_test("changed.dot")])
+		);
+	}
+
+	// What dotNS answers for a provider the host stopped listing is dropped,
+	// so listing it again starts from the host's snapshot, while a provider
+	// listed throughout keeps its answer.
+	#[test]
+	fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
+		let listed = |product_ids: &[&str]| {
+			offered_providers(
+				product_ids
+					.iter()
+					.map(|product_id| FundingProviderEntry {
+						product_id: ProductId::for_test(product_id),
+						worker_manifest: Some(manifest(CARD_IN)),
+						origin: FundingProviderOrigin::Published,
+					})
+					.collect(),
+			)
+			.expect("offered")
+		};
+		let providers = FundingProviders::default();
+		providers.offer(listed(&["kept.dot", "dropped.dot"]));
+		providers.answered(&ProductId::for_test("kept.dot"), None);
+		providers.offer(listed(&["kept.dot"]));
+		let late = providers.answered(&ProductId::for_test("dropped.dot"), None);
+		providers.offer(listed(&["kept.dot", "dropped.dot"]));
+
+		assert_eq!(
+			(late, ids(providers.candidates(FundingDirection::In))),
+			(false, vec![ProductId::for_test("dropped.dot")])
 		);
 	}
 
@@ -679,7 +753,7 @@ mod tests {
 			("unshipped.dot", None),
 			("withdrawn.dot", Some(manifest(CARD_IN))),
 		]);
-		lock(&providers.live).insert(ProductId::for_test("withdrawn.dot"), None);
+		providers.answered(&ProductId::for_test("withdrawn.dot"), None);
 
 		assert_eq!(
 			(

@@ -10128,6 +10128,29 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	);
 }
 
+// A manifest read whose task is dropped before it ends, as when the runtime
+// shuts its tasks down, must not leave the provider marked as being read, or
+// no later refresh would read it again.
+#[test]
+fn a_dropped_manifest_read_lets_the_next_refresh_read_again() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_with(
+		stub_platform(),
+		&crate::store::open_memory_core_db(),
+		tasks.spawner(),
+	);
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let reading = tasks.take();
+	services.refresh_funding_providers();
+	let while_reading = tasks.take().len();
+	drop(reading);
+	services.refresh_funding_providers();
+	let after_drop = tasks.take().len();
+
+	// Each refresh also loads what earlier quotes showed: one task more.
+	assert_eq!((while_reading, after_drop), (1, 2));
+}
+
 // A provider the host lists after the overlay asked, or one dotNS answers
 // for meanwhile, is asked at once rather than at the next round, so it shows
 // while the user is still choosing.
