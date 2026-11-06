@@ -39,7 +39,7 @@ impl PairingHost {
 		if session.sso.is_none() {
 			return Err(AuthorityError::Disconnected);
 		}
-		let lifecycle_epoch = self.grants.lifecycle().revision();
+		let grant_revision = self.grants.lifecycle().revision();
 		let cache_key = (GrantScope::from_session(session), product_id.clone());
 		if let Some(public_key) = self
 			.grants
@@ -58,7 +58,7 @@ impl PairingHost {
 			.persist_product_subtree_if_current(
 				&self.session_state,
 				session,
-				lifecycle_epoch,
+				grant_revision,
 				cache_key,
 				public_key,
 			)
@@ -280,17 +280,17 @@ impl PairingHost {
 
 	/// Ask the paired signing host to allocate product resources and keep the grants.
 	///
-	/// `lifecycle_epoch` is the grant revision read before the allocation was
-	/// confirmed, so a product reset during the review discards the result.
+	/// `grant_revision` is read before the allocation was confirmed, so a
+	/// product reset during the review discards the result.
 	pub async fn remote_allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		lifecycle_epoch: u64,
+		grant_revision: u64,
 		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-		self.grants.lifecycle().require_revision(lifecycle_epoch)?;
+		self.grants.lifecycle().require_revision(grant_revision)?;
 		let outcomes = self
 			.session
 			.call(
@@ -309,7 +309,7 @@ impl PairingHost {
 				self.retain_grant(
 					cx,
 					session,
-					lifecycle_epoch,
+					grant_revision,
 					product_id,
 					decode_grant(resource.clone())?,
 				)
@@ -362,13 +362,13 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.grants.lifecycle().revision();
+		let grant_revision = self.grants.lifecycle().revision();
 		if let Some(AccountGrant::StatementStore { key, .. }) = self
 			.grants
 			.cached_allowance(
 				&self.session_state,
 				session,
-				lifecycle_epoch,
+				grant_revision,
 				product_id,
 				AllowanceResource::StatementStore,
 			)
@@ -392,7 +392,7 @@ impl PairingHost {
 					.retain_allowance(
 						&self.session_state,
 						session,
-						lifecycle_epoch,
+						grant_revision,
 						product_id,
 						&AccountGrant::StatementStore { key: key.clone(), period: None },
 					)
@@ -411,13 +411,13 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.grants.lifecycle().revision();
+		let grant_revision = self.grants.lifecycle().revision();
 		if let Some(AccountGrant::Bulletin(key)) = self
 			.grants
 			.cached_allowance(
 				&self.session_state,
 				session,
-				lifecycle_epoch,
+				grant_revision,
 				product_id,
 				AllowanceResource::Bulletin,
 			)
@@ -428,7 +428,7 @@ impl PairingHost {
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
-			lifecycle_epoch,
+			grant_revision,
 			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
@@ -443,14 +443,14 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.grants.lifecycle().revision();
+		let grant_revision = self.grants.lifecycle().revision();
 		self.grants
-			.evict_bulletin_allowance(&self.session_state, session, lifecycle_epoch, product_id)
+			.evict_bulletin_allowance(&self.session_state, session, grant_revision, product_id)
 			.await?;
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
-			lifecycle_epoch,
+			grant_revision,
 			product_id,
 			OnExistingAllowancePolicy::Increase,
 		)
@@ -461,7 +461,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		lifecycle_epoch: u64,
+		grant_revision: u64,
 		product_id: &ProductId,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
@@ -481,7 +481,7 @@ impl PairingHost {
 					.retain_allowance(
 						&self.session_state,
 						session,
-						lifecycle_epoch,
+						grant_revision,
 						product_id,
 						&AccountGrant::Bulletin(key.clone()),
 					)
@@ -497,7 +497,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		lifecycle_epoch: u64,
+		grant_revision: u64,
 		product_id: &ProductId,
 		grant: AccountGrant,
 	) -> Result<(), AuthorityError> {
@@ -507,7 +507,7 @@ impl PairingHost {
 					.retain_allowance(
 						&self.session_state,
 						session,
-						lifecycle_epoch,
+						grant_revision,
 						product_id,
 						&grant,
 					)
@@ -520,7 +520,7 @@ impl PairingHost {
 					.remember_auto_signing_key(
 						&self.session_state,
 						session,
-						lifecycle_epoch,
+						grant_revision,
 						product_id,
 						expected,
 						key,
