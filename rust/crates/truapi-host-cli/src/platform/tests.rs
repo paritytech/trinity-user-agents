@@ -15,9 +15,10 @@ fn test_network() -> crate::network::Stack {
 /// other seventeen.
 ///
 /// `feature_supported` answers from the roles the stack serves, the same roles
-/// the core's `get_chain_info` answers for, so the two cannot disagree. The negatives are the
-/// malformed inputs, a well-formed hash the host serves no role for, and the all-zero SSO sentinel
-/// — which the provider does route, to the People fallback, yet is still not a served role.
+/// the core's `get_chain_info` answers for, so the two cannot disagree. The
+/// negatives are the malformed inputs, a well-formed hash the host serves no
+/// role for, and the all-zero SSO sentinel, which the provider does route, to
+/// the People fallback, yet is still not a served role.
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
