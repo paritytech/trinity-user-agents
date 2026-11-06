@@ -759,7 +759,7 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
-  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  scripts/battery.sh --funding-host     # funding phase only
   make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -776,13 +776,52 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
-  The funding phase builds the host with `--features test-host` and installs
-  a scripted funding overlay: each request the product makes is answered with
-  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
-  (`deliver:900,release:500,fail,dismiss`), and a started session is settled
-  through the core's test hook with no chain behind it. Every overlay request
-  and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
-  The live on-ramp on Paseo Next is `truapi-host funding-check`.
+  The funding phase runs the signing host's funding overlay as a host app
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers,
+  comma-separated, each with a Worker manifest the CLI ships for it, and each
+  a product id optionally followed by `=` and the path of its worker script
+  (`fundtest.dot=./worker.ts,other.dot`). The host acts as the provider's
+  host: when the core asks for a provider's worker, it launches that script
+  as its own process on a frame socket of its own, served as a Worker
+  execution of the provider, and kills it when the core lets the worker go.
+  A provider without a script has no worker on this host. The phase runs the
+  product script (`funding-battery.ts`, an App) and the provider
+  `fundtest.dot` with `funding-worker.ts` as its worker, which serves
+  sessions through `onQuote`, `onAssign`, `onCancel` and `onSettleCancel` by
+  their direction and amount and records what it did in
+  `TRUAPI_FUNDING_WORKER_LOG`. The overlay lists the providers serving a
+  session and their quotes. The cases check that no worker runs until the
+  overlay asks the provider for a quote, and that once its sessions end the
+  host stops it and a new worker process is started for the next session.
+  The auto-accepting user picks the first quote and accepts cancel offers,
+  including one the worker makes on a withdrawal only once it is released,
+  which it then refunds; a paid-out withdrawal's payout is reported through
+  retries and its references. The script acts as the user
+  through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
+  a stdin that is not a terminal takes `/funding cancel <intent>` and
+  `/approval manual|automatic`, so a case cancels a session or has the overlay
+  closed. A provider's screen is a link the host prints: the provider's App on
+  dotNS at the route it asked for (`https://dot.li/<product><route>`), or the
+  page's own URL. It stays open until the provider calls `closeFrame`, or the
+  user types `/funding close <intent>` (answered `Dismissed`) or
+  `/funding returned <intent> <url>` (answered `Returned`); under
+  `--auto-accept` it finishes at once, a page at its return URL. A worker
+  that exits on its own is reported to the core, which starts it again while
+  a session still holds it. The provider reports progress and starts top-ups and payment
+  requests, which ledger engines complete in full and record in
+  `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
+  ledger moves no real funds, so the host refuses it on a network preset whose
+  identities are real. The
+  phase runs the host twice on the same storage, so the restarted host starts
+  the provider's worker for the inbound session still open, which is assigned
+  it again and finishes it from the state it kept in its own storage. The
+  device detects the country `TRUAPI_FUNDING_COUNTRY` names, if any. Every
+  overlay request, screen, cancel, answer, session change and worker launch,
+  stop or exit is recorded in
+  `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
+  change to the core, the CLI or the client, with a fixed development signer
+  in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
+  chain.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)

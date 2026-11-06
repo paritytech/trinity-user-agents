@@ -1,12 +1,14 @@
-// End-to-end funding check against a host that serves the funding overlay
-// (`truapi-host signing-host` built with `--features test-host` and
-// TRUAPI_FUNDING_OUTCOMES set).
+// End-to-end funding check against the CLI signing host's funding overlay.
 //
-// The host plays the overlay and the provider: it answers each request with
-// the next scripted outcome, settles a started session as though its funds
-// had moved, and records every request and session change in
-// TRUAPI_FUNDING_LOG. These cases are the product side, and each also reads
-// the host's transcript, so a pass cannot rest on the product's word alone.
+// The host shows the overlay, the auto-accepting user picks the provider
+// `TRUAPI_FUNDING_PROVIDERS` names, and the host launches that provider's
+// worker (`scripts/funding-worker.ts`) as its own process once the core asks
+// for it. The worker delivers, releases or fails each session through
+// top-ups, payments and reports, by the session's direction and amount, so
+// the core settles it as it would any other. The host records every request,
+// session change and worker launch or stop in TRUAPI_FUNDING_LOG. These cases
+// are the product side, and each also reads the host's transcript, so a pass
+// cannot rest on the product's word alone.
 import { existsSync, readFileSync } from "node:fs";
 import type {
   ObservableLike,
@@ -14,28 +16,42 @@ import type {
 } from "../../../../js/packages/truapi/src/index.ts";
 import type { HostFundingStatusSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
+import {
+  DELIVERED_AMOUNT,
+  DELIVERED_CREDIT,
+  FAILED_AMOUNT,
+  RELEASED_AMOUNT,
+  actAsUser,
+  journaled,
+  requestFunding,
+  until,
+} from "./funding-provider-e2e.ts";
 
-// The cases make their requests in the order `scripts/battery.sh` scripts the
-// host's outcomes: deliver:900, release:500, fail, dismiss.
+export const WAIT_MS = 15_000;
 
-const WAIT_MS = 15_000;
-
-/** A fresh id for one funding request; the product watches its session by it. */
-function fundingId(): `0x${string}` {
+/** A fresh id for a top-up or payment the product starts. */
+export function randomId(): `0x${string}` {
   return `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
 }
 
-interface TranscriptLine {
+export interface TranscriptLine {
   kind: string;
   intent?: string;
   direction?: string;
   amount?: string | null;
   outcome?: string;
   tag?: string;
+  progress?: string | null;
+  link?: string;
+  answer?: string;
+  provider?: string;
+  transition?: string;
+  providers?: string[];
+  quotes?: { provider: string; state: string }[];
 }
 
 /** What the host recorded. */
-function transcript(path: string): TranscriptLine[] {
+export function transcript(path: string): TranscriptLine[] {
   if (!existsSync(path)) {
     return [];
   }
@@ -54,7 +70,7 @@ function transcript(path: string): TranscriptLine[] {
 
 /** Every item a stream emits until it completes, or a rejection once
  *  `WAIT_MS` passes or the stream fails. */
-function untilComplete<Item>(
+export function untilComplete<Item>(
   stream: ObservableLike<Item>,
   what: string,
 ): Promise<Item[]> {
@@ -108,7 +124,7 @@ function interruption<Item>(
 }
 
 /** Wait until the host's transcript holds a line matching `predicate`. */
-async function waitForTranscript(
+export async function waitForTranscript(
   path: string,
   predicate: (line: TranscriptLine) => boolean,
   what: string,
@@ -124,16 +140,29 @@ async function waitForTranscript(
   }
 }
 
-const stringify = (value: unknown) =>
+export const stringify = (value: unknown) =>
   JSON.stringify(value, (_, inner) =>
     typeof inner === "bigint" ? inner.toString() : inner,
   );
 
-/** Run the scripted sessions: delivered, released, failed, dismissed, and a
- *  watch of a session that does not exist. */
+/** The host's launches and stops of `provider`'s worker, in order, each
+ *  with its position in the transcript. */
+function workerTransitions(path: string, provider: string) {
+  return transcript(path).flatMap((line, index) =>
+    line.kind === "worker" && line.provider === provider && line.transition
+      ? [{ index, transition: line.transition }]
+      : [],
+  );
+}
+
+/** Run sessions the provider delivers, releases and fails, with the core
+ *  starting its worker on demand and again after it stopped, one the user
+ *  dismisses, and a watch of a session that does not exist. */
 export async function runFundingE2e(
   client: TrUApiClient,
   fundingLogPath: string | undefined,
+  journalPath: string | undefined,
+  provider: string | undefined,
 ): Promise<DiagnosisRow[]> {
   const rows: DiagnosisRow[] = [];
   const row = (
@@ -150,14 +179,15 @@ export async function runFundingE2e(
     durationMs: Math.round(performance.now() - startedAt),
   });
 
-  if (!fundingLogPath) {
-    // Without it a pass could not tell "the host showed the overlay and the
-    // session settled" from "the product was told it did".
+  if (!fundingLogPath || !journalPath || !provider) {
+    // Without them a pass could not tell "the host showed the overlay, its
+    // worker served the session and it settled" from "the product was told
+    // it did".
     return [
       row(
         "e2e",
         "skipped",
-        "TRUAPI_FUNDING_LOG not set; cannot read what the host observed",
+        "TRUAPI_FUNDING_LOG, TRUAPI_FUNDING_WORKER_LOG or TRUAPI_FUNDING_PROVIDERS not set; cannot read what the host and the worker observed",
         performance.now(),
       ),
     ];
@@ -172,33 +202,26 @@ export async function runFundingE2e(
     first: HostFundingStatusSubscribeItem["tag"],
     terminal: (item: HostFundingStatusSubscribeItem) => boolean,
     hostStatus: { tag: string; amount?: string },
-  ) => {
+  ): Promise<string | undefined> => {
     const startedAt = performance.now();
     try {
-      const id = fundingId();
-      const requested = await client.funding.request({ id, direction, amount });
+      const requested = await client.funding.request({ direction, amount });
       if (requested.isErr()) {
         rows.push(
           row(methodName, "fail", stringify(requested.error), startedAt),
         );
-        return;
+        return undefined;
       }
+      const { intent } = requested.value;
       const items = await untilComplete(
-        client.funding.statusSubscribe({ request: { id } }),
-        `session ${id}`,
+        client.funding.statusSubscribe({ request: { intent } }),
+        `session ${intent}`,
       );
-      // The host keeps the session under the id hashed with the product, so
-      // its transcript is matched by what the case asked for, which no other
-      // case asks for.
       const presented = await waitForTranscript(
         fundingLogPath,
-        (line) =>
-          line.kind === "presented" &&
-          line.direction === direction &&
-          line.amount === amount.toString(),
-        `the overlay request for ${direction} ${amount}`,
+        (line) => line.kind === "presented" && line.intent === intent,
+        `the overlay request for ${intent}`,
       );
-      const intent = presented.intent;
       await waitForTranscript(
         fundingLogPath,
         (line) =>
@@ -231,32 +254,113 @@ export async function runFundingE2e(
               startedAt,
             ),
       );
+      return intent;
     } catch (error) {
       // One stuck case is recorded and the rest still run.
       rows.push(row(methodName, "fail", String(error), startedAt));
+      return undefined;
     }
   };
 
-  await settles(
+  // A case that passes with what `run` returns and fails with what it
+  // throws.
+  const check = async (methodName: string, run: () => Promise<string>) => {
+    const startedAt = performance.now();
+    try {
+      rows.push(row(methodName, "pass", await run(), startedAt));
+    } catch (error) {
+      rows.push(
+        row(
+          methodName,
+          "fail",
+          error instanceof Error ? error.message : String(error),
+          startedAt,
+        ),
+      );
+    }
+  };
+
+  // Nothing has asked for the provider's worker yet, so the host runs none.
+  const runningBefore =
+    workerTransitions(fundingLogPath, provider).at(-1)?.transition === "Start";
+  const beforeRequest = transcript(fundingLogPath).length;
+  const delivered = await settles(
     "request_in_delivered",
     "In",
-    1_000n,
+    DELIVERED_AMOUNT,
     "InProgress",
-    (item) => item.tag === "Delivered" && item.value.credited === 900n,
-    { tag: "Delivered", amount: "900" },
+    (item) =>
+      item.tag === "Delivered" && item.value.credited === DELIVERED_CREDIT,
+    { tag: "Delivered", amount: DELIVERED_CREDIT.toString() },
   );
+
+  // The core asked for the worker once the overlay needed its quote, and the
+  // host launched it then: it was not running before, and its launch comes
+  // after the product's request in the host's transcript.
+  let served: number | undefined;
+  await check("worker_started_on_demand", async () => {
+    if (runningBefore) {
+      throw new Error(
+        "the provider's worker was running before anything asked for it",
+      );
+    }
+    if (!delivered) throw new Error("the delivered session never started");
+    const started = workerTransitions(fundingLogPath, provider).find(
+      ({ index, transition }) =>
+        transition === "Start" && index >= beforeRequest,
+    );
+    if (!started) {
+      throw new Error("the host never launched the worker for the request");
+    }
+    served = (await journaled(journalPath, "assigned", delivered)).pid;
+    return `the host launched the worker once the overlay asked ${provider} for a quote, and it was assigned the session`;
+  });
+
+  // Once its last session ended the core let the worker go and the host
+  // stopped it; the next session starts a new worker process, which is
+  // assigned it.
+  await check("worker_reassigned_after_stop", async () => {
+    const stopped = await until(
+      () =>
+        workerTransitions(fundingLogPath, provider)
+          .filter(({ transition }) => transition === "Stop")
+          .at(-1),
+      "the host stopping the worker",
+    );
+    const intent = await requestFunding(client, "In", DELIVERED_AMOUNT);
+    const assigned = await journaled(journalPath, "assigned", intent);
+    const restarted = workerTransitions(fundingLogPath, provider).some(
+      ({ index, transition }) =>
+        transition === "Start" && index > stopped.index,
+    );
+    if (!restarted || assigned.pid === served) {
+      throw new Error(
+        `restarted=${restarted}, served by ${served} and then by ${assigned.pid}`,
+      );
+    }
+    const items = await untilComplete(
+      client.funding.statusSubscribe({ request: { intent } }),
+      `session ${intent}`,
+    );
+    const last = items.at(-1);
+    if (last?.tag !== "Delivered") {
+      throw new Error(`ended as ${stringify(last)}`);
+    }
+    return "the host stopped the worker once its sessions ended, launched a new one for the next session, and it delivered it";
+  });
+
   await settles(
     "request_out_released",
     "Out",
-    500n,
+    RELEASED_AMOUNT,
     "InProgress",
-    (item) => item.tag === "Released" && item.value.debited === 500n,
-    { tag: "Released", amount: "500" },
+    (item) => item.tag === "Released" && item.value.debited === RELEASED_AMOUNT,
+    { tag: "Released", amount: RELEASED_AMOUNT.toString() },
   );
   await settles(
     "request_failed",
     "In",
-    2_000n,
+    FAILED_AMOUNT,
     "InProgress",
     (item) =>
       item.tag === "Failed" &&
@@ -265,45 +369,53 @@ export async function runFundingE2e(
     { tag: "Failed" },
   );
 
-  // A dismissed overlay is a refusal, and leaves no session behind.
+  // A dismissed overlay leaves no session behind. The user switches to
+  // manual approval, and with no terminal to ask on the overlay is closed.
   let startedAt = performance.now();
   try {
+    actAsUser("/approval manual");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     const dismissed = await client.funding.request({
-      id: fundingId(),
       direction: "In",
       amount: 3_000n,
     });
-    const dismissedAsRejected =
-      dismissed.isErr() &&
-      dismissed.error.tag === "Domain" &&
-      dismissed.error.value.tag === "V1" &&
-      dismissed.error.value.value.tag === "Rejected";
+    if (dismissed.isErr()) {
+      throw new Error(`funding.request failed: ${stringify(dismissed.error)}`);
+    }
+    const { intent } = dismissed.value;
     const shown = await waitForTranscript(
       fundingLogPath,
       (line) =>
         line.kind === "presented" &&
-        line.outcome === "Dismiss" &&
-        line.direction === "In" &&
-        line.amount === "3000",
+        line.intent === intent &&
+        line.outcome === "Dismissed",
       "the dismissed overlay",
     );
+    const watched = await interruption(
+      client.funding.statusSubscribe({ request: { intent } }),
+      "a watch of the dismissed session",
+    );
     rows.push(
-      dismissedAsRejected
+      stringify(watched).includes("NotFound")
         ? row(
             "request_dismissed",
             "pass",
-            "the host showed the overlay, the user closed it, the product was told Rejected",
+            "the host showed the overlay, the user closed it, and no session was left",
             startedAt,
           )
         : row(
             "request_dismissed",
             "fail",
-            `result=${stringify(dismissed)} shown=${stringify(shown)}`,
+            `watched=${stringify(watched)} shown=${stringify(shown)}`,
             startedAt,
           ),
     );
   } catch (error) {
     rows.push(row("request_dismissed", "fail", String(error), startedAt));
+  } finally {
+    // The provider cases after this one need the user to approve again.
+    actAsUser("/approval automatic");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
   // A session that does not exist, or is not the caller's, is not found.
@@ -311,7 +423,7 @@ export async function runFundingE2e(
   try {
     const refused = await interruption(
       client.funding.statusSubscribe({
-        request: { id: fundingId() },
+        request: { intent: "fs_unknown" },
       }),
       "a watch of an unknown session",
     );
