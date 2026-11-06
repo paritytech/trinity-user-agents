@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import uniffi.truapi.ProductId
 
@@ -20,6 +21,7 @@ sealed interface TrUAPIConfirmation {
     class Signing(
         override val requesterProductId: ProductId?,
         val request: SigningRequestBody,
+        val account: SigningAccount,
     ) : TrUAPIConfirmation
 
     /** Everything the app has no dedicated screen for, rendered generically. */
