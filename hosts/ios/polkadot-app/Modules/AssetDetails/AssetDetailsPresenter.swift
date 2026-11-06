@@ -4,7 +4,7 @@ import SubstrateSdk
 import PolkadotUI
 import Coinage
 import ChainRegistry
-import Products
+import TrUAPIHost
 
 @MainActor
 final class AssetDetailsPresenter {
@@ -102,9 +102,7 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        view?.didReceive(topUpLoading: true)
-
-        interactor?.openTopUpProduct()
+        openFunding(.in)
     }
 
     #if TESTNET_FEATURE
@@ -117,16 +115,14 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
-        view?.didReceive(topUpLoading: false)
+    func didCompleteFunding(_ direction: FundingDirection, result: Result<String?, Error>) {
+        view?.didReceive(fundingLoading: direction, isLoading: false)
 
-        switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
-        }
+        // The Purse stays on screen whether or not a session started: it
+        // shows the session's progress itself.
+        guard case let .failed(error) = FundingOpened(result) else { return }
+
+        wireframe.present(error: error, from: view)
     }
 
     func didReceive(
@@ -213,5 +209,13 @@ private extension AssetDetailsPresenter {
             traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
+    }
+}
+
+private extension AssetDetailsPresenter {
+    func openFunding(_ direction: FundingDirection) {
+        view?.didReceive(fundingLoading: direction, isLoading: true)
+
+        interactor?.openFunding(direction)
     }
 }

@@ -3,7 +3,6 @@ import ChainRegistry
 import Foundation_iOS
 import os
 import AsyncExtensions
-import Products
 
 private typealias SearchAccountSections = AccountSearchSections<RecentContactModelWithUsername, ContactSearchPayload>
 
@@ -20,7 +19,7 @@ final class SearchAccountInteractor {
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
-    private let fundingDomainProvider: FundingDomainProviding
+    private let fundingOpener: FundingOpening
     private let stateLock: OSAllocatedUnfairLock<State>
 
     private static let maximumPrefixCount = 32
@@ -35,13 +34,13 @@ final class SearchAccountInteractor {
         chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
         logger: LoggerProtocol,
-        fundingDomainProvider: FundingDomainProviding
+        fundingOpener: FundingOpening
     ) {
         self.accountSearching = accountSearching
         self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
-        self.fundingDomainProvider = fundingDomainProvider
+        self.fundingOpener = fundingOpener
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
@@ -99,13 +98,13 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
         }
     }
 
-    func openWithdrawProduct() {
-        let task = Task { [weak presenter, fundingDomainProvider] in
+    func openWithdrawal() {
+        let task = Task { [weak presenter, fundingOpener] in
             do {
-                let page = try await RampAction.withdraw.resolvePage(using: fundingDomainProvider)
-                await presenter?.didResolveWithdrawProduct(.success(page))
+                let session = try await fundingOpener.openFunding(direction: .out)
+                await presenter?.didOpenWithdrawal(.success(session))
             } catch {
-                await presenter?.didResolveWithdrawProduct(.failure(error))
+                await presenter?.didOpenWithdrawal(.failure(error))
             }
         }
 

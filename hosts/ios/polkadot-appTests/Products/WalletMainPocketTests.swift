@@ -228,6 +228,7 @@ private final class RecordingWireframe: WalletMainWireframeProtocol {
 
     func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
+    func showFundingHistory() {}
 }
 
 /// A chain that has not answered the tab's first read, then does.

@@ -128,7 +128,6 @@ private extension RustRuntimeEnvironment {
             productId: productId,
             permissionGuard: ProductPermissionGuard.create(
                 router: routers.productsRouter,
-                fundingProvider: FundingDomainProvider(hostProvider: hostProvider),
                 osAsker: osPermissionAsker
             ),
             osPermissionAsker: osPermissionAsker,

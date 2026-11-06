@@ -48,6 +48,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let fundingOverlay: FundingOverlayPresenting?
     private let bundledProducts: BundledProducts
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
@@ -73,6 +74,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        fundingOverlay: FundingOverlayPresenting? = nil,
         bundledProducts: BundledProducts = .app,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -84,6 +86,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
+        self.fundingOverlay = fundingOverlay
         self.bundledProducts = bundledProducts
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -113,16 +116,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -190,9 +190,17 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
-        // Also before any execution opens: the core offers only the providers
-        // the host lists, the ones `funding_config` names, then the ones it ships.
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names, then the ones it ships.
+        let router = confirmationRouterFacade
+        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [bundledProducts] in
+            AppFundingEnvironment(router: router.productsRouter, bundledProducts: bundledProducts)
+        }
+        runtime.setFunding(AppFundingHostBridge(overlay: overlay))
+        bridge.onWorkerCrashing { [weak overlay] productId in overlay?.workerCrashing(productId: productId) }
         followFundingProviders(on: runtime)
+        FundingActivityCenter.attach(runtime: runtime, overlay: overlay)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,

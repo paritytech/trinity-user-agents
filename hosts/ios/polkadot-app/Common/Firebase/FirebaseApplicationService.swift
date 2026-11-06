@@ -105,8 +105,6 @@ final class FirebaseApplicationService: RemoteConfigManaging {
             dotNsResolver: dotNsResolverAddress(),
             dotNsNameRegistry: dotNsNameRegistryAddress(),
             coinageInstanceId: coinageInstanceId(),
-            fundingUrl: fundingConfigValue(.onrampUrl),
-            offrampUrl: fundingConfigValue(.offrampUrl),
             accountDataStoreContract: accountDataStoreContractAddress(),
             paymentAsset: paymentAssetConfig(),
             appSharingUrl: url(for: .appSharingUrl),
@@ -166,12 +164,6 @@ private extension FirebaseApplicationService {
     func url(for key: String) -> URL? {
         guard let value = nonEmptyString(for: key) else { return nil }
         return URL(string: value)
-    }
-
-    /// One JSON object shared with Android, passed through as published:
-    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp", "providers": […] }`.
-    func fundingConfigValue(_ field: String) -> String? {
-        FundingConfig.string(field, in: remoteConfig[.fundingConfig].jsonValue as? [String: Any])
     }
 
     /// One JSON object shared with Android: `{ "contractAddress": "0x…" }`, decoded to an EVM address
@@ -283,13 +275,11 @@ private extension String {
     static let ipfsGatewayUrl = "ipfs_gateway_url"
     static let dotNsResolver = "dot_ns_config"
     static let coinageInstanceId = "coinage_instance_id"
-    static let fundingConfig = "funding_config"
-    static let onrampUrl = "onrampUrl"
-    static let offrampUrl = "offrampUrl"
     static let accountDataStoreConfig = "account_data_store_config"
     static let contractAddress = "contractAddress"
     static let paymentAssetConfig = "payment_asset_config"
     static let appSharingUrl = "app_sharing_url"
+    static let fundingConfig = "funding_config"
     static let issueProxyUrl = "issue_proxy_url"
     static let issueProxyApiKey = "issue_proxy_api_key"
 }

@@ -51,8 +51,4 @@ final class StubProductHostProvider: ProductHostProviding, @unchecked Sendable {
     func resolveHost(rawString _: String) async throws -> ProductHost? {
         nil
     }
-
-    func resolvePage(destination: String) async throws -> ProductPage {
-        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
-    }
 }

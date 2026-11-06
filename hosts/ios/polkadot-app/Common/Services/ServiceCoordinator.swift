@@ -319,7 +319,21 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
+
+        // The core resumes funding when it starts; start it now, with payments
+        // attached, if a provider was still working on a session when the app
+        // last ran. The core says again whether one still is, so a launch with
+        // nothing left stops starting it.
+        if SettingsManager.shared.isFundingInProgress {
+            Task.detached {
+                do {
+                    _ = try truapiRuntimeProvider.sharedRuntime()
+                } catch {
+                    logger.error("[funding] starting the core to resume funding failed: \(error)")
+                }
+            }
+        }
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
