@@ -54,7 +54,7 @@ use std::{
 	},
 };
 
-use core::{ops::ControlFlow, time::Duration};
+use core::{hash::Hash, ops::ControlFlow, time::Duration};
 
 use futures::{
 	channel::{mpsc, oneshot},
@@ -92,7 +92,7 @@ use crate::{
 };
 
 /// Wait before retrying an expiry sweep whose write failed.
-const SWEEP_RETRY: Duration = Duration::from_secs(30);
+const SWEEP_RETRY_MS: u64 = 30_000;
 /// First wait before reading a top-up's or payment's status again, when the
 /// last read ended without an outcome.
 const FOLLOW_RETRY_FIRST: Duration = Duration::from_secs(1);
@@ -107,13 +107,13 @@ const UNKNOWN_FUNDS_GRACE_MS: u64 = 60 * 60 * 1_000;
 const ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Wait before asking the engine again about recorded funds it could not
 /// place.
-const RESOLVE_RETRY: Duration = Duration::from_secs(30);
+const RESOLVE_RETRY_MS: u64 = 30_000;
 /// How long a provider's worker may take to answer one call before it counts
 /// as unanswered.
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Wait before handing a worker its sessions again after a call went
 /// unanswered.
-const CATCH_UP_RETRY: Duration = Duration::from_secs(5);
+const CATCH_UP_RETRY_MS: u64 = 5_000;
 
 /// An ended session in the session pack, with whether the host has told the
 /// user how it ended. One it has not is handed to it again when funding
@@ -169,6 +169,15 @@ struct Links {
 	by_provider: HashMap<ProductId, Link>,
 	/// Callers waiting for a provider's worker to connect, by product id.
 	waiters: HashMap<ProductId, WakeSignal>,
+}
+
+impl Links {
+	/// Link `generation` of `provider_id`, unless a later link replaced it.
+	fn current(&mut self, provider_id: &ProductId, generation: u64) -> Option<&mut Link> {
+		self.by_provider
+			.get_mut(provider_id)
+			.filter(|held| held.generation == generation)
+	}
 }
 
 /// Whether a worker connection has been handed every session it serves.
@@ -560,9 +569,9 @@ impl FundingRegistry {
 		}
 	}
 
-	/// What `provider_id`'s worker has to hear when it connects, one list per
-	/// session it serves, oldest first.
-	fn pending_calls(&self, provider_id: &ProductId) -> Vec<Vec<ProviderCall>> {
+	/// What `provider_id`'s worker has to hear when it connects: each session
+	/// it serves, oldest first, followed by its pending cancel call.
+	fn pending_calls(&self, provider_id: &ProductId) -> Vec<ProviderCall> {
 		let held = self.lock_held();
 		let mut served: Vec<&FundingSession> = held
 			.sessions
@@ -574,14 +583,12 @@ impl FundingRegistry {
 		served.sort_by_key(|session| session.opened_at_ms);
 		served
 			.into_iter()
-			.map(|session| {
-				core::iter::once(ProviderCall::Assign(Box::new(session.assignment())))
-					.chain(
-						session
-							.pending_cancel_call()
-							.map(|call| ProviderCall::Cancel(session.intent.clone(), call)),
-					)
-					.collect()
+			.flat_map(|session| {
+				core::iter::once(ProviderCall::Assign(Box::new(session.assignment()))).chain(
+					session
+						.pending_cancel_call()
+						.map(|call| ProviderCall::Cancel(session.intent.clone(), call)),
+				)
 			})
 			.collect()
 	}
@@ -612,10 +619,19 @@ impl FundingRegistry {
 
 	/// Take `host_id` for one host call at a time: `None` while another call
 	/// under it is in flight. The id is free again once the guard drops.
-	pub fn begin_start(self: &Arc<Self>, host_id: [u8; 32]) -> Option<StartGuard> {
-		self.lock_starting()
-			.insert(host_id)
-			.then(|| StartGuard { registry: self.clone(), host_id })
+	pub fn begin_start(self: &Arc<Self>, host_id: [u8; 32]) -> Option<Claim<[u8; 32]>> {
+		self.claim(|registry| &registry.starting, host_id)
+	}
+
+	/// Take `key` in `set`, or `None` while it is taken.
+	fn claim<K: Eq + Hash + Clone>(
+		self: &Arc<Self>,
+		set: fn(&FundingRegistry) -> &Mutex<HashSet<K>>,
+		key: K,
+	) -> Option<Claim<K>> {
+		lock(set(self))
+			.insert(key.clone())
+			.then(|| Claim { registry: self.clone(), set, key })
 	}
 
 	/// Whether session `intent` recorded funds under `host_id`.
@@ -724,11 +740,6 @@ impl FundingRegistry {
 			Some(session) => session.is_terminal().then(|| session.wire_item()),
 			None => held.pack.get(intent).map(|packed| packed.summary.wire_item()),
 		}
-	}
-
-	/// Whether session `intent`'s overlay is up.
-	pub fn is_presenting(&self, intent: &str) -> bool {
-		self.lock_held().presenting.contains_key(intent)
 	}
 
 	/// The sessions whose overlay is up.
@@ -1149,9 +1160,7 @@ impl FundingRegistry {
 					if self.loaded.load(Ordering::Acquire) {
 						self.reconcile_work(services, now_ms);
 					}
-					return Some(
-						u64::try_from(SWEEP_RETRY.as_millis()).expect("retry delay fits in u64"),
-					);
+					return Some(SWEEP_RETRY_MS);
 				},
 			}
 		}
@@ -1238,8 +1247,10 @@ impl FundingRegistry {
 				},
 				Settlement::Payment(_) => services.payment_platform().is_some(),
 			};
-			if engine && self.lock_following().insert(intent.clone()) {
-				let following = Following { registry: services.funding().clone(), intent };
+			if engine &&
+				let Some(following) =
+					services.funding().claim(|registry| &registry.following, intent)
+			{
 				services.clone().follow_settlement(following, provider, settlement);
 			}
 		}
@@ -1311,10 +1322,8 @@ impl FundingRegistry {
 				let mut catching = catching;
 				let registry = catching.registry.clone();
 				let mut answered = true;
-				for calls in registry.pending_calls(&catching.provider) {
-					for call in calls {
-						answered &= registry.put(link.as_ref(), call).await;
-					}
+				for call in registry.pending_calls(&catching.provider) {
+					answered &= registry.put(link.as_ref(), call).await;
 				}
 				catching.answered = answered;
 			}));
@@ -1325,15 +1334,10 @@ impl FundingRegistry {
 	/// went: done when every call was answered, due again shortly otherwise.
 	/// A link replaced meanwhile is left as it is.
 	fn caught_up(&self, provider_id: &ProductId, generation: u64, answered: bool) {
-		let retry_ms = current_unix_millis().saturating_add(
-			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
-		);
+		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY_MS);
 		let due = {
 			let mut links = self.lock_links();
-			let held = links
-				.by_provider
-				.get_mut(provider_id)
-				.filter(|held| held.generation == generation);
+			let held = links.current(provider_id, generation);
 			let due = !answered ||
 				held.as_ref().is_some_and(|held| held.catch_up == CatchUp::RunningThenDue);
 			if let Some(held) = held {
@@ -1352,15 +1356,9 @@ impl FundingRegistry {
 	/// call. A link still connecting or already due is caught up anyway, and
 	/// one being caught up is due again once that ends.
 	fn call_unanswered(&self, provider_id: &ProductId, generation: u64) {
-		let retry_ms = current_unix_millis().saturating_add(
-			u64::try_from(CATCH_UP_RETRY.as_millis()).expect("retry delay fits in u64"),
-		);
+		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY_MS);
 		let mut links = self.lock_links();
-		let Some(held) = links
-			.by_provider
-			.get_mut(provider_id)
-			.filter(|held| held.generation == generation)
-		else {
+		let Some(held) = links.current(provider_id, generation) else {
 			return;
 		};
 		match held.catch_up {
@@ -1647,10 +1645,6 @@ impl FundingRegistry {
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
 	}
-
-	fn lock_following(&self) -> MutexGuard<'_, HashSet<String>> {
-		lock(&self.following)
-	}
 }
 
 /// Lock `mutex`, recovering its value if a holder panicked: every value the
@@ -1672,33 +1666,21 @@ pub struct FundsAsked {
 	pub terms: [u8; 32],
 }
 
-/// An id whose host call is in flight, from [`FundingRegistry::begin_start`].
-/// Dropping it lets the next call under the id start.
-pub struct StartGuard {
+/// A key taken in one of the registry's sets of work in flight: an id whose
+/// host call is in flight, from [`FundingRegistry::begin_start`], or a
+/// session whose settlement is being followed, from
+/// [`FundingRegistry::follow_settlements`]. Dropping it, as the work ends or
+/// its task is dropped, frees the key; the reconciler leaves taken work alone,
+/// so it looks again then.
+pub struct Claim<K: Eq + Hash> {
 	registry: Arc<FundingRegistry>,
-	host_id: [u8; 32],
+	set: fn(&FundingRegistry) -> &Mutex<HashSet<K>>,
+	key: K,
 }
 
-impl Drop for StartGuard {
+impl<K: Eq + Hash> Drop for Claim<K> {
 	fn drop(&mut self) {
-		self.registry.lock_starting().remove(&self.host_id);
-		// The reconciler leaves a record alone while its call is in flight,
-		// so it looks again once the call is done.
-		self.registry.wake();
-	}
-}
-
-/// A session whose settlement is being followed, from
-/// [`FundingRegistry::follow_settlements`]. Dropping it, as the follow ends
-/// or its task is dropped, lets the reconciler follow the session again.
-struct Following {
-	registry: Arc<FundingRegistry>,
-	intent: String,
-}
-
-impl Drop for Following {
-	fn drop(&mut self) {
-		self.registry.lock_following().remove(&self.intent);
+		lock((self.set)(&self.registry)).remove(&self.key);
 		self.registry.wake();
 	}
 }
@@ -2065,14 +2047,14 @@ impl RuntimeServices {
 	/// if this stops with it still due.
 	fn follow_settlement(
 		self: Arc<Self>,
-		following: Following,
+		following: Claim<String>,
 		provider_id: ProductId,
 		settlement: Settlement,
 	) {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
 			let registry = following.registry.clone();
-			let intent = following.intent.clone();
+			let intent = following.key.clone();
 			let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
 			let refund = matches!(settlement, Settlement::Refund(_));
 			let moved = match settlement {
@@ -2144,9 +2126,7 @@ impl RuntimeServices {
 		let held = engine_holds(&self, &provider, funds.direction, funds.host_id).await;
 		let now_ms = current_unix_millis();
 		let lapse_ms = funds.recorded_at_ms.saturating_add(UNKNOWN_FUNDS_GRACE_MS);
-		let retry_ms = now_ms.saturating_add(
-			u64::try_from(RESOLVE_RETRY.as_millis()).expect("retry delay fits in u64"),
-		);
+		let retry_ms = now_ms.saturating_add(RESOLVE_RETRY_MS);
 		let (taken, next_ms) = match held {
 			Ok(true) => (Some(true), None),
 			Ok(false) if now_ms >= lapse_ms => (Some(false), None),

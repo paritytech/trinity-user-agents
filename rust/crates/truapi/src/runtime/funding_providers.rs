@@ -21,9 +21,9 @@ use crate::{
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
-			FUNDING_MIN_AMOUNT, FundingAmountLimits, FundingCandidate, FundingCountry,
-			FundingNetworkLimits, FundingOptions, FundingProviderEntry, FundingProviderOrigin,
-			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
+			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
+			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
+			LearnedSupport, LimitScope, amount_limits, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -262,21 +262,17 @@ impl RuntimeServices {
 		let providers = self.funding_providers();
 		let selection = self.funding().selection(intent);
 		let candidates = providers.candidates(session.direction);
-		let limits_on = |selection: &FundingSelection, network: Option<&str>| {
+		let limits_on = |selection: &FundingSelection, asset: &str, network: Option<&str>| {
 			providers.amount_limits(LimitScope {
 				direction: session.direction,
 				rail: selection.rail,
-				asset: selection.asset.as_deref().unwrap_or_default(),
+				asset,
 				network,
 				country: selection.country.as_deref(),
 			})
 		};
 		let (countries, limits, networks) = match &selection {
-			None => (
-				Vec::new(),
-				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
-				Vec::new(),
-			),
+			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
 				let countries = selection
 					.asset
@@ -293,26 +289,16 @@ impl RuntimeServices {
 					.map(|(network, assets)| {
 						let limits = assets
 							.iter()
-							.map(|asset| {
-								providers.amount_limits(LimitScope {
-									direction: session.direction,
-									rail: FundingRail::Crypto,
-									asset,
-									network: Some(&network),
-									country: selection.country.as_deref(),
-								})
-							})
+							.map(|asset| limits_on(selection, asset, Some(&network)))
 							.reduce(FundingAmountLimits::widest)
-							.unwrap_or(FundingAmountLimits {
-								min: Some(FUNDING_MIN_AMOUNT),
-								max: None,
-							});
+							.unwrap_or(FundingAmountLimits::ANY);
 						FundingNetworkLimits { network, limits }
 					})
 					.collect(),
 					_ => Vec::new(),
 				};
-				(countries, limits_on(selection, selection.network.as_deref()), networks)
+				let asset = selection.asset.as_deref().unwrap_or_default();
+				(countries, limits_on(selection, asset, selection.network.as_deref()), networks)
 			},
 		};
 		feed.funding_options_changed(

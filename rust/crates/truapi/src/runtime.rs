@@ -1684,12 +1684,7 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
@@ -1717,12 +1712,7 @@ impl FundingProvider for ProductRuntimeHost {
 		version(request)
 			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
 				platform.close_provider_frame(&self.connection.product, intent);
@@ -1903,6 +1893,14 @@ impl ProductRuntimeHost {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 
