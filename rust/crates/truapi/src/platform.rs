@@ -2360,7 +2360,7 @@ pub enum ExpandedCardFaceOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face, so the request had no effect.
+	/// The user is moving the face or turning the card, so the request had no effect.
 	UserMoving,
 	/// The host cannot move the face at all.
 	Unsupported,
