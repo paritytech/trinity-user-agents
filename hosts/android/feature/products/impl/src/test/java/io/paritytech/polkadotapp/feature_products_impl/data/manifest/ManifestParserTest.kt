@@ -218,7 +218,6 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":""}]}"""))
-        // Gson's string adapter would read a number as "5", so a number has to be refused, not read.
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":5}]}"""))
         // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
         publishesNoCards(

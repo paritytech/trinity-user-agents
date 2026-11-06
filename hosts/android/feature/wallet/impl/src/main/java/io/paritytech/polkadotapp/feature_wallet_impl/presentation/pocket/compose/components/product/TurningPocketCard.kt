@@ -14,15 +14,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -30,9 +30,8 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
+import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.launch
@@ -63,7 +62,6 @@ internal fun TurningPocketCard(
 
     Box(
         modifier = modifier
-            .testTag(PocketTestTags.TURNING_CARD)
             .onSizeChanged { widthPx = it.width.toFloat() }
             .draggable(
                 orientation = Orientation.Horizontal,
@@ -102,13 +100,7 @@ private fun BoxScope.CardEdge(turn: CardTurnState, thickness: Float) {
         Box(
             Modifier
                 .matchParentSize()
-                .graphicsLayer {
-                    rotationY = turn.layerRotation(PocketCardSide.FRONT)
-                    translationX = turn.depthOffset(depth)
-                    scaleX = turn.scale
-                    scaleY = turn.scale
-                    cameraDistance = CAMERA_DISTANCE_DP * density
-                }
+                .turned(turn, PocketCardSide.FRONT, depth)
                 .drawBehind {
                     val outline = shape.createOutline(size, layoutDirection, this)
                     // The edge catches more light the more of it faces the viewer.
@@ -135,20 +127,23 @@ private fun CardFace(
     ProductPocketCard(
         modifier = Modifier
             .zIndex(if (shown) 1f else 0f)
-            .graphicsLayer {
-                rotationY = turn.layerRotation(side)
-                translationX = turn.depthOffset(depth)
-                scaleX = turn.scale
-                scaleY = turn.scale
-                cameraDistance = CAMERA_DISTANCE_DP * density
-                alpha = if (shown) 1f else 0f
-            }
+            .turned(turn, side, depth)
+            .alpha(if (shown) 1f else 0f)
             .then(if (shown) Modifier else Modifier.clearAndSetSemantics {}),
         card = card,
         bindings = bindings,
         onOpen = null,
         onRemoveRequested = null,
     )
+}
+
+/** Draws a layer of the card [depth] behind its middle, as [side] is seen at the current turn. */
+private fun Modifier.turned(turn: CardTurnState, side: PocketCardSide, depth: Float) = graphicsLayer {
+    rotationY = turn.layerRotation(side)
+    translationX = turn.depthOffset(depth)
+    scaleX = turn.scale
+    scaleY = turn.scale
+    cameraDistance = CAMERA_DISTANCE_DP * density
 }
 
 private const val CAMERA_DISTANCE_DP = 12f

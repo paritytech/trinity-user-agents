@@ -17,8 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import uniffi.truapi.PocketCardSide
-import kotlin.math.cos
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -46,21 +46,23 @@ internal class CardTurnState(initialAngle: Float = 0f) {
         return (turned + HALF_TURN).mod(FULL_TURN) - HALF_TURN
     }
 
+    private val sine: Float
+        get() = sin(Math.toRadians(angle.toDouble())).toFloat()
+
     /** 0 while the card lies flat, 1 when it is seen side-on. */
     val sideOn: Float
-        get() = abs(sin(Math.toRadians(angle.toDouble()))).toFloat()
+        get() = abs(sine)
 
     /** Smaller while side-on, so perspective never makes the near side taller than the card's own bounds. */
     val scale: Float
         get() = 1f - SIDE_ON_SHRINK * sideOn
 
     /** Whether the card's own left side, rather than its right, is the one turned toward the viewer. */
-    // A positive rotationY draws the card's left side toward the viewer.
     val leftSideNearer: Boolean
-        get() = sin(Math.toRadians(angle.toDouble())) > 0
+        get() = sine > 0
 
     /** How far sideways a layer [depthPx] behind the card's middle is drawn at this angle. */
-    fun depthOffset(depthPx: Float): Float = -depthPx * sin(Math.toRadians(angle.toDouble())).toFloat()
+    fun depthOffset(depthPx: Float): Float = -depthPx * sine
 
     /** Stops a settle under way: the finger outranks it. A card turning home is not stopped. */
     suspend fun beginDrag() {

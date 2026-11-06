@@ -8,18 +8,13 @@ import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.Executables
-import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
-import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
-import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.faceOf
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.publishingLoyalty
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.flowOf
@@ -33,24 +28,6 @@ import uniffi.truapi.RenderContext
 
 class TrUAPIPocketFaceStreamsTest {
     private val key = cardKey(gameProduct, "loyalty")
-
-    private fun publishing(back: PocketCardPreview? = null) = ResolvedProduct(
-        product = Product(id = gameProduct, name = "Game", icon = null),
-        description = null,
-        executables = Executables(
-            app = null,
-            widget = null,
-            worker = ProductExecutable.Worker(
-                scriptUrl = "https://worker.game.dot/index.js",
-                appVersion = SemVer.ZERO,
-                includesChat = false,
-                includesPocket = true,
-                pocketCards = listOf(
-                    PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true, back = back),
-                ),
-            ),
-        ),
-    )
 
     private class ScriptedResolver(private val answers: List<Result<ResolvedProduct>>) : ResolveProductUseCase {
         var calls = 0
@@ -72,7 +49,7 @@ class TrUAPIPocketFaceStreamsTest {
     // Giving up on it leaves the card static for as long as it stays on screen.
     @Test
     fun `a card whose product could not be read is looked up again`() = runTest {
-        val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing())))
+        val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishingLoyalty())))
 
         streams(resolver).renderFaces(key).toList()
 
@@ -109,7 +86,7 @@ class TrUAPIPocketFaceStreamsTest {
     // The context is all a product has to tell which side it is asked to draw, or which side was pressed.
     @Test
     fun `the back is drawn and pressed under its own context`() = runTest {
-        val streams = liveStreams(publishing(back = PocketCardPreview.Archive("back.json")))
+        val streams = liveStreams(publishingLoyalty(back = PocketCardPreview.Archive("back.json")))
 
         val drawn = streams.renderFaces(key, PocketCardSide.BACK).toList()
         streams.sendAction(key, PocketCardSide.BACK, "stamp-back", ByteArray(0))
@@ -122,7 +99,7 @@ class TrUAPIPocketFaceStreamsTest {
     // A product that declares no back may run an SDK that cannot decode the back's context at all.
     @Test
     fun `a card published without a back is never asked to draw one`() = runTest {
-        liveStreams(publishing()).renderFaces(key, PocketCardSide.BACK).toList()
+        liveStreams(publishingLoyalty()).renderFaces(key, PocketCardSide.BACK).toList()
 
         verify(exactly = 0) { execution.render(any()) }
     }
