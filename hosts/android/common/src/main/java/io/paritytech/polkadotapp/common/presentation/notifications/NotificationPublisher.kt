@@ -34,8 +34,7 @@ abstract class NotificationPublisher(
         createChannel(channel)
 
         notificationManager.notify(tag, notificationId, notification)
-        return notificationManager.getNotificationChannelCompat(channel.id)?.importance !=
-            NotificationManagerCompat.IMPORTANCE_NONE
+        return channelReachesThePerson(notificationManager.getNotificationChannelCompat(channel.id)?.importance)
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {
@@ -104,3 +103,11 @@ abstract class NotificationPublisher(
         notificationManager.cancel(tag, notificationId)
     }
 }
+
+/**
+ * Whether a notification posted to a channel of this importance reaches the person.
+ *
+ * A null importance is a channel that does not exist, which nothing can be posted through.
+ */
+internal fun channelReachesThePerson(importance: Int?): Boolean =
+    importance != null && importance != NotificationManagerCompat.IMPORTANCE_NONE
