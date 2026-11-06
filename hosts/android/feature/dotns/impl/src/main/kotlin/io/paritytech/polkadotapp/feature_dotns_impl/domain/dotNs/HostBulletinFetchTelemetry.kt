@@ -17,19 +17,24 @@ class HostBulletinFetchTelemetry @Inject internal constructor(
 ) {
     fun nowMillis(): Long = timeProvider.nowMillis()
 
-    fun report(fetch: BulletinFetch) {
+    fun report(
+        domain: String,
+        outcome: HostEventOutcome,
+        contentHashMillis: Long,
+        startedAtMillis: Long,
+        bytes: Long?,
+    ) {
         runCatching {
             capture.capture {
                 val now = timeProvider.nowMillis()
                 originProvider.current().stepEvent(
                     name = EVENT_NAME,
-                    outcome = fetch.outcome,
+                    outcome = outcome,
                     monotonicMs = now,
-                    durationMs = now - fetch.startedAtMillis,
-                    sessionId = sessions.sessionIdForProductOrSubname(fetch.domain),
-                    tags = mapOf("dotns.domain" to fetch.domain),
-                    extras = mapOf("dotns.content_hash_ms" to fetch.contentHashMillis) +
-                        fetch.bytes?.let { mapOf("bulletin.bytes" to it) }.orEmpty(),
+                    durationMs = now - startedAtMillis,
+                    sessionId = sessions.sessionIdForProductOrSubname(domain),
+                    extras = mapOf("dotns.domain" to domain, "dotns.content_hash_ms" to contentHashMillis) +
+                        bytes?.let { mapOf("bulletin.bytes" to it) }.orEmpty(),
                 )
             }
         }.logFailure("Failed to capture native host Bulletin fetch event")
@@ -39,11 +44,3 @@ class HostBulletinFetchTelemetry @Inject internal constructor(
         const val EVENT_NAME = "host.bulletin.fetch"
     }
 }
-
-class BulletinFetch(
-    val domain: String,
-    val outcome: HostEventOutcome,
-    val contentHashMillis: Long,
-    val startedAtMillis: Long,
-    val bytes: Long?,
-)

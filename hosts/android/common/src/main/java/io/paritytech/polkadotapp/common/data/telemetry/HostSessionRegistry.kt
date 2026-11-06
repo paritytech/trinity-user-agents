@@ -17,5 +17,8 @@ class HostSessionRegistry @Inject constructor() {
     }
 
     fun sessionIdForProductOrSubname(dotNsName: String): String? = sessionIdsByProduct[dotNsName]
-        ?: sessionIdsByProduct.entries.firstOrNull { (productId, _) -> dotNsName.endsWith(".$productId") }?.value
+        ?: sessionIdsByProduct.entries
+            .filter { (productId, _) -> dotNsName.endsWith(".$productId") }
+            .maxByOrNull { (productId, _) -> productId.length }
+            ?.value
 }

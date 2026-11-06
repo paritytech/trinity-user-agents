@@ -118,6 +118,7 @@ class TrUAPISessionStarter @Inject constructor(
         scope.coroutineContext[Job]?.invokeOnCompletion { hostSessions.close(productId.value, hostSessionId) }
 
         val mainFrameFailed = AtomicBoolean(false)
+        provider.addOnPageStartedListener { mainFrameFailed.set(false) }
         provider.addOnMainFrameFailedListener { mainFrameFailed.set(true) }
         val pageLoadedReported = AtomicBoolean(false)
         provider.addOnPageFinishedListener {

@@ -213,8 +213,9 @@ class BrowserWebViewProvider @AssistedInject constructor(
             if (request.isForMainFrame) notifyMainFrameFailed()
         }
 
+        // An aborted load, such as one a newer navigation replaced, arrives as ERROR_UNKNOWN.
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) notifyMainFrameFailed()
+            if (request.isForMainFrame && error.errorCode != WebViewClient.ERROR_UNKNOWN) notifyMainFrameFailed()
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail?): Boolean {

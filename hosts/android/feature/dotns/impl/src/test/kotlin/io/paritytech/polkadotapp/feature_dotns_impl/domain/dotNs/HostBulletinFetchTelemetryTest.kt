@@ -79,13 +79,13 @@ class HostBulletinFetchTelemetryTest {
                         "host.app_flavor" to "gp",
                         "host.native_app_version" to "1.2.3",
                         "outcome" to "ok",
-                        "dotns.domain" to APP_DOMAIN,
                     ),
                     extras = mapOf(
                         "host.app_build" to 123L,
                         "event.monotonic_ms" to FETCHED_AT,
                         "duration_ms" to FETCHED_AT - FETCH_STARTED_AT,
                         "host.session_id" to "session-42",
+                        "dotns.domain" to APP_DOMAIN,
                         "dotns.content_hash_ms" to FETCH_STARTED_AT - LOOKUP_STARTED_AT,
                         "bulletin.bytes" to BUNDLE_BYTES,
                     ),
@@ -118,7 +118,7 @@ class HostBulletinFetchTelemetryTest {
     @Test
     fun `the event is not built when capture drops it`() {
         HostBulletinFetchTelemetry(originProvider, timeProvider, HostEventCapture { }, sessions)
-            .report(BulletinFetch(APP_DOMAIN, HostEventOutcome.OK, 30L, FETCH_STARTED_AT, BUNDLE_BYTES))
+            .report(APP_DOMAIN, HostEventOutcome.OK, 30L, FETCH_STARTED_AT, BUNDLE_BYTES)
 
         verify(exactly = 0) { originProvider.current() }
         verify(exactly = 0) { timeProvider.nowMillis() }

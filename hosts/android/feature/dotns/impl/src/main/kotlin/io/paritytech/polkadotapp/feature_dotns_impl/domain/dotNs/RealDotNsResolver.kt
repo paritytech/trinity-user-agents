@@ -82,9 +82,8 @@ internal class RealDotNsResolver @Inject constructor(
     ): Result<Uri> {
         val contentHash = contentHashHex.fromHex()
         val fetchStartedAtMillis = fetchTelemetry.nowMillis()
-        fun reportFetch(outcome: HostEventOutcome, bytes: Long?) = fetchTelemetry.report(
-            BulletinFetch(dotNsName, outcome, contentHashMillis, fetchStartedAtMillis, bytes),
-        )
+        fun reportFetch(outcome: HostEventOutcome, bytes: Long?) =
+            fetchTelemetry.report(dotNsName, outcome, contentHashMillis, fetchStartedAtMillis, bytes)
         Timber.d("resolving content for content hash $contentHashHex ($dotNsName)")
 
         // Check if we already have this content

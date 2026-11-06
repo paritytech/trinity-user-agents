@@ -51,6 +51,7 @@ class TrUAPISessionStarterTest {
     private val hostSessions = HostSessionRegistry()
     private val pageFinishedListeners = mutableListOf<() -> Unit>()
     private val mainFrameFailedListeners = mutableListOf<() -> Unit>()
+    private val pageStartedListeners = mutableListOf<(String) -> Unit>()
 
     private val starter = TrUAPISessionStarter(
         hostBridgeFactory = hostBridgeFactory,
@@ -132,6 +133,29 @@ class TrUAPISessionStarterTest {
         }
     }
 
+    // A navigation that replaces a failed one starts a new document, and that document is what loads.
+    @Test
+    fun `a failure on a document that a later navigation replaced does not mark the load as failed`() =
+        runBlocking<Unit> {
+            starter.start(
+                provider = provider,
+                productUrl = PRODUCT_URL,
+                scope = this,
+                hostApiNavigation = navigation,
+                explicitProductId = PRODUCT_ID,
+            )
+            yield()
+
+            pageStartedListeners.forEach { it(PRODUCT_URL) }
+            mainFrameFailedListeners.forEach { it() }
+            pageStartedListeners.forEach { it(PRODUCT_URL) }
+            pageFinishedListeners.forEach { it() }
+
+            verify(exactly = 1) {
+                pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = true)
+            }
+        }
+
     // Shared dotNS loading finds the session through the product's name or an executable's subname, and a
     // product that closed must not lend its id to whatever loads for it next.
     @Test
@@ -176,6 +200,7 @@ class TrUAPISessionStarterTest {
         every { pageLoadedTelemetry.report(any(), any(), any(), any()) } just Runs
         every { provider.addOnPageFinishedListener(capture(pageFinishedListeners)) } just Runs
         every { provider.addOnMainFrameFailedListener(capture(mainFrameFailedListeners)) } just Runs
+        every { provider.addOnPageStartedListener(capture(pageStartedListeners)) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
             Result.success(execution)
