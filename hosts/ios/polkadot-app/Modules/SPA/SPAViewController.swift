@@ -17,6 +17,9 @@ final class SPAViewController: UIViewController, ViewHolder {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
 
+    private(set) var statusBarTitle: String?
+    var onStatusBarTitleChanged: (() -> Void)?
+
     private var titleObservation: NSKeyValueObservation?
     private var didSetupWebViewLayout = false
     private var loadFailure: ErrorContent?
@@ -26,7 +29,6 @@ final class SPAViewController: UIViewController, ViewHolder {
         progressView: rootView.loadProgressView,
         statusLabel: rootView.loadStatusLabel
     )
-    private var chromeCollapser: BrowserChromeCollapser?
 
     init(
         presenter: SPAPresenterProtocol,
@@ -68,11 +70,6 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
-
-        if configuration.presentation == .browserTab {
-            setupBrowserTabActions()
-            setupChromeCollapse()
-        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -127,7 +124,8 @@ private extension SPAViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs:
+            case .dotNs,
+                 .bundled:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
@@ -194,26 +192,14 @@ private extension SPAViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.presentation == .browserTab {
-            rootView.setupBrowserTabLayout()
-        } else if configuration.isRootScreen {
+        if configuration.isRootScreen {
             rootView.setupRootLayout()
         } else {
             rootView.setupDefaultLayout()
         }
     }
 
-    func setupBrowserTabActions() {
-        rootView.minimizeButton.addTarget(self, action: #selector(onMinimizeTapped), for: .touchUpInside)
-        rootView.moreButton.showsMenuAsPrimaryAction = true
-        rootView.moreButton.menu = UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] completion in
-                completion(self?.makeMoreMenuElements() ?? [])
-            }
-        ])
-    }
-
-    func makeMoreMenuElements() -> [UIMenuElement] {
+    func makeMenuElements() -> [UIMenuElement] {
         var elements: [UIMenuElement] = []
 
         if presenter.hasChatEntry() {
@@ -239,51 +225,21 @@ private extension SPAViewController {
             self?.presenter.didTapShare()
         })
 
-        elements.append(UIAction(
-            title: String(localized: .Common.close),
-            image: UIImage(systemName: "xmark"),
-            attributes: .destructive
+        let closeApp = UIAction(
+            title: String(localized: .spaActionCloseApp),
+            image: UIImage(systemName: "xmark")
         ) { [weak self] _ in
             self?.presenter.didTapClose()
-        })
+        }
+        elements.append(UIMenu(options: .displayInline, children: [closeApp]))
 
         return elements
-    }
-
-    func setupChromeCollapse() {
-        let collapser = BrowserChromeCollapser(topPanelHeight: rootView.topChromeHeight)
-        chromeCollapser = collapser
-        rootView.webView.scrollView.delegate = self
-    }
-
-    func feedChromeCollapse(_ scrollView: UIScrollView) {
-        guard let collapser = chromeCollapser else { return }
-
-        let sample = BrowserChromeScrollSample(
-            offsetToTopEdge: max(0, scrollView.bounds.minY),
-            isInteracting: scrollView.isDragging || scrollView.isDecelerating
-        )
-
-        if let update = collapser.update(with: sample) {
-            rootView.applyChromeCollapse(update.fraction, animated: update.animated)
-        }
-    }
-
-    func resetChromeCollapse() {
-        guard let chromeCollapser else { return }
-
-        chromeCollapser.reset()
-        rootView.applyChromeCollapse(0, animated: false)
     }
 
     // MARK: - Actions
 
     @objc func onMoreTapped() {
         presenter.didTapMoreButton()
-    }
-
-    @objc func onMinimizeTapped() {
-        presenter.didTapMinimize()
     }
 }
 
@@ -293,7 +249,6 @@ extension SPAViewController: SPAViewProtocol {
     var pageScrollView: UIScrollView { rootView.webView.scrollView }
 
     func navigate(to url: URL) {
-        resetChromeCollapse()
         rootView.webView.load(URLRequest(url: url))
     }
 
@@ -307,10 +262,11 @@ extension SPAViewController: SPAViewProtocol {
 
     func updateTitle(_ title: String) {
         navigationItem.title = title
+        statusBarTitle = title
+        onStatusBarTitleChanged?()
     }
 
     func reload() {
-        resetChromeCollapse()
         rootView.webView.reload()
     }
 
@@ -356,20 +312,14 @@ extension SPAViewController: SPAViewProtocol {
 
 extension SPAViewController: RootScreen {}
 
-// MARK: - UIScrollViewDelegate
+// MARK: - StatusBarTitleProviding
 
-extension SPAViewController: UIScrollViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        feedChromeCollapse(scrollView)
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate {
-            feedChromeCollapse(scrollView)
-        }
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        feedChromeCollapse(scrollView)
+extension SPAViewController: StatusBarTitleProviding {
+    func makeStatusBarMenu() -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.makeMenuElements() ?? [])
+            }
+        ])
     }
 }

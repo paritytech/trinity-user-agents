@@ -38,7 +38,7 @@ pub struct WasmSocket {
 }
 
 /// The state of the [`WasmSocket`].
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Clone)]
 enum ConnectionState {
 	/// Initial state of the socket.
 	Connecting,
