@@ -99,9 +99,9 @@ describe("HostStorage networks", () => {
     const { backing, storage } = storageWithExternalChanges();
     storage.useWallet("alice");
     await storage.product.write("counter", bytes(1));
-    expect(backing.getItem("truapi-web-signing-host:product:alice:counter")).toBe(
-      "0x01",
-    );
+    expect(
+      backing.getItem("truapi-web-signing-host:product:alice:counter"),
+    ).toBe("0x01");
   });
 
   // The same wallet on two networks must not share grants, keys or product data.
@@ -156,7 +156,9 @@ describe("HostStorage networks", () => {
 
     expect(storage.clearProductData("app.paseo")).toBe(1);
 
-    expect(await storage.product.read(coreKey("app.paseo", "a"))).toBeUndefined();
+    expect(
+      await storage.product.read(coreKey("app.paseo", "a")),
+    ).toBeUndefined();
     storage.useWallet("alice", "paseo");
     expect(await storage.product.read(coreKey("app.paseo", "a"))).toEqual(
       bytes(1),
@@ -182,7 +184,7 @@ describe("HostStorage.clearProductData", () => {
       {
         tag: "PermissionAuthorization",
         value: {
-          productId: "app.paseo",
+          scope: "app.paseo",
           request: { tag: "IdentityDisclosure" },
         },
       },

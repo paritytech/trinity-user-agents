@@ -10,6 +10,7 @@
  * Nothing here reads a chain or invents a figure.
  */
 
+import { asProductId } from "@parity/truapi";
 import type { PocketPlatform } from "@parity/truapi-host";
 import type { PocketCardKey } from "./faces.js";
 import { constant } from "../platform/subscription.js";
@@ -79,7 +80,10 @@ export function cardKey(
   card: ProductCard,
   networkSuffix: string,
 ): PocketCardKey {
-  return { productId: `${card.product}.${networkSuffix}`, cardId: card.id };
+  return {
+    productId: asProductId(`${card.product}.${networkSuffix}`),
+    cardId: card.id,
+  };
 }
 
 /** The pinned product cards on the network whose TLD is `networkSuffix`. */

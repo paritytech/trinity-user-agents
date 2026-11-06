@@ -1,4 +1,4 @@
-import type { TrUApiClient } from "@parity/truapi";
+import type { ProductId, TrUApiClient } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
 import type { Heard, Post } from "./protocol.js";
 
@@ -77,7 +77,7 @@ function errorText(error: unknown): string {
 /** The product's TrUAPI Statement Store, as Contact Chat uses it, for the product `productId`. */
 export function truapiStatements(
   client: StatementClient,
-  productId: string,
+  productId: ProductId,
   schedule: (task: () => void, delayMs: number) => () => void,
 ): Statements {
   const accountAt = (index: string) => ({

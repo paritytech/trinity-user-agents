@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import type { ChainDirectory } from "../../../src/platform/chain-directory.js";
@@ -202,7 +203,7 @@ const nativeIdentityProof = (
   keyedBlake2b256(secret, concat(identity, signer, text("mds-chat-request")));
 
 describe("a request and its reply under wallet keys", () => {
-  const PRODUCT = { id: "chat.paseo", name: "Chat" };
+  const PRODUCT = { id: asProductId("chat.paseo"), name: "Chat" };
   const PAYLOAD = "0x0102";
   const replyKey = xwingPair(digest("reply", "one"));
   const request = (overrides: Partial<RequestContext> = {}) =>

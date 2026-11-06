@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   REPLY_SEALS,
@@ -80,7 +81,7 @@ const START = Date.UTC(2026, 9, 21, 12, 0, 0);
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const NETWORK = "testnet";
-const PRODUCT = { id: "example-chat.test", name: "Example Chat" };
+const PRODUCT = { id: asProductId("example-chat.test"), name: "Example Chat" };
 const [ALICE, BOB, CAROL] = TEST_USERS as [TestUser, TestUser, TestUser];
 
 class Clock {

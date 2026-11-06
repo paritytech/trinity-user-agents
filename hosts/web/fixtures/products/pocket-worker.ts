@@ -5,7 +5,7 @@
  * read. It starts drawing a moment after it loads, as a real worker does once
  * it has booted. What it saw is kept on `window.__pocketWorker`.
  */
-import type { RendererNode } from "@parity/truapi";
+import { asProductId, type RendererNode } from "@parity/truapi";
 import { getClientSync } from "@parity/truapi/sandbox";
 
 interface Seen {
@@ -64,7 +64,7 @@ const face = (): RendererNode => ({
 
 const account = await client.account.getAccount({
   productAccountId: {
-    dotNsIdentifier: "peopl.paseo",
+    dotNsIdentifier: asProductId("peopl.paseo"),
     derivationIndex: { tag: "Index", value: 0 },
   },
 });

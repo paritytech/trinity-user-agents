@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
-import type { RendererNode } from "@parity/truapi";
+import { asProductId, type RendererNode } from "@parity/truapi";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import {
   CONNECT_RETRY_MS,
@@ -13,7 +13,7 @@ import {
 } from "../../../src/pocket/faces.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
-const CARD = { productId: "example.paseo", cardId: "membership" };
+const CARD = { productId: asProductId("example.paseo"), cardId: "membership" };
 const SESSION = { walletId: "w1", networkId: "paseo", cards: [CARD] };
 
 const face = (text: string): RendererNode => ({

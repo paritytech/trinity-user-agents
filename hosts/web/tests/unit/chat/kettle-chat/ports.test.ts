@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
@@ -75,7 +76,7 @@ describe("Kettle Chat's statement ports", () => {
       const made = client(accept);
       const ports = conversationPorts({
         client: made.client,
-        productId: "chat.example",
+        productId: asProductId("chat.example"),
         index: `0x${"44".repeat(32)}`,
         allow: async () => null,
         report: () => {},
@@ -126,7 +127,7 @@ describe("Kettle Chat's statement ports", () => {
     const seen: KettleSubmission[] = [];
     const ports = conversationPorts({
       client: refusing,
-      productId: "chat.example",
+      productId: asProductId("chat.example"),
       index: `0x${"44".repeat(32)}`,
       allow: async () => "not final yet",
       report: () => {},

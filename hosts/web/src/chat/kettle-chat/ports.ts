@@ -1,4 +1,4 @@
-import type { TrUApiClient } from "@parity/truapi";
+import type { ProductId, TrUApiClient } from "@parity/truapi";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import { concat, utf8 } from "../../platform/codec.js";
 import { blake2b256 } from "../../platform/crypto.js";
@@ -182,7 +182,7 @@ type PortsClient = Pick<
 
 export interface ConversationPortsOptions {
   client: PortsClient;
-  productId: string;
+  productId: ProductId;
   /** The conversation's raw derivation index, `0x` hex. */
   index: string;
   /** Null once the host allows the account to post now, or why not. */

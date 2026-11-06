@@ -159,6 +159,11 @@ export function createHostCallbacks(
       },
     },
 
+    // The core builds every extrinsic this host signs, as V4.
+    extrinsicVersion: {
+      transactionExtensionVersions: () => Promise.resolve({ chains: [] }),
+    },
+
     features: {
       featureSupported: (request) =>
         Promise.resolve({

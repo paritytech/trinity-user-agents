@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
 import { ChatInbox, type InboxChange } from "../../../src/chat/inbox.js";
@@ -8,7 +9,7 @@ import { ProductChat, productChatKey } from "../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const worker = (productId: string): ProductContext => ({
-  productId,
+  productId: asProductId(productId),
   executionKind: "Worker",
 });
 

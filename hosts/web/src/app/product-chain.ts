@@ -1,4 +1,4 @@
-import { createClient, createTransport } from "@parity/truapi";
+import { createClient, createTransport, type ProductId } from "@parity/truapi";
 import { hexToBytes } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChainProvider } from "@parity/truapi-host";
@@ -43,7 +43,7 @@ const CHAIN_TIMEOUT_MS = 30_000;
  */
 export async function readProductAccount(
   source: Pick<WorkerPairingHostRuntime, "createProvider">,
-  productId: string,
+  productId: ProductId,
 ): Promise<HexString> {
   const provider = await source.createProvider({
     productId,

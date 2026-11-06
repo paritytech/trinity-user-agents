@@ -1,5 +1,10 @@
 import { bytesToHex } from "@parity/truapi/scale";
-import type { HexString, RenderContext, RendererNode } from "@parity/truapi";
+import type {
+  HexString,
+  ProductId,
+  RenderContext,
+  RendererNode,
+} from "@parity/truapi";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import type { WorkerSurface } from "../products/product-workers.js";
 
@@ -21,7 +26,7 @@ import type { WorkerSurface } from "../products/product-workers.js";
 
 /** One card in Pocket. */
 export interface PocketCardKey {
-  productId: string;
+  productId: ProductId;
   cardId: string;
 }
 

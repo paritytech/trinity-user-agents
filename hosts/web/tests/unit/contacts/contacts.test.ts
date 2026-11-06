@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import type { HexString } from "@parity/truapi/scale";
 import type { ProductContext } from "@parity/truapi-host";
@@ -24,7 +25,7 @@ import {
 } from "../../../src/contacts/wallet-contacts.js";
 
 const product: ProductContext = {
-  productId: "pay.paseo",
+  productId: asProductId("pay.paseo"),
   executionKind: "App",
 };
 const KIM = `0x${"4b".repeat(32)}` as HexString;

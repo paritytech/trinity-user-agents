@@ -5,6 +5,7 @@
  * draws no face above an opened card, so a Widget is told `Unsupported`
  * where an App is `Denied`. What it saw is kept on `window.__widget`.
  */
+import { asProductId } from "@parity/truapi";
 import { getClientSync } from "@parity/truapi/sandbox";
 
 interface Seen {
@@ -29,7 +30,7 @@ const client = found;
 
 const account = await client.account.getAccount({
   productAccountId: {
-    dotNsIdentifier: "peopl.paseo",
+    dotNsIdentifier: asProductId("peopl.paseo"),
     derivationIndex: { tag: "Index", value: 0 },
   },
 });

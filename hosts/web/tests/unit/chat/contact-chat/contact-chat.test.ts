@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ContactHandle } from "@parity/truapi";
+import { asProductId, type ContactHandle } from "@parity/truapi";
 import { messagePortBridge } from "../../../../src/chat/draft/contract.js";
 import { serveConversations } from "../../../../src/chat/draft/conversations.js";
 import { ChatV2Host } from "../../../../src/chat/draft/host.js";
@@ -73,7 +73,7 @@ import { MemoryChatStatements } from "../../../support/chat-statements.js";
 
 const START = Date.UTC(2026, 9, 29, 12, 0, 0);
 const NETWORK = "testnet";
-const PRODUCT = { id: "contact-chat.test", name: "Contact Chat" };
+const PRODUCT = { id: asProductId("contact-chat.test"), name: "Contact Chat" };
 const [ALICE, BOB, CAROL] = TEST_USERS as [TestUser, TestUser, TestUser];
 
 const settle = async () => {

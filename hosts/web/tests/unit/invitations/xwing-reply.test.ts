@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import { ml_kem768_x25519 } from "@noble/post-quantum/hybrid.js";
 import {
@@ -163,7 +164,7 @@ const LIN = personOf("lin");
 const authOf = (id: string) => new WalletIdentityAuth(keysOf(id));
 const contacts = (signingPublic: string) =>
   [ADA, LIN].find((who) => who.identity.signingPublic === signingPublic);
-const PRODUCT = { id: "chat.example", name: "Example Chat" };
+const PRODUCT = { id: asProductId("chat.example"), name: "Example Chat" };
 const CREATED_AT = Date.UTC(2026, 9, 21, 12, 0, 0);
 
 function request(

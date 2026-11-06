@@ -14,7 +14,7 @@
  *   the same product as a real product worker.
  */
 import type { HexString } from "@parity/truapi/scale";
-import type { RendererNode } from "@parity/truapi";
+import { asProductId, type RendererNode } from "@parity/truapi";
 import type { ProductContext } from "@parity/truapi-host";
 import type { ChatInboxView, InboxChange } from "../../src/chat/inbox.js";
 import type { ChatProvider } from "../../src/chat/provider.js";
@@ -51,7 +51,7 @@ import {
   walletRecordKey,
 } from "../../src/contacts/wallet-contacts.js";
 
-const QUIZ = "quiz.test";
+const QUIZ = asProductId("quiz.test");
 const CHAT_PRODUCT = "chat.test";
 const PEOPLE = "people.test";
 const KIM = `0x${"4b".repeat(32)}` as HexString;

@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import {
@@ -58,7 +59,7 @@ async function open(heard: ProductLoadSummary[], onClose?: () => void) {
   const product = await openProduct(
     runtime,
     new URL(`${ORIGIN}/truapi-sandbox/index.html`),
-    "one.paseo",
+    asProductId("one.paseo"),
     {} as HTMLElement,
     {
       mounted: true,

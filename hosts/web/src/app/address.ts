@@ -1,4 +1,8 @@
-import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "../platform/network-config.js";
+import { asProductId, type ProductId } from "@parity/truapi";
+import {
+  DEFAULT_NETWORK_CONFIG,
+  type NetworkConfig,
+} from "../platform/network-config.js";
 import { parseProductUrl, productIdFor } from "../products/product.js";
 
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -92,7 +96,7 @@ export function parseAddress(
 
 /** The product id a navigation will use, and where it came from. */
 export interface EffectiveProductId {
-  id: string;
+  id: ProductId;
   source: "entered" | "derived";
   /**
    * Whether the core is likely to accept the id. A bare IP address derives an
@@ -116,7 +120,8 @@ export function effectiveProductId(
   override: string,
 ): EffectiveProductId {
   const entered = override.trim();
-  if (entered !== "") return { id: entered, source: "entered", usable: true };
+  if (entered !== "")
+    return { id: asProductId(entered), source: "entered", usable: true };
   const id = productIdFor(url, "");
   const bareAddress = IPV4.test(url.hostname) || url.hostname.includes(":");
   return { id, source: "derived", usable: !bareAddress };
@@ -133,8 +138,8 @@ export function effectiveProductIdFor(
   if (address.kind === "url") return effectiveProductId(address.url, override);
   const entered = override.trim();
   return entered === ""
-    ? { id: address.name, source: "derived", usable: true }
-    : { id: entered, source: "entered", usable: true };
+    ? { id: asProductId(address.name), source: "derived", usable: true }
+    : { id: asProductId(entered), source: "entered", usable: true };
 }
 
 const BARE_LABEL = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=$|[/?#])/i;

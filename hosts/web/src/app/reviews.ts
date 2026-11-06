@@ -31,6 +31,7 @@ const TITLES: Record<UserConfirmationReview["tag"], string> = {
   AccountAccess: "Give access to another product's account",
   SignVrf: "Sign a VRF transcript",
   ProductSubtree: "Share the product account",
+  NftPurseDrain: "Move items out of an NFT purse",
 };
 
 /**
@@ -74,6 +75,7 @@ function requestingProduct(review: UserConfirmationReview): string | undefined {
     case "CreateProof":
     case "ResourceAllocation":
     case "SignVrf":
+    case "NftPurseDrain":
       return review.value.callingProductId;
     case "IdentityDisclosure":
     case "ProductSubtree":

@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DirectoryContacts } from "../../../src/invitations/directory-contacts.js";
 import type { HostDelivery } from "../../../src/invitations/ports.js";
@@ -57,7 +58,7 @@ function host(
   const log: string[] = [];
   let checks = 0;
   const chat = startContactChatHost({
-    product: { id: "contact-chat.paseo", name: "Contact Chat" },
+    product: { id: asProductId("contact-chat.paseo"), name: "Contact Chat" },
     keys: { sent: "sent", received: "received" },
     auth: new WalletIdentityAuth(keys),
     delivery,

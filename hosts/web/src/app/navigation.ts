@@ -1,3 +1,4 @@
+import { asProductId, type ProductId } from "@parity/truapi";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import {
   displayAddress,
@@ -69,7 +70,7 @@ interface Target extends Opened {
 /** A product this tab opened itself, kept so a reload brings it back. */
 export interface TabProduct {
   address: string;
-  productId: string;
+  productId: ProductId;
   destination: Destination | null;
   parsed: Address;
 }
@@ -90,7 +91,7 @@ export interface NavigationDeps {
   walletId(): string | null;
   /** Whether the tab acts as a test user, which opens no product by destination. */
   testUser: boolean;
-  tap(runtime: Runtime, productId: string): FrameTap;
+  tap(runtime: Runtime, productId: ProductId): FrameTap;
   /** Show `text` in the address bar. */
   showAddress(text: string): void;
   /** Empty the address bar, which names no product over a host screen. */
@@ -102,7 +103,7 @@ export interface NavigationDeps {
   /** An App was opened by its address, for the history. */
   recorded(entry: {
     address: string;
-    productId: string;
+    productId: ProductId;
     entered: boolean;
   }): void;
   activity: ActivitySink;
@@ -654,7 +655,7 @@ export class ProductNavigation {
   async openTyped(
     runtime: Runtime,
     address: Address,
-    productId: string,
+    productId: ProductId,
     entered: boolean,
   ): Promise<boolean> {
     if (!isProductDestination(this.where)) {
@@ -677,7 +678,7 @@ export class ProductNavigation {
    */
   private async resolveTarget(
     address: Address,
-    productId: string,
+    productId: ProductId,
   ): Promise<Target> {
     const network = this.deps.network;
     if (address.kind === "url")
@@ -737,7 +738,7 @@ export class ProductNavigation {
   async openTarget(
     runtime: Runtime,
     target: Target,
-    productId: string,
+    productId: ProductId,
     entered: boolean,
     scope: string,
     executionKind: "App" | "Widget" = "App",
@@ -954,7 +955,7 @@ export class ProductNavigation {
   async openResolved(
     runtime: Runtime,
     address: Address,
-    productId: string,
+    productId: ProductId,
     entered: boolean,
   ): Promise<void> {
     let target: Target;
@@ -996,7 +997,7 @@ export class ProductNavigation {
         return null;
       return {
         address,
-        productId,
+        productId: asProductId(productId),
         destination:
           DESTINATIONS.find((known) => known === destination) ?? null,
         parsed: parseTypedAddress(address, network),

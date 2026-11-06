@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import {
@@ -15,7 +16,7 @@ import {
  * requires to replace a post on a channel.
  */
 
-const PRODUCT = "contact-chat.test";
+const PRODUCT = asProductId("contact-chat.test");
 const TOPIC = `0x${"ab".repeat(32)}`;
 const CHANNEL = `0x${"cd".repeat(32)}`;
 const INDEX = `0x${"11".repeat(32)}`;

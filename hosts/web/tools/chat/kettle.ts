@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import type { ChatProductSpec } from "../../src/invitations/wallet-chat.js";
 import {
@@ -29,7 +30,7 @@ export function kettleChat(
 ): ChatProductSpec {
   return {
     product: (networkSuffix) => ({
-      id: `kettle-chat.${networkSuffix}`,
+      id: asProductId(`kettle-chat.${networkSuffix}`),
       name: "Kettle Chat",
     }),
     workerPath: KETTLE_CHAT_PATH,

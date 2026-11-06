@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
@@ -49,7 +50,7 @@ describe("normalizeAddress", () => {
 describe("effectiveProductId", () => {
   test("derives a localhost id that keeps the port", () => {
     expect(effectiveProductId(new URL("http://localhost:3000/"), "")).toEqual({
-      id: "localhost:3000",
+      id: asProductId("localhost:3000"),
       source: "derived",
       usable: true,
     });
@@ -60,7 +61,7 @@ describe("effectiveProductId", () => {
   test("marks a bare LAN address as needing an entered id", () => {
     expect(effectiveProductId(new URL("http://192.168.0.7:3000/"), "")).toEqual(
       {
-        id: "192.168.0.7",
+        id: asProductId("192.168.0.7"),
         source: "derived",
         usable: false,
       },
@@ -70,10 +71,14 @@ describe("effectiveProductId", () => {
   test("uses an entered id for any address", () => {
     expect(
       effectiveProductId(new URL("http://192.168.0.7:3000/"), " myapp.paseo "),
-    ).toEqual({ id: "myapp.paseo", source: "entered", usable: true });
+    ).toEqual({
+      id: asProductId("myapp.paseo"),
+      source: "entered",
+      usable: true,
+    });
     expect(
       effectiveProductId(new URL("http://localhost:3000/"), "myapp.paseo").id,
-    ).toBe("myapp.paseo");
+    ).toBe(asProductId("myapp.paseo"));
   });
 
   // Editing the address must not silently reset a chosen id.
@@ -83,7 +88,7 @@ describe("effectiveProductId", () => {
       "http://192.168.0.94:3000/",
     ])
       expect(effectiveProductId(new URL(address), "myapp.paseo").id).toBe(
-        "myapp.paseo",
+        asProductId("myapp.paseo"),
       );
   });
 });
@@ -119,12 +124,12 @@ describe("parseAddress: product names", () => {
   test("gives a name its own id, and an entered id still wins", () => {
     const address = parseAddress("myapp.paseo");
     expect(effectiveProductIdFor(address, "")).toEqual({
-      id: "myapp.paseo",
+      id: asProductId("myapp.paseo"),
       source: "derived",
       usable: true,
     });
     expect(effectiveProductIdFor(address, " other.paseo ")).toEqual({
-      id: "other.paseo",
+      id: asProductId("other.paseo"),
       source: "entered",
       usable: true,
     });
@@ -186,7 +191,10 @@ describe("dotNS TLDs", () => {
   // a TLD added or removed there must be added or removed here.
   test("match the Rust core's DOTNS_TLDS", () => {
     const dotnsName = readFileSync(
-      new URL("../../../../../rust/crates/truapi/src/dotns_name.rs", import.meta.url),
+      new URL(
+        "../../../../../rust/crates/truapi/src/dotns_name.rs",
+        import.meta.url,
+      ),
       "utf8",
     );
     const list = /pub const DOTNS_TLDS: &\[&str\] = &\[([^\]]*)\];/.exec(
@@ -302,7 +310,9 @@ describe("product-name routing on PreviewNet", () => {
 
   test("shows an opened name without the active TLD", () => {
     expect(displayAddress("myapp.testnet", previewnet)).toBe("myapp");
-    expect(displayAddress("myapp.testnet/x?y=1", previewnet)).toBe("myapp/x?y=1");
+    expect(displayAddress("myapp.testnet/x?y=1", previewnet)).toBe(
+      "myapp/x?y=1",
+    );
     expect(displayAddress("myapp.paseo", previewnet)).toBe("myapp.paseo");
   });
 

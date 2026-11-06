@@ -1,10 +1,11 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
 import { createGameReminders } from "../../../src/app/callbacks.js";
 import type { Activity } from "../../../src/platform/activity.js";
 
 const product: ProductContext = {
-  productId: "game.example",
+  productId: asProductId("game.example"),
   executionKind: "Worker",
 };
 

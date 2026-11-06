@@ -1,3 +1,4 @@
+import { asProductId, type ProductId } from "@parity/truapi";
 import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
@@ -38,10 +39,10 @@ export function parseProductUrl(raw: string): URL {
  * development id. Any other host needs `override` to name the dotNS product it
  * stands in for; the core refuses ids that are neither.
  */
-export function productIdFor(url: URL, override: string): string {
+export function productIdFor(url: URL, override: string): ProductId {
   const named = override.trim();
-  if (named) return named;
-  return url.hostname === "localhost" ? url.host : url.hostname;
+  if (named) return asProductId(named);
+  return asProductId(url.hostname === "localhost" ? url.host : url.hostname);
 }
 
 /**
@@ -57,7 +58,7 @@ export const PRODUCT_FRAME_POLICY = "camera; microphone";
 /** A product embedded in the page and connected to the core. */
 export interface OpenProduct {
   url: URL;
-  productId: string;
+  productId: ProductId;
   /** What the core runs the frame as, kept so the product can be opened again as the same. */
   executionKind: "App" | "Widget" | "Worker";
   /** The product's channel to the core, for host-initiated renders and actions. */
@@ -155,7 +156,7 @@ export interface OpenProductOptions {
 export async function openProduct(
   runtime: WorkerPairingHostRuntime,
   url: URL,
-  productId: string,
+  productId: ProductId,
   container: HTMLElement,
   options: OpenProductOptions = {},
 ): Promise<OpenProduct> {

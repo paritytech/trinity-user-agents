@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import { describeReview, formatValue } from "../../../src/app/reviews.js";
 
@@ -10,7 +11,7 @@ describe("describeReview", () => {
       value: {
         tag: "Product",
         value: {
-          callingProductId: "myapp.paseo",
+          callingProductId: asProductId("myapp.paseo"),
           request: {} as never,
           watermarked: false,
         },
@@ -33,7 +34,7 @@ describe("describeReview", () => {
       value: {
         tag: "Product",
         value: {
-          callingProductId: "myapp.paseo",
+          callingProductId: asProductId("myapp.paseo"),
           request: {} as never,
           watermarked: true,
         },
@@ -45,7 +46,10 @@ describe("describeReview", () => {
   test("names the product that asks for another product's account", () => {
     const review = describeReview({
       tag: "AccountAccess",
-      value: { requestingProductId: "one.paseo", targetProductId: "two.paseo" },
+      value: {
+        requestingProductId: asProductId("one.paseo"),
+        targetProductId: asProductId("two.paseo"),
+      },
     });
     expect(review.product).toBe("one.paseo");
   });

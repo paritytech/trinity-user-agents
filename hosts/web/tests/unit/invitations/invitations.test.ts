@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, spyOn, test } from "bun:test";
 import * as sealingModule from "../../../src/invitations/sealing.js";
 import { ChatKeys } from "../../../src/invitations/chat-keys.js";
@@ -57,7 +58,7 @@ import {
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
-const PRODUCT = { id: "chat.example", name: "Example Chat" };
+const PRODUCT = { id: asProductId("chat.example"), name: "Example Chat" };
 const PAYLOAD = `0x${"ab".repeat(64)}`;
 const REPLY = `0x${"cd".repeat(64)}`;
 
@@ -469,7 +470,8 @@ describe("the request service, receiving", () => {
   test("ignores a request for another product, and takes one made at any time", () => {
     const lin = host(LIN);
     lin.delivery.receive!.request(
-      fromAda({ product: { id: "other.example", name: "Other" } }).sealed,
+      fromAda({ product: { id: asProductId("other.example"), name: "Other" } })
+        .sealed,
     );
     expect(lin.notifications.list()).toEqual([]);
     lin.delivery.receive!.request(

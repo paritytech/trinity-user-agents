@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { NotificationClaim } from "@parity/truapi-host/web";
@@ -47,7 +48,7 @@ import { MemoryStorage, settle } from "../../support/test-support.js";
  */
 
 const NETWORK = "testnet";
-const PRODUCT = { id: "example-chat.test", name: "Example Chat" };
+const PRODUCT = { id: asProductId("example-chat.test"), name: "Example Chat" };
 const DAY = 86_400_000;
 const [ALICE, BOB, CAROL] = TEST_USERS as [TestUser, TestUser, TestUser];
 const personOf = (user: TestUser) =>

@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import type {
   NotificationClaim,
   StatementAccountClaim,
@@ -64,7 +65,7 @@ export type WalletDelivery =
 
 /** Contact Chat's product id and name on a network. */
 export const contactChat = (networkSuffix: string): Product => ({
-  id: `contact-chat.${networkSuffix}`,
+  id: asProductId(`contact-chat.${networkSuffix}`),
   name: "Contact Chat",
 });
 

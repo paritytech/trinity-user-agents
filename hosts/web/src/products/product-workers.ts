@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { FrameTap } from "./tap.js";
@@ -460,7 +461,7 @@ export class ProductWorkers {
       const handle = await openProduct(
         runtime,
         url,
-        name,
+        asProductId(name),
         this.deps.container,
         {
           mounted: true,
@@ -522,7 +523,7 @@ export class ProductWorkers {
         return;
       }
       handle.setVisible(false);
-      runtime.acquireWorker(name);
+      runtime.acquireWorker(handle.productId);
       running.handle = handle;
       running.cid = worker.cid;
       if (running.state.state === "starting")
@@ -611,7 +612,7 @@ export class ProductWorkers {
     this.deps.invitations?.disconnect(name);
     this.diagnose(name, running.run, null);
     if (running.handle !== null) {
-      this.deps.runtime()?.releaseWorker(name);
+      this.deps.runtime()?.releaseWorker(running.handle.productId);
       running.handle.dispose();
       running.handle = null;
       this.deps.activity({

@@ -1,3 +1,4 @@
+import { asProductId, type ProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import {
   COINAGE_MISSING,
@@ -47,10 +48,10 @@ describe("the pinned Humanity card", () => {
   // network they run on.
   test("belongs to peopl on the network's TLD", () => {
     expect(pinnedCards("paseo")).toEqual([
-      { productId: "peopl.paseo", cardId: "humanity" },
+      { productId: asProductId("peopl.paseo"), cardId: "humanity" },
     ]);
     expect(pinnedCards("testnet")).toEqual([
-      { productId: "peopl.testnet", cardId: "humanity" },
+      { productId: asProductId("peopl.testnet"), cardId: "humanity" },
     ]);
   });
 
@@ -62,26 +63,26 @@ describe("the pinned Humanity card", () => {
   // Each product sees only its own cards, and no product removes a pinned one.
   test("is the personhood product's only card, and cannot be removed", async () => {
     const pocket = pocketPlatform("paseo");
-    const first = async (productId: string) => {
+    const first = async (productId: ProductId) => {
       for await (const item of pocket.subscribePocketCards({
         productId,
         executionKind: "Worker",
       }))
         return item._unsafeUnwrap();
     };
-    expect(await first("peopl.paseo")).toEqual({
+    expect(await first(asProductId("peopl.paseo"))).toEqual({
       cards: [{ cardId: "humanity", privileged: true }],
     });
-    expect(await first("other.paseo")).toEqual({ cards: [] });
+    expect(await first(asProductId("other.paseo"))).toEqual({ cards: [] });
     await expect(
       pocket.removePocketCard(
-        { productId: "peopl.paseo", executionKind: "Worker" },
+        { productId: asProductId("peopl.paseo"), executionKind: "Worker" },
         { cardId: "humanity" },
       ),
     ).rejects.toThrow("Privileged");
     // Removing a card that is not there succeeds.
     await pocket.removePocketCard(
-      { productId: "other.paseo", executionKind: "Worker" },
+      { productId: asProductId("other.paseo"), executionKind: "Worker" },
       { cardId: "humanity" },
     );
   });

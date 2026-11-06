@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  HostChatActionSubscribeItem,
-  HostRendererActionSubscribeItem,
-  ProductRendererRenderRequest,
+import {
+  asProductId,
+  type HostChatActionSubscribeItem,
+  type HostRendererActionSubscribeItem,
+  type ProductRendererRenderRequest,
 } from "@parity/truapi";
 import type { ProductContext, RenderSink } from "@parity/truapi-host";
 import type { ProviderEvent } from "../../../src/chat/provider.js";
@@ -15,7 +16,7 @@ import {
 import type { WorkerState } from "../../../src/products/product-workers.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
-const PRODUCT = "game.paseo";
+const PRODUCT = asProductId("game.paseo");
 const ICON = "data:image/png;base64,AA==";
 const worker: ProductContext = { productId: PRODUCT, executionKind: "Worker" };
 const TREE = {

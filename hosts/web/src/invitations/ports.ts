@@ -1,3 +1,4 @@
+import type { ProductId } from "@parity/truapi";
 import type { ContactHandle } from "./contract.js";
 
 /**
@@ -7,7 +8,7 @@ import type { ContactHandle } from "./contract.js";
  */
 
 export interface Product {
-  id: string;
+  id: ProductId;
   name: string;
 }
 
@@ -176,7 +177,7 @@ export interface ConversationAllowance {
    * nothing.
    */
   allow(
-    product: string,
+    product: ProductId,
     index: Uint8Array,
   ): Promise<{ account: string; until: number }>;
 }
