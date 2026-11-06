@@ -343,6 +343,19 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// A stack on `tld` over these chains, without a relay. Reserved values are
+/// allowed, so a test may run on `dot`.
+pub fn test_stack(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: Option<[u8; 32]>,
+) -> crate::platform::Stack {
+	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
+	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+		.expect("test stack is valid")
+}
+
 /// The key [`sign_test_descriptor`] signs with.
 pub const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
 
@@ -412,9 +425,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -467,9 +478,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
 		"polkadotapp".to_string(),
 	)
 	.expect("test pairing config is valid");
@@ -1328,22 +1337,6 @@ impl PlatformFeatures for StubPlatform {
 		_request: v01::HostFeatureSupportedRequest,
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		Ok(v01::HostFeatureSupportedResponse { supported: true })
-	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		Ok(crate::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::AssetHub,
-					genesis_hash: [0xaa; 32],
-				},
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::People,
-					genesis_hash: [0x22; 32],
-				},
-			],
-		})
 	}
 }
 

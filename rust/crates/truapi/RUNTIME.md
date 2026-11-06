@@ -213,14 +213,26 @@ a compile error, not a runtime `Unavailable`.
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
-`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
-from the same network configuration used by wallet onboarding. It must match
-the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `uid.<suffix>` and `peopl.<suffix>`, while the chain uses that suffix for
-proof contexts. Configuration keeps local activation and key derivation
-available offline. The core validates supported suffixes but does not
-automatically check that the configured suffix matches the chain.
+### Stack
+
+Both host configs carry a `Stack`, the core's only source of chain
+configuration: the People, Bulletin, Asset Hub and relay genesis hashes, the
+network `get_chain_info` reports, and the dotNS TLD. A native or browser shell
+passes the stack's pointer (`polkadotapp://stack?key=0x…&url=…`), the signed
+descriptor its build bundles, and whether the build allows reserved values;
+`Stack::bundled` verifies the copy against the pointer's key. It refuses a
+pointer without a key, a descriptor without a People or Bulletin chain, a TLD
+the core does not serve dotNS under, and Polkadot's genesis hashes or the `dot`
+TLD on a stack the build does not allow them on. A Rust host that resolved a
+stack itself, such as the CLI, builds one with `Stack::new` under the same
+rules, and a test-host browser bundle takes one built from its parts as
+`runtimeConfig.testStack`.
+
+The TLD must match the People chain's `NetworkSuffix.NetworkSuffix`: reserved
+identities derive under `uid.<tld>` and `peopl.<tld>`, while the chain uses that
+suffix for proof contexts. Reading it from the bundled copy keeps local
+activation and key derivation available offline. The core does not yet check
+the descriptor against the live chains, and does not fetch newer copies.
 
 ### Core database
 

@@ -8,7 +8,7 @@ mod sso_service;
 
 use std::sync::{Arc, Mutex};
 use truapi::latest::{
-	ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+	DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
 	HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
@@ -44,7 +44,6 @@ use crate::{
 	},
 	host_logic::{
 		entropy::derive_product_entropy,
-		features::genesis_for,
 		product_account::{
 			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
 			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
@@ -80,10 +79,6 @@ use zeroize::Zeroizing;
 pub struct SigningHost {
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
-	/// The dotNS TLD of the network this wallet serves, from
-	/// [`crate::platform::SigningHostConfig::network_suffix`]. Every reserved
-	/// RFC-0022 derivation (`uid.<suffix>`, `peopl.<suffix>`) ends in it.
-	network_suffix: String,
 	session_state: Arc<SessionState>,
 	auth_state: AuthStateMachine,
 	/// Account-access decisions and reviews for local and paired callers.
@@ -115,15 +110,14 @@ pub struct SigningHost {
 }
 
 impl SigningHost {
-	/// Build a locked signing host for the network's dotNS suffix.
-	pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
+	/// Build a locked signing host for the stack `services` runs.
+	pub fn new(services: Arc<RuntimeServices>) -> Arc<Self> {
 		let platform = services.platform.clone();
 		let ring_resolver = ChainRingResolver::new(services.chain.clone());
 		let session_state = SessionState::new();
 		Arc::new(Self {
 			services,
 			platform: platform.clone(),
-			network_suffix,
 			#[cfg(feature = "test-host")]
 			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
@@ -197,16 +191,13 @@ impl SigningHost {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::test_stack(network_suffix, [0; 32], [0xbb; 32], Some([0xcc; 32])),
 			crate::test_support::test_spawner(),
 		);
 		let session_state = SessionState::new();
 		Arc::new(Self {
 			services,
 			platform: platform.clone(),
-			network_suffix: network_suffix.to_string(),
 			#[cfg(feature = "test-host")]
 			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
@@ -229,10 +220,10 @@ impl SigningHost {
 		self.session_state.clone()
 	}
 
-	/// The dotNS TLD of the network this wallet serves: the suffix of every
+	/// The dotNS TLD of the stack this wallet serves: the suffix of every
 	/// reserved identity it derives.
 	pub fn network_suffix(&self) -> &str {
-		&self.network_suffix
+		self.services.stack().tld()
 	}
 
 	/// Current root entropy, or [`AuthorityError::Disconnected`] when no local
@@ -386,7 +377,7 @@ impl SigningHost {
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		let entropy = self.root_entropy()?;
-		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
+		derive_identity_keypair(&entropy, self.network_suffix()).map_err(Into::into)
 	}
 
 	fn identity_keypair_for(
@@ -486,11 +477,11 @@ impl SigningHost {
 		Ok(vec![
 			CollectionCandidate {
 				collection: PersonhoodCollection::People,
-				entropy: derive_full_person_ring_vrf_entropy(&root, &self.network_suffix),
+				entropy: derive_full_person_ring_vrf_entropy(&root, self.network_suffix()),
 			},
 			CollectionCandidate {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: derive_lite_person_ring_vrf_entropy(&root, &self.network_suffix),
+				entropy: derive_lite_person_ring_vrf_entropy(&root, self.network_suffix()),
 			},
 		])
 	}
@@ -500,16 +491,10 @@ impl SigningHost {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner != &personhood_product_id(&self.network_suffix) {
+		if owner != &personhood_product_id(self.network_suffix()) {
 			return Ok(());
 		}
-		let chains = self
-			.platform
-			.supported_chains()
-			.await
-			.map_err(|error| RingVrfError::Unknown { reason: error.reason })?;
-		let chain_id =
-			genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
+		let chain_id = self.services.stack().chains().people;
 		let entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		let missing = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.into_iter()

@@ -302,7 +302,7 @@ fn feature_supported_reports_unserved_chains_only_when_asked() {
 	assert!(supported(&MockPlatform::new(), unserved.clone()));
 	let strict =
 		MockPlatform::with_config(MockConfig { only_served_chains: true, ..Default::default() });
-	let served = strict.config.supported_chains.chains[0].genesis_hash.to_vec();
+	let served = strict.config.served_chains[0].to_vec();
 	assert!(supported(&strict, served));
 	assert!(!supported(&strict, unserved));
 }
@@ -910,47 +910,30 @@ fn injected_permission_and_feature_faults_surface_as_errors() {
 		))
 		.is_err()
 	);
-	assert!(block_on(p.supported_chains()).is_err());
 	// A failed prompt is not a recorded decision.
 	assert!(p.permission_log().is_empty());
 }
 
 #[test]
-fn declared_supported_chains_are_what_the_mock_reports() {
-	// The default set is spelled out rather than compared against
-	// `mock_genesis::chain_set()`, because the TypeScript mock declares
-	// these same three and a suite written against either has to be
-	// answered the same way.
-	let p = MockPlatform::new();
-	let default_set = block_on(p.supported_chains()).expect("default set");
-	assert_eq!(default_set.network, "mock");
+fn the_mock_stack_names_the_chains_the_mock_serves() {
+	// Spelled out rather than compared against `mock_genesis`, because the
+	// TypeScript mock declares these same three and a suite written against
+	// either has to be answered the same way.
+	let stack = mock_genesis::stack();
 	assert_eq!(
-		default_set
-			.chains
-			.iter()
-			.map(|entry| (entry.identifier, entry.genesis_hash))
-			.collect::<Vec<_>>(),
-		vec![
-			(latest::ChainIdentifier::People, [0x11; 32]),
-			(latest::ChainIdentifier::Bulletin, [0x22; 32]),
-			(latest::ChainIdentifier::AssetHub, [0x33; 32]),
-		]
+		(stack.network(), stack.tld(), stack.chains().clone()),
+		(
+			"mock",
+			"paseo",
+			crate::platform::StackChains {
+				relay: None,
+				asset_hub: Some([0x33; 32]),
+				people: [0x11; 32],
+				bulletin: [0x22; 32],
+			}
+		)
 	);
-
-	let p = MockPlatform::with_config(MockConfig {
-		supported_chains: crate::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![crate::platform::HostChainEntry {
-				identifier: latest::ChainIdentifier::AssetHub,
-				genesis_hash: [0xaa; 32],
-			}],
-		},
-		..MockConfig::default()
-	});
-	let set = block_on(p.supported_chains()).expect("declared set");
-	assert_eq!(set.network, "paseo");
-	assert_eq!(set.chains.len(), 1);
-	assert_eq!(set.chains[0].genesis_hash, [0xaa; 32]);
+	assert_eq!(MockConfig::default().served_chains, vec![[0x11; 32], [0x22; 32], [0x33; 32]]);
 }
 
 #[test]

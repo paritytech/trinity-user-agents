@@ -6,7 +6,7 @@
 //! Reserved built-ins additionally pin the `uid.<suffix>` identity account and
 //! the `peopl.<suffix>` full/lite ring-VRF keyed-hash paths used by pairing
 //! attestation, where `<suffix>` is the network's dotNS TLD (`dot`, `paseo`,
-//! `testnet`) from [`crate::platform::SigningHostConfig::network_suffix`]. The
+//! `testnet`) from [`crate::platform::Stack::tld`]. The
 //! People chain scopes its proof contexts with the same suffix, so one
 //! network has one person per seed. RFC-0024 operational key selection comes
 //! from the registry.

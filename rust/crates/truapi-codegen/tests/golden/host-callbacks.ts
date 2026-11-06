@@ -9,7 +9,6 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
   CodeFormat,
   FundingDirection,
   FundingQuote,
@@ -454,37 +453,6 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
-
-  /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
-   */
-  genesisHash: Bytes32;
-}
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export interface HostChainSet {
-  /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-   */
-  network: string;
-
-  /**
-   * Chains this host serves, keyed by protocol role.
-   */
-  chains: Array<HostChainEntry>;
-}
 
 /**
  * Contact handles the core needs turned back into accounts, and the key they
@@ -1264,29 +1232,6 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
 );
 
 /**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
-);
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
-    S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
-);
-
-/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
@@ -1966,12 +1911,6 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
-
-  /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
-   */
-  supportedChains(): Promise<HostChainSet>;
 }
 
 /**

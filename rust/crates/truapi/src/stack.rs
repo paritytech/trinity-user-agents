@@ -1,5 +1,5 @@
-//! The Trinity stack a host runs: its network, its dotNS TLD and the genesis
-//! hash of each chain role, resolved from a signed descriptor.
+//! The Trinity stack a host runs, the core's only source of chain
+//! configuration.
 //!
 //! A host build bundles a signed descriptor and hands it to
 //! [`Stack::bundled`] with the stack's pointer. The resolved [`Stack`] answers

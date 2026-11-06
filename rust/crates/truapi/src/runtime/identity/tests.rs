@@ -280,7 +280,9 @@ fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 	let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&chain,
+		Some([0xcc; 32]),
+		session,
 	));
 
 	// The pending claim yields the lite name; the settled store yields the
@@ -319,7 +321,9 @@ fn root_key_resolves_when_identity_account_labels_are_unissued() {
 	let session = session_without_usernames(ACCOUNT, SQUATTER);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&chain,
+		Some([0xcc; 32]),
+		session,
 	));
 
 	assert_eq!(
