@@ -8,15 +8,16 @@ use std::sync::{
 use super::{
 	super::{
 		sso_remote::{
-			RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError, SsoSessionKey,
-			fresh_statement_expiry, reply_matcher, sso_message_id, statement_subscription_stream,
-			subscribe_statement_topic, wait_for_sso_remote_response,
+			CancelError, RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError,
+			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
+			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 		},
 		statement_store_rpc::{self, StatementStoreRpc},
 	},
 	SsoRequestService,
 };
 use crate::{
+	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{
 			RemoteMessage, RemoteMessageData, SsoSessionStatement, Withdrawal,
@@ -28,6 +29,7 @@ use crate::{
 		session::{SessionInfo, SsoSessionInfo},
 		statement_store::parse_new_statements_result,
 	},
+	time::RealTimer,
 };
 
 use futures::{
@@ -35,7 +37,7 @@ use futures::{
 	future::{AbortHandle, Abortable},
 };
 use tracing::{debug, instrument, warn};
-use truapi::{CallContext, CancellationReason};
+use truapi::{CallContext, CancellationReason, CancellationToken};
 
 /// Active peer-disconnect watcher for one SSO session; aborts on drop.
 pub struct SsoDisconnectMonitor {
@@ -234,20 +236,14 @@ impl SsoRequestService {
 			.client("SSO statement-store")
 			.await
 			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
-		let own_subscription = subscribe_statement_topic(&rpc_client, sso.session_id_own)
-			.await
-			.map_err(|err| {
-				SsoRemoteResponseError::Failure(format!(
-					"SSO own statement-store subscribe failed: {err}"
-				))
-			})?;
-		let peer_subscription = subscribe_statement_topic(&rpc_client, sso.session_id_peer)
-			.await
-			.map_err(|err| {
-			SsoRemoteResponseError::Failure(format!(
-				"SSO peer statement-store subscribe failed: {err}"
-			))
-		})?;
+		let own_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
+				.await
+				.map_err(|err| subscribe_error(cx, &message_id, "own", &err))?;
+		let peer_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_peer, cx.cancel())
+				.await
+				.map_err(|err| subscribe_error(cx, &message_id, "peer", &err))?;
 		let submit_client = rpc_client.clone();
 		let session_state = self.session_state.clone();
 		let submitting = Arc::new(AtomicBool::new(false));
@@ -257,11 +253,30 @@ impl SsoRequestService {
 				return Err(SsoRemoteResponseError::LocalDisconnected);
 			}
 			submit_started.store(true, Ordering::Release);
-			statement_store_rpc::submit_sso(&submit_client, statement, "pairing-host request")
-				.await
-				.map_err(|err| {
-					SsoRemoteResponseError::Failure(format!("SSO statement submit failed: {err}"))
-				})
+			let submit_statement = || {
+				statement_store_rpc::submit_sso(
+					&submit_client,
+					statement.clone(),
+					"pairing-host request",
+				)
+			};
+			let reached_no_peer = |reason: &String| statement_store_rpc::reached_no_peer(reason);
+			retry_while_halted(
+				submit_statement,
+				reached_no_peer,
+				&RealTimer,
+				&CancellationToken::default(),
+			)
+			.await
+			.map_err(|err| {
+				let reason = format!("SSO statement submit failed: {err}");
+				// A statement no peer received never reached the signing host.
+				if statement_store_rpc::reached_no_peer(&err) {
+					SsoRemoteResponseError::ChainUnavailable(reason)
+				} else {
+					SsoRemoteResponseError::Failure(reason)
+				}
+			})
 		}
 		.boxed();
 		let action = R::NAME;
@@ -280,12 +295,7 @@ impl SsoRequestService {
 			reply_matcher::<R>(&message_id),
 		)
 		.await;
-		let result = result.map_err(|reason| match reason {
-			SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
-				SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
-			},
-			reason => reason,
-		});
+		let result = result.map_err(|reason| with_caller_request_id(cx, reason));
 		match &result {
 			Ok(_) => debug!(action, %message_id, "SSO remote response received"),
 			Err(reason) => warn!(action, %message_id, %reason, "SSO remote message failed"),
@@ -303,6 +313,41 @@ impl SsoRequestService {
 			self.handle_signing_host_disconnected(key).await;
 		}
 		result.map(|response| response.payload)
+	}
+}
+
+/// `reason`, with a cancellation naming the caller's request when it has one.
+fn with_caller_request_id(
+	cx: &CallContext,
+	reason: SsoRemoteResponseError,
+) -> SsoRemoteResponseError {
+	match reason {
+		SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
+			SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
+		},
+		reason => reason,
+	}
+}
+
+/// The error for a failed `label` subscribe: `Cancelled` if the caller gave
+/// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
+fn subscribe_error(
+	cx: &CallContext,
+	message_id: &str,
+	label: &str,
+	err: &subxt_rpcs::Error,
+) -> SsoRemoteResponseError {
+	if let Some(reason) = cx.cancel().reason() {
+		return with_caller_request_id(
+			cx,
+			SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id)),
+		);
+	}
+	let reason = format!("SSO {label} statement-store subscribe failed: {err}");
+	if says_chain_halted(err) {
+		SsoRemoteResponseError::ChainUnavailable(reason)
+	} else {
+		SsoRemoteResponseError::Failure(reason)
 	}
 }
 
@@ -340,4 +385,38 @@ async fn wait_for_sso_peer_disconnect(
 		}
 	}
 	Err("SSO disconnect monitor response stream ended".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::{
+		runtime::authority::AuthorityError,
+		test_support::{chain_halted_rpc_error, rpc_refusal},
+	};
+
+	/// Only a lasting halt is retryable, since the request was never sent.
+	#[test]
+	fn only_a_halted_subscribe_is_reported_as_chain_unavailable() {
+		let reason = |err| format!("SSO own statement-store subscribe failed: {err}");
+		let reported = [chain_halted_rpc_error(), rpc_refusal(None)]
+			.iter()
+			.map(|err| {
+				AuthorityError::from(subscribe_error(
+					&CallContext::default(),
+					"request",
+					"own",
+					err,
+				))
+			})
+			.collect::<Vec<_>>();
+
+		assert_eq!(
+			reported,
+			vec![
+				AuthorityError::ChainUnavailable { reason: reason(chain_halted_rpc_error()) },
+				AuthorityError::Unknown { reason: reason(rpc_refusal(None)) },
+			]
+		);
+	}
 }

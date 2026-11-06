@@ -22,7 +22,7 @@ android {
         buildConfigField("boolean", "TESTNET_FUND_ENABLED", "true")
         buildConfigField("boolean", "SAMPLE_BOT", "true")
         buildConfigField("boolean", "SAFETY_MODE", "false")
-        buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "false")
+        buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "true")
         buildConfigField("boolean", "DEBUG_TOOLS_ENABLED", "true")
         buildConfigField("boolean", "BUNDLED_PRODUCTS_ENABLED", "true")
     }
@@ -31,7 +31,6 @@ android {
         getByName("release") {
             initWith(getByName("release"))
             buildConfigField("boolean", "SAFETY_MODE", "true")
-            buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "true")
             buildConfigField("String", "TESTNET_ENVIRONMENT", "\"PRODUCTION\"")
             buildConfigField("boolean", "COINAGE_DEBUG_FEATURES", "false")
             buildConfigField("boolean", "COINAGE_DEBUG_TOOLS", "false")
@@ -48,7 +47,6 @@ android {
         }
         getByName("safetynet") {
             buildConfigField("boolean", "SAFETY_MODE", "true")
-            buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "true")
             buildConfigField("String", "TESTNET_ENVIRONMENT", "\"NIGHTLY\"")
             buildConfigField("boolean", "SAMPLE_BOT", "false")
             buildConfigField("boolean", "COINAGE_DEBUG_TOOLS", "false")

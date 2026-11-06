@@ -62,7 +62,7 @@ mod imp {
 		let listen = config["listen"].as_str().unwrap_or("127.0.0.1:9944").to_owned();
 		let chains = config["chains"].as_object().expect("config.chains must be an object");
 
-		let mut builder = EmbeddedChainProvider::builder();
+		let mut builder = EmbeddedChainProvider::builder().catalog();
 		let mut routes = HashMap::new();
 		for (name, entry) in chains {
 			let genesis =

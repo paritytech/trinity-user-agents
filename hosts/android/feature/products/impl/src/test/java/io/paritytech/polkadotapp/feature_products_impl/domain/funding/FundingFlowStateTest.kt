@@ -132,14 +132,16 @@ class FundingFlowStateTest {
         assertEquals(Instant.fromEpochMilliseconds(REFRESH_AT_MS.toLong()), quoted.refreshAt)
     }
 
-    // At the core's refresh every row goes back to pending; the old price stays on screen, greyed, until the new one.
+    // Asking the same ask again starts every row pending; the old price stays on screen, greyed, until the new one.
     @Test
-    fun `a row back to pending at a refresh keeps its last quote greyed`() {
+    fun `a row pending after the same ask again keeps its last quote greyed`() {
         val quote = quoted(providerA, send = "5200")
         val refreshed = state(listOf(candidate(providerA, card())), amount = "50").let { start ->
-            start.asking(requireNotNull(start.currentAsk()))
+            val ask = requireNotNull(start.currentAsk())
+            start.asking(ask)
                 .receiving(list(quote, best = providerA))
-                .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending)))
+                .asking(ask)
+                .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), requestId = 2u))
         }
 
         assertEquals(mapOf(providerA to (quote.state as FundingQuoteState.Quoted).quote), refreshed.staleQuotes)

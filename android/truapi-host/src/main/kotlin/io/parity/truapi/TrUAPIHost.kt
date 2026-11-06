@@ -903,7 +903,8 @@ interface FundingHostBridge {
 
     /**
      * The quote list requested with [TrUAPIHostRuntime.getFundingQuote]: again whenever a provider answers,
-     * and each time the core asks every provider again at its `refreshAtMs`. Runs inline on the core's thread.
+     * and each time the core asks every provider again at its `refreshAtMs`, each row keeping its answer until
+     * the provider answers again. Runs inline on the core's thread.
      */
     fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {}
 }
@@ -1220,15 +1221,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /**
      * Ask every funding provider to price [ask] for session [intent]. The list arrives through
      * [FundingHostBridge.fundingQuotesChanged], and is asked for again every minute until the session is handed
-     * to a provider or ends, the host asks for another [ask], or calls [stopFundingQuotes]. Returns the request
-     * id every list for this ask carries as [FundingQuoteList.requestId]; a host shows only its latest request's.
+     * to a provider, ends or leaves the overlay, or the host asks for another [ask]. Returns the request id every
+     * list for this ask carries as [FundingQuoteList.requestId]; a host shows only its latest request's.
      */
     fun getFundingQuote(intent: String, ask: FundingQuoteAsk): ULong = inner.getFundingQuote(intent, ask)
-
-    /** Stop asking again for session [intent]'s quotes, as when the user leaves the provider list. */
-    fun stopFundingQuotes(intent: String) {
-        inner.stopFundingQuotes(intent)
-    }
 
     /**
      * Report what the user picked so far in session [intent]'s overlay, whenever it changes. The countries and

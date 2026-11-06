@@ -49,12 +49,11 @@ interface FundingRuntime {
     suspend fun selectOptions(intent: String, selection: FundingSelection)
 
     /**
-     * The list arrives through [quoteLists], and is asked for again every minute until [stopQuotes]. Returns the
-     * request id every list for this ask carries.
+     * The list arrives through [quoteLists], and is asked for again every minute until the session is handed to a
+     * provider, ends or leaves the overlay, or another [ask] replaces it. Returns the request id every list for this
+     * ask carries.
      */
     suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong>
-
-    suspend fun stopQuotes(intent: String)
 
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
 
