@@ -8,6 +8,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -29,7 +31,7 @@ private fun workerManifestJson(includes: String) =
     """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":$includes}"""
 
 class BundledProductsTest {
-    private val manifest = """{"${'$'}v":1,"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[]}}}"""
+    private val manifest = workerManifestJson("""{"funding":{"routes":[]}}""")
 
     private val files = InMemoryBundledProductFiles(
         mapOf(
@@ -57,6 +59,20 @@ class BundledProductsTest {
         assertTrue(products.hasWorker(product))
         assertTrue(products.hasApp(product))
         assertEquals("https://worker.provider.dot/index.js", product.workerScriptUrl)
+    }
+
+    @Test
+    fun `lists only the products that serve funding as bundled providers`() {
+        assertEquals(
+            listOf(
+                FundingProviderEntry(
+                    productId = ProductId.parse("provider.dot").getOrThrow(),
+                    workerManifest = manifest,
+                    origin = FundingProviderOrigin.BUNDLED,
+                ),
+            ),
+            products.fundingProviders(),
+        )
     }
 
     @Test
@@ -91,6 +107,7 @@ class BundledProductsTest {
         val empty = InMemoryBundledProductFiles(emptyMap())
         assertNull(BundledProducts(empty, ManifestParser(Gson()), enabled = true).product(provider))
         assertNull(BundledProducts(files, ManifestParser(Gson()), enabled = false).product(provider))
+        assertTrue(BundledProducts(files, ManifestParser(Gson()), enabled = false).fundingProviders().isEmpty())
     }
 }
 

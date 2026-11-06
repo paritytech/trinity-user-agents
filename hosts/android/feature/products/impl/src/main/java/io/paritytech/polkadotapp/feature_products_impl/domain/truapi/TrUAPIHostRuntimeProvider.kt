@@ -20,10 +20,13 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -43,6 +46,8 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
+import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -79,6 +84,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
+    private val bundledProducts: BundledProducts,
+    private val fundingProvidersConfig: FundingProvidersConfig,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
@@ -86,6 +93,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
+    private val workerCrashNotice: WorkerCrashNotice,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -133,6 +141,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // window where the host lists no contacts or answers payments Unsupported.
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
+        listFundingProviders(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -142,6 +151,23 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeAppLifecycle()
         scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
+    }
+
+    // The core offers only the providers listed here. The bundled ones go in at once; the
+    // configured ones wait for the Remote Config sync, then the whole list is set again.
+    private fun listFundingProviders(runtime: TrUAPIHostRuntime) {
+        val bundled = bundledProducts.fundingProviders()
+        if (bundled.isNotEmpty()) setFundingProviders(runtime, bundled)
+        scope.launch {
+            fundingProvidersConfig.getFundingProviderIds()
+                .logFailure("Funding providers unavailable from Remote Config")
+                .onSuccess { ids -> setFundingProviders(runtime, fundingProviderEntries(ids, bundled)) }
+        }
+    }
+
+    private fun setFundingProviders(runtime: TrUAPIHostRuntime, providers: List<FundingProviderEntry>) {
+        runCatching { runtime.setFundingProviders(providers) }
+            .logFailure("TrUAPI refused the funding providers")
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
@@ -243,6 +269,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             workerSupervisor.get().onDemandChanged(productId, demand)
         }
 
+        override fun workerCrashing(productId: ProductId, crashes: UInt) {
+            Timber.w("TrUAPI worker for %s crashed %d times in a row", productId, crashes.toInt())
+            workerCrashNotice.onCrashing(productId)
+        }
+
         // A run returns by itself once nothing is live, so `false` needs no action.
         override fun durableWorkChanged(pending: Boolean) {
             if (pending) CoreDurableRecoveryWorker.enqueue(context)
@@ -325,6 +356,18 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          */
         const val DATABASE_DIRECTORY = "truapi"
     }
+}
+
+/** [published] as dotNS providers, then each of [bundled] not already among them. */
+internal fun fundingProviderEntries(
+    published: List<ProductId>,
+    bundled: List<FundingProviderEntry>,
+): List<FundingProviderEntry> {
+    val listed = published.map { id ->
+        FundingProviderEntry(productId = id, workerManifest = null, origin = FundingProviderOrigin.PUBLISHED)
+    }
+    val publishedIds = published.toSet()
+    return listed + bundled.filterNot { it.productId in publishedIds }
 }
 
 private object HostLevelStorage : HostStorage {
