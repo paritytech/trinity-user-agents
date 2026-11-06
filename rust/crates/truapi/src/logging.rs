@@ -148,20 +148,26 @@ impl fmt::Debug for Account<'_> {
 	}
 }
 
-/// Longest a host-supplied string may run in a line that leaves the device.
+/// Longest a host-supplied string may run in a line that leaves the device,
+/// counted after escaping and not counting the quotes around it.
 const HOST_TEXT_MAX_CHARS: usize = 160;
 
 /// Text a host handed the core, named in a log line.
 ///
 /// A foreign exception message is written by code the core does not control.
-/// It can run to any length and can carry newlines, and the host ships
-/// warnings and errors to a crash reporter. Both `Display` and `Debug` write
-/// it on one line and stop after a bounded number of characters, so one
-/// foreign string cannot crowd the fields beside it out of the detail the
-/// sink forwards.
+/// It can run to any length, can carry newlines and the separators a detail
+/// is built from, and the host ships warnings and errors to a crash reporter.
+/// Both `Display` and `Debug` write it quoted and escaped the way a Rust
+/// string literal is written, and stop after a bounded number of characters,
+/// so it stays on one line, cannot be read as the fields beside it, and
+/// cannot reorder what follows it.
 ///
-/// The text itself is not read or rewritten. This bounds its shape, and it is
-/// the one place a rule about its content would go.
+/// Escaping goes through `char::escape_debug`, which covers the categories
+/// `char::is_control` leaves out, the line and paragraph separators and the
+/// bidirectional overrides among them.
+///
+/// The wording of the text is not otherwise rewritten. This bounds its shape,
+/// and it is the one place a rule about its content would go.
 #[derive(Clone, Copy)]
 pub struct HostText<'a>(&'a str);
 
@@ -174,12 +180,25 @@ impl<'a> HostText<'a> {
 
 impl fmt::Display for HostText<'_> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let bounded = truncate_to_chars(self.0, HOST_TEXT_MAX_CHARS);
-		for character in bounded.chars() {
-			f.write_char(if character.is_control() { ' ' } else { character })?;
+		f.write_char('"')?;
+		let mut written = 0;
+		let mut stopped_early = false;
+		for character in self.0.chars() {
+			let escaped = character.escape_debug();
+			// Counting the escape rather than the character keeps the bound on
+			// what is written, and never cuts an escape in half.
+			if written + escaped.len() > HOST_TEXT_MAX_CHARS {
+				stopped_early = true;
+				break;
+			}
+			written += escaped.len();
+			for part in escaped {
+				f.write_char(part)?;
+			}
 		}
-		if bounded.len() < self.0.len() {
-			f.write_str("\u{2026}")?;
+		f.write_char('"')?;
+		if stopped_early {
+			f.write_char('\u{2026}')?;
 		}
 		Ok(())
 	}
@@ -567,10 +586,6 @@ mod tests {
 	use super::*;
 	use std::sync::Mutex;
 
-	/// The host sink is process-wide, so a test that installs one has to own it
-	/// for the whole of its run or a sibling's teardown reads as its own.
-	static SINK_TESTS: Mutex<()> = Mutex::new(());
-
 	/// Both sigils a `tracing` field can use have to redact, or the safe
 	/// spelling is the one the author has to remember.
 	#[test]
@@ -603,7 +618,36 @@ mod tests {
 	fn host_text_is_written_on_one_line() {
 		let thrown = "NSError Domain=Host\nCode=3\r\n\tUserInfo={}";
 
-		assert_eq!(HostText::new(thrown).to_string(), "NSError Domain=Host Code=3   UserInfo={}");
+		assert_eq!(
+			HostText::new(thrown).to_string(),
+			r#""NSError Domain=Host\nCode=3\r\n\tUserInfo={}""#
+		);
+	}
+
+	/// `char::is_control` is category Cc alone, so the separators and the
+	/// bidirectional overrides have to be escaped by something that knows
+	/// about them.
+	#[test]
+	fn host_text_escapes_what_is_control_misses() {
+		for (raw, escaped) in [
+			("a\u{2028}b", r#""a\u{2028}b""#),
+			("a\u{2029}b", r#""a\u{2029}b""#),
+			("safe\u{202e}txet", r#""safe\u{202e}txet""#),
+			("a\u{200b}b", r#""a\u{200b}b""#),
+			("a\u{feff}b", r#""a\u{feff}b""#),
+		] {
+			assert!(!raw.chars().any(char::is_control), "{raw:?} would need no help");
+			assert_eq!(HostText::new(raw).to_string(), escaped);
+		}
+	}
+
+	/// A detail is `name=value` pairs joined by commas, so unquoted host text
+	/// can be read as the fields beside it.
+	#[test]
+	fn host_text_cannot_forge_a_field() {
+		let thrown = "denied, user=admin, level=error";
+
+		assert_eq!(HostText::new(thrown).to_string(), r#""denied, user=admin, level=error""#);
 	}
 
 	/// One foreign string must not crowd the fields beside it out of the
@@ -614,29 +658,63 @@ mod tests {
 
 		let written = HostText::new(&thrown).to_string();
 
-		assert_eq!(written.chars().count(), HOST_TEXT_MAX_CHARS + 1);
-		assert!(written.ends_with('\u{2026}'), "{written}");
+		// The bound counts the escaped text, with the quotes and the mark on
+		// top of it.
+		assert_eq!(written.chars().count(), HOST_TEXT_MAX_CHARS + 3);
+		assert!(written.ends_with("\u{2026}"), "{written}");
 	}
 
-	/// Text already within the bound is written as the host wrote it, with no
-	/// marker suggesting something was dropped.
+	/// An escape is written whole or not at all, so the bound cannot leave a
+	/// half-written `\u{...}` behind.
 	#[test]
-	fn host_text_within_the_bound_is_untouched() {
-		assert_eq!(HostText::new("keychain unavailable").to_string(), "keychain unavailable");
-		assert_eq!(format!("{:?}", HostText::new("keychain unavailable")), "keychain unavailable");
-	}
-
-	/// The bound counts characters, so a multi-byte description is not cut
-	/// mid-character.
-	#[test]
-	fn host_text_bounds_characters_not_bytes() {
-		let thrown = "\u{e9}".repeat(HOST_TEXT_MAX_CHARS + 5);
+	fn host_text_does_not_cut_an_escape_in_half() {
+		// Each separator escapes to eight characters, so the bound falls
+		// inside one of them rather than between two.
+		let thrown = "\u{2028}".repeat(30);
 
 		let written = HostText::new(&thrown).to_string();
 
-		assert_eq!(written.chars().filter(|c| *c == '\u{e9}').count(), HOST_TEXT_MAX_CHARS);
+		assert_eq!(written.matches(r"\u{2028}").count(), HOST_TEXT_MAX_CHARS / 8);
+		assert!(written.ends_with("\u{2026}"), "{written}");
 	}
 
+	/// Text already within the bound is written as the host wrote it, with no
+	/// mark suggesting something was dropped.
+	#[test]
+	fn host_text_within_the_bound_is_untouched() {
+		assert_eq!(HostText::new("keychain unavailable").to_string(), r#""keychain unavailable""#);
+		assert_eq!(
+			format!("{:?}", HostText::new("keychain unavailable")),
+			r#""keychain unavailable""#
+		);
+	}
+
+	/// The bound counts characters, so text under it in characters and over
+	/// it in bytes is complete and must not be marked as cut.
+	#[test]
+	fn host_text_bounds_characters_not_bytes() {
+		let under_in_chars_over_in_bytes = "\u{e9}".repeat(100);
+		assert!(under_in_chars_over_in_bytes.len() > HOST_TEXT_MAX_CHARS);
+
+		let written = HostText::new(&under_in_chars_over_in_bytes).to_string();
+
+		assert_eq!(written, format!("\"{under_in_chars_over_in_bytes}\""));
+		assert!(!written.ends_with("\u{2026}"), "{written}");
+	}
+
+	/// Text exactly at the bound is complete, so it carries no mark either.
+	#[test]
+	fn host_text_exactly_at_the_bound_is_not_marked() {
+		let thrown = "e".repeat(HOST_TEXT_MAX_CHARS);
+
+		let written = HostText::new(&thrown).to_string();
+
+		assert_eq!(written, format!("\"{thrown}\""));
+	}
+
+	/// The host sink is process-wide, so a test that installs one has to own it
+	/// for the whole of its run or a sibling's teardown reads as its own.
+	static SINK_TESTS: Mutex<()> = Mutex::new(());
 	/// A host-addressed target the table does not list never reaches a sink,
 	/// so a marker added without saying what it carries stays on the device.
 	#[test]
