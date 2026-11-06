@@ -100,7 +100,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             bootstrapScript: bootstrapScript,
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
-                truapiHostVersion: truapiHostVersion()
+                truapiHostVersion: truapiHostVersion(),
+                openTap: configuration.openTap
             )
         )
 
@@ -249,6 +250,7 @@ private extension SPARustRuntime {
                 productID: configuration.productId.rawValue,
                 outcome: outcome,
                 durationMilliseconds: finishedAt - openedAt,
+                tapMilliseconds: configuration.openTap.map { finishedAt - $0.monotonicMilliseconds },
                 origin: origin,
                 monotonicMilliseconds: now
             )

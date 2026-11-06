@@ -28,6 +28,20 @@ struct PocketCardHostsTests {
 
     /// A page is loaded with the params of the link that opened it, so a link
     /// with other params, or a tap with none, has to load the page again.
+    /// A tap that reuses the held page reports that page's session, not one of its own.
+    @Test
+    func keepsTheSessionOfThePageItHolds() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+        let session = UUID()
+
+        _ = hosts.product(for: loyalty, hostSessionId: session, make: factory.make)
+        let reused = hosts.product(for: loyalty, hostSessionId: UUID(), make: factory.make)
+
+        #expect(reused?.hostSessionId == session)
+        #expect(hosts.heldSession(of: loyalty) == session)
+    }
+
     @Test
     func reusesAPageOnlyForTheParamsItWasOpenedWith() {
         let hosts = PocketCardHosts()

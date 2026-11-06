@@ -7,17 +7,20 @@ public struct HostLoadTelemetry: Sendable {
     private let origin: HostEventOrigin
     private let cacheHits: HostCacheHitLedger
     private let monotonicMilliseconds: @Sendable () -> Int
+    private let epochMilliseconds: @Sendable () -> Int64
 
     public init(
         recorder: any HostEventRecording,
         origin: HostEventOrigin = .current,
         cacheHits: HostCacheHitLedger = .shared,
-        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
+        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() },
+        epochMilliseconds: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) }
     ) {
         self.recorder = recorder
         self.origin = origin
         self.cacheHits = cacheHits
         self.monotonicMilliseconds = monotonicMilliseconds
+        self.epochMilliseconds = epochMilliseconds
     }
 
     private init() {
@@ -25,6 +28,7 @@ public struct HostLoadTelemetry: Sendable {
         origin = .current
         cacheHits = HostCacheHitLedger()
         monotonicMilliseconds = { 0 }
+        epochMilliseconds = { 0 }
     }
 
     public var isEnabled: Bool {
@@ -37,6 +41,18 @@ public struct HostLoadTelemetry: Sendable {
 
     public func makeSessionID() -> UUID? {
         isEnabled ? UUID() : nil
+    }
+
+    /// Read first thing in the tap handler, before any hop or animation.
+    public func beginOpen(source: HostOpenSource) -> HostOpenTap? {
+        guard isEnabled else { return nil }
+
+        return HostOpenTap(
+            hostSessionID: UUID(),
+            source: source,
+            openedAtEpochMilliseconds: epochMilliseconds(),
+            monotonicMilliseconds: monotonicMilliseconds()
+        )
     }
 
     public func withContext<R>(

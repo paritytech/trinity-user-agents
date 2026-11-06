@@ -16,6 +16,10 @@ struct PocketCardOpening {
     let pocket: ProductPocketService
 
     func open(_ card: PocketCardViewModel, pageQuery: String = "") {
+        open(card, pageQuery: pageQuery, tap: telemetry.beginOpen(source: .pocketCard))
+    }
+
+    private func open(_ card: PocketCardViewModel, pageQuery: String, tap: HostOpenTap?) {
         guard
             let url = card.key.launchUrl(pageQuery: pageQuery),
             let page = flowState.hostProvider.page(url: url)
@@ -28,17 +32,34 @@ struct PocketCardOpening {
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
                 }
+                reportTap(tap, on: card, opened: false, hostSessionId: pocket.cardHosts.heldSession(of: card.key))
                 return
             }
 
-            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
-                makeView(for: card, page: page, pageQuery: pageQuery)
-            }) else { return }
+            var built = false
+            guard let product = pocket.cardHosts.product(
+                for: card.key,
+                pageQuery: pageQuery,
+                hostSessionId: tap?.hostSessionID,
+                make: { _ in
+                    built = true
+                    return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
+                }
+            ) else { return }
+
+            let reused = !built
+            if !reused {
+                reportTap(tap, on: card, opened: true, hostSessionId: product.hostSessionId)
+            }
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
             PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
                 product.surface.claim(screen)
+
+                if reused {
+                    reportTap(tap, on: card, opened: false, hostSessionId: product.hostSessionId)
+                }
             }
 
             Task { [weak screen] in
@@ -55,6 +76,7 @@ struct PocketCardOpening {
     /// A link may name a card the Pocket does not hold, which is the one case
     /// the user is told about rather than silently taken into the product.
     func open(link: PocketDeeplink) {
+        let tap = telemetry.beginOpen(source: .deeplink)
         let key = PocketCardKey(productId: link.productHost, cardId: link.cardId)
 
         Task { @MainActor in
@@ -63,16 +85,38 @@ struct PocketCardOpening {
                 return
             }
 
-            open(card, pageQuery: link.pageQuery)
+            open(card, pageQuery: link.pageQuery, tap: tap)
         }
     }
 }
 
 private extension PocketCardOpening {
+    var telemetry: HostLoadTelemetry {
+        IssueMonitoringFactory.createHostLoadTelemetry()
+    }
+
+    /// `opened` when the tap built a new page, else the page already held was shown.
+    func reportTap(_ tap: HostOpenTap?, on card: PocketCardViewModel, opened: Bool, hostSessionId: UUID?) {
+        guard let tap else { return }
+
+        telemetry.record { origin, now in
+            .pocketCardTapped(
+                productID: card.key.productId.rawValue,
+                outcome: opened ? .opened : .reused,
+                source: tap.source,
+                reuseMilliseconds: opened ? nil : now - tap.monotonicMilliseconds,
+                hostSessionID: hostSessionId,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
+    }
+
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
-        pageQuery: String
+        pageQuery: String,
+        tap: HostOpenTap?
     ) -> SPAViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
@@ -80,7 +124,8 @@ private extension PocketCardOpening {
             isRootScreen: false,
             showMoreButton: false,
             page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            openTap: tap
         )
 
         // A page loaded by its address goes to the Rust runtime on its own.
