@@ -6,7 +6,6 @@ use trinity_stack::Descriptor;
 use super::{
 	super::{
 		Network,
-		overrides::ChainOverrides,
 		stack::stack_network_config,
 		testing::{edit_stack, serve_rpc},
 	},
@@ -62,11 +61,10 @@ async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> Netwo
 
 async fn verify_stack_endpoints(
 	config: &NetworkConfig,
-	unanswered: Unanswered,
 	built_in: Option<&BuiltInOrigin>,
 ) -> Result<()> {
 	let endpoints: Vec<_> = config.chains.iter().cloned().collect();
-	verify_endpoints(config, &endpoints, unanswered, built_in, Some(config.network_suffix)).await
+	verify_endpoints(config, &endpoints, built_in).await
 }
 
 /// An endpoint that does not answer is not evidence of a wrong stack, so it
@@ -74,7 +72,7 @@ async fn verify_stack_endpoints(
 #[tokio::test]
 async fn test_stack_endpoint_unreachable() {
 	let config = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
-	verify_stack_endpoints(&config, Unanswered::Warn, None)
+	verify_stack_endpoints(&config, None)
 		.await
 		.expect("unreachable endpoint rejected");
 }
@@ -93,21 +91,8 @@ async fn test_silent_endpoint_deadline() {
 	});
 	let config = stack_with_people_at(&url);
 	let start = std::time::Instant::now();
-	verify_stack_endpoints(&config, Unanswered::Warn, None)
-		.await
-		.expect("silent endpoint rejected");
+	verify_stack_endpoints(&config, None).await.expect("silent endpoint rejected");
 	assert!(start.elapsed() < BUILT_IN_REFRESH_TIMEOUT + Duration::from_secs(2));
-}
-
-/// An override is the user's own reroute, so an endpoint it points to that
-/// cannot answer is an error before anything runs.
-#[tokio::test]
-async fn test_rerouted_endpoint_unreachable_error() {
-	let config = stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
-	let error = verify_stack_endpoints(&config, Unanswered::Fail, None)
-		.await
-		.expect_err("unreachable rerouted endpoint accepted");
-	assert!(error.to_string().contains("ws://127.0.0.1:"));
 }
 
 /// The case the endpoint check exists for: an endpoint that answers as a
@@ -118,9 +103,7 @@ async fn test_rerouted_endpoint_unreachable_error() {
 async fn test_stack_endpoint_genesis_mismatch() {
 	let url = serve_chain([0x5a; 32], Some("testnet")).await;
 	let config = stack_with_people_at(&url);
-	let error = verify_stack_endpoints(&config, Unanswered::Warn, None)
-		.await
-		.expect_err("wrong genesis accepted");
+	let error = verify_stack_endpoints(&config, None).await.expect_err("wrong genesis accepted");
 	assert!(error.to_string().contains(&url));
 	assert!(error.to_string().contains("reports genesis"));
 	assert!(!error.to_string().contains("NetworkSuffix"));
@@ -136,7 +119,7 @@ async fn test_built_in_genesis_mismatch_hint() {
 		url: "https://stack.example/s.json".to_owned(),
 		copy: BuiltInCopy::Published,
 	};
-	let error = verify_stack_endpoints(&config, Unanswered::Warn, Some(&origin))
+	let error = verify_stack_endpoints(&config, Some(&origin))
 		.await
 		.expect_err("wrong genesis accepted");
 	assert!(error.to_string().ends_with(&origin.restart_hint()));
@@ -147,16 +130,12 @@ async fn test_built_in_genesis_mismatch_hint() {
 #[tokio::test]
 async fn test_network_suffix_mismatch_error() {
 	let config = stack_with_people_suffix(Some("testnet")).await;
-	let error = verify_stack_endpoints(&config, Unanswered::Warn, None)
-		.await
-		.expect_err("other suffix accepted");
+	let error = verify_stack_endpoints(&config, None).await.expect_err("other suffix accepted");
 	let message = error.to_string();
 	assert!(message.contains("NetworkSuffix testnet") && message.contains("tld is paseo"));
 
 	let matching = stack_with_people_suffix(Some("paseo")).await;
-	verify_stack_endpoints(&matching, Unanswered::Warn, None)
-		.await
-		.expect("matching suffix rejected");
+	verify_stack_endpoints(&matching, None).await.expect("matching suffix rejected");
 }
 
 /// A People chain without the storage item, or one that does not answer,
@@ -164,59 +143,22 @@ async fn test_network_suffix_mismatch_error() {
 #[tokio::test]
 async fn test_network_suffix_absent_or_unreachable() {
 	let absent = stack_with_people_suffix(None).await;
-	verify_stack_endpoints(&absent, Unanswered::Warn, None)
-		.await
-		.expect("absent suffix rejected");
+	verify_stack_endpoints(&absent, None).await.expect("absent suffix rejected");
 	let closed_port_config =
 		stack_network_config(&stack_on_closed_ports(), ChainBackend::Rpc).unwrap();
-	verify_stack_endpoints(&closed_port_config, Unanswered::Warn, None)
+	verify_stack_endpoints(&closed_port_config, None)
 		.await
 		.expect("unreachable People rejected");
 }
 
-/// Built-in stacks have every endpoint and the suffix checked, as a
-/// `--stack` does; a local network and the light client, which does not use
-/// the RPC endpoints, do not, beyond what an override reroutes.
+/// A network reached over RPC has every endpoint and the suffix checked; the
+/// light client, which does not use the RPC endpoints, has none.
 #[test]
-fn test_chain_checks_by_source() {
+fn test_chain_checks_by_backend() {
 	let paseo = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let built_in = ChainChecks::plan(&paseo, &paseo.chains, false, None);
-	assert_eq!((built_in.rerouted.len(), built_in.from_stack.len()), (0, 3));
-	assert_eq!(built_in.expected_suffix, Some("paseo"));
-
+	assert_eq!(ChainChecks::plan(&paseo, None).endpoints.len(), 3);
 	let light_client = Network::PaseoNextV2.config(ChainBackend::LightClient);
-	let light_client = ChainChecks::plan(&light_client, &paseo.chains, false, None);
-	assert_eq!((light_client.rerouted.len(), light_client.from_stack.len()), (0, 0));
-	assert_eq!(light_client.expected_suffix, None);
-
-	let overrides =
-		ChainOverrides::parse([Some("ws://127.0.0.1:9".to_string()), None, None]).unwrap();
-	let local = ChainChecks::plan(&overrides.apply(paseo.clone()), &paseo.chains, true, None);
-	assert_eq!((local.rerouted.len(), local.from_stack.len()), (1, 0));
-	assert_eq!(local.expected_suffix, None);
-}
-
-/// Only the endpoints an override reroutes are checked as such, even one
-/// set to another role's URL, which only its genesis tells apart.
-#[test]
-fn test_rerouted_endpoint_by_genesis() {
-	let base = Network::PaseoNextV2.config(ChainBackend::Rpc);
-	let overrides =
-		ChainOverrides::parse([Some(base.chains.bulletin.ws.clone()), None, None]).unwrap();
-	let config = overrides.apply(base.clone());
-	let checks = ChainChecks::plan(&config, &base.chains, false, None);
-	assert_eq!(checks.rerouted.len(), 1);
-	assert_eq!(
-		(checks.rerouted[0].genesis, &checks.rerouted[0].ws),
-		(base.chains.people.genesis, &base.chains.bulletin.ws)
-	);
-	assert_eq!(checks.from_stack.len(), 2);
-	assert!(
-		checks
-			.from_stack
-			.iter()
-			.all(|endpoint| endpoint.genesis != base.chains.people.genesis)
-	);
+	assert!(ChainChecks::plan(&light_client, None).endpoints.is_empty());
 }
 
 /// A built-in stack that restarted from genesis after this build has chains

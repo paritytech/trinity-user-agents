@@ -1677,8 +1677,7 @@ uses Polkadot's `dot` TLD.
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. A stack names it as its `dub` service, and
 the CLI reports the complete backend response when registration fails. A
-network without one fails a command that needs it with an error naming
-`HOST_CLI_IDENTITY_BACKEND_BASE` until that variable supplies it.
+stack without one fails a command that needs it with an error saying so.
 
 #### Stacks
 
@@ -1715,8 +1714,8 @@ Only the shipped copy is read, without a fetch; `scripts/update-stacks.sh`
 refreshes it with the built-ins. A fork of Polkadot keeps Polkadot's genesis
 hashes and may use the `dot` TLD, and runs like any other network. Before a
 command runs, every endpoint the network routes whose genesis is one of the
-shipped copy's (a built-in, a `--stack`, a `HOST_CLI_*_WS` override or a
-local-network file) is compared with real Polkadot, in parallel with the other
+shipped copy's, from a built-in or a `--stack`, is compared with real Polkadot,
+in parallel with the other
 checks. The endpoint and the first of the Polkadot descriptor's RPC nodes for
 the same chain that answers each report their finalized block number; at the
 lower of the two, both report their block hash. Equal hashes mean the endpoint
@@ -1782,40 +1781,17 @@ state directory) is the descriptor's `id` without a trailing `-fork`, which must
 be a lowercase label; a `polkadot-fork` stack keeps its full `id`, so it does
 not share the retired `polkadot` namespace.
 
-#### Overrides
+#### `network-check`
 
-Two env vars route chains on top of the network a command resolves (§21).
+A stack is the only source of a network's routing: a fork or a local network
+runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
+URLs are `ws://` and `http://` on loopback. An error about a stack names where
+it came from, `--stack` or `HOST_CLI_STACK`.
 
-`HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one
-role's URL on a built-in network or a `--stack`, for a fork that has the same
-genesis hashes. Each must be a `ws://` or `wss://` URL; blank is unset.
-
-`HOST_CLI_LOCAL_NETWORK_CONFIG` names a JSON file that routes every role and the
-identity backend of the built-in network `--network` selects (paseo-next-v2 by
-default) to loopback endpoints with their own genesis hashes, under that
-network's product namespace (`docs/local-network.md`). Its `network` must match
-`--network`, every field is required,
-and an invalid file is an error; blank is unset. It cannot be combined with
-`--stack` or with a `HOST_CLI_*_WS` override: the command fails with an error
-naming both. In this mode the built-in network comes from its bundled copy
-only, with no descriptor fetch, and only the file's endpoints are checked
-(below); People's `NetworkSuffix` is not.
-
-Neither override can be combined with `--chain-backend light-client`. Before a
-command runs, every endpoint an override reroutes is asked for its genesis and
-must answer with the genesis it is routed as; an endpoint that does not answer or
-reports another genesis stops the command. (A `--stack` endpoint that does not
-answer is only logged, as above.) An error about a stack names where it came
-from, `--stack` or `HOST_CLI_STACK`. A rerouted endpoint with one of Polkadot's
-genesis hashes is compared with real Polkadot as above.
-
-`network-check` resolves the network as any command does, overrides included,
-fetching only the descriptor, and prints as JSON `schema_version`, `network` (the
-product namespace), `namespace` (the network's TLD), `identity_backend_base`, and
-`ws` and `genesis` for `people`, `asset_hub` and `bulletin`. The hidden
-`local-network-check` fails unless `HOST_CLI_LOCAL_NETWORK_CONFIG` is set, then
-resolves the network and asks every node for its genesis before printing the
-same JSON.
+`network-check` resolves the network as any command does, fetching only the
+descriptor, and prints as JSON `schema_version`, `network` (the product
+namespace), `namespace` (the network's TLD), `identity_backend_base`, and `ws`
+and `genesis` for `people`, `asset_hub` and `bulletin`.
 
 #### `pcf-devnet`
 
@@ -1834,9 +1810,8 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 (§12.3), or takes one from `HOST_CLI_IDENTITY_BACKEND_TOKEN`, so auto-managed
 account creation works here.
 
-There are no public endpoint override flags besides `--stack`; the env vars
-above reroute chains, and `HOST_CLI_IDENTITY_BACKEND_BASE` replaces the identity
-backend base URL (§21).
+There are no endpoint override flags or variables besides `--stack` and
+`HOST_CLI_STACK` (§21).
 
 Every role the network serves (People, Bulletin and Asset Hub) is always routed,
 because host internals require all three: statement-store traffic addressed to the
@@ -1897,7 +1872,7 @@ Every chain connection the CLI makes goes through `CliChainProvider`
 (`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
 (§4.3). Routing (§14.1) is the same on both. Neither backend resolves a genesis
 from the bundled catalog, so the light client runs only the chains of the
-selected network. The genesis check of a `--stack` or overridden endpoint (§14.1) uses a
+selected network. The genesis check of a stack's endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
 commands, or the setup of a subscription, fails once its connection has
 delivered nothing for 30 seconds while it waits.
@@ -2386,10 +2361,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
-| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies to a built-in network or a `--stack`; `HOST_CLI_LOCAL_NETWORK_CONFIG` takes precedence. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
-| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error. One with a Polkadot genesis must also show it serves a fork, not Polkadot itself (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs, and one with a Polkadot genesis must show it serves a fork, not Polkadot itself (§14.1). Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` supplies the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

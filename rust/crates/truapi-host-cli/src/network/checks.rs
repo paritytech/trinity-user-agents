@@ -4,79 +4,50 @@
 //! `NetworkSuffix`, and whether an endpoint with one of Polkadot's genesis
 //! hashes serves a fork rather than Polkadot itself.
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Result, anyhow, ensure};
 
 use super::{
 	ChainEndpoint, NetworkConfig,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 };
-use crate::{chain::ChainBackend, stack_descriptor::Roles};
+use crate::chain::ChainBackend;
 
 /// What the CLI checks against the chains before a command runs.
 pub struct ChainChecks {
-	/// Endpoints an override reroutes; one that does not answer is an error.
-	rerouted: Vec<ChainEndpoint>,
-	/// The other endpoints of the stack; one that does not answer within
-	/// [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
-	from_stack: Vec<ChainEndpoint>,
+	/// The stack's endpoints, when reached over RPC; one that does not answer
+	/// within [`BUILT_IN_REFRESH_TIMEOUT`] is left to fail on first use.
+	endpoints: Vec<ChainEndpoint>,
 	/// For a built-in stack, the descriptor in use.
 	built_in: Option<BuiltInOrigin>,
-	/// The TLD People's `NetworkSuffix` must equal, when the stack's own
-	/// endpoints are checked.
-	expected_suffix: Option<&'static str>,
-	/// The routed endpoints with one of Polkadot's genesis hashes, each of
-	/// which must show it serves a fork.
+	/// The endpoints with one of Polkadot's genesis hashes, each of which must
+	/// show it serves a fork.
 	polkadot_chains: Vec<PolkadotChain>,
 }
 
 impl ChainChecks {
-	/// The checks for `config`, resolved from `base_chains`: endpoints `config`
-	/// routes differently from `base_chains`, by genesis and URL, are
-	/// rerouted. A network reached over RPC without a local network also has
-	/// its other endpoints and People's `NetworkSuffix` checked.
-	pub fn plan(
-		config: &NetworkConfig,
-		base_chains: &Roles<ChainEndpoint>,
-		local_network: bool,
-		built_in: Option<BuiltInOrigin>,
-	) -> Self {
-		let (rerouted, untouched): (Vec<_>, Vec<_>) = config
-			.chains
-			.iter()
-			.cloned()
-			.partition(|endpoint| !base_chains.iter().any(|chain| chain == endpoint));
-		let checks_stack = !local_network && config.chain_backend == ChainBackend::Rpc;
-		Self {
-			rerouted,
-			from_stack: if checks_stack { untouched } else { Vec::new() },
-			built_in,
-			expected_suffix: checks_stack.then_some(config.network_suffix),
-			polkadot_chains: polkadot_chains(&config.chains),
-		}
+	/// The checks for `config`: a network reached over RPC has every endpoint
+	/// and People's `NetworkSuffix` checked.
+	pub fn plan(config: &NetworkConfig, built_in: Option<BuiltInOrigin>) -> Self {
+		let endpoints = match config.chain_backend {
+			ChainBackend::Rpc => config.chains.iter().cloned().collect(),
+			ChainBackend::LightClient => Vec::new(),
+		};
+		Self { endpoints, built_in, polkadot_chains: polkadot_chains(&config.chains) }
 	}
 
-	/// Fails when an endpoint an override reroutes fails its check, or when an
-	/// endpoint with one of Polkadot's genesis hashes does not show it serves
-	/// a fork; otherwise the outcome of the stack's own endpoints, which a
-	/// fetch of the published descriptor may resolve.
+	/// Fails when an endpoint with one of Polkadot's genesis hashes does not
+	/// show it serves a fork; otherwise the outcome of the endpoint checks,
+	/// which a fetch of the published descriptor may resolve.
 	pub async fn verify(&self, config: &NetworkConfig) -> Result<Result<()>> {
-		let (rerouted, from_stack, polkadot_forks) = futures::join!(
-			verify_endpoints(config, &self.rerouted, Unanswered::Fail, None, self.expected_suffix),
-			verify_endpoints(
-				config,
-				&self.from_stack,
-				Unanswered::Warn,
-				self.built_in.as_ref(),
-				self.expected_suffix
-			),
+		let (endpoints, polkadot_forks) = futures::join!(
+			verify_endpoints(config, &self.endpoints, self.built_in.as_ref()),
 			futures::future::try_join_all(
 				self.polkadot_chains.iter().map(PolkadotChain::ensure_fork)
 			),
 		);
-		rerouted?;
 		polkadot_forks?;
-		Ok(from_stack)
+		Ok(endpoints)
 	}
 
 	/// Which copy of a built-in stack's descriptor the checked network runs
@@ -110,16 +81,6 @@ pub fn refuse_light_client(config: &NetworkConfig) -> Result<()> {
 		config.id
 	);
 	Ok(())
-}
-
-/// What a genesis check does with an endpoint that does not answer.
-#[derive(Clone, Copy)]
-enum Unanswered {
-	/// Fail the command.
-	Fail,
-	/// Log it after at most [`BUILT_IN_REFRESH_TIMEOUT`] and leave it to fail
-	/// on first use.
-	Warn,
 }
 
 /// What an endpoint reports about its chain.
@@ -160,31 +121,21 @@ pub async fn within_check_timeout<T>(
 }
 
 /// Fails when one of `endpoints` reports a genesis other than the one it is
-/// routed as, adding the restart hint of `built_in` to the error, when People
-/// reports a `NetworkSuffix` other than `expected_suffix`, or when an endpoint
-/// does not answer with `Unanswered::Fail`. A People chain without a readable
-/// suffix is logged.
+/// routed as, adding the restart hint of `built_in` to the error, or when
+/// People reports a `NetworkSuffix` other than the stack's TLD. An endpoint
+/// that does not answer, or a People chain without a readable suffix, is
+/// logged.
 async fn verify_endpoints(
 	config: &NetworkConfig,
 	endpoints: &[ChainEndpoint],
-	unanswered: Unanswered,
 	built_in: Option<&BuiltInOrigin>,
-	expected_suffix: Option<&str>,
 ) -> Result<()> {
 	let checks = endpoints.iter().map(|endpoint| async move {
-		let expected_suffix =
-			expected_suffix.filter(|_| endpoint.genesis == config.chains.people.genesis);
-		let probe = probe_endpoint(config, endpoint, expected_suffix.is_some());
-		let report = match unanswered {
-			Unanswered::Fail => probe.await,
-			Unanswered::Warn => within_check_timeout(probe).await,
-		};
-		let report = match (report, unanswered) {
-			(Ok(report), _) => report,
-			(Err(error), Unanswered::Fail) => {
-				bail!("cannot check the genesis of {}: {error}", endpoint.ws)
-			},
-			(Err(error), Unanswered::Warn) => {
+		let read_suffix = endpoint.genesis == config.chains.people.genesis;
+		let report = match within_check_timeout(probe_endpoint(config, endpoint, read_suffix)).await
+		{
+			Ok(report) => report,
+			Err(error) => {
 				tracing::warn!("cannot check the genesis of {}: {error}", endpoint.ws);
 				return Ok(());
 			},
@@ -200,9 +151,10 @@ async fn verify_endpoints(
 				.map(|origin| format!("; {}", origin.restart_hint()))
 				.unwrap_or_default()
 		);
-		let (Some(expected), Some(suffix)) = (expected_suffix, report.network_suffix) else {
+		let Some(suffix) = report.network_suffix else {
 			return Ok(());
 		};
+		let expected = config.network_suffix;
 		match suffix {
 			Ok(suffix) => ensure!(
 				suffix == expected.as_bytes(),

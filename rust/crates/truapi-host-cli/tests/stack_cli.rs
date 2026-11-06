@@ -520,147 +520,24 @@ fn test_network_check_light_client_stack() {
 	assert!(stderr(&output).contains("--stack"));
 }
 
-/// Exported but empty `HOST_CLI_STACK` and `HOST_CLI_LOCAL_NETWORK_CONFIG` are unset, so
-/// `--network` selects the built-in network as it is.
+/// An exported but empty `HOST_CLI_STACK` is unset, so `--network` selects the built-in network
+/// as it is.
 #[test]
-fn test_blank_routing_variables() {
-	let output = host_with_env(
-		&["network-check", "--network", "previewnet"],
-		&[("HOST_CLI_STACK", ""), ("HOST_CLI_LOCAL_NETWORK_CONFIG", " ")],
-	);
+fn test_blank_stack_variable() {
+	let output =
+		host_with_env(&["network-check", "--network", "previewnet"], &[("HOST_CLI_STACK", "")]);
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
 	assert!(!report["people"]["ws"].as_str().unwrap().starts_with("ws://127.0.0.1"));
 }
 
-/// Runs `truapi-host <args>` with `env` set and no other routing variable inherited.
+/// Runs `truapi-host <args>` with `env` set and no `HOST_CLI_STACK` inherited.
 fn host_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
 	let mut command = Command::new(env!("CARGO_BIN_EXE_truapi-host"));
-	command.args(args).env("TRUAPI_HOST_NO_UPDATE", "1");
-	for name in [
-		"HOST_CLI_STACK",
-		"HOST_CLI_PEOPLE_WS",
-		"HOST_CLI_ASSET_HUB_WS",
-		"HOST_CLI_BULLETIN_WS",
-		"HOST_CLI_LOCAL_NETWORK_CONFIG",
-		"HOST_CLI_IDENTITY_BACKEND_BASE",
-	] {
-		command.env_remove(name);
-	}
+	command
+		.args(args)
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.env_remove("HOST_CLI_STACK");
 	command.envs(env.iter().copied()).output().expect("truapi-host did not start")
-}
-
-/// A chain URL override reroutes one role of a stack, which has the stack's genesis.
-#[test]
-fn test_network_check_chain_override_on_stack() {
-	let dir = tempfile::tempdir().unwrap();
-	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let output = host_with_env(
-		&["--stack", &file, "network-check"],
-		&[("HOST_CLI_BULLETIN_WS", "ws://127.0.0.1:9")],
-	);
-	assert!(output.status.success());
-	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
-	assert_eq!(report["bulletin"]["ws"], "ws://127.0.0.1:9");
-	assert_eq!(report["bulletin"]["genesis"], format!("0x{}", "04".repeat(32)));
-	assert_eq!(report["people"]["ws"], "ws://127.0.0.1:2");
-}
-
-/// The local-network file routes every chain of the built-in network in its `network` field,
-/// under that network's namespace. `network-check` prints the routing without contacting a
-/// chain; `local-network-check` asks every node for its genesis first, so a local node that does
-/// not answer is an error.
-#[test]
-fn test_local_network_check() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("local-network.json");
-	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
-	let local = serde_json::json!({
-		"network": "previewnet",
-		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
-		"people": chain(1, "11"),
-		"asset_hub": chain(2, "22"),
-		"bulletin": chain(3, "33"),
-	});
-	fs::write(&path, local.to_string()).unwrap();
-	let path = path.to_str().unwrap();
-	let local_env = [("HOST_CLI_LOCAL_NETWORK_CONFIG", path)];
-	let output = host_with_env(&["--network", "previewnet", "network-check"], &local_env);
-	assert!(output.status.success());
-	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
-	assert_eq!(report["network"], "previewnet");
-	assert_eq!(report["people"], chain(1, "11"));
-	assert_eq!(report["identity_backend_base"], "http://127.0.0.1:8092/api/v1");
-
-	let checked = host_with_env(&["--network", "previewnet", "local-network-check"], &local_env);
-	assert!(!checked.status.success());
-	assert!(stderr(&checked).contains("cannot check the genesis of ws://127.0.0.1:"));
-
-	let unset = host_with_env(&["local-network-check"], &[]);
-	assert!(!unset.status.success());
-	assert!(stderr(&unset).contains("HOST_CLI_LOCAL_NETWORK_CONFIG must be set"));
-
-	let stack = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let with_stack = host_with_env(&["--stack", &stack, "network-check"], &local_env);
-	assert!(!with_stack.status.success());
-	let message = stderr(&with_stack);
-	assert!(message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("--stack"));
-
-	let with_override = host_with_env(
-		&["--network", "previewnet", "network-check"],
-		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path), ("HOST_CLI_PEOPLE_WS", "ws://127.0.0.1:9")],
-	);
-	assert!(!with_override.status.success());
-	let message = stderr(&with_override);
-	assert!(
-		message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("HOST_CLI_PEOPLE_WS")
-	);
-}
-
-/// An HTTPS proxy on a loopback port that counts the connections it receives and closes each
-/// one, so a descriptor fetch through it fails after the count.
-fn spawn_counting_proxy() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-	let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-	let url = format!("http://{}", listener.local_addr().unwrap());
-	let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-	let thread_count = count.clone();
-	thread::spawn(move || {
-		for socket in listener.incoming() {
-			thread_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-			drop(socket);
-		}
-	});
-	(url, count)
-}
-
-/// A local network replaces every route, so the built-in network comes from the bundled copy
-/// and its published descriptor is not fetched.
-#[test]
-fn test_local_network_without_descriptor_fetch() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("local-network.json");
-	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
-	let local = serde_json::json!({
-		"network": "previewnet",
-		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
-		"people": chain(1, "11"),
-		"asset_hub": chain(2, "22"),
-		"bulletin": chain(3, "33"),
-	});
-	fs::write(&path, local.to_string()).unwrap();
-	let (proxy, requests) = spawn_counting_proxy();
-	let run_through_proxy = |extra: &[(&str, &str)]| {
-		let mut env = vec![("HTTPS_PROXY", proxy.as_str()), ("NO_PROXY", "")];
-		env.extend_from_slice(extra);
-		host_with_env(&["--network", "previewnet", "network-check"], &env)
-	};
-
-	assert!(run_through_proxy(&[]).status.success());
-	assert!(requests.load(std::sync::atomic::Ordering::SeqCst) > 0);
-
-	requests.store(0, std::sync::atomic::Ordering::SeqCst);
-	let local = run_through_proxy(&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path.to_str().unwrap())]);
-	assert!(local.status.success());
-	assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

@@ -9,8 +9,6 @@ use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 mod built_in;
 mod checks;
-pub mod local_network;
-mod overrides;
 mod polkadot_fork;
 mod source;
 mod stack;
@@ -38,11 +36,6 @@ pub enum Network {
 	#[value(name = "pcf-devnet")]
 	PcfDevnet,
 }
-
-/// Env var overriding the identity backend base URL for every command. The URL
-/// includes `/api/v1`, for instance a local backend at
-/// `http://localhost:8080/api/v1`.
-pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
 /// Env var supplying `--stack` when the flag is absent; a blank value is unset.
 pub const STACK_ENV: &str = "HOST_CLI_STACK";
@@ -92,8 +85,8 @@ pub struct NetworkConfig {
 	/// this network. `live_people_chain::network_suffix_matches_the_preset`
 	/// holds it against the chain.
 	pub network_suffix: &'static str,
-	/// Identity backend base URL including `/api/v1`. `None` on a network with
-	/// no published backend, where [`IDENTITY_BACKEND_BASE_ENV`] must supply it.
+	/// Identity backend base URL including `/api/v1`, from the stack's `dub`
+	/// service. `None` on a stack without one.
 	pub identity_backend_base: Option<String>,
 	/// Each role's endpoint. A genesis hash is both the role's identity in
 	/// [`NetworkConfig::host_chain_set`] and its routing key; Asset Hub's is
@@ -135,13 +128,12 @@ impl Roles<ChainEndpoint> {
 }
 
 impl NetworkConfig {
-	/// The identity backend base URL, or an error naming the override when the
-	/// network has none.
+	/// The identity backend base URL, or an error when the stack has no `dub`
+	/// service.
 	pub fn identity_backend(&self) -> anyhow::Result<&str> {
 		self.identity_backend_base.as_deref().ok_or_else(|| {
 			anyhow::anyhow!(
-				"{} has no published identity backend; set {IDENTITY_BACKEND_BASE_ENV} to its \
-				 base URL, including /api/v1",
+				"the {} stack has no identity backend: it lists no dub service",
 				self.id
 			)
 		})

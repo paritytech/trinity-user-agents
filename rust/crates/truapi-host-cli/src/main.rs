@@ -84,7 +84,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg, local_network},
+	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
@@ -248,14 +248,8 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
-	/// Resolve the network, with any `HOST_CLI_*_WS` or
-	/// `HOST_CLI_LOCAL_NETWORK_CONFIG` routing, and print it as JSON without
-	/// contacting any chain.
+	/// Resolve the network and print it as JSON without contacting any chain.
 	NetworkCheck,
-	/// Resolve the `HOST_CLI_LOCAL_NETWORK_CONFIG` network, ask every node for
-	/// its genesis, and print the routing as `network-check` does.
-	#[command(hide = true)]
-	LocalNetworkCheck,
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///
 	/// With `--script`, exits with the script's status. Without it, stays in an
@@ -652,15 +646,6 @@ async fn dispatch(
 		Command::Update => update::run_update_command().await,
 		Command::NetworkCheck => {
 			print_network(&source.resolve().await?);
-			Ok(())
-		},
-		Command::LocalNetworkCheck => {
-			anyhow::ensure!(
-				local_network::config_path().is_some(),
-				"{} must be set",
-				local_network::CONFIG_ENV
-			);
-			print_network(&source.cli_config().await?);
 			Ok(())
 		},
 		Command::PairingHost(args) => {

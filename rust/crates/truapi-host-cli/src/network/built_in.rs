@@ -76,6 +76,7 @@ impl Network {
 
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching anything.
+	#[cfg(test)]
 	pub fn config(self, chain_backend: ChainBackend) -> NetworkConfig {
 		stack_config(&self.built_in_stack().bundled(), self.id().to_owned(), chain_backend)
 			.expect("invalid bundled stack")

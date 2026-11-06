@@ -27,7 +27,7 @@ One binary, `truapi-host`:
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
 | `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
-| `network-check` | Resolve the network (`--network` or `--stack`, with any `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` routing) and print it as JSON, without contacting a chain. |
+| `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
@@ -1048,7 +1048,7 @@ own chain reads all land on one network. The CLI mints the identity backend's
 bearer token itself (SPEC.md §12.3). Sessions are per network, so each network
 gets its own signer identity on the same machine.
 
-A command reaches its chains in one of three ways:
+A command reaches its chains in one of two ways:
 
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
   All three are built-in Trinity stacks. Each command that
@@ -1062,34 +1062,19 @@ A command reaches its chains in one of three ways:
   without a line. A published descriptor that changes the stack's `tld` is not used,
   since every account derives under it. A stack past its `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
-  `HOST_CLI_STACK`), such as a fork or a staging instance. It replaces
-  `--network`, and the two cannot be combined; details below.
-- **A disposable local copy of a built-in test network**
-  (`HOST_CLI_LOCAL_NETWORK_CONFIG`, a JSON file with every chain's loopback URL and
-  genesis hash and the identity backend; see
-  [`docs/local-network.md`](../../../docs/local-network.md)). It runs under the
-  product namespace of `--network`, reads that network's bundled copy without
-  fetching its descriptor, and cannot be combined with `--stack`.
+  `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
+  replaces `--network`, and the two cannot be combined; details below.
 
-On top of a built-in network or a stack, `HOST_CLI_PEOPLE_WS`,
-`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one chain's URL for a fork
-that has the same genesis hash. Each must be a `ws://` or `wss://` URL, and a blank
-value is unset. They cannot be combined with `HOST_CLI_LOCAL_NETWORK_CONFIG` or the
-light client. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
-pointing at a backend that serves the fork.
-
-Before anything runs, every endpoint of a built-in stack or a `--stack` reached over
-RPC, and every endpoint an override reroutes, is asked for its genesis, and People of
-a built-in stack or a `--stack`, once its genesis matches, for its `NetworkSuffix`. An
-endpoint that reports a genesis other than the one it is routed as is an error; for a
-built-in it reports that the stack restarted from genesis and which descriptor is in
-use, after fetching the published descriptor once more when it could not be fetched
-before. A `NetworkSuffix` other than the `tld` is an error. An endpoint an override or the
-local file reroutes must answer; any other that does not answer within 3 seconds is
-logged and left to fail on first use.
+Before anything runs, every endpoint of a stack reached over RPC is asked for its
+genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpoint
+that reports a genesis other than the one it is routed as is an error; for a built-in
+it reports that the stack restarted from genesis and which descriptor is in use, after
+fetching the published descriptor once more when it could not be fetched before. A
+`NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
+within 3 seconds is logged and left to fail on first use.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
-with one of Polkadot's genesis hashes, from a built-in, a stack, an override or the local
-file, is compared with real Polkadot, whose signed descriptor the binary ships as a
+with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
+Polkadot, whose signed descriptor the binary ships as a
 reference: at the lower of the endpoint's and Polkadot's finalized block, an equal block
 hash means it serves Polkadot itself and the command stops, and so it does when the
 endpoint, or every Polkadot node the reference lists, does not answer. A stack with the id
@@ -1101,12 +1086,12 @@ truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.examp
 truapi-host --stack https://stack.example/.well-known/trinity-stack.json network-check
 truapi-host --stack ./local-stack.json dev \
   --base-path /tmp/local-stack-host -- npm run dev
-HOST_CLI_BULLETIN_WS=ws://127.0.0.1:10030 truapi-host --network previewnet signing-host
 ```
 
 For `--stack`, a link on any scheme or domain is read for its `url` and `key`, and
 a signed stack must verify against the key. A URL alone is read unsigned, and so is
-a local descriptor file, signed or not, which suits a local network. The stack's
+a local descriptor file, signed or not, which suits a local network: its `rpc` and
+`dub` URLs may be `ws://` and `http://` on loopback and private addresses. The stack's
 People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
@@ -1120,14 +1105,12 @@ applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
 RPC.
 
-`truapi-host network-check` prints the resolved routing of any of these as JSON
+`truapi-host network-check` prints the resolved routing of either as JSON
 without contacting a chain, so a harness can check it before starting a session:
 `schema_version`; `network`, the product namespace; `namespace`, the network's
 `tld`; `identity_backend_base`; and `ws` and `genesis` for `people`,
 `asset_hub` and `bulletin`.
 
-`HOST_CLI_IDENTITY_BACKEND_BASE` swaps
-the identity backend (for a local one) on a built-in network or a stack.
 `HOST_CLI_IDENTITY_BACKEND_TOKEN`
 supplies its bearer token instead of the CLI minting one. For username
 registration, an injected token's subject must match the session's `uid.<tld>`
