@@ -205,7 +205,9 @@ struct Reconciler {
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
 struct Announcements {
-	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
+	/// Each change with the record the session had when it was queued, or
+	/// `None` for one compacted before then.
+	pending: VecDeque<(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
 	/// The [`FundingRegistry::is_in_progress`] the host was last told.
@@ -214,7 +216,7 @@ struct Announcements {
 
 /// One change the host is told of.
 enum Announcement {
-	Session(String, HostFundingStatusSubscribeItem),
+	Session(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>),
 	InProgress(bool),
 }
 
@@ -258,10 +260,6 @@ pub struct FundingRegistry {
 	/// Ended sessions compacted out of [`Self::sessions`], by intent.
 	/// Should a session sit in both, the full record wins.
 	pack: Mutex<HashMap<String, PackedSession>>,
-	/// Sessions compacted by the commit that ended them, held in full until
-	/// that ending is handed to the host, so the host gets the full record
-	/// with it.
-	ending: Mutex<HashMap<String, FundingSession>>,
 	/// Sessions whose overlay is still up, with what the user picked in it so
 	/// far: live in memory, so the overlay can quote and pick a provider for
 	/// them, but not stored until the user starts them. Closing the overlay
@@ -918,6 +916,9 @@ impl FundingRegistry {
 		let presenting_before = self.lock_presenting().clone();
 		let mut working = self.lock_sessions().clone();
 		let mut changed = Vec::new();
+		// Sessions this commit compacted as it ended them, which go to the
+		// host in full once more.
+		let mut ending = HashMap::new();
 		let (result, edited) = edit(&mut working);
 		// A session the host is told about must be stored too, which covers
 		// one leaving the overlay: started, though nothing in it changed.
@@ -988,35 +989,17 @@ impl FundingRegistry {
 				compacted.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
 			);
 			*self.lock_sessions() = kept;
-			// A session this commit ended goes to the host in full once more.
-			self.lock_ending().extend(
-				ended
-					.into_iter()
-					.filter(|session| changed.contains(&session.intent))
-					.map(|session| (session.intent.clone(), session)),
-			);
+			ending.extend(ended.into_iter().map(|session| (session.intent.clone(), session)));
 		}
 		// Each session once, even when an edit and its expiry both name it.
 		let mut announced = HashSet::new();
 		changed.retain(|intent| announced.insert(intent.clone()));
 		for intent in changed {
-			let ending = self.lock_ending().get(&intent).cloned();
-			if let Some(session) = self.get(&intent).or(ending) {
+			if let Some(session) = self.get(&intent).or_else(|| ending.remove(&intent)) {
 				self.fan_out(&session);
 			} else if let Some(packed) = self.lock_pack().get(&intent).cloned() {
 				self.tell_host_packed(&packed);
 			}
-		}
-		// What no announcement waits for is not held: the host is not told
-		// of a session whose overlay is up, nor of any without a surface.
-		{
-			let pending: HashSet<String> = self
-				.lock_announcements()
-				.pending
-				.iter()
-				.map(|(intent, _)| intent.clone())
-				.collect();
-			self.lock_ending().retain(|intent, _| pending.contains(intent));
 		}
 		for session in self.now_taking_longer(now_ms) {
 			if !announced.contains(&session.intent) {
@@ -1476,9 +1459,11 @@ impl FundingRegistry {
 	/// it has not told the user how it went.
 	fn tell_host_packed(&self, packed: &PackedSession) {
 		if self.platform.get().is_some() {
-			self.lock_announcements()
-				.pending
-				.push_back((packed.summary.intent.clone(), packed.summary.wire_item()));
+			self.lock_announcements().pending.push_back((
+				packed.summary.intent.clone(),
+				packed.summary.wire_item(),
+				None,
+			));
 		}
 	}
 
@@ -1486,9 +1471,11 @@ impl FundingRegistry {
 	/// once the user starts it.
 	fn tell_host(&self, session: &FundingSession) {
 		if self.platform.get().is_some() && !self.lock_presenting().contains_key(&session.intent) {
-			self.lock_announcements()
-				.pending
-				.push_back((session.intent.clone(), session.wire_item()));
+			self.lock_announcements().pending.push_back((
+				session.intent.clone(),
+				session.wire_item(),
+				Some(Box::new(session.clone())),
+			));
 		}
 	}
 
@@ -1496,7 +1483,8 @@ impl FundingRegistry {
 	/// lock so the host may call back into the registry, then whether a
 	/// provider still works on any session, when that changed. Each session
 	/// goes with the record and progress it has when delivered, which are at
-	/// least as new as its status. One caller delivers at a time, and a
+	/// least as new as its status, or once it is compacted with the record it
+	/// was queued with. One caller delivers at a time, and a
 	/// change committed from inside the callback is delivered by that caller
 	/// once the callback returns.
 	fn announce(&self) {
@@ -1511,7 +1499,9 @@ impl FundingRegistry {
 			let next = {
 				let mut announcements = self.lock_announcements();
 				let next = match announcements.pending.pop_front() {
-					Some((intent, item)) => Some(Announcement::Session(intent, item)),
+					Some((intent, item, queued)) => {
+						Some(Announcement::Session(intent, item, queued))
+					},
 					None if announcements.in_progress != Some(in_progress) => {
 						announcements.in_progress = Some(in_progress);
 						Some(Announcement::InProgress(in_progress))
@@ -1523,21 +1513,12 @@ impl FundingRegistry {
 			};
 			let feed = self.feed();
 			match next {
-				Some(Announcement::Session(intent, item)) => {
+				Some(Announcement::Session(intent, item, queued)) => {
 					platform.funding_session_changed(intent.clone(), item.clone());
 					if let Some(feed) = feed {
-						// The full record of a session compacted as it ended
-						// goes with every change still queued, and is let go
-						// with the one that ends it.
-						let ending = {
-							let mut ending = self.lock_ending();
-							if matches!(item, HostFundingStatusSubscribeItem::InProgress { .. }) {
-								ending.get(&intent).cloned()
-							} else {
-								ending.remove(&intent)
-							}
-						};
-						let session = self.get(&intent).or(ending);
+						// The record the session has now, or the one it was
+						// queued with once it is compacted.
+						let session = self.get(&intent).or(queued.map(|queued| *queued));
 						let progress =
 							session.as_ref().map(|session| session.progress(current_unix_millis()));
 						feed.funding_session_changed(intent, item, session, progress);
@@ -1567,10 +1548,6 @@ impl FundingRegistry {
 
 	fn lock_resolving(&self) -> MutexGuard<'_, HashMap<[u8; 32], u64>> {
 		lock(&self.resolving)
-	}
-
-	fn lock_ending(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		lock(&self.ending)
 	}
 
 	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, PackedSession>> {
@@ -3103,10 +3080,11 @@ mod tests {
 		);
 	}
 
-	// Changes queued before the one that ended a compacted session still
-	// carry its full record, and so does the ending itself.
+	// Changes queued for a session compacted before they are delivered carry
+	// the record it had when each was queued; an ending replayed from the
+	// pack has none.
 	#[test]
-	fn every_queued_change_of_a_session_compacted_as_it_ended_carries_its_record() {
+	fn a_queued_change_of_a_compacted_session_carries_the_record_it_was_queued_with() {
 		let registry = registry_on(&open_memory_core_db());
 		let feed = Arc::new(RecordingFeed::default());
 		assert!(registry.install_platform(Arc::new(SilentPlatform)));
@@ -3115,22 +3093,24 @@ mod tests {
 			stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
 			..session("fs_1", NOW)
 		};
-		registry.lock_ending().insert("fs_1".to_string(), ended.clone());
 		{
 			let mut announcements = registry.lock_announcements();
 			announcements.pending.push_back((
 				"fs_1".to_string(),
 				HostFundingStatusSubscribeItem::InProgress { expires_at: None },
+				Some(Box::new(session("fs_1", NOW))),
 			));
-			announcements.pending.push_back(("fs_1".to_string(), ended.wire_item()));
+			announcements.pending.push_back((
+				"fs_1".to_string(),
+				ended.wire_item(),
+				Some(Box::new(ended.clone())),
+			));
+			announcements.pending.push_back(("fs_1".to_string(), ended.wire_item(), None));
 		}
 
 		registry.announce();
 
-		assert_eq!(
-			(feed.sessions("fs_1"), registry.lock_ending().is_empty()),
-			(vec![true, true], true)
-		);
+		assert_eq!(feed.sessions("fs_1"), vec![true, true, false]);
 	}
 
 	// A session compacted as it ends still reaches its watchers and the
