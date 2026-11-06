@@ -121,17 +121,21 @@ fn work_whose_task_is_dropped_is_taken_up_again() {
 	registry.link(&ramp(), Arc::new(IdleLink));
 	let generation = registry.lock_links().by_provider[&ramp()].generation;
 	registry.lock_links().by_provider.get_mut(&ramp()).expect("linked").catch_up = CatchUp::Running;
-	registry.lock_following().insert("fs_1".to_string());
+	lock(&registry.following).insert("fs_1".to_string());
 	registry.lock_resolving().insert([1; 32], u64::MAX);
 
 	drop(CatchingUp { registry: registry.clone(), provider: ramp(), generation, answered: false });
-	drop(Following { registry: registry.clone(), intent: "fs_1".to_string() });
+	drop(Claim {
+		registry: registry.clone(),
+		set: |registry| &registry.following,
+		key: "fs_1".to_string(),
+	});
 	drop(Resolving { registry: registry.clone(), host_id: [1; 32], next_ms: None });
 
 	assert_eq!(
 		(
 			matches!(registry.lock_links().by_provider[&ramp()].catch_up, CatchUp::Due { .. }),
-			registry.lock_following().is_empty(),
+			lock(&registry.following).is_empty(),
 			registry.lock_resolving().is_empty(),
 		),
 		(true, true, true)
@@ -150,7 +154,7 @@ fn waiting_for_a_provider_that_never_connects_leaves_no_trail() {
 		assert!(futures::FutureExt::now_or_never(asked).is_none());
 	}
 
-	assert_eq!(registry.lock_links().waiters[&ramp].0.len(), 1);
+	assert_eq!(registry.lock_links().waiters[&ramp].listeners.lock().len(), 1);
 }
 
 // A deadline already past belongs to funds whose call is still in
@@ -277,7 +281,6 @@ fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
 		registry
 			.pending_calls(&ProductId::for_test("ramp.dot"))
 			.into_iter()
-			.flatten()
 			.find_map(|call| match call {
 				ProviderCall::Assign(session) => Some(session.intent),
 				ProviderCall::Cancel(..) => None,
