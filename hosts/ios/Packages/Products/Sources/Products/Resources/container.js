@@ -6392,9 +6392,27 @@
       }))
     };
   }
+  function fromNativeDerivationIndex(index) {
+    return typeof index === "number" ? { tag: "Index", value: index } : { tag: "Raw", value: fromHex3(index) };
+  }
+  function fromNativeRing(ring) {
+    return {
+      chainId: ring.chainId,
+      junctions: ring.junctions.map((junction) => junction.tag === "CollectionId" ? { tag: "CollectionId", value: fromHex3(junction.value) } : { tag: "PalletInstance", value: junction.value })
+    };
+  }
+  function fromNativeRegistryEntry(entry) {
+    const [owner, index] = entry.handle;
+    return {
+      handle: [owner, fromNativeDerivationIndex(index)],
+      rings: entry.rings.map(fromNativeRing),
+      publicKey: entry.publicKey ? fromHex3(entry.publicKey) : void 0
+    };
+  }
   container.handleAccountGetAlias((params, { ok: ok2, err: err2 }) => {
-    const [context, ring] = params;
+    const [keyHandle, context, ring] = params;
     return callNative("accountGetAlias", {
+      keyHandle: toNativeAccountId(keyHandle),
       context: toNativeContext(context),
       ring: toNativeRing(ring)
     }).then(
@@ -6408,6 +6426,10 @@
             return err2(new GetAliasErr.RingNotFound());
           case "NotMember":
             return err2(new GetAliasErr.NotMember());
+          case "KeyNotRegistered":
+            return err2(new GetAliasErr.KeyNotRegistered());
+          case "KeyNotInRing":
+            return err2(new GetAliasErr.KeyNotInRing());
           case "Rejected":
             return err2(new GetAliasErr.Rejected());
           default:
@@ -6417,8 +6439,9 @@
     );
   });
   container.handleAccountCreateProof((params, { ok: ok2, err: err2 }) => {
-    const [context, ring, message] = params;
+    const [keyHandle, context, ring, message] = params;
     return callNative("accountCreateProof", {
+      keyHandle: toNativeAccountId(keyHandle),
       context: toNativeContext(context),
       ring: toNativeRing(ring),
       message: toHex2(message)
@@ -6438,10 +6461,32 @@
             return err2(new CreateProofErr.RingNotFound());
           case "NotMember":
             return err2(new CreateProofErr.NotMember());
+          case "KeyNotRegistered":
+            return err2(new CreateProofErr.KeyNotRegistered());
+          case "KeyNotInRing":
+            return err2(new CreateProofErr.KeyNotInRing());
+          case "NotAllowlisted":
+            return err2(new CreateProofErr.NotAllowlisted());
           case "Rejected":
             return err2(new CreateProofErr.Rejected());
           default:
             return err2(new CreateProofErr.Unknown({ reason: String(e?.message ?? e) }));
+        }
+      }
+    );
+  });
+  container.handleAccountListRingVrfKeys((params, { ok: ok2, err: err2 }) => {
+    const [owner, disclosure] = params;
+    return callNative("listRingVrfKeys", { owner, disclosure }).then(
+      (entries) => ok2(entries.map(fromNativeRegistryEntry)),
+      (e) => {
+        switch (e?.code) {
+          case "NotConnected":
+            return err2(new ListRingVrfKeysErr.NotConnected());
+          case "Rejected":
+            return err2(new ListRingVrfKeysErr.Rejected());
+          default:
+            return err2(new ListRingVrfKeysErr.Unknown({ reason: String(e?.message ?? e) }));
         }
       }
     );

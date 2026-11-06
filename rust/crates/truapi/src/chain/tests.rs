@@ -97,7 +97,12 @@ impl Node {
 	}
 
 	fn block(&self, number: u64) -> HashAndNumber {
-		HashAndNumber { hash: header_hash(&self.headers[number as usize]), number }
+		HashAndNumber {
+			hash: header_hash(
+				&self.headers[usize::try_from(number).expect("block number fits in usize")],
+			),
+			number,
+		}
 	}
 
 	fn header_at(&self, hash: &Value) -> Option<&SubstrateHeader<H256>> {
@@ -278,7 +283,7 @@ impl Node {
 }
 
 /// What `TaggedTransactionQueue_validate_transaction` answers.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Validation {
 	Valid,
 	Invalid,

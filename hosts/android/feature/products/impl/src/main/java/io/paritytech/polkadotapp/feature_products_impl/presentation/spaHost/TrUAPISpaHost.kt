@@ -154,6 +154,8 @@ private class TrUAPISpaHostSession(
     private val bridge: ProductTrUAPIHostBridge,
     override val faceShownRequests: Flow<FaceShownRequest>,
 ) : SpaHostSession {
+    override val isPageRevealed: StateFlow<Boolean> = provider.isPageRevealed
+
     override fun pauseConnections() {
         provider.pauseConnections()
     }

@@ -2,8 +2,14 @@ import SwiftUI
 import ExternalAccessibility
 import PolkadotUI
 
-final class WalletMainViewController: UIHostingController<WalletView>, RootScreen {
+final class WalletMainViewController: UIHostingController<WalletView>, RootScreen, NavigationDependable,
+    NavigationBarHiding {
     let presenter: WalletMainPresenterProtocol
+    weak var navigationControlling: NavigationControlling?
+
+    var hidesNavigationBar: Bool {
+        rootView.viewModel.expandedSection == .none
+    }
 
     private var assetDetailsScene: AssetDetailsScene
     private var identityDetailsScene: IdentityDetailsScene
@@ -12,8 +18,6 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         view.typography = .headlineSmall
         view.textColor = .fgPrimary
     }
-
-    private let statusTitleView = NetworkStatusTitleView()
 
     init(
         presenter: WalletMainPresenterProtocol,
@@ -48,6 +52,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         identityDetailsScene.attachNavigationHost(self)
         setupHandlers()
         presenter.setup()
+    }
+
+    private func updateNavigationBarVisibility(animated: Bool) {
+        navigationControlling?.setNavigationBarHidden(hidesNavigationBar, animated: animated)
     }
 
     private func setupHandlers() {
@@ -188,14 +196,14 @@ extension WalletMainViewController: WalletMainViewProtocol {
 
     func setMainTitle() {
         navigationItem.style = .browser
-        if #unavailable(iOS 26.0) {
-            navigationItem.title = nil
-        }
-        setTitleView(statusTitleView)
+        navigationItem.title = nil
+        navigationItem.titleView = nil
+        updateNavigationBarVisibility(animated: true)
     }
 
     func setTitleCenter(_ title: String?) {
         navigationItem.style = .navigator
+        updateNavigationBarVisibility(animated: true)
         guard #available(iOS 26, *) else {
             navigationItem.title = title
             return
@@ -207,9 +215,5 @@ extension WalletMainViewController: WalletMainViewProtocol {
         titleLabel.accessibilityLabel = title
         titleLabel.sizeToFit()
         navigationItem.titleView = titleLabel
-    }
-
-    func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel) {
-        statusTitleView.bind(viewModel: titleViewModel)
     }
 }
