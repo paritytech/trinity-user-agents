@@ -105,7 +105,7 @@ impl SessionLifecycle {
 	}
 }
 
-#[derive(Debug, derive_more::Display)]
+#[derive(derive_more::Display)]
 enum StoredSessionActivationError {
 	#[display("stored auth session is absent")]
 	Missing,
@@ -599,7 +599,7 @@ impl SsoRequestService {
 	}
 
 	/// Whether the selected session's SSO channel is `key`.
-	pub fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
+	fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
 		key.matches(&self.session_state)
 	}
 

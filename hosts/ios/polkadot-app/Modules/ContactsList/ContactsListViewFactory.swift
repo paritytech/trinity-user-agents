@@ -17,16 +17,9 @@ enum ContactsListViewFactory {
             return nil
         }
 
-        let networkStatusObserver = NetworkStatusObserver(
-            networkStatusService: flowState.networkStatusService,
-            chainIds: [AppConfig.Chains.chatChain],
-            logger: Logger.shared
-        )
-
         let interactor = ContactsListInteractor(
             chatContactDataProviderFactory: ChatContactDataProviderFactory(),
             chatExtensionsRegistry: flowState.extensionsRegistry,
-            networkStatusObserver: networkStatusObserver,
             foregroundVisibilityReporter: flowState.foregroundVisibilityReporter,
             logger: Logger.shared
         )
@@ -54,9 +47,6 @@ enum ContactsListViewFactory {
             interactor: interactor,
             wireframe: wireframe,
             viewModelFactory: viewModelFactory,
-            titleViewModelFactory: NetworkStatusTitleViewModelFactory(
-                screenTitle: String(localized: .chatMainTitle)
-            ),
             assetDisplayInfo: chainAsset.asset.digitalDollarDisplayInfo
         )
 

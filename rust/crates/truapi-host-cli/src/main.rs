@@ -25,7 +25,6 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
-mod local_network;
 mod network;
 mod platform;
 mod pocket;
@@ -38,6 +37,7 @@ mod script_runner;
 mod sessions;
 mod signing_shell;
 mod stack;
+mod stack_descriptor;
 mod terminal_ui;
 mod transcript;
 mod update;
@@ -84,7 +84,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig},
+	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg, local_network},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
@@ -130,14 +130,25 @@ struct Cli {
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
 	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
-	/// and `previewnet` only).
+	/// and `previewnet` only, without `--stack`).
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
+	/// Built-in network to run against; paseo-next-v2 when neither this nor
+	/// `--stack` is set.
+	#[arg(long, global = true, value_enum)]
+	network: Option<Network>,
+	/// Run against this Trinity stack instead of a built-in network: a
+	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
+	/// descriptor file. Its chains, identity backend and TLD are used, under
+	/// the product namespace of the descriptor's `id` without a trailing
+	/// `-fork`. Defaults to `HOST_CLI_STACK` when that is not blank.
+	#[arg(long, global = true, value_name = "STACK")]
+	stack: Option<String>,
 	#[command(subcommand)]
 	command: Command,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, derive_more::Display)]
+#[derive(Clone, ValueEnum, derive_more::Display, Debug, PartialEq, Copy)]
 #[display(rename_all = "lowercase")]
 enum LogLevel {
 	Error,
@@ -164,7 +175,7 @@ impl LogLevel {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Clone, derive_more::Display, derive_more::Error, Debug, PartialEq)]
 #[display("invalid log level `{value}`; expected error, warn, info, debug, or trace")]
 struct InvalidLogLevel {
 	value: String,
@@ -237,11 +248,14 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
-	/// Validate and print opt-in local routing without contacting any chain.
-	LocalNetworkCheck {
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
-	},
+	/// Resolve the network, with any `HOST_CLI_*_WS` or
+	/// `HOST_CLI_LOCAL_NETWORK_CONFIG` routing, and print it as JSON without
+	/// contacting any chain.
+	NetworkCheck,
+	/// Resolve the `HOST_CLI_LOCAL_NETWORK_CONFIG` network, ask every node for
+	/// its genesis, and print the routing as `network-check` does.
+	#[command(hide = true)]
+	LocalNetworkCheck,
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///
 	/// With `--script`, exits with the script's status. Without it, stays in an
@@ -266,9 +280,6 @@ enum Command {
 		/// BIP-39 mnemonic to probe.
 		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
-		/// Network preset to probe.
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
 	},
 	/// Register a full-person username on dotNS via
 	/// `DotnsGateway.register_name` on Asset Hub. Requires a recognized full
@@ -277,9 +288,6 @@ enum Command {
 		/// BIP-39 mnemonic of the recognized full person.
 		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
-		/// Network preset to use.
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
 		/// Base label to register (lowercase ASCII letters only).
 		#[arg(long)]
 		label: String,
@@ -300,9 +308,6 @@ enum Command {
 		/// BIP-39 mnemonic of the identity to attest.
 		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
-		/// Network preset to attest on.
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
 		/// Lite username base (6+ lowercase ASCII letters).
 		#[arg(long)]
 		username: String,
@@ -314,9 +319,6 @@ enum Command {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
 		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
-		/// Network preset to use for People-chain RPC.
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
 		/// Target account (hex, 32 bytes) to grant allowance to. Defaults to
 		/// all-zero (read-only slot scan only).
 		#[arg(long)]
@@ -335,9 +337,6 @@ enum Command {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
 		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
-		/// Network preset to use for People and Asset Hub RPC.
-		#[arg(long, value_enum, default_value = "paseo-next-v2")]
-		network: Network,
 		/// Account (hex, 32 bytes) the claim credits. Required with `--submit`.
 		#[arg(long)]
 		target: Option<String>,
@@ -361,7 +360,7 @@ enum Command {
 }
 
 /// Execution kind the CLI serves a product as.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Default, ValueEnum, Copy)]
 enum ExecutionKind {
 	/// Ordinary full-page product. Chat requests answer `Denied`, as they do
 	/// on any host that does not serve chat.
@@ -412,9 +411,6 @@ struct PairingHostArgs {
 	/// Base directory; CLI-managed state lives in its v2 subdirectory.
 	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
 	base_path: Option<PathBuf>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
 	/// Approve every confirmation without prompting on the CLI.
 	#[arg(long)]
 	auto_accept: bool,
@@ -438,9 +434,6 @@ struct DevArgs {
 	/// origin, which is what a product derives for itself locally.
 	#[arg(long = "product-id")]
 	product_id: Option<ProductId>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
 	/// Persistent signing-host session to restore or create.
 	#[arg(long)]
 	session: Option<String>,
@@ -499,9 +492,6 @@ struct SigningHostArgs {
 	/// Base directory; CLI-managed state lives in its v2 subdirectory.
 	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
 	base_path: Option<PathBuf>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
 	/// TCP address to serve product WebSocket frames on. When omitted, use a
 	/// private per-process Unix-domain socket.
 	#[arg(long)]
@@ -537,7 +527,6 @@ impl Default for SigningHostArgs {
 			session: None,
 			reserved_username: None,
 			base_path: None,
-			network: Network::default(),
 			frame_listen: None,
 			auto_accept: false,
 			serve: false,
@@ -626,8 +615,15 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	let outcome =
-		dispatch(cli.command, log_filter, log_controller, debugger, cli.chain_backend).await;
+	// Read here rather than through clap's `env`, so an exported blank value is
+	// unset rather than a `--stack` next to `--network`.
+	let stack = match normalized(cli.stack) {
+		Some(value) => Some(StackArg { value, source: "--stack" }),
+		None => normalized(std::env::var(STACK_ENV).ok())
+			.map(|value| StackArg { value, source: STACK_ENV }),
+	};
+	let source = NetworkSource { chain_backend: cli.chain_backend, network: cli.network, stack };
+	let outcome = dispatch(cli.command, log_filter, log_controller, debugger, source).await;
 
 	if let Some(check) = check {
 		update::finish_background_check(check).await;
@@ -644,7 +640,7 @@ async fn dispatch(
 	log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
-	chain_backend: ChainBackend,
+	source: NetworkSource,
 ) -> Result<()> {
 	// The switch is global but resolved per command, by the three arms that build
 	// a frame server and still before they bind a port. `update`,
@@ -654,43 +650,33 @@ async fn dispatch(
 	// carries the switch.
 	match command {
 		Command::Update => update::run_update_command().await,
-		Command::LocalNetworkCheck { network } => {
+		Command::NetworkCheck => {
+			print_network(&source.resolve().await?);
+			Ok(())
+		},
+		Command::LocalNetworkCheck => {
 			anyhow::ensure!(
 				local_network::config_path().is_some(),
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config(chain_backend).await?;
-			println!(
-				"{}",
-				serde_json::json!({
-					"schema_version": 1,
-					"network": config.id,
-					"namespace": config.network_suffix,
-					"identity_backend_base": config.identity_backend_base,
-					"people": { "ws": config.people_ws, "genesis": format!("0x{}", hex::encode(config.people_genesis)) },
-					"asset_hub": { "ws": config.asset_hub_ws, "genesis": format!("0x{}", hex::encode(config.asset_hub_genesis)) },
-					"bulletin": { "ws": config.bulletin_ws, "genesis": format!("0x{}", hex::encode(config.bulletin_genesis)) },
-				})
-			);
+			print_network(&source.cli_config().await?);
 			Ok(())
 		},
 		Command::PairingHost(args) => {
-			run_pairing_host(args, log_filter, log_controller, debugger, chain_backend).await
+			run_pairing_host(args, log_filter, log_controller, debugger, &source).await
 		},
-		Command::Dev(args) => {
-			run_dev(args, log_filter, log_controller, debugger, chain_backend).await
-		},
+		Command::Dev(args) => run_dev(args, log_filter, log_controller, debugger, &source).await,
 		Command::SigningHost(args) => {
-			run_signing_host(args, log_filter, log_controller, None, debugger, chain_backend).await
+			run_signing_host(args, log_filter, log_controller, None, debugger, &source).await
 		},
-		Command::IdentityCheck { mnemonic, network } => {
+		Command::IdentityCheck { mnemonic } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config(chain_backend).await?, &entropy).await
+			attestation::check_identity(source.cli_config().await?, &entropy).await
 		},
-		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
+		Command::RegisterName { mnemonic, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
@@ -704,7 +690,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config(chain_backend).await?,
+				network: source.cli_config().await?,
 				entropy,
 				label,
 				link_lite,
@@ -712,33 +698,15 @@ async fn dispatch(
 			})
 			.await
 		},
-		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(
-				mnemonic,
-				network.cli_config(chain_backend).await?,
-				target,
-				lookback,
-				submit,
-			)
-			.await
+		Command::AllocCheck { mnemonic, target, lookback, submit } => {
+			run_alloc_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
 		},
-		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(
-				mnemonic,
-				network.cli_config(chain_backend).await?,
-				target,
-				lookback,
-				submit,
-			)
-			.await
+		Command::PgasCheck { mnemonic, target, lookback, submit } => {
+			run_pgas_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
 		},
-		Command::Attest { mnemonic, network, username } => {
-			let attested = accounts::attest_mnemonic(
-				network.cli_config(chain_backend).await?,
-				&mnemonic,
-				&username,
-			)
-			.await?;
+		Command::Attest { mnemonic, username } => {
+			let attested =
+				accounts::attest_mnemonic(source.cli_config().await?, &mnemonic, &username).await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -751,6 +719,23 @@ async fn dispatch(
 		},
 		Command::Stack { command } => stack::run(command).await,
 	}
+}
+
+/// Prints `config`'s routing as the one JSON line `network-check` writes.
+fn print_network(config: &NetworkConfig) {
+	let chain = |ws: &str, genesis: [u8; 32]| serde_json::json!({ "ws": ws, "genesis": format!("0x{}", hex::encode(genesis)) });
+	println!(
+		"{}",
+		serde_json::json!({
+			"schema_version": 1,
+			"network": config.id,
+			"namespace": config.network_suffix,
+			"identity_backend_base": config.identity_backend_base,
+			"people": chain(config.people_ws, config.people_genesis),
+			"asset_hub": chain(config.asset_hub_ws, config.asset_hub_genesis),
+			"bulletin": chain(config.bulletin_ws, config.bulletin_genesis),
+		})
+	);
 }
 
 /// Diagnose an Asset Hub PGAS claim, and optionally submit it.
@@ -771,7 +756,7 @@ async fn run_pgas_check(
 	if submit && network.chain_backend == chain::ChainBackend::LightClient {
 		bail!(
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -1160,8 +1145,9 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 	}
 	anyhow::ensure!(
 		network.disposable_identities,
-		"{} holds real identities, so every confirmation must be approved by hand; \
-		 automatic approval, which `dev` always uses, is only available on test network presets",
+		"{} has real identities, so every confirmation must be approved by hand; \
+		 automatic approval, which `dev` always uses, is only available on disposable-identity \
+		 networks",
 		network.id
 	);
 	Ok(ApprovalPolicy::AutoAccept)
@@ -1325,7 +1311,7 @@ async fn run_pairing_host(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
-	chain_backend: ChainBackend,
+	source: &NetworkSource,
 ) -> Result<()> {
 	let script_projects = script_project_directory(args.base_path.clone());
 	let interactive = args.script.is_none();
@@ -1334,15 +1320,19 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config(chain_backend).await?;
+	let network = source.cli_config().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
-		let (ui, handle) =
-			TerminalUi::new_pairing(network.id, product_id.clone(), initial_log_filter);
+		let (ui, handle) = TerminalUi::new_pairing(
+			network.id,
+			network.chain_backend,
+			product_id.clone(),
+			initial_log_filter,
+		);
 		(Some(ui.enter()?), Some(handle))
 	} else {
 		(None, None)
@@ -1434,7 +1424,7 @@ async fn run_signing_host(
 	log_controller: LogController,
 	dev_command: Option<Vec<String>>,
 	debugger: Option<DebuggerSwitch>,
-	chain_backend: ChainBackend,
+	source: &NetworkSource,
 ) -> Result<()> {
 	if let Err(error) = validate_signing_args(&args) {
 		invalid_invocation(error);
@@ -1453,7 +1443,7 @@ async fn run_signing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
-	let network = args.network.cli_config(chain_backend).await?;
+	let network = source.cli_config().await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -1461,6 +1451,7 @@ async fn run_signing_host(
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new(
 			network.id,
+			network.chain_backend,
 			product_id,
 			initial_session_name.clone(),
 			initial_session_names,
@@ -1626,7 +1617,7 @@ struct SigningHostSession {
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
-#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[derive(derive_more::Display, derive_more::Error, Debug)]
 enum SessionOperationError {
 	#[display("failed to activate cached session")]
 	CachedActivation(GenericError),
@@ -2222,8 +2213,8 @@ async fn apply_local_product_grants(
 	// Seeded grants persist in the core database and are never prompted for.
 	anyhow::ensure!(
 		network.disposable_identities,
-		"{} holds real identities, so --product-config grants are only available on test \
-		 network presets",
+		"{} has real identities, so --product-config grants are only available on \
+		 disposable-identity networks",
 		network.id
 	);
 	let configs = product_config::read_all(paths)?;
@@ -2247,7 +2238,7 @@ async fn run_dev(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
-	chain_backend: ChainBackend,
+	source: &NetworkSource,
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = match args.product_id {
@@ -2258,7 +2249,6 @@ async fn run_dev(
 	};
 	let signing = SigningHostArgs {
 		product_id,
-		network: args.network,
 		session: args.session,
 		mnemonic: args.mnemonic,
 		base_path: args.base_path,
@@ -2271,8 +2261,7 @@ async fn run_dev(
 		..Default::default()
 	};
 	let command = (!args.command.is_empty()).then_some(args.command);
-	run_signing_host(signing, initial_log_filter, log_controller, command, debugger, chain_backend)
-		.await
+	run_signing_host(signing, initial_log_filter, log_controller, command, debugger, source).await
 }
 
 /// Run the wrapped development command, returning the code to exit with.
@@ -4554,7 +4543,7 @@ mod cli_tests {
 		assert_eq!(
 			error.to_string(),
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 
