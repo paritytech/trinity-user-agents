@@ -1,5 +1,4 @@
 import Foundation
-import TrUAPIHost
 
 /// The parts of the `funding_config` remote object the iOS host reads:
 /// `{ "onrampUrl": …, "offrampUrl": …, "providers": ["ramp.dot", …] }`, the
@@ -19,26 +18,20 @@ enum FundingConfig {
         return value
     }
 
-    /// The configured providers, in the published order without repeats. A
-    /// name the core does not accept as a product id is skipped and logged,
-    /// so one typo does not take the other providers down with it.
-    static func providers(in json: [String: Any]?, logger: LoggerProtocol?) -> [ProductId] {
+    /// The configured provider names, in the published order without
+    /// repeats. An entry that is not a name is skipped and logged, so one
+    /// typo does not take the other providers down with it.
+    static func providers(in json: [String: Any]?, logger: LoggerProtocol?) -> [String] {
         guard let names = json?[Key.providers] as? [Any] else { return [] }
 
-        var seen = Set<ProductId>()
+        var seen = Set<String>()
         return names.compactMap { name in
-            guard let name = name as? String else {
+            guard let name = name as? String, !name.isEmpty else {
                 logger?.error("funding_config lists a provider that is not a name: \(name)")
                 return nil
             }
 
-            do {
-                let productId = try ProductId(name)
-                return seen.insert(productId).inserted ? productId : nil
-            } catch {
-                logger?.error("funding_config lists an unusable provider name \(name): \(error)")
-                return nil
-            }
+            return seen.insert(name).inserted ? name : nil
         }
     }
 }
