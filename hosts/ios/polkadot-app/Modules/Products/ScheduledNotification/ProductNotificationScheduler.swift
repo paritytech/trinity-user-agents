@@ -1,7 +1,10 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import FoundationExt
+import IssueMonitoring
 import Operation_iOS
 import Products
+import StructuredConcurrency
 import UserNotifications
 
 protocol ProductNotificationScheduling {
@@ -15,47 +18,164 @@ protocol ProductNotificationScheduling {
     func cancelAll(forProductId productId: ProductId) async throws
 }
 
+/// The part of the system notification center the scheduler uses.
+protocol ScheduledNotificationCentering: Sendable {
+    func add(_ request: UNNotificationRequest) async throws
+
+    func pendingNotificationRequests() async -> [UNNotificationRequest]
+
+    func deliveredNotifications() async -> [UNNotification]
+
+    func removePendingNotificationRequests(withIdentifiers identifiers: [String])
+}
+
+extension UNUserNotificationCenter: ScheduledNotificationCentering {}
+
 actor ProductNotificationScheduler: ProductNotificationScheduling {
     static let shared = ProductNotificationScheduler()
 
     private static let globalSlotLimit = 64
 
     private let storageFacade: StorageFacadeProtocol
-    private let notificationCenter: UNUserNotificationCenter
+    private let notificationCenter: any ScheduledNotificationCentering
     private let mapper: AnyCoreDataMapper<ScheduledNotificationEntry, CDScheduledNotification>
+    private let diagnostics: ProductNotificationDiagnostics
+    private let applicationStateStreams: ApplicationStateStreamFactory
     private let logger: LoggerProtocol
+
+    // Actor methods interleave at each await, so a sweep could report a booking twice or call a cancelled one gone.
+    private let operations = SerialOperationQueue()
+    private var becameActive: Task<Void, Never>?
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
-        notificationCenter: UNUserNotificationCenter = .current(),
+        notificationCenter: any ScheduledNotificationCentering = UNUserNotificationCenter.current(),
+        diagnostics: ProductNotificationDiagnostics = ProductNotificationDiagnostics(
+            recorder: IssueMonitoringFactory.createHostEventRecorder()
+        ),
+        applicationStateStreams: ApplicationStateStreamFactory = ApplicationStateStreamFactory(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.storageFacade = storageFacade
         self.notificationCenter = notificationCenter
         mapper = AnyCoreDataMapper(ScheduledNotificationMapper())
+        self.diagnostics = diagnostics
+        self.applicationStateStreams = applicationStateStreams
         self.logger = logger
+    }
+
+    /// Sweeps now and at every activation, since a launch passes its first activation before the services start.
+    func start() {
+        guard becameActive == nil else {
+            return
+        }
+        let events = applicationStateStreams.stream(for: .didBecomeActive)
+        becameActive = Task { [weak self] in
+            await self?.sweepInTurn()
+            for await _ in events {
+                guard let self else {
+                    return
+                }
+                await sweepInTurn()
+            }
+        }
     }
 
     func schedule(
         productId: ProductId,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32 {
-        try await reconcileStaleEntries()
+        let notificationId = try await operations.run { [self] in
+            try await book(productId: productId, request: request)
+        }
+        guard Task.isCancelled else {
+            return notificationId
+        }
 
-        let allRepository = createRepository()
-        let currentCount = try await allRepository.fetchAllOperation(with: .init()).asyncExecute().count
+        // The queue runs the booking on its own task, so cancelling the caller cannot stop it.
+        try await cancel(productId: productId, notificationId: notificationId)
+        throw CancellationError()
+    }
+
+    func cancel(productId: ProductId, notificationId: UInt32) async throws {
+        try await operations.run { [self] in
+            try await cancelBooking(productId: productId, notificationId: notificationId)
+        }
+    }
+
+    func cancelAll(forProductId productId: ProductId) async throws {
+        try await operations.run { [self] in
+            try await cancelBookings(productId: productId)
+        }
+    }
+}
+
+// MARK: - Private
+
+private extension ProductNotificationScheduler {
+    func book(productId: ProductId, request: ScheduledNotificationRequest) async throws -> UInt32 {
+        let repository = createRepository()
+        let (currentCount, notificationId) = try await reporting(.storeFailed, productId: productId) {
+            try await sweep()
+            let bookedCount = try await repository.fetchAllOperation(with: .init()).asyncExecute().count
+            return try await (bookedCount, generateUniqueId(productId: productId))
+        }
+
         guard currentCount < Self.globalSlotLimit else {
+            diagnostics.notScheduled(productId: productId, notificationId: nil, reason: .limitReached)
             throw ProductNativeApiError.scheduleLimitReached
         }
 
-        let notificationId = try await generateUniqueId(productId: productId)
         let entry = ScheduledNotificationEntry(
             productId: productId,
             notificationId: notificationId
         )
 
+        try await reporting(.addFailed, productId: productId, notificationId: notificationId) {
+            try await notificationCenter.add(makeRequest(entry: entry, request: request))
+        }
+        try await reporting(.storeFailed, productId: productId, notificationId: notificationId) {
+            try await store(entry, in: repository)
+        }
+
+        diagnostics.scheduled(entry: entry, scheduledAtMs: request.scheduledAtMs)
+        logger.debug("Scheduled push notification for \(productId)")
+
+        return notificationId
+    }
+
+    func reporting<T>(
+        _ reason: ProductNotificationEvent.Reason,
+        productId: ProductId,
+        notificationId: UInt32? = nil,
+        _ step: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await step()
+        } catch {
+            diagnostics.notScheduled(productId: productId, notificationId: notificationId, reason: reason)
+            throw error
+        }
+    }
+
+    func store(
+        _ entry: ScheduledNotificationEntry,
+        in repository: AnyDataProviderRepository<ScheduledNotificationEntry>
+    ) async throws {
+        do {
+            try await repository.saveOperation({ [entry] }, { [] }).asyncExecute()
+        } catch {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: [entry.unIdentifier])
+            throw error
+        }
+    }
+
+    func makeRequest(
+        entry: ScheduledNotificationEntry,
+        request: ScheduledNotificationRequest
+    ) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
-        content.title = productId.rawValue
+        content.title = entry.productId.rawValue
         content.body = request.text
         content.sound = .default
 
@@ -69,23 +189,16 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 
         content.userInfo = userInfo
 
-        let trigger = makeTrigger(scheduledAtMs: request.scheduledAtMs)
-
-        let notificationRequest = UNNotificationRequest(
+        return UNNotificationRequest(
             identifier: entry.unIdentifier,
             content: content,
-            trigger: trigger
+            trigger: makeTrigger(scheduledAtMs: request.scheduledAtMs)
         )
-
-        try await notificationCenter.add(notificationRequest)
-        try await allRepository.saveOperation({ [entry] }, { [] }).asyncExecute()
-
-        logger.debug("Scheduled push notification for \(productId)")
-
-        return notificationId
     }
 
-    func cancel(productId: ProductId, notificationId: UInt32) async throws {
+    func cancelBooking(productId: ProductId, notificationId: UInt32) async throws {
+        await sweepLoggingFailure()
+
         let entry = ScheduledNotificationEntry(
             productId: productId,
             notificationId: notificationId
@@ -96,12 +209,20 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         )
 
         let repository = createRepository()
+        let storedEntry = try await repository.fetchOperation(by: { entry.identifier }, options: .init())
+            .asyncExecute()
+        guard storedEntry != nil else { return }
+
+        diagnostics.cancelled(entry: entry)
+
         try await repository.saveOperation({ [] }, { [entry.identifier] }).asyncExecute()
 
         logger.debug("Cancelled notification \(notificationId) \(productId)")
     }
 
-    func cancelAll(forProductId productId: ProductId) async throws {
+    func cancelBookings(productId: ProductId) async throws {
+        await sweepLoggingFailure()
+
         let repository = createProductRepository(productId: productId)
 
         let entries = try await repository.fetchAllOperation(with: .init()).asyncExecute()
@@ -109,16 +230,13 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 
         let unIdentifiers = entries.map(\.unIdentifier)
         notificationCenter.removePendingNotificationRequests(withIdentifiers: unIdentifiers)
+        entries.forEach(diagnostics.cancelled(entry:))
 
         try await repository.deleteAllOperation().asyncExecute()
 
         logger.debug("Cancelled notifications \(productId)")
     }
-}
 
-// MARK: - Private
-
-private extension ProductNotificationScheduler {
     func createRepository() -> AnyDataProviderRepository<ScheduledNotificationEntry> {
         AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -147,7 +265,21 @@ private extension ProductNotificationScheduler {
         )
     }
 
-    func reconcileStaleEntries() async throws {
+    func sweepInTurn() async {
+        await operations.run { [self] in
+            await sweepLoggingFailure()
+        }
+    }
+
+    func sweepLoggingFailure() async {
+        do {
+            try await sweep()
+        } catch {
+            logger.warning("Scheduled notification sweep failed: \(error)")
+        }
+    }
+
+    func sweep() async throws {
         let repository = createRepository()
         let dbEntries = try await repository.fetchAllOperation(with: .init()).asyncExecute()
         guard !dbEntries.isEmpty else { return }
@@ -155,15 +287,28 @@ private extension ProductNotificationScheduler {
         let pendingRequests = await notificationCenter.pendingNotificationRequests()
         let pendingIdentifiers = Set(pendingRequests.map(\.identifier))
 
-        let staleIdentifiers = dbEntries
-            .filter { !pendingIdentifiers.contains($0.unIdentifier) }
-            .map(\.identifier)
+        let staleEntries = dbEntries.filter { !pendingIdentifiers.contains($0.unIdentifier) }
 
-        guard !staleIdentifiers.isEmpty else { return }
+        guard !staleEntries.isEmpty else { return }
 
-        try await repository.saveOperation({ [] }, { staleIdentifiers }).asyncExecute()
+        let deliveredNotifications = await notificationCenter.deliveredNotifications()
+        let deliveredDates = Dictionary(
+            deliveredNotifications.map { ($0.request.identifier, $0.date) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
-        logger.debug("Pruned \(staleIdentifiers.count) stale scheduled notification entries")
+        // Pruning first means a failed prune retries without reporting an entry twice.
+        try await repository.saveOperation({ [] }, { staleEntries.map(\.identifier) }).asyncExecute()
+
+        for entry in staleEntries {
+            if let deliveredAt = deliveredDates[entry.unIdentifier] {
+                diagnostics.delivered(entry: entry, deliveredAt: deliveredAt)
+            } else {
+                diagnostics.gone(entry: entry)
+            }
+        }
+
+        logger.debug("Pruned \(staleEntries.count) stale scheduled notification entries")
     }
 
     func generateUniqueId(productId: ProductId) async throws -> UInt32 {

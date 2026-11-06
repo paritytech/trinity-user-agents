@@ -1,5 +1,6 @@
 import UserNotifications
 import SDKLogger
+import IssueMonitoring
 
 protocol UserNotificationServicing {
     func notificationAccessStatus() async -> NotificationAccessStatus
@@ -115,11 +116,18 @@ final class UserNotificationService: NSObject {
     private var pendingResponses: [UNNotificationResponse] = []
     private var canHandlePushNotifications: Bool = false
     private let logger: LoggerProtocol
+    private let productNotificationDiagnostics: ProductNotificationDiagnostics
 
     let center: UNUserNotificationCenter = .current()
 
-    init(logger: LoggerProtocol = Logger.shared) {
+    init(
+        logger: LoggerProtocol = Logger.shared,
+        productNotificationDiagnostics: ProductNotificationDiagnostics = ProductNotificationDiagnostics(
+            recorder: IssueMonitoringFactory.createHostEventRecorder()
+        )
+    ) {
         self.logger = logger
+        self.productNotificationDiagnostics = productNotificationDiagnostics
         super.init()
     }
 
@@ -249,6 +257,19 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
+        if presentationOptions.isEmpty {
+            productNotificationDiagnostics.suppressed(
+                identifier: notification.request.identifier,
+                userInfo: notification.request.content.userInfo,
+                deliveredAt: notification.date
+            )
+        } else {
+            productNotificationDiagnostics.shown(
+                identifier: notification.request.identifier,
+                userInfo: notification.request.content.userInfo,
+                deliveredAt: notification.date
+            )
+        }
         completionHandler(presentationOptions)
     }
 
@@ -257,6 +278,11 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        productNotificationDiagnostics.tapped(
+            identifier: response.notification.request.identifier,
+            userInfo: response.notification.request.content.userInfo,
+            deliveredAt: response.notification.date
+        )
         guard canHandlePushNotifications, let pushTapHandler else {
             pendingResponses.append(response)
             completionHandler()
