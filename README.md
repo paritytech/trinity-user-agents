@@ -446,7 +446,7 @@ hosts cache records for one hour; `force` refreshes them. The returned avatar CI
 selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
 resolver reads the chain on each call.
 
-Android contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
+Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry.
 
 ### Trinity stack descriptors
 
