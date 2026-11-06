@@ -192,6 +192,48 @@ struct SPARustRuntimeTests {
         #expect(recorder.events.last?.tags["outcome"] == "abandoned")
     }
 
+    /// The interactor reads the product before the runtime starts; that first, cold read is the
+    /// page's load and must carry its session.
+    @Test func whatRunsAsThePageOpenCarriesItsSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let loader = StubProductContentLoader()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            contentLoader: loader,
+            hostEventRecorder: recorder
+        )
+
+        _ = try await runtime.asPageOpen {
+            try await loader.open(ProductId("test.dot"), kind: .app, policy: .untilCancelled)
+        }
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let session = try #require(recorder.events.first?.tags["host.session_id"])
+        #expect(loader.openContexts.count == 2)
+        #expect(loader.openContexts.allSatisfy { $0?.sessionID?.uuidString.lowercased() == session })
+        #expect(loader.openContexts.allSatisfy { $0?.trigger == .open })
+
+        await runtime.dispose()
+    }
+
+    /// Serving a newer build is the user reloading, not the product opening.
+    @Test func servingALaterBuildIsNotThePageOpen() async throws {
+        let loader = StubProductContentLoader()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            contentLoader: loader,
+            hostEventRecorder: RecordingHostEventRecorder()
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        loader.simulate(appliedContentHash: "01")
+        try await runtime.useLatestBuild()
+
+        #expect(loader.openContexts.last == .some(nil))
+
+        await runtime.dispose()
+    }
+
     @Test func anOpenThatFailedBeforeItsPageIsAnError() async throws {
         let recorder = RecordingHostEventRecorder()
         let loader = StubProductContentLoader()

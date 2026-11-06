@@ -186,7 +186,7 @@ private extension SPARustRuntimeInteractor {
 
             setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await self?.resolveProduct()
+                    self?.resolvedProduct = try await newRuntime.asPageOpen { try await self?.resolveProduct() }
 
                     let url = try await newRuntime.start(with: engine)
                     self?.presenter?.didRequestNavigation(to: url)

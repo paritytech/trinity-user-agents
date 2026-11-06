@@ -167,9 +167,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
-        let served = try await telemetry.withContext(session: hostSessionId, trigger: .open) {
-            try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
-        }.archive
+        let served = try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
+            .archive
         try checkNotDisposed()
 
         guard served != servedContent else { return }
@@ -179,6 +178,10 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
     func servedBuild() -> DotNsResolvedContent? {
         servedContent
+    }
+
+    nonisolated func asPageOpen<R>(_ operation: () async throws -> R) async rethrows -> R {
+        try await telemetry.withContext(session: hostSessionId, trigger: .open, operation: operation)
     }
 
     nonisolated func pageLoadTimestamp() -> Int? {
