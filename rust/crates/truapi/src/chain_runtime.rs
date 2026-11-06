@@ -26,7 +26,7 @@ use std::time::Duration;
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
-		Arc, Mutex, OnceLock,
+		Arc, Mutex, OnceLock, Weak,
 		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 };
@@ -163,6 +163,16 @@ pub struct SubxtConnection {
 	pub client: OnlineClient<SubstrateConfig>,
 	/// What the backend's RPC client has learned about its follow.
 	follow: Arc<FollowReport>,
+	/// The connection the client reads over. Weak, since that connection
+	/// caches this bundle.
+	connection: Weak<ChainConnection>,
+}
+
+impl SubxtConnection {
+	/// Whether the connection under this client has closed, or is gone.
+	fn connection_closed(&self) -> bool {
+		self.connection.upgrade().is_none_or(|connection| connection.is_closed())
+	}
 }
 
 /// Cached Subxt client over the legacy JSON-RPC methods, which reach any
@@ -187,7 +197,9 @@ pub struct LegacyConnection {
 /// `ProductRuntimeHost` boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeFailureKind {
-	/// Backend is not wired or refused the request for plumbing reasons.
+	/// The chain could not be reached: the backend is not wired, the node
+	/// could not be dialled, or the connection is gone. A later attempt can
+	/// succeed.
 	Unavailable,
 	/// Backend responded but the payload was malformed or the call failed.
 	HostFailure,
@@ -1467,7 +1479,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow })
+		Ok(SubxtConnection { client, follow, connection: Arc::downgrade(&self) })
 	}
 
 	/// The config every Subxt client on this connection is built with. It
