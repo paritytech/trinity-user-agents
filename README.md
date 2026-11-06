@@ -445,7 +445,7 @@ For avatars, `ImageReference::Username { username, force }` resolves a
 hosts cache records for one hour; `force` refreshes them. The Rust WASM resolver
 reads the chain on each call.
 
-Android contacts and chat views load avatars through the shared loader.
+Android contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
 
 ### Trinity stack descriptors
 
