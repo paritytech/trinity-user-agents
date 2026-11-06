@@ -292,3 +292,59 @@ fn a_lite_username_resolves_part_by_part() {
 	assert_eq!(username_node(tld, "alice.01"), expected);
 	assert_eq!(username_node(tld, "alicebc"), namehash_under(&tld_node(tld), "alicebc"));
 }
+
+#[test]
+fn publishing_uses_the_profile_key_and_canonical_scale_text() {
+	let location =
+		ProfileRecordLocation { node: [0x11; 32], registry: [0x22; 20], resolver: [0x33; 20] };
+	let expected = concat!(
+		"10f13a8c",
+		"1111111111111111111111111111111111111111111111111111111111111111",
+		"0000000000000000000000000000000000000000000000000000000000000060",
+		"00000000000000000000000000000000000000000000000000000000000000a0",
+		"0000000000000000000000000000000000000000000000000000000000000007",
+		"70726f66696c6500000000000000000000000000000000000000000000000000",
+		"0000000000000000000000000000000000000000000000000000000000000004",
+		"41413d3d00000000000000000000000000000000000000000000000000000000",
+	);
+
+	assert_eq!(hex::encode(location.set_record_call(&ProfileRecord::default()).unwrap()), expected);
+}
+
+/// A registry that names `owner` as the owner of one node, and no one as
+/// the owner of any other.
+struct OwnedNode {
+	node: [u8; 32],
+	owner: Address,
+}
+
+#[async_trait::async_trait]
+impl DotnsTransport for OwnedNode {
+	async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		panic!("an owner read needs no raw storage")
+	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("an owner read makes one view call")
+	}
+
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		assert_eq!(dest, &[0x22; 20], "the owner is read from the registry");
+		let call = DotnsRegistry::ownerCall::abi_decode(&input).expect("an owner() view");
+		let owner = if call.node == B256::from(self.node) { self.owner } else { Address::ZERO };
+		Ok(DotnsRegistry::ownerCall::abi_encode_returns(&owner))
+	}
+}
+
+#[tokio::test]
+async fn the_profile_owner_is_the_registry_owner_of_its_node() {
+	let location =
+		ProfileRecordLocation { node: [0x11; 32], registry: [0x22; 20], resolver: [0x33; 20] };
+	let mut registry = OwnedNode { node: [0x11; 32], owner: Address::repeat_byte(0x44) };
+
+	assert_eq!(location.owner(&mut registry).await.unwrap(), [0x44; 20]);
+}

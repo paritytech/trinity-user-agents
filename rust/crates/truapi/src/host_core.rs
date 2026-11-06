@@ -662,6 +662,28 @@ impl SigningHostRuntime {
 		self.signing_host.set_submit_preimages_locally(local);
 	}
 
+	/// Stores a public avatar on Bulletin using the active identity's allowance.
+	///
+	/// Requires an active session and at most 2 MiB of bytes. Success returns the content key;
+	/// authorization or storage failures return an error.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn submit_public_profile_avatar(
+		&self,
+		bytes: Vec<u8>,
+	) -> Result<[u8; 32], truapi::latest::GenericError> {
+		self.signing_host.submit_public_profile_avatar(bytes).await
+	}
+
+	/// Funds the active identity's account for its dotNS profile transaction.
+	///
+	/// Requires an active session and returns allocation failures to the caller.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn ensure_public_profile_allowance(
+		&self,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.signing_host.ensure_public_profile_allowance().await
+	}
+
 	/// The product's hard-subtree public key, derived from the active session
 	/// root, or `None` while no session is active.
 	///

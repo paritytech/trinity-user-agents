@@ -3,6 +3,8 @@
 
 mod policy;
 
+pub use policy::MAX_IMAGE_BYTES;
+
 use core::{future::Future, ops::ControlFlow, time::Duration};
 use std::sync::Arc;
 
@@ -41,6 +43,17 @@ pub enum ImageFormat {
 	/// WebP.
 	#[codec(index = 2)]
 	Webp,
+}
+
+impl ImageFormat {
+	/// Validates the format, file size and dimensions against the core's image policy.
+	///
+	/// Checks headers without decoding pixels. Rejects unsupported or mismatched formats,
+	/// files over 2 MiB, unreadable dimensions and sides exceeding 4096 pixels.
+	pub fn validate(bytes: &[u8], declared_format: Option<Self>) -> Result<Self, ImageError> {
+		policy::check(bytes, declared_format)
+			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })
+	}
 }
 
 // Products write the CIDs in their renderer trees, so a bad one is input, not a bug. UniFFI hands a
@@ -152,8 +165,7 @@ impl ImageLoader {
 			},
 		};
 		let bytes = self.read_verified(&cid, || self.read(&cid)).await?;
-		let format = policy::check(&bytes, declared_format)
-			.map_err(|rejection| ImageError::Rejected { reason: rejection.to_string() })?;
+		let format = ImageFormat::validate(&bytes, declared_format)?;
 		Ok(LoadedImage { bytes, format, content_key: cid })
 	}
 

@@ -390,6 +390,9 @@ pub enum DotnsError {
 	/// A name's content resolver could not be located.
 	#[error("DotnsRegistry.resolver()")]
 	Resolver(#[source] DotnsCallError),
+	/// A name's owner could not be read.
+	#[error("DotnsRegistry.owner()")]
+	Owner(#[source] DotnsCallError),
 	/// A text record could not be read.
 	#[error("ContentResolver.text()")]
 	TextRecord(#[source] DotnsCallError),

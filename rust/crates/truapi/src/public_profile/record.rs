@@ -31,6 +31,31 @@ impl ProfileRecord {
 		Self::decode_all(&mut bytes.as_slice()).ok()
 	}
 
+	/// Encodes a publishable record as base64.
+	///
+	/// Returns `None` when its SCALE payload exceeds the reader's 16 KiB limit.
+	pub fn to_text(&self) -> Option<String> {
+		let bytes = self.encode();
+		(bytes.len() <= MAX_RECORD_BYTES).then(|| STANDARD.encode(bytes))
+	}
+
+	/// Makes this avatar the first entry.
+	///
+	/// Replaces the first decodable avatar, preserving every other entry and its relative order.
+	pub fn set_avatar(&mut self, cid: BulletinCid, format: ImageFormat) {
+		if let Some(index) = self
+			.entries
+			.iter()
+			.position(|entry| matches!(entry.try_decode(), Some(ProfileEntry::Avatar(_))))
+		{
+			self.entries.remove(index);
+		}
+		self.entries.insert(
+			0,
+			WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar { cid, format })),
+		);
+	}
+
 	/// Returns the first decodable avatar.
 	///
 	/// Unknown or malformed entries are skipped. Returns `None` when no avatar decodes.

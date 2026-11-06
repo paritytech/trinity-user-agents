@@ -24,7 +24,8 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
-                         from Bulletin by CID and checks them
+                         from Bulletin by CID and checks them; `runtime/preimage.rs`
+                         submits Bulletin preimages for products and identity profiles
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol

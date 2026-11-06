@@ -10,9 +10,7 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use tracing::{instrument, warn};
 
-pub use record::ProfileRecord;
-#[cfg(test)]
-pub use record::{ProfileAvatar, ProfileEntry};
+pub use record::{ProfileAvatar, ProfileEntry, ProfileRecord};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{store::DbError, unix_time::current_unix_secs};
@@ -20,8 +18,8 @@ use crate::{store::DbError, unix_time::current_unix_secs};
 use crate::{
 	dotns_views::{decode_view, network_tld_from_view, protocol_registry, read_view, tld_node},
 	host_logic::dotns_gateway::{
-		ContentResolver, DotnsError, DotnsTransport, ProtocolRegistry, is_dotted_lite_username,
-		namehash_under,
+		ContentResolver, DotnsError, DotnsRegistry, DotnsTransport, ProtocolRegistry,
+		is_dotted_lite_username, namehash_under,
 	},
 	platform::is_dns_label,
 	runtime::{DotnsLookup, DotnsLookupKind, services::RuntimeServices},
@@ -54,19 +52,36 @@ pub enum PublicProfileError {
 }
 
 /// The node and contracts that hold a username's public profile.
+///
+/// Resolve from the deployment before reading, checking ownership or preparing a write.
 #[derive(Debug, PartialEq)]
-struct ProfileRecordLocation {
+pub struct ProfileRecordLocation {
 	/// Username namehash under the deployment's TLD.
 	node: [u8; 32],
 	/// Forward registry that determines the node's owner and delegates.
 	registry: [u8; 20],
 	/// Content resolver registered by the deployment.
-	resolver: [u8; 20],
+	pub resolver: [u8; 20],
 }
 
 impl ProfileRecordLocation {
+	/// Encodes the call to publish this node's profile record.
+	///
+	/// Returns `None` when the SCALE record exceeds 16 KiB before base64 encoding.
+	pub fn set_record_call(&self, record: &ProfileRecord) -> Option<Vec<u8>> {
+		let call = ContentResolver::setTextCall {
+			node: self.node.into(),
+			key: PROFILE_RECORD_KEY.to_string(),
+			value: record.to_text()?,
+		};
+		Some(call.abi_encode())
+	}
+
 	/// Finds the profile's content resolver without changing the node's resolver.
-	async fn resolve<T: DotnsTransport + ?Sized>(
+	///
+	/// Returns `None` when the deployment lacks the required contracts. Invalid usernames
+	/// and failed chain reads return errors.
+	pub async fn resolve<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
 	) -> Result<Option<Self>, PublicProfileError> {
@@ -102,7 +117,9 @@ impl ProfileRecordLocation {
 	}
 
 	/// Reads the raw text so a writer can reject malformed records without losing them.
-	async fn read<T: DotnsTransport + ?Sized>(
+	///
+	/// Empty text returns `None`; chain and decoding failures return errors.
+	pub async fn read<T: DotnsTransport + ?Sized>(
 		&self,
 		transport: &mut T,
 	) -> Result<Option<String>, DotnsError> {
@@ -117,6 +134,24 @@ impl ProfileRecordLocation {
 		.await
 		.map_err(DotnsError::TextRecord)?;
 		Ok((!text.is_empty()).then_some(text))
+	}
+
+	/// Returns the registered owner of the profile's name.
+	///
+	/// Writers compare this address with their signer before spending its allowance.
+	/// Chain and decoding failures return an owner lookup error.
+	pub async fn owner<T: DotnsTransport + ?Sized>(
+		&self,
+		transport: &mut T,
+	) -> Result<[u8; 20], DotnsError> {
+		let owner = read_view(
+			transport,
+			&self.registry,
+			DotnsRegistry::ownerCall { node: self.node.into() },
+		)
+		.await
+		.map_err(DotnsError::Owner)?;
+		Ok(owner.into_array())
 	}
 }
 

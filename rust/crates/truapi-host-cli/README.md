@@ -261,6 +261,9 @@ Commands always start with `/`:
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
+| `/profile` | Show the active identity's decoded public `ProfileRecord` (signing host). |
+| `/profile <username>` | Show another username's public `ProfileRecord` without provisioning an identity (signing host). |
+| `/profile upload <image>` | Upload a local PNG, JPEG, GIF, or WebP image and publish it as the active identity's avatar (signing host). |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
@@ -271,6 +274,14 @@ Commands always start with `/`:
 | `/clear` | Clear the visible transcript. |
 | `/copy` | Copy the retained transcript to the system clipboard. |
 | `/quit` | Shut down cleanly. |
+
+`/profile upload` accepts images up to 2 MiB and 4096 pixels on each side.
+Quote paths containing spaces,
+for example `/profile upload "pictures/my avatar.png"`. It uploads the image
+to Bulletin and updates the username's dotNS `profile` text record, preserving
+unrelated entries. The command requires an existing identity with a username.
+Profile reads and uploads also work through `signing-host exec`, for example
+`truapi-host signing-host exec '/profile alice.01'`.
 
 ### Pasting a pairing QR image
 
@@ -299,8 +310,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Enter submits `/session <name>` as
-typed; use Tab first to insert a suggested exact session name.
+and `/script` and `/profile upload` complete filesystem paths. Profile uploads
+also complete quoted directories containing spaces. Enter submits `/session <name>`
+as typed; use Tab first to insert a suggested exact session name.
 Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a

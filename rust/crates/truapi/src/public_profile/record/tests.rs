@@ -149,3 +149,89 @@ fn a_gif_avatar_uses_the_shared_image_format() {
 		),
 	);
 }
+
+#[test]
+fn updating_the_avatar_preserves_unknown_entries_and_their_order() {
+	let unknown = WrapperKeepOpaque::from_encoded(vec![7, 1, 2, 3]);
+	let duplicate = WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
+		cid: [2; 32].into(),
+		format: ImageFormat::Png,
+	}));
+	let mut record = ProfileRecord {
+		entries: vec![
+			unknown.clone(),
+			WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar(CID))),
+			duplicate.clone(),
+		],
+	};
+
+	record.set_avatar([3; 32].into(), ImageFormat::Webp);
+
+	assert_eq!(
+		ProfileRecord::from_text(&record.to_text().unwrap()),
+		Some(ProfileRecord {
+			entries: vec![
+				WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
+					cid: [3; 32].into(),
+					format: ImageFormat::Webp,
+				})),
+				unknown,
+				duplicate,
+			],
+		})
+	);
+}
+
+#[test]
+fn adding_an_avatar_keeps_a_record_from_a_newer_writer() {
+	let unknown = WrapperKeepOpaque::from_encoded(vec![9, 4, 5]);
+	let mut record = ProfileRecord { entries: vec![unknown.clone()] };
+
+	record.set_avatar(CID.parse().unwrap(), ImageFormat::Png);
+
+	assert_eq!(
+		record,
+		ProfileRecord {
+			entries: vec![
+				WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar(CID))),
+				unknown
+			],
+		}
+	);
+}
+
+#[test]
+fn a_new_avatar_precedes_opaque_avatars_from_newer_writers() {
+	let future_avatar = WrapperKeepOpaque::from_encoded(
+		[vec![0u8], CID.parse::<BulletinCid>().unwrap().encode(), vec![9u8]].concat(),
+	);
+	for entries in [
+		vec![future_avatar.clone()],
+		vec![
+			future_avatar.clone(),
+			WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar(CID))),
+		],
+	] {
+		let mut record = ProfileRecord { entries };
+
+		record.set_avatar(CID.parse().unwrap(), ImageFormat::Png);
+
+		assert_eq!(
+			ProfileRecord::from_text(&record.to_text().unwrap()),
+			Some(ProfileRecord {
+				entries: vec![
+					WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar(CID))),
+					future_avatar.clone(),
+				],
+			})
+		);
+	}
+}
+
+#[test]
+fn a_writer_cannot_publish_a_record_readers_will_refuse() {
+	let record =
+		ProfileRecord { entries: vec![WrapperKeepOpaque::from_encoded(vec![0; MAX_RECORD_BYTES])] };
+
+	assert_eq!(record.to_text(), None);
+}

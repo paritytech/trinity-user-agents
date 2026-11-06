@@ -149,10 +149,73 @@ fn exec_help_is_plain_and_exits_successfully() {
 	assert!(String::from_utf8_lossy(&output.stdout).contains("/devices --remove <id> --force"));
 	assert!(String::from_utf8_lossy(&output.stdout).contains("/approval automatic"));
 	assert!(String::from_utf8_lossy(&output.stdout).contains("/session --clear-all"));
+	assert!(String::from_utf8_lossy(&output.stdout).contains("/profile <username>"));
+	assert!(String::from_utf8_lossy(&output.stdout).contains("/profile upload <image>"));
 	#[cfg(unix)]
 	assert!(String::from_utf8_lossy(&output.stdout).contains("ws+unix:"));
 	assert!(!output.stdout.contains(&0x1b));
 	assert!(!output.stderr.contains(&0x1b));
+}
+
+#[test]
+fn own_profile_commands_do_not_provision_an_identity() {
+	for input in ["/profile", "/profile upload avatar.png"] {
+		let temporary = tempfile::tempdir().expect("create temporary state root");
+		let output = command()
+			.args(["signing-host", "--frame-listen", "127.0.0.1:0", "--base-path"])
+			.arg(temporary.path())
+			.args(["exec", input])
+			.env_remove("HOST_CLI_SIGNER_MNEMONIC")
+			.env_remove("TRUAPI_HOST_BASE_PATH")
+			.env("TRUAPI_HOST_NO_UPDATE", "1")
+			.stdin(Stdio::null())
+			.output()
+			.expect("run profile command without an identity");
+
+		assert!(!output.status.success(), "{input}: {output:?}");
+		assert!(
+			String::from_utf8_lossy(&output.stderr).contains("no active identity username"),
+			"{input}: {output:?}"
+		);
+		assert!(!temporary.path().join("v2/accounts.json").exists());
+	}
+}
+
+#[test]
+fn malformed_profile_upload_is_rejected_before_session_setup() {
+	let temporary = tempfile::tempdir().expect("create temporary state root");
+	let output = command()
+		.args(["signing-host", "--base-path"])
+		.arg(temporary.path())
+		.args(["exec", "/profile upload"])
+		.env_remove("HOST_CLI_SIGNER_MNEMONIC")
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.stdin(Stdio::null())
+		.output()
+		.expect("reject incomplete profile upload");
+
+	assert!(!output.status.success());
+	assert!(String::from_utf8_lossy(&output.stderr).contains("usage: /profile"));
+	assert!(!temporary.path().join("v2/paseo-next-v2").exists());
+}
+
+#[test]
+fn named_profile_reads_do_not_require_or_create_a_signer() {
+	let temporary = tempfile::tempdir().expect("create temporary state root");
+	let output = command()
+		.args(["signing-host", "--frame-listen", "127.0.0.1:0", "--base-path"])
+		.arg(temporary.path())
+		.args(["exec", "/profile invalid/name"])
+		.env_remove("HOST_CLI_SIGNER_MNEMONIC")
+		.env_remove("TRUAPI_HOST_BASE_PATH")
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.stdin(Stdio::null())
+		.output()
+		.expect("resolve a profile without a signer");
+
+	assert!(!output.status.success());
+	assert!(String::from_utf8_lossy(&output.stderr).contains("not a dotNS username"), "{output:?}");
+	assert!(!temporary.path().join("v2/accounts.json").exists());
 }
 
 #[test]
