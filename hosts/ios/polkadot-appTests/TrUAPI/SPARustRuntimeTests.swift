@@ -164,6 +164,7 @@ struct SPARustRuntimeTests {
         let finishedAt = try #require(runtime.pageLoadTimestamp())
         await runtime.didFinishPageLoad(loaded: true, at: finishedAt)
         await runtime.didFinishPageLoad(loaded: false, at: finishedAt)
+        await runtime.dispose()
 
         let events = recorder.events
         #expect(events.map(\.name) == ["host.webview.created", "host.webview.page_loaded"])
@@ -176,8 +177,6 @@ struct SPARustRuntimeTests {
         #expect(pageLoaded.tags["product.id"] == "test.dot")
         #expect(pageLoaded.extras["duration_ms"] == .integer(500))
         #expect(pageLoaded.extras["event.monotonic_ms"] == .integer(1_750))
-
-        await runtime.dispose()
     }
 
     @Test func aFailedFirstPageIsReportedAsAnError() async throws {
@@ -246,13 +245,12 @@ struct SPARustRuntimeTests {
             try await loader.open(ProductId("test.dot"), kind: .app, policy: .untilCancelled)
         }
         _ = try await runtime.start(with: MockJSEngine())
+        await runtime.dispose()
 
         let session = try #require(recorder.events.first?.tags["host.session_id"])
         #expect(loader.openContexts.count == 2)
         #expect(loader.openContexts.allSatisfy { $0?.sessionID?.uuidString.lowercased() == session })
         #expect(loader.openContexts.allSatisfy { $0?.trigger == .open })
-
-        await runtime.dispose()
     }
 
     /// Serving a newer build is the user reloading, not the product opening.
@@ -347,13 +345,12 @@ struct SPARustRuntimeTests {
         )
 
         _ = try await runtime.start(with: MockJSEngine())
+        await runtime.dispose()
 
         let session = try #require(recorder.events.first?.tags["host.session_id"])
         let context = try #require(loader.openContexts.first ?? nil)
         #expect(context.sessionID?.uuidString.lowercased() == session)
         #expect(context.trigger == .open)
-
-        await runtime.dispose()
     }
 
     #if DEBUG
@@ -474,12 +471,11 @@ struct SPARustRuntimeTests {
 
         _ = try await runtime.start(with: MockJSEngine())
         await runtime.didFinishPageLoad(loaded: true, at: 2_000)
+        await runtime.dispose()
 
         let pageLoaded = try #require(recorder.events.last)
         #expect(pageLoaded.extras["tap_ms"] == .integer(1_600))
         #expect(pageLoaded.extras["duration_ms"] == .integer(1_000))
-
-        await runtime.dispose()
     }
 
     /// A tap that opened a page is timed to that page's load starting, under the page's session, once
@@ -502,6 +498,8 @@ struct SPARustRuntimeTests {
         )
         let retry = makeRuntime(configuration: configuration, hostEventRecorder: recorder)
         _ = try await runtime.start(with: MockJSEngine())
+        await runtime.dispose()
+        await retry.dispose()
 
         let tapped = recorder.events.filter { $0.name == "host.pocket.card_tapped" }
         let created = try #require(recorder.events.first { $0.name == "host.webview.created" })
@@ -510,9 +508,6 @@ struct SPARustRuntimeTests {
         #expect(tapped.first?.tags["open.source"] == "deeplink")
         #expect(tapped.first?.extras["duration_ms"] == .integer(300))
         #expect(tapped.first?.tags["host.session_id"] == created.tags["host.session_id"])
-
-        await runtime.dispose()
-        await retry.dispose()
 
         // The retry has a session of its own and is not timed from the tap.
         let pages = recorder.events.filter { $0.name == "host.webview.page_loaded" }
