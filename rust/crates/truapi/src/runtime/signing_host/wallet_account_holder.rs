@@ -316,6 +316,18 @@ impl WalletAccountHolder {
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
 		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))
 	}
+
+	/// Check that `account` is this wallet's identity account.
+	///
+	/// Fails with `Unavailable` for any other account, so a paired host's legacy
+	/// request is refused before the user reviews it.
+	pub fn require_identity_account(
+		&self,
+		session: &AuthoritySession,
+		account: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		self.with_keys(session, |keys| keys.identity_keypair_for(account).map(drop))
+	}
 }
 
 struct WalletKeys {
@@ -357,6 +369,21 @@ impl WalletKeys {
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		Ok(derive_identity_keypair(&self.entropy, &self.network_suffix)?)
+	}
+
+	fn identity_keypair_for(
+		&self,
+		account: [u8; 32],
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		let keypair = self.identity_keypair()?;
+		if keypair.public.to_bytes() != account {
+			return Err(AuthorityError::Unavailable {
+				reason: "signing host: the requested identity account is not available in this \
+				         CLI wallet"
+					.to_string(),
+			});
+		}
+		Ok(keypair)
 	}
 
 	fn ring_vrf_entropy(

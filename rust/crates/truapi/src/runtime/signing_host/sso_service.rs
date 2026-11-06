@@ -5,8 +5,8 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use crate::platform::{
-	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-	UserConfirmationReview,
+	CreateTransactionReview, LegacySigningAccount, ProductId, ResourceAllocationReview,
+	SignPayloadReview, SignRawReview, UserConfirmationReview,
 };
 use tracing::warn;
 use truapi::latest as api;
@@ -174,6 +174,10 @@ impl SigningHostSsoService {
 		request: SignRawWithLegacyAccountRequest,
 		watermarked: bool,
 	) -> Result<api::HostSignPayloadResponse, String> {
+		self.signing_host
+			.wallet()
+			.require_identity_account(&cx.session, request.account)
+			.map_err(|err| err.to_string())?;
 		let public_request = api::HostSignRawWithLegacyAccountRequest {
 			signer: product_public_key_to_address(request.account),
 			payload: request.data,
@@ -181,6 +185,7 @@ impl SigningHostSsoService {
 		self.confirm(
 			cx,
 			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
 				request: public_request.clone(),
 				watermarked,
 			}),
@@ -411,9 +416,16 @@ impl SigningHostSsoService {
 		request: CreateTransactionWithLegacyAccountRequest,
 	) -> CreateTransactionResponse {
 		let CreateTransactionLegacyPayload::V1(payload) = request.payload;
+		self.signing_host
+			.wallet()
+			.require_identity_account(&cx.session, payload.signer)
+			.map_err(|err| err.to_string())?;
 		self.serve_create_transaction(
 			cx,
-			CreateTransactionReview::LegacyAccount(payload.clone()),
+			CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: payload.clone(),
+			},
 			CreateTransactionAuthorityRequest::IdentityAccount(payload),
 		)
 		.await

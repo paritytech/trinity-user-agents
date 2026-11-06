@@ -122,15 +122,7 @@ impl WalletAccountHolder {
 				Ok(keypair)
 			},
 			CreateTransactionAuthorityRequest::IdentityAccount(request) => {
-				let keypair = keys.identity_keypair()?;
-				if keypair.public.to_bytes() != request.signer {
-					return Err(AuthorityError::Unavailable {
-						reason: "signing host: the requested identity account is not available in \
-                                 this CLI wallet"
-							.to_string(),
-					});
-				}
-				Ok(keypair)
+				keys.identity_keypair_for(request.signer)
 			},
 		}
 	}
@@ -480,15 +472,7 @@ impl AccountHolder for WalletAccountHolder {
 						(keys.product_keypair(&request.account)?, request.payload)
 					},
 					SignRawAuthorityRequest::LegacyAccount { account, request } => {
-						let keypair = keys.identity_keypair()?;
-						if keypair.public.to_bytes() != account {
-							return Err(AuthorityError::Unavailable {
-								reason: "signing host: the requested legacy account is not \
-                                         available in this CLI wallet"
-									.to_string(),
-							});
-						}
-						(keypair, request.payload)
+						(keys.identity_keypair_for(account)?, request.payload)
 					},
 				};
 				let message = raw_payload_bytes(payload, watermarked)?;

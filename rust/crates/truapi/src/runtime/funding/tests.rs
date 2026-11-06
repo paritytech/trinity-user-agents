@@ -1,12 +1,12 @@
 use super::*;
-use crate::latest::FundingInboundUpdate;
+use crate::latest::{FundingInboundUpdate, FundingOutboundUpdate};
 
 use futures::executor::block_on;
 use parity_scale_codec::Encode;
 
 use super::store::{put_session_row, rows};
 use crate::{
-	host_logic::funding::{FundingStage, RECORDED_PER_OWNER},
+	host_logic::funding::FundingStage,
 	store::{Db, open_memory_core_db},
 };
 
@@ -70,10 +70,11 @@ impl FundingProviderLink for IdleLink {
 fn an_unanswered_call_leaves_a_connecting_or_running_catch_up_alone() {
 	let registry = FundingRegistry::default();
 	registry.link(&ramp(), Arc::new(IdleLink));
-	let state = || registry.lock_links()[&ramp()].catch_up;
-	let set =
-		|catch_up| registry.lock_links().get_mut(&ramp()).expect("linked").catch_up = catch_up;
-	let generation = registry.lock_links()[&ramp()].generation;
+	let state = || registry.lock_links().by_provider[&ramp()].catch_up;
+	let set = |catch_up| {
+		registry.lock_links().by_provider.get_mut(&ramp()).expect("linked").catch_up = catch_up
+	};
+	let generation = registry.lock_links().by_provider[&ramp()].generation;
 
 	registry.call_unanswered(&ramp(), generation);
 	let connecting = state();
@@ -111,6 +112,51 @@ fn a_link_a_call_failed_on_is_passed_over_for_the_next_connection() {
 	assert!(waited && Arc::ptr_eq(&block_on(next), &started));
 }
 
+// A task dropped before it finishes, as when the runtime shuts its tasks
+// down, must not leave its session, funds or worker marked as being
+// worked on, or the reconciler would never take them up again.
+#[test]
+fn work_whose_task_is_dropped_is_taken_up_again() {
+	let registry = Arc::new(FundingRegistry::default());
+	registry.link(&ramp(), Arc::new(IdleLink));
+	let generation = registry.lock_links().by_provider[&ramp()].generation;
+	registry.lock_links().by_provider.get_mut(&ramp()).expect("linked").catch_up = CatchUp::Running;
+	lock(&registry.following).insert("fs_1".to_string());
+	registry.lock_resolving().insert([1; 32], u64::MAX);
+
+	drop(CatchingUp { registry: registry.clone(), provider: ramp(), generation, answered: false });
+	drop(Claim {
+		registry: registry.clone(),
+		set: |registry| &registry.following,
+		key: "fs_1".to_string(),
+	});
+	drop(Resolving { registry: registry.clone(), host_id: [1; 32], next_ms: None });
+
+	assert_eq!(
+		(
+			matches!(registry.lock_links().by_provider[&ramp()].catch_up, CatchUp::Due { .. }),
+			lock(&registry.following).is_empty(),
+			registry.lock_resolving().is_empty(),
+		),
+		(true, true, true)
+	);
+}
+
+// Every quote asked of a provider that never connects waits for it and
+// then gives up; what is left behind is at most the last waiter, not one
+// per ask.
+#[test]
+fn waiting_for_a_provider_that_never_connects_leaves_no_trail() {
+	let registry = FundingRegistry::default();
+	let ramp = ramp();
+	for _ in 0..3 {
+		let asked = registry.connected_link_besides(&ramp, None);
+		assert!(futures::FutureExt::now_or_never(asked).is_none());
+	}
+
+	assert_eq!(registry.lock_links().waiters[&ramp].listeners.lock().len(), 1);
+}
+
 // A deadline already past belongs to funds whose call is still in
 // flight, which the reconciler skips; waking for it would spin.
 #[test]
@@ -135,8 +181,8 @@ fn stored_intents(db: &Db) -> Vec<String> {
 }
 
 fn insert(registry: &FundingRegistry, session: FundingSession) {
-	block_on(registry.commit(NOW, move |sessions| {
-		sessions.insert(session.intent.clone(), session);
+	block_on(registry.commit(NOW, move |draft| {
+		draft.sessions.insert(session.intent.clone(), session);
 		((), Vec::new())
 	}))
 	.expect("inserted");
@@ -151,7 +197,10 @@ fn a_settled_session_survives_later_saves() {
 
 	insert(&registry, session("fs_new", NOW));
 
-	assert_eq!(stored_intents(&db), ["fs_new", "fs_old"]);
+	assert_eq!(
+		(stored_intents(&db), block_on(rows(&db, "funding_summary")).len()),
+		(vec!["fs_new".to_string()], 1)
+	);
 }
 
 #[test]
@@ -182,7 +231,7 @@ fn subscribing_drops_watchers_that_went_away() {
 	}
 	let _live = registry.subscribe("fs_1").expect("session exists");
 
-	assert_eq!(registry.lock_subscribers()["fs_1"].len(), 1);
+	assert_eq!(registry.lock_held().subscribers["fs_1"].len(), 1);
 }
 
 #[test]
@@ -197,39 +246,60 @@ fn a_restart_restores_open_sessions_and_expires_overdue_ones() {
 
 	assert_eq!(after.get("fs_live"), Some(session("fs_live", NOW)));
 	assert_eq!(
-		after.get("fs_overdue").map(|session| session.stage),
+		after
+			.lock_held()
+			.pack
+			.get("fs_overdue")
+			.map(|packed| packed.summary.stage.clone()),
 		Some(FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW })
 	);
 }
 
-// The host's list shows what is in flight first, then what ended, each
-// newest first.
+// A provider that restarts after a withdrawal was released must still be
+// handed it, or it could never report how the payout went; once it has,
+// there is nothing left for it to do.
 #[test]
-fn sessions_list_in_flight_first_then_ended_newest_first() {
-	let db = open_memory_core_db();
-	let registry = registry_on(&db);
-	let ended = |intent, settled_at_ms| {
-		let mut session = session(intent, settled_at_ms - 1);
-		session.fail(FundingFailure::Expired, settled_at_ms);
-		session
-	};
-	for session in [
-		ended("fs_old", NOW - 2),
-		session("fs_live_old", NOW - 5),
-		ended("fs_new", NOW - 1),
-		session("fs_live_new", NOW),
-	] {
-		insert(&registry, session);
-	}
-
-	assert_eq!(
+fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
+	let registry = registry_on(&open_memory_core_db());
+	let mut released =
+		FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
+	assert!(released.assign(
+		&ProductId::for_test("ramp.dot"),
+		crate::host_logic::funding::test_choice(),
+		NOW
+	));
+	released.updates.push(crate::host_logic::funding::FundingUpdateRecord {
+		update: FundingUpdate::Out(FundingOutboundUpdate::Collecting {
+			payment_id: [4; 32],
+			amount: 100,
+		}),
+		at_ms: NOW,
+	});
+	assert!(released.settle(100, NOW));
+	insert(&registry, released);
+	let first_served = || {
 		registry
-			.sessions()
+			.pending_calls(&ProductId::for_test("ramp.dot"))
 			.into_iter()
-			.map(|session| session.intent)
-			.collect::<Vec<_>>(),
-		["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
-	);
+			.find_map(|call| match call {
+				ProviderCall::Assign(session) => Some(session.intent),
+				ProviderCall::Cancel(..) => None,
+			})
+	};
+
+	let before = first_served();
+	let reported = block_on(registry.report(
+		NOW + 1,
+		&worker("ramp.dot"),
+		"fs_out",
+		FundingUpdate::Out(FundingOutboundUpdate::Payout {
+			outcome: truapi::latest::FundingPayout::PaidOut,
+		}),
+	))
+	.expect("stored");
+	let after = first_served();
+
+	assert_eq!((before, reported, after), (Some("fs_out".to_string()), Ok(()), None));
 }
 
 fn worker(provider_id: &str) -> ProductContext {
@@ -239,6 +309,7 @@ fn worker(provider_id: &str) -> ProductContext {
 /// Funds a report named, as the core follows them.
 fn named_funds_record(host_id: [u8; 32], amount: u128) -> StartedFunds {
 	StartedFunds {
+		direction: FundingDirection::In,
 		host_id,
 		amount,
 		terms: [0; 32],
@@ -312,6 +383,74 @@ fn started_funds_belong_to_the_session_they_were_started_for() {
 			CancelOutcome::Requested,
 			Vec::new(),
 		)
+	);
+}
+
+// A withdrawal whose payout failed is refunded with a top-up, so it takes
+// a top-up named for it, which moves in; a withdrawal still paying out
+// takes none.
+#[test]
+fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
+	let registry = registry_on(&open_memory_core_db());
+	let withdrawal = |intent: &str, payout: Option<truapi::latest::FundingPayout>| {
+		let mut withdrawal =
+			FundingSession { direction: FundingDirection::Out, ..session(intent, NOW) };
+		assert!(withdrawal.assign(
+			&ProductId::for_test("ramp.dot"),
+			crate::host_logic::funding::test_choice(),
+			NOW
+		));
+		withdrawal.record_start(FundingDirection::Out, [4; 32], 80, [0; 32], NOW);
+		withdrawal.accept_start(&[4; 32]);
+		withdrawal
+			.report(
+				&ProductId::for_test("ramp.dot"),
+				FundingUpdate::Out(FundingOutboundUpdate::Collecting {
+					payment_id: [4; 32],
+					amount: 80,
+				}),
+				|id| *id,
+				NOW,
+			)
+			.expect("collecting");
+		assert!(withdrawal.settle(80, NOW));
+		if let Some(outcome) = payout {
+			withdrawal
+				.report(
+					&ProductId::for_test("ramp.dot"),
+					FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }),
+					|id| *id,
+					NOW,
+				)
+				.expect("payout");
+		}
+		withdrawal
+	};
+	let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
+	insert(&registry, withdrawal("fs_failed", Some(failed)));
+	insert(&registry, withdrawal("fs_paying", None));
+	let refund = |intent: &str, host_id: [u8; 32]| {
+		block_on(registry.record_start(
+			NOW,
+			&ProductId::for_test("ramp.dot"),
+			intent,
+			FundsAsked { direction: FundingDirection::In, host_id, amount: 80, terms: [0; 32] },
+		))
+		.expect("stored")
+	};
+
+	assert_eq!(
+		(
+			refund("fs_failed", [7; 32]),
+			refund("fs_paying", [8; 32]),
+			registry
+				.get("fs_failed")
+				.expect("kept")
+				.pending_starts()
+				.map(|funds| (funds.direction, funds.host_id))
+				.collect::<Vec<_>>(),
+		),
+		(Some(StartRecord::New), None, vec![(FundingDirection::In, [7; 32])])
 	);
 }
 
@@ -456,6 +595,8 @@ impl FundingPlatform for ReentrantHost {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
 	fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
 		let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
 		// Calling back while the lock is held would hang, so that is
@@ -503,8 +644,8 @@ fn a_failed_save_changes_nothing_in_memory() {
 	insert(&registry, session("fs_1", NOW));
 	block_on(fail_writes(&db, true));
 
-	let failed = block_on(registry.commit(NOW, |sessions| {
-		sessions.clear();
+	let failed = block_on(registry.commit(NOW, |draft| {
+		draft.sessions.clear();
 		((), Vec::new())
 	}));
 
@@ -528,6 +669,139 @@ fn a_session_whose_start_failed_is_not_stored_by_a_later_commit() {
 	assert_eq!(block_on(stored_sessions(&db)), vec![session("fs_2", NOW)]);
 }
 
+/// A funding surface that answers everything and hears nothing.
+struct SilentPlatform;
+
+#[async_trait::async_trait]
+impl FundingPlatform for SilentPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: FundingPresentation,
+	) -> Result<FundingPresentOutcome, GenericError> {
+		Ok(FundingPresentOutcome::Dismissed)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+}
+
+/// A host feed that records, per session, whether each push carried the
+/// full record.
+#[derive(Default)]
+struct RecordingFeed {
+	pushed: Mutex<Vec<(String, bool)>>,
+}
+
+impl RecordingFeed {
+	fn sessions(&self, intent: &str) -> Vec<bool> {
+		lock(&self.pushed)
+			.iter()
+			.filter(|(pushed, _)| pushed == intent)
+			.map(|(_, in_full)| *in_full)
+			.collect()
+	}
+
+	fn clear(&self) {
+		lock(&self.pushed).clear();
+	}
+}
+
+impl FundingFeed for RecordingFeed {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		_status: HostFundingStatusSubscribeItem,
+		session: Option<FundingSession>,
+		_progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		lock(&self.pushed).push((intent, session.is_some()));
+	}
+
+	fn funding_in_progress_changed(&self, _in_progress: bool) {}
+
+	fn funding_options_changed(
+		&self,
+		_intent: String,
+		_options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+	}
+}
+
+// History is the core's: a session is listed as soon as it ends, before
+// the host acknowledges it, and an open one is not. The ended one is
+// compacted at once, remembering that the host has not acknowledged it.
+#[test]
+fn history_lists_every_ended_session_whether_acknowledged_or_not() {
+	let registry = registry_on(&open_memory_core_db());
+	insert(&registry, session("fs_open", NOW));
+	insert(&registry, session("fs_ended", NOW - DAY_MS));
+	block_on(registry.sweep(NOW)).expect("expired");
+	let packed = registry.lock_held().pack.get("fs_ended").cloned().expect("compacted");
+
+	assert_eq!(
+		(registry.get("fs_ended"), packed.acknowledged, registry.history()),
+		(None, false, vec![packed.summary])
+	);
+}
+
+// Changes queued for a session compacted before they are delivered carry
+// the record it had when each was queued; an ending replayed from the
+// pack has none.
+#[test]
+fn a_queued_change_of_a_compacted_session_carries_the_record_it_was_queued_with() {
+	let registry = registry_on(&open_memory_core_db());
+	let feed = Arc::new(RecordingFeed::default());
+	assert!(registry.install_platform(Arc::new(SilentPlatform)));
+	registry.install_feed(feed.clone());
+	let ended = FundingSession {
+		stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
+		..session("fs_1", NOW)
+	};
+	{
+		let mut announcements = registry.lock_announcements();
+		announcements.pending.push_back((
+			"fs_1".to_string(),
+			HostFundingStatusSubscribeItem::InProgress { expires_at: None },
+			Some(Box::new(session("fs_1", NOW))),
+		));
+		announcements.pending.push_back((
+			"fs_1".to_string(),
+			ended.wire_item(),
+			Some(Box::new(ended.clone())),
+		));
+		announcements.pending.push_back(("fs_1".to_string(), ended.wire_item(), None));
+	}
+
+	registry.announce();
+
+	assert_eq!(feed.sessions("fs_1"), vec![true, true, false]);
+}
+
+// A session compacted as it ends still reaches its watchers and the
+// host in full, so the host shows the ending with the whole record.
+#[test]
+fn a_session_compacted_as_it_ends_reaches_the_host_in_full() {
+	let registry = registry_on(&open_memory_core_db());
+	let feed = Arc::new(RecordingFeed::default());
+	assert!(registry.install_platform(Arc::new(SilentPlatform)));
+	registry.install_feed(feed.clone());
+	insert(&registry, session("fs_1", NOW - DAY_MS + 1));
+	feed.clear();
+
+	block_on(registry.sweep(NOW + 1)).expect("expired");
+
+	assert_eq!((registry.get("fs_1"), feed.sessions("fs_1")), (None, vec![true]));
+}
+
 // A product that reloads after the host recorded its session must still
 // learn how it ended, not read it as a session that never existed.
 #[test]
@@ -544,14 +818,107 @@ fn a_recorded_session_still_answers_its_owner_after_a_restart() {
 	let replay = after.subscribe("fs_1").expect("recorded session kept");
 
 	assert_eq!(
-		(block_on(replay.collect::<Vec<_>>()), after.sessions(), after.subscribe("fs_9").is_none()),
-		(vec![expired], Vec::new(), true)
+		(
+			block_on(replay.collect::<Vec<_>>()),
+			after.get("fs_1").is_some_and(|session| session.needs_handoff()),
+			after.subscribe("fs_9").is_none()
+		),
+		(vec![expired], false, true)
 	);
 }
 
-// A recorded session pushed out by newer ones of its owner is compacted,
-// not dropped: after a restart its owner still reads how it ended, and
-// the host can rebuild its history from every recorded session.
+// A compacted session keeps what its history row shows: the provider,
+// the quote it was chosen on, how it ended, the payout and the provider's
+// references, across a restart.
+#[test]
+fn a_compacted_withdrawal_keeps_its_history_details_after_a_restart() {
+	let db = open_memory_core_db();
+	let before = registry_on(&db);
+	let mut sent = FundingSession {
+		direction: FundingDirection::Out,
+		acknowledged: true,
+		..session("fs_sent", NOW - 1)
+	};
+	assert!(sent.assign(
+		&ProductId::for_test("ramp.dot"),
+		crate::host_logic::funding::test_choice(),
+		NOW - 1
+	));
+	sent.choice = Some(crate::host_logic::funding::FundingChoice {
+		quote: truapi::latest::FundingQuote {
+			quote_id: "q".into(),
+			send_amount: 100,
+			receive_amount: 95,
+			provider_fee: 5,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at: None,
+			asset_decimals: 2,
+		},
+		rail: truapi::latest::FundingRail::Bank,
+		asset: "EUR".into(),
+		network: None,
+	});
+	for update in [
+		FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id: [4; 32], amount: 100 }),
+		FundingUpdate::Details {
+			transaction_id: Some("tx-1".into()),
+			reference: Some("ref-1".into()),
+		},
+		FundingUpdate::Out(FundingOutboundUpdate::Payout {
+			outcome: truapi::latest::FundingPayout::PaidOut,
+		}),
+	] {
+		sent.updates
+			.push(crate::host_logic::funding::FundingUpdateRecord { update, at_ms: NOW - 1 });
+	}
+	assert!(sent.settle(100, NOW - 1));
+	let newer = |n: u64| FundingSession {
+		acknowledged: true,
+		stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW + n },
+		..session(&format!("fs_{n}"), NOW)
+	};
+	block_on(before.commit(NOW, |draft| {
+		draft.sessions.insert("fs_sent".to_string(), sent);
+		for n in 0..3 {
+			draft.sessions.insert(format!("fs_{n}"), newer(n));
+		}
+		((), Vec::new())
+	}))
+	.expect("stored");
+
+	let after = registry_on(&db);
+	block_on(after.sweep(NOW)).expect("loaded");
+	let row = after.history().into_iter().find(|row| row.intent == "fs_sent");
+
+	assert_eq!(
+		(
+			after.get("fs_sent").is_none(),
+			row.map(|row| (
+				row.provider_id,
+				row.choice.map(|choice| (choice.rail, choice.asset, choice.quote.send_amount)),
+				row.status,
+				row.payout,
+				row.transaction_id,
+				row.reference
+			))
+		),
+		(
+			true,
+			Some((
+				Some(ProductId::for_test("ramp.dot")),
+				Some((truapi::latest::FundingRail::Bank, "EUR".to_string(), 100)),
+				crate::host_logic::funding::FundingStatus::Sent,
+				Some(truapi::latest::FundingPayout::PaidOut),
+				Some("tx-1".to_string()),
+				Some("ref-1".to_string())
+			))
+		)
+	);
+}
+
+// An ended session is compacted, not dropped: after a restart its owner
+// still reads how it ended, and history still lists every ended session.
 #[test]
 fn a_compacted_session_still_answers_its_owner_after_a_restart() {
 	let db = open_memory_core_db();
@@ -561,9 +928,9 @@ fn a_compacted_session_still_answers_its_owner_after_a_restart() {
 		stage: FundingStage::Delivered { credited: u128::from(n) + 1, settled_at_ms: NOW + n },
 		..session(&format!("fs_{n}"), NOW)
 	};
-	block_on(before.commit(NOW, |sessions| {
-		for n in 0..=RECORDED_PER_OWNER as u64 {
-			sessions.insert(format!("fs_{n}"), recorded(n));
+	block_on(before.commit(NOW, |draft| {
+		for n in 0..=2 {
+			draft.sessions.insert(format!("fs_{n}"), recorded(n));
 		}
 		((), Vec::new())
 	}))
@@ -585,11 +952,8 @@ fn a_compacted_session_still_answers_its_owner_after_a_restart() {
 			None,
 			vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
 			Some(Some(ProductId::for_test("wallet.dot"))),
-			true,
-			(0..=RECORDED_PER_OWNER as u64)
-				.rev()
-				.map(|n| recorded(n).summary())
-				.collect::<Vec<_>>(),
+			false,
+			(0..=2).rev().map(|n| recorded(n).summary()).collect::<Vec<_>>(),
 		)
 	);
 }
@@ -615,9 +979,9 @@ fn a_held_intent_cannot_be_presented_again() {
 	let db = open_memory_core_db();
 	let registry = registry_on(&db);
 	insert(&registry, session("fs_1", NOW));
-	registry.lock_pack().insert(
+	registry.lock_held().pack.insert(
 		"fs_packed".to_string(),
-		FundingSessionSummary::from(FundingSession {
+		PackedSession::from(&FundingSession {
 			stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW },
 			..session("fs_packed", NOW)
 		}),
@@ -684,6 +1048,29 @@ fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
 	assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
 }
 
+// A selection is the overlay's own: closing the overlay drops it, and one
+// the host reports as the overlay closes is not kept for a session that
+// no longer has one.
+#[test]
+fn a_selection_goes_with_its_overlay() {
+	let db = open_memory_core_db();
+	let registry = registry_on(&db);
+	let picked = FundingSelection {
+		rail: truapi::latest::FundingRail::Card,
+		asset: Some("EUR".to_string()),
+		network: None,
+		country: None,
+	};
+	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+	let while_up = (registry.select("fs_1", picked.clone()), registry.selection("fs_1"));
+	block_on(registry.start(NOW, "fs_1")).expect("started");
+
+	assert_eq!(
+		(while_up, registry.select("fs_1", picked.clone()), registry.selection("fs_1")),
+		((true, Some(picked)), false, None)
+	);
+}
+
 // A row that does not decode is the core's only trace of that session, so
 // no later commit writes over it or deletes it.
 #[test]
@@ -707,33 +1094,25 @@ fn a_row_that_does_not_decode_survives_later_commits() {
 fn a_compaction_that_fails_to_store_keeps_every_session() {
 	let db = open_memory_core_db();
 	let registry = registry_on(&db);
-	let recorded = |n: u64| FundingSession {
-		acknowledged: true,
-		stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW + n },
-		..session(&format!("fs_{n}"), NOW)
-	};
-	block_on(registry.commit(NOW, |sessions| {
-		for n in 0..RECORDED_PER_OWNER as u64 {
-			sessions.insert(format!("fs_{n}"), recorded(n));
-		}
-		((), Vec::new())
-	}))
-	.expect("stored");
+	insert(&registry, session("fs_0", NOW));
+	insert(&registry, session("fs_1", NOW));
 	block_on(fail_writes(&db, true));
 
-	let compacted = block_on(registry.commit(NOW, |sessions| {
-		sessions.insert("fs_last".to_string(), recorded(RECORDED_PER_OWNER as u64));
+	let compacted = block_on(registry.commit(NOW, |draft| {
+		for session in draft.sessions.values_mut() {
+			session.stage = FundingStage::Delivered { credited: 1, settled_at_ms: NOW };
+		}
 		((), Vec::new())
 	}));
 
 	assert_eq!(
 		(
 			compacted.is_err(),
-			registry.get("fs_0").is_some(),
+			registry.get("fs_0").is_some_and(|session| !session.is_terminal()),
 			registry.history().len(),
 			block_on(rows(&db, "funding_session")).len(),
 			block_on(rows(&db, "funding_summary")).len(),
 		),
-		(true, true, RECORDED_PER_OWNER, RECORDED_PER_OWNER, 0)
+		(true, true, 0, 2, 0)
 	);
 }

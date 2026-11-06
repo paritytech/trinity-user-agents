@@ -661,3 +661,16 @@ fn owner_key_follows_the_root_entropy() {
 		WalletKeys::new(vec![8; 32], "paseo".to_string()).root_public_key().unwrap()
 	);
 }
+
+/// `resolve_targets` names an unresolvable target with `?target`, and that
+/// warning leaves the device, so the target's own `Debug` is what keeps
+/// the account out of a crash report.
+#[test]
+fn a_renewal_target_does_not_name_its_account_in_full() {
+	let account_id = [0xab; 32];
+	let target = StatementRenewalTarget::Account { account_id, label: "pairing peer".to_string() };
+
+	let written = format!("{target:?}");
+
+	assert_eq!(written, r#"Account { account_id: abababab, label: "pairing peer" }"#);
+}
