@@ -20,7 +20,8 @@ use crate::{
 	network::built_in::ensure_built_in_runnable,
 	platform,
 	stack_descriptor::{
-		FETCH_TIMEOUT, fetch, pointer_of, read_stack, reads_same, refused, unix_now,
+		FETCH_TIMEOUT, describe_pin_change, fetch, pointer_of, read_stack, reads_same, refused,
+		unix_now,
 	},
 	terminal_ui::qr_rows,
 };
@@ -276,13 +277,10 @@ async fn bundle(
 			)
 		})?;
 		let stored_descriptor = stored_document.descriptor();
-		if stored_descriptor.tld != descriptor.tld {
+		if let Some(reason) = describe_pin_change(stored_descriptor, descriptor) {
 			bail!(
-				"not bundled: {} changes the tld from {} to {}, which changes every account derived \
-				 under it; remove {} to bundle the new tld on purpose",
+				"not bundled: {} {reason}; remove {} to bundle it on purpose",
 				pointer.url(),
-				stored_descriptor.tld,
-				descriptor.tld,
 				out.display()
 			);
 		}

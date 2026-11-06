@@ -340,8 +340,9 @@ fn test_bundle_skip_same_projection() {
 	assert_eq!(fs::read(out).unwrap(), fallback);
 }
 
-/// Every account derives under the TLD, so `bundle` rejects a copy that changes it, also when
-/// the existing copy was signed with another key or cannot be read at all.
+/// Every account derives under the TLD and is stored under the id, so `bundle` rejects a copy that
+/// changes either, also when the existing copy was signed with another key or cannot be read at
+/// all.
 #[test]
 fn test_bundle_tld_pin() {
 	let dir = tempfile::tempdir().unwrap();
@@ -374,6 +375,16 @@ fn test_bundle_tld_pin() {
 	assert!(!tld_change_output.status.success());
 	assert!(stderr(&tld_change_output).contains("changes every account"));
 	assert!(stderr(&tld_change_output).contains(out));
+	assert_eq!(fs::read(out).unwrap(), first);
+
+	let renamed_model = write_model(dir.path(), "Renamed", None);
+	let mut renamed: serde_json::Value =
+		serde_json::from_slice(&fs::read(&renamed_model).unwrap()).unwrap();
+	renamed["id"] = "renamed".into();
+	fs::write(&renamed_model, renamed.to_string()).unwrap();
+	let id_change_output = bundle(publish(dir.path(), &renamed_model, &key_file, state));
+	assert!(!id_change_output.status.success());
+	assert!(stderr(&id_change_output).contains("changes the id from local to renamed"));
 	assert_eq!(fs::read(out).unwrap(), first);
 
 	let other_state = dir.path().join("other-state.json");

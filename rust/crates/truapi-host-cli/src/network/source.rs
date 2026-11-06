@@ -6,8 +6,8 @@ use anyhow::{Result, anyhow, ensure};
 
 use super::{
 	NetworkSource, STACK_ENV, Stack,
-	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy},
-	checks::{ChainChecks, refuse_light_client},
+	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
+	checks::{refuse_light_client, verify_chains},
 };
 use crate::{
 	chain::ChainBackend,
@@ -28,24 +28,26 @@ const REMOVED_ENV: [&str; 6] = [
 impl NetworkSource {
 	/// The network a command runs against, the built-in network or the stack,
 	/// once its chains pass the checks. Fails as [`Stack::new`] and
-	/// [`ChainChecks::verify`] do, for `--network` with a stack, for a removed
+	/// [`verify_chains`] do, for `--network` with a stack, for a removed
 	/// routing env var, for an unreachable or expired `--stack`, and when the
 	/// light client cannot serve the network. A built-in network whose
 	/// published descriptor is unreachable runs on its bundled copy; when that
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
-		let (stack, checks) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
-		let Err(error) = checks.verify(&stack).await? else { return Ok(stack) };
-		if checks.copy_in_use() != Some(BuiltInCopy::Unreachable) {
+		let (stack, built_in) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
+		let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
+			return Ok(stack);
+		};
+		if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
 			return Err(error);
 		}
 		tracing::info!("{error}; fetching the published descriptor again");
-		let (stack, checks) = self.resolve_routes(FETCH_TIMEOUT).await?;
-		if checks.copy_in_use() != Some(BuiltInCopy::Published) {
+		let (stack, built_in) = self.resolve_routes(FETCH_TIMEOUT).await?;
+		if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
 			return Err(error);
 		}
-		checks.verify(&stack).await??;
+		verify_chains(&stack, built_in.as_ref()).await??;
 		Ok(stack)
 	}
 
@@ -56,9 +58,12 @@ impl NetworkSource {
 		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
 	}
 
-	/// The network and the [`ChainChecks`] to run against its chains. A
-	/// built-in stack's published descriptor gets `fetch_timeout`.
-	async fn resolve_routes(&self, fetch_timeout: Duration) -> Result<(Stack, ChainChecks)> {
+	/// The network, and for a built-in, which copy of its descriptor is in
+	/// use. A built-in stack's published descriptor gets `fetch_timeout`.
+	async fn resolve_routes(
+		&self,
+		fetch_timeout: Duration,
+	) -> Result<(Stack, Option<BuiltInOrigin>)> {
 		self.ensure_compatible()?;
 		ensure_removed_env_unset(|name| std::env::var(name).ok())?;
 		let (stack, built_in) = match &self.stack {
@@ -79,7 +84,7 @@ impl NetworkSource {
 			},
 		};
 		refuse_light_client(&stack)?;
-		Ok((stack, ChainChecks::plan(built_in)))
+		Ok((stack, built_in))
 	}
 
 	/// Fails for `--network` with a stack, and for the light client with a

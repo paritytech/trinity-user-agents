@@ -10,7 +10,7 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use super::{Network, Stack};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FetchError, fetch, reads_same, unix_now},
+	stack_descriptor::{FetchError, describe_pin_change, fetch, reads_same, unix_now},
 };
 
 /// How long a command waits for a built-in stack's published descriptor
@@ -232,55 +232,44 @@ fn refresh_stack(
 		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
 	let accepted = accept(pointer, Some(bundled), fetched, now_unix_seconds)
 		.map_err(|error| anyhow!("the {id} stack has no usable descriptor: {error}"))?;
-	match &accepted.status {
-		Status::Updated | Status::Unchanged | Status::Unreachable => {},
-		Status::Refused(error) => tracing::warn!(
-			"the published {id} stack descriptor is refused ({}): {error}; using the bundled copy",
-			error.code()
-		),
-		status => tracing::warn!(
-			"the published {id} stack descriptor is a {}; using the bundled copy",
-			status.code()
-		),
-	}
+	let copy = match &accepted.status {
+		Status::Updated | Status::Unchanged => BuiltInCopy::Published,
+		Status::Unreachable => BuiltInCopy::Unreachable,
+		Status::Refused(error) => {
+			tracing::warn!(
+				"the published {id} stack descriptor is refused ({}): {error}; using the bundled \
+				 copy",
+				error.code()
+			);
+			BuiltInCopy::Rejected
+		},
+		status => {
+			tracing::warn!(
+				"the published {id} stack descriptor is a {}; using the bundled copy",
+				status.code()
+			);
+			BuiltInCopy::Rejected
+		},
+	};
 	let (bundled_descriptor, published) =
 		(&bundled_copy.stack.descriptor, &accepted.stack.descriptor);
-	let pin_change = if published.tld != bundled_descriptor.tld {
-		Some(format!(
-			"changes the TLD from {} to {}, which would change every account derived under it",
-			bundled_descriptor.tld, published.tld
-		))
-	} else if published.id != bundled_descriptor.id {
-		Some(format!(
-			"changes the id from {} to {}, which would move every session and account to \
-			 another namespace",
-			bundled_descriptor.id, published.id
-		))
-	} else {
-		None
-	};
 	let notice = (!reads_same(published, bundled_descriptor)).then(|| StackNotice {
 		id: id.to_owned(),
 		bundle_sequence: bundled_descriptor.sequence,
 		remote_sequence: published.sequence,
 		new_generation: accepted.new_generation,
 	});
-	let copy = match accepted.status {
-		Status::Updated | Status::Unchanged => BuiltInCopy::Published,
-		Status::Unreachable => BuiltInCopy::Unreachable,
-		_ => BuiltInCopy::Rejected,
-	};
-	let published_stack = match pin_change {
-		Some(reason) => Err(reason),
-		None => {
-			ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
-			Stack::new(accepted.stack.descriptor, chain_backend)
-				.map(|stack| (stack, accepted.stale))
-				.map_err(|error| format!("cannot run: {error}"))
-		},
-	};
+	let published_stack: Result<Stack, String> =
+		match describe_pin_change(bundled_descriptor, published) {
+			Some(reason) => Err(reason),
+			None => {
+				ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
+				Stack::new(accepted.stack.descriptor, chain_backend)
+					.map_err(|error| format!("cannot run: {error:#}"))
+			},
+		};
 	let (stack, stale, copy, notice) = match published_stack {
-		Ok((stack, stale)) => (stack, stale, copy, notice),
+		Ok(stack) => (stack, accepted.stale, copy, notice),
 		Err(reason) => {
 			tracing::warn!(
 				"the published {id} stack descriptor at {} {reason}; using the bundled copy",

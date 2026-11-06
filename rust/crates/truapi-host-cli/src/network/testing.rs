@@ -1,7 +1,10 @@
-//! Stack descriptors for tests, edited from the bundled paseo-next-v2 copy,
-//! and loopback RPC nodes.
+//! Stack descriptors and stacks for tests, edited from the bundled
+//! paseo-next-v2 copy, and loopback RPC nodes.
 
 use trinity_stack::{Descriptor, Document};
+use truapi::latest::ChainIdentifier;
+
+use super::{ChainEndpoint, Stack};
 
 /// The bundle `built_in` ships, included here rather than read from
 /// `built_in`, whose tests use this module.
@@ -30,6 +33,60 @@ pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Desc
 		let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
 		edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
 	})
+}
+
+impl Stack {
+	/// The descriptor this stack reads.
+	pub fn descriptor(&self) -> &Descriptor {
+		&self.descriptor
+	}
+
+	/// The endpoint of a served role; `None` for the relay chain, which no
+	/// network routes.
+	pub fn endpoint_for_role(&self, role: ChainIdentifier) -> Option<&ChainEndpoint> {
+		match role {
+			ChainIdentifier::People => Some(&self.chains.people),
+			ChainIdentifier::Bulletin => Some(&self.chains.bulletin),
+			ChainIdentifier::AssetHub => Some(&self.chains.asset_hub),
+			ChainIdentifier::Relay => None,
+		}
+	}
+
+	/// This stack with its descriptor edited as JSON.
+	pub fn edited(&self, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
+		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
+		edit(&mut document);
+		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
+		Self::new(descriptor, self.chain_backend).expect("edited stack refused")
+	}
+
+	/// This stack with the chain of `role` edited as JSON.
+	pub fn edited_chain(&self, role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
+		self.edited(|descriptor| {
+			let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
+			edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
+		})
+	}
+
+	/// This stack with its `dub` service at `url`, so its identity backend is
+	/// `url` with `/api/v1` appended.
+	pub fn with_dub(&self, url: &str) -> Self {
+		self.edited(|descriptor| {
+			let services = descriptor["services"].as_array_mut().expect("services not an array");
+			for service in services.iter_mut().filter(|service| service["kind"] == "dub") {
+				service["urls"] = serde_json::json!([url]);
+			}
+		})
+	}
+
+	/// This stack with every chain's RPC list set to `url` alone.
+	pub fn with_rpc(&self, url: &str) -> Self {
+		self.edited(|descriptor| {
+			for chain in descriptor["chains"].as_array_mut().expect("chains not an array") {
+				chain["rpc"] = serde_json::json!([url]);
+			}
+		})
+	}
 }
 
 /// A loopback WebSocket JSON-RPC node answering each request with

@@ -73,22 +73,8 @@ enum Backend {
 impl CliChainProvider {
 	/// A provider for `network`'s chains over its chain backend.
 	pub fn new(network: &Stack) -> Self {
-		let endpoints = network.chains().iter().cloned().collect();
-		Self::with_endpoints(network, endpoints, network.chain_backend())
-	}
-
-	/// A provider for `endpoint` alone, over RPC, so a check connects to
-	/// exactly that URL on the transport the routed chains use.
-	pub fn for_endpoint(network: &Stack, endpoint: &ChainEndpoint) -> Self {
-		Self::with_endpoints(network, vec![endpoint.clone()], ChainBackend::Rpc)
-	}
-
-	fn with_endpoints(
-		network: &Stack,
-		routed_endpoints: Vec<ChainEndpoint>,
-		chain_backend: ChainBackend,
-	) -> Self {
-		let backend = match chain_backend {
+		let routed_endpoints: Vec<ChainEndpoint> = network.chains().iter().cloned().collect();
+		let backend = match network.chain_backend() {
 			ChainBackend::Rpc => Backend::Rpc(Box::new(
 				routed_endpoints
 					.iter()

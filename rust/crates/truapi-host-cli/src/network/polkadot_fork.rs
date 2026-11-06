@@ -1,7 +1,7 @@
 //! The check that tells a chain carrying one of Polkadot's genesis hashes, a
 //! fork, from Polkadot itself.
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::json;
 use truapi::statement_allowance::rpc::RpcClient;
@@ -46,8 +46,8 @@ impl PolkadotChain<'_> {
 		let (height, fork_hash, polkadot_hash) =
 			self.finalized_hashes().await.map_err(|reason| {
 				anyhow!(
-					"cannot tell {ws} from Polkadot ({reason}); a chain with Polkadot's genesis runs \
-				 only once it shows a fork"
+					"cannot tell {ws} from Polkadot ({reason:#}); a chain with Polkadot's genesis \
+					 runs only once it shows a fork"
 				)
 			})?;
 		ensure!(
@@ -60,14 +60,10 @@ impl PolkadotChain<'_> {
 
 	/// The lower of the endpoint's and Polkadot's finalized block numbers, and
 	/// the block hash each reports there, or which side did not answer.
-	async fn finalized_hashes(&self) -> Result<(u32, String, String), String> {
+	async fn finalized_hashes(&self) -> Result<(u32, String, String)> {
 		let ws = &self.endpoint.ws;
 		let ((fork, fork_finalized), (polkadot, polkadot_finalized, polkadot_ws)) = futures::try_join!(
-			async {
-				within_check_timeout(connect_finalized(ws))
-					.await
-					.map_err(|reason| format!("{ws}: {reason}"))
-			},
+			async { within_check_timeout(connect_finalized(ws)).await.context(ws.clone()) },
 			connect_first_finalized(self.polkadot_rpc),
 		)?;
 		let height = fork_finalized.min(polkadot_finalized);
@@ -75,12 +71,12 @@ impl PolkadotChain<'_> {
 			async {
 				within_check_timeout(block_hash(&fork, height))
 					.await
-					.map_err(|reason| format!("{ws}: its block {height}: {reason}"))
+					.with_context(|| format!("{ws}: its block {height}"))
 			},
 			async {
-				within_check_timeout(block_hash(&polkadot, height)).await.map_err(|reason| {
-					format!("Polkadot's {polkadot_ws}: its block {height}: {reason}")
-				})
+				within_check_timeout(block_hash(&polkadot, height))
+					.await
+					.with_context(|| format!("Polkadot's {polkadot_ws}: its block {height}"))
 			},
 		)?;
 		Ok((height, fork_hash, polkadot_hash))
@@ -88,11 +84,9 @@ impl PolkadotChain<'_> {
 }
 
 /// A connection to `ws` and the number of its finalized block.
-async fn connect_finalized(ws: &str) -> Result<(RpcClient, u32), String> {
-	let rpc = RpcClient::connect(ws).await.map_err(|error| error.to_string())?;
-	let finalized = finalized_number(&rpc)
-		.await
-		.map_err(|reason| format!("its finalized block: {reason}"))?;
+async fn connect_finalized(ws: &str) -> Result<(RpcClient, u32)> {
+	let rpc = RpcClient::connect(ws).await?;
+	let finalized = finalized_number(&rpc).await.context("its finalized block")?;
 	Ok((rpc, finalized))
 }
 
@@ -100,7 +94,7 @@ async fn connect_finalized(ws: &str) -> Result<(RpcClient, u32), String> {
 /// block within [`super::CHAIN_CHECK_TIMEOUT`], that block's number and the
 /// node's URL. All nodes are contacted at once, so one that stays silent
 /// does not delay the others.
-async fn connect_first_finalized(nodes: &[String]) -> Result<(RpcClient, u32, &str), String> {
+async fn connect_first_finalized(nodes: &[String]) -> Result<(RpcClient, u32, &str)> {
 	let mut attempts: FuturesUnordered<_> = nodes
 		.iter()
 		.map(|node| async move { (node, within_check_timeout(connect_finalized(node)).await) })
@@ -109,35 +103,24 @@ async fn connect_first_finalized(nodes: &[String]) -> Result<(RpcClient, u32, &s
 	while let Some((node, outcome)) = attempts.next().await {
 		match outcome {
 			Ok((rpc, finalized)) => return Ok((rpc, finalized, node)),
-			Err(reason) => failures.push(format!("{node}: {reason}")),
+			Err(error) => failures.push(format!("{node}: {error:#}")),
 		}
 	}
-	Err(format!("Polkadot's nodes did not answer: {}", failures.join("; ")))
+	bail!("Polkadot's nodes did not answer: {}", failures.join("; "))
 }
 
 /// The number of the block `rpc` reports as finalized.
-async fn finalized_number(rpc: &RpcClient) -> Result<u32, String> {
-	let head = rpc
-		.call("chain_getFinalizedHead", json!([]))
-		.await
-		.map_err(|error| error.to_string())?;
-	let header = rpc
-		.call("chain_getHeader", json!([head]))
-		.await
-		.map_err(|error| error.to_string())?;
-	let number = header["number"].as_str().ok_or("a header without a number")?;
-	u32::from_str_radix(number.trim_start_matches("0x"), 16).map_err(|error| error.to_string())
+async fn finalized_number(rpc: &RpcClient) -> Result<u32> {
+	let head = rpc.finalized_head().await?;
+	let header = rpc.call("chain_getHeader", json!([head])).await?;
+	let number = header["number"].as_str().context("a header without a number")?;
+	Ok(u32::from_str_radix(number.trim_start_matches("0x"), 16)?)
 }
 
 /// The hash of `rpc`'s block at `height`.
-async fn block_hash(rpc: &RpcClient, height: u32) -> Result<String, String> {
-	let hash = rpc
-		.call("chain_getBlockHash", json!([height]))
-		.await
-		.map_err(|error| error.to_string())?;
-	hash.as_str()
-		.map(str::to_owned)
-		.ok_or_else(|| "no block at that height".to_owned())
+async fn block_hash(rpc: &RpcClient, height: u32) -> Result<String> {
+	let hash = rpc.call("chain_getBlockHash", json!([height])).await?;
+	hash.as_str().map(str::to_owned).context("no block at that height")
 }
 
 #[cfg(test)]

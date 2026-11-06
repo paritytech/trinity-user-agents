@@ -49,11 +49,11 @@ pub const CHAIN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 /// `check`'s outcome, or an error once [`CHAIN_CHECK_TIMEOUT`] passes without
 /// one.
 pub async fn within_check_timeout<T>(
-	check: impl Future<Output = Result<T, String>>,
-) -> Result<T, String> {
-	tokio::time::timeout(CHAIN_CHECK_TIMEOUT, check)
-		.await
-		.unwrap_or_else(|_| Err(format!("no answer within {}s", CHAIN_CHECK_TIMEOUT.as_secs())))
+	check: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+	tokio::time::timeout(CHAIN_CHECK_TIMEOUT, check).await.unwrap_or_else(|_| {
+		Err(anyhow::anyhow!("no answer within {}s", CHAIN_CHECK_TIMEOUT.as_secs()))
+	})
 }
 
 /// The namespace of `--network polkadot`, which earlier releases stored
@@ -156,12 +156,6 @@ impl Stack {
 		self.chain_backend
 	}
 
-	/// The descriptor this stack reads.
-	#[cfg(test)]
-	pub fn descriptor(&self) -> &Descriptor {
-		&self.descriptor
-	}
-
 	/// The chain set this network serves, for `Features::supported_chains`.
 	pub fn host_chain_set(&self) -> HostChainSet {
 		let genesis = self.genesis();
@@ -195,49 +189,6 @@ impl Stack {
 				ChainExtensionVersion { genesis_hash: genesis.asset_hub, extension_version: 1 },
 			],
 		}
-	}
-
-	/// The endpoint of a served role; `None` for the relay chain, which no
-	/// network routes.
-	#[cfg(test)]
-	pub fn endpoint_for_role(&self, role: ChainIdentifier) -> Option<&ChainEndpoint> {
-		match role {
-			ChainIdentifier::People => Some(&self.chains.people),
-			ChainIdentifier::Bulletin => Some(&self.chains.bulletin),
-			ChainIdentifier::AssetHub => Some(&self.chains.asset_hub),
-			ChainIdentifier::Relay => None,
-		}
-	}
-
-	/// This stack with its descriptor edited as JSON.
-	#[cfg(test)]
-	pub fn edited(&self, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
-		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
-		edit(&mut document);
-		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(descriptor, self.chain_backend).expect("edited stack refused")
-	}
-
-	/// This stack with its `dub` service at `url`, so its identity backend is
-	/// `url` with `/api/v1` appended.
-	#[cfg(test)]
-	pub fn with_dub(&self, url: &str) -> Self {
-		self.edited(|descriptor| {
-			let services = descriptor["services"].as_array_mut().expect("services not an array");
-			for service in services.iter_mut().filter(|service| service["kind"] == "dub") {
-				service["urls"] = serde_json::json!([url]);
-			}
-		})
-	}
-
-	/// This stack with every chain's RPC list set to `url` alone.
-	#[cfg(test)]
-	pub fn with_rpc(&self, url: &str) -> Self {
-		self.edited(|descriptor| {
-			for chain in descriptor["chains"].as_array_mut().expect("chains not an array") {
-				chain["rpc"] = serde_json::json!([url]);
-			}
-		})
 	}
 }
 

@@ -5,7 +5,8 @@ use clap::ValueEnum;
 use super::{
 	super::{
 		CHAIN_CHECK_TIMEOUT, Network,
-		testing::{edit_stack, serve_rpc, serve_silent},
+		built_in::BuiltInCopy,
+		testing::{serve_rpc, serve_silent},
 	},
 	*,
 };
@@ -27,23 +28,16 @@ async fn serve_chain(genesis: [u8; 32], network_suffix: Option<&'static str>) ->
 
 /// Every role on a loopback port nothing listens on.
 fn stack_on_closed_ports() -> Stack {
-	let descriptor = edit_stack(|descriptor| {
+	Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
 		for (port, chain) in (1..).zip(descriptor["chains"].as_array_mut().unwrap()) {
 			chain["rpc"] = serde_json::json!([format!("ws://127.0.0.1:{port}")]);
 		}
-	});
-	Stack::new(descriptor, ChainBackend::Rpc).unwrap()
+	})
 }
 
 /// The stack on closed ports with People served by `url`.
 fn stack_with_people_at(url: &str) -> Stack {
-	stack_on_closed_ports().edited(|descriptor| {
-		for chain in descriptor["chains"].as_array_mut().unwrap() {
-			if chain["role"] == "People" {
-				chain["rpc"] = serde_json::json!([url]);
-			}
-		}
-	})
+	stack_on_closed_ports().edited_chain("People", |chain| chain["rpc"] = serde_json::json!([url]))
 }
 
 /// The stack on closed ports with a loopback People that reports its own
@@ -53,19 +47,12 @@ async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> Stack
 	stack_with_people_at(&serve_chain(genesis, network_suffix).await)
 }
 
-async fn verify_stack_endpoints(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<()> {
-	let endpoints: Vec<_> = stack.chains().iter().collect();
-	verify_endpoints(stack, &endpoints, built_in).await
-}
-
 /// An endpoint that does not answer is not evidence of a wrong stack, so it
 /// is left to fail on first use.
 #[tokio::test]
 async fn test_stack_endpoint_unreachable() {
 	let stack = stack_on_closed_ports();
-	verify_stack_endpoints(&stack, None)
-		.await
-		.expect("unreachable endpoint rejected");
+	verify_endpoints(&stack, None).await.expect("unreachable endpoint rejected");
 }
 
 /// An endpoint that accepts the connection and then stays silent delays a
@@ -74,7 +61,7 @@ async fn test_stack_endpoint_unreachable() {
 async fn test_silent_endpoint_deadline() {
 	let stack = stack_with_people_at(&serve_silent().await);
 	let start = std::time::Instant::now();
-	verify_stack_endpoints(&stack, None).await.expect("silent endpoint rejected");
+	verify_endpoints(&stack, None).await.expect("silent endpoint rejected");
 	assert!(start.elapsed() < CHAIN_CHECK_TIMEOUT + Duration::from_secs(2));
 }
 
@@ -86,7 +73,7 @@ async fn test_silent_endpoint_deadline() {
 async fn test_stack_endpoint_genesis_mismatch() {
 	let url = serve_chain([0x5a; 32], Some("testnet")).await;
 	let stack = stack_with_people_at(&url);
-	let error = verify_stack_endpoints(&stack, None).await.expect_err("wrong genesis accepted");
+	let error = verify_endpoints(&stack, None).await.expect_err("wrong genesis accepted");
 	assert!(error.to_string().contains(&url));
 	assert!(error.to_string().contains("reports genesis"));
 	assert!(!error.to_string().contains("NetworkSuffix"));
@@ -102,7 +89,7 @@ async fn test_built_in_genesis_mismatch_hint() {
 		url: "https://stack.example/s.json".to_owned(),
 		copy: BuiltInCopy::Published,
 	};
-	let error = verify_stack_endpoints(&stack, Some(&origin))
+	let error = verify_endpoints(&stack, Some(&origin))
 		.await
 		.expect_err("wrong genesis accepted");
 	assert!(error.to_string().ends_with(&origin.restart_hint()));
@@ -113,12 +100,12 @@ async fn test_built_in_genesis_mismatch_hint() {
 #[tokio::test]
 async fn test_network_suffix_mismatch_error() {
 	let stack = stack_with_people_suffix(Some("testnet")).await;
-	let error = verify_stack_endpoints(&stack, None).await.expect_err("other suffix accepted");
+	let error = verify_endpoints(&stack, None).await.expect_err("other suffix accepted");
 	let message = error.to_string();
 	assert!(message.contains("NetworkSuffix testnet") && message.contains("tld is paseo"));
 
 	let matching = stack_with_people_suffix(Some("paseo")).await;
-	verify_stack_endpoints(&matching, None).await.expect("matching suffix rejected");
+	verify_endpoints(&matching, None).await.expect("matching suffix rejected");
 }
 
 /// A People chain without the storage item, or one that does not answer,
@@ -126,9 +113,9 @@ async fn test_network_suffix_mismatch_error() {
 #[tokio::test]
 async fn test_network_suffix_absent_or_unreachable() {
 	let absent = stack_with_people_suffix(None).await;
-	verify_stack_endpoints(&absent, None).await.expect("absent suffix rejected");
+	verify_endpoints(&absent, None).await.expect("absent suffix rejected");
 	let closed_port_stack = stack_on_closed_ports();
-	verify_stack_endpoints(&closed_port_stack, None)
+	verify_endpoints(&closed_port_stack, None)
 		.await
 		.expect("unreachable People rejected");
 }
@@ -139,23 +126,15 @@ async fn test_network_suffix_absent_or_unreachable() {
 /// the RPC endpoints, has none of them checked.
 #[tokio::test]
 async fn test_polkadot_fork_check_wiring() {
-	let polkadot_people = stack_on_closed_ports().edited(|descriptor| {
-		for chain in descriptor["chains"].as_array_mut().unwrap() {
-			if chain["role"] == "People" {
-				chain["genesisHash"] =
-					"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
-			}
-		}
+	let polkadot_people = stack_on_closed_ports().edited_chain("People", |chain| {
+		chain["genesisHash"] =
+			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
-	let error = ChainChecks::plan(None)
-		.verify(&polkadot_people)
-		.await
-		.expect_err("fork unproven");
+	let error = verify_chains(&polkadot_people, None).await.expect_err("fork unproven");
 	assert!(error.to_string().contains("cannot tell ws://127.0.0.1:"));
 
 	let light_client = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient);
-	ChainChecks::plan(None)
-		.verify(&light_client)
+	verify_chains(&light_client, None)
 		.await
 		.expect("light-client checks failed")
 		.expect("light-client endpoint checks failed");
@@ -165,16 +144,12 @@ async fn test_polkadot_fork_check_wiring() {
 /// the light client's bundled specs cannot sync.
 #[test]
 fn test_light_client_after_restart_error() {
-	let restarted =
-		Network::PaseoNextV2
-			.bundled_stack(ChainBackend::LightClient)
-			.edited(|descriptor| {
-				for chain in descriptor["chains"].as_array_mut().unwrap() {
-					if chain["role"] == "People" {
-						chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
-					}
-				}
-			});
+	let restarted = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).edited_chain(
+		"People",
+		|chain| {
+			chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
+		},
+	);
 	let error = refuse_light_client(&restarted).unwrap_err();
 	assert!(error.to_string().contains("--chain-backend rpc"));
 }

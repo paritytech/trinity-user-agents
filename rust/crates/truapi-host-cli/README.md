@@ -968,9 +968,10 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 ```
 
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
-stack, one whose `tld` differs from the copy at `--out`, also when that copy
-was signed with another key (every derived account would change; remove the copy to
-bundle a new TLD on purpose), and a built-in network's copy the CLI cannot run on.
+stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
+copy was signed with another key (every derived account, or the namespace every
+session is stored under, would change; remove the copy to bundle it on purpose),
+and a built-in network's copy the CLI cannot run on.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields truapi-host does not read
 leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)

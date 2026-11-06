@@ -105,24 +105,38 @@ impl<T> Roles<T> {
 /// is the product namespace, the TLD, `generation`, the `dub` service,
 /// `dotns.popController`, and the genesis hash and full `rpc` list of People,
 /// Asset Hub and Bulletin. The full lists are compared because the Polkadot
-/// fork check connects to the reference's nodes in that order.
+/// fork check contacts every node the reference lists for a chain.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
-	fn pop_controller(stack: &Descriptor) -> Option<&String> {
-		stack.dotns.as_ref()?.get("popController")
+	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
+		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
 	}
-	let role_chains_same =
-		ROLE_NAMES.iter().all(|role| match (stack.chain(role), other.chain(role)) {
-			(Some(chain), Some(other)) => {
-				chain.genesis_hash == other.genesis_hash && chain.rpc == other.rpc
-			},
-			(chain, other) => chain.is_none() && other.is_none(),
-		});
 	stack.id == other.id &&
 		stack.tld == other.tld &&
 		stack.generation == other.generation &&
 		stack.service("dub") == other.service("dub") &&
-		pop_controller(stack) == pop_controller(other) &&
-		role_chains_same
+		stack.dotns_address("popController") == other.dotns_address("popController") &&
+		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
+}
+
+/// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
+/// a change to the TLD, which every account derives under, or to the `id`,
+/// the namespace every session and account is stored under. `None` when both
+/// stay.
+pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<String> {
+	if fetched.tld != stored.tld {
+		Some(format!(
+			"changes the tld from {} to {}, which changes every account derived under it",
+			stored.tld, fetched.tld
+		))
+	} else if fetched.id != stored.id {
+		Some(format!(
+			"changes the id from {} to {}, which moves every session and account to another \
+			 namespace",
+			stored.id, fetched.id
+		))
+	} else {
+		None
+	}
 }
 
 /// Why a descriptor URL served no descriptor.

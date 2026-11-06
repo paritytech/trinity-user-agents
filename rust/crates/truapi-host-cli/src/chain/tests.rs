@@ -6,13 +6,9 @@ use crate::network::Network;
 
 /// The default network with People at `people_ws`.
 fn build_network_with_people_at(people_ws: &str) -> Stack {
-	Network::default().bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
-		for chain in descriptor["chains"].as_array_mut().unwrap() {
-			if chain["role"] == "People" {
-				chain["rpc"] = serde_json::json!([people_ws]);
-			}
-		}
-	})
+	Network::default()
+		.bundled_stack(ChainBackend::Rpc)
+		.edited_chain("People", |chain| chain["rpc"] = serde_json::json!([people_ws]))
 }
 
 /// A loopback server that sends `open` on every connection, then closes it.
@@ -70,19 +66,6 @@ async fn an_unrouted_catalog_chain_stays_on_rpc() {
 			.await
 			.expect("the loopback server answers at once");
 	assert_eq!(first.as_deref(), Some("open"));
-}
-
-/// Without a People route there is nothing to fall back to: a provider for
-/// one other endpoint rejects the sentinel.
-#[tokio::test]
-async fn test_sentinel_without_people_route_error() {
-	let network = Network::default().bundled_stack(ChainBackend::Rpc);
-	let provider = CliChainProvider::for_endpoint(&network, &network.chains().bulletin);
-
-	let Err(error) = provider.connect([0; 32]).await else {
-		panic!("People is not routed, so the sentinel may not connect");
-	};
-	assert_eq!(error.to_string(), format!("no chain registered for genesis 0x{}", "00".repeat(32)));
 }
 
 const PARACHAIN: [u8; 32] = [0x11; 32];
@@ -169,19 +152,6 @@ async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 
 	let light = light_client(network.namespace()).expect("the default network is bundled");
 	assert!(light.is_connected(network.genesis().people));
-}
-
-/// The genesis check of an endpoint must connect to that URL, whatever the
-/// network's routing would do with the hash, and nothing else.
-#[test]
-fn an_endpoint_provider_reaches_only_its_endpoint() {
-	let network = build_network_with_people_at("wss://people.invalid");
-	let optional = ChainEndpoint { genesis: [0x5a; 32], ws: "wss://optional.invalid".to_owned() };
-
-	let alone = CliChainProvider::for_endpoint(&network, &optional);
-
-	assert_eq!(alone.location(optional.genesis), optional.ws);
-	assert!(alone.chain_for(network.genesis().people).is_none(), "People is not this endpoint");
 }
 
 /// Ignored by default; needs network access to paseo-next-v2's chains. The

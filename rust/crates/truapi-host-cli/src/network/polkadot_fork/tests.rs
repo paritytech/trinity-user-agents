@@ -57,13 +57,12 @@ fn test_polkadot_chains_from_reference() {
 	for network in Network::value_variants() {
 		assert!(polkadot_chains(&network.bundled_stack(ChainBackend::Rpc)).is_empty());
 	}
-	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
-		for chain in descriptor["chains"].as_array_mut().unwrap() {
-			if chain["role"] == "People" {
+	let stack =
+		Network::PaseoNextV2
+			.bundled_stack(ChainBackend::Rpc)
+			.edited_chain("People", |chain| {
 				chain["genesisHash"] = format!("0x{POLKADOT_PEOPLE_GENESIS}").into();
-			}
-		}
-	});
+			});
 	let reference = polkadot_reference();
 	let people = reference.chain("People").expect("reference without People");
 	assert_eq!(
