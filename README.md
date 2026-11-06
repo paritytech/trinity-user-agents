@@ -448,6 +448,8 @@ resolver reads the chain on each call.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
+iOS contacts and chat views resolve profile metadata first, then reuse Kingfisher's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
