@@ -5,13 +5,16 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class HostPocketTapsTest {
-    private val taps = HostPocketTaps({ TAPPED_AT }, { })
+    private val taps = HostPocketTaps({ TAPPED_AT }, { TAPPED_AT_EPOCH }, { })
 
     @Test
     fun `the page opened for the tapped card takes the tap, once`() {
         taps.tapped("humanity.dot")
 
-        assertEquals(listOf(TAPPED_AT, null), listOf(taps.consume("humanity.dot"), taps.consume("humanity.dot")))
+        val first = taps.consume("humanity.dot")
+
+        assertEquals(TAPPED_AT to TAPPED_AT_EPOCH, first?.atMillis to first?.atEpochMillis)
+        assertNull(taps.consume("humanity.dot"))
     }
 
     @Test
@@ -19,7 +22,7 @@ class HostPocketTapsTest {
         taps.tapped("humanity.dot")
 
         assertNull(taps.consume("game.dot"))
-        assertEquals(TAPPED_AT, taps.consume("humanity.dot"))
+        assertEquals(TAPPED_AT, taps.consume("humanity.dot")?.atMillis)
     }
 
     // A held page is shown again without a new load, so its tap must not reach the next open.
@@ -34,7 +37,7 @@ class HostPocketTapsTest {
 
     @Test
     fun `no tap is kept while host telemetry is off`() {
-        val off = HostPocketTaps({ error("no clock read while off") }, object : HostEventCapture {
+        val off = HostPocketTaps({ error("no clock read while off") }, { error("no clock read while off") }, object : HostEventCapture {
             override val enabled = false
 
             override fun capture(event: () -> HostEvent) = Unit
@@ -47,5 +50,6 @@ class HostPocketTapsTest {
 
     private companion object {
         const val TAPPED_AT = 4_000L
+        const val TAPPED_AT_EPOCH = 1_793_880_000_000L
     }
 }

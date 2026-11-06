@@ -44,8 +44,26 @@ class TrUAPISessionStarter @Inject constructor(
         hostApiNavigation: NavigationPolicy,
         card: ExpandedCardFace? = null,
         explicitProductId: ProductId? = null,
+    ): ProductTrUAPIHostBridge = startPage(
+        provider,
+        productUrl,
+        scope,
+        hostApiNavigation,
+        card,
+        explicitProductId,
+        hostPageOpenTelemetry.open(),
+    )
+
+    /** Starts the page as [start] does, reporting its open through [pageOpen], which the caller keeps. */
+    fun startPage(
+        provider: BrowserWebViewProvider,
+        productUrl: String,
+        scope: CoroutineScope,
+        hostApiNavigation: NavigationPolicy,
+        card: ExpandedCardFace?,
+        explicitProductId: ProductId?,
+        pageOpen: HostPageOpenTelemetry.PageOpen,
     ): ProductTrUAPIHostBridge {
-        val pageOpen = hostPageOpenTelemetry.open()
         scope.coroutineContext[Job]?.invokeOnCompletion { pageOpen.closed() }
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
@@ -89,6 +107,7 @@ class TrUAPISessionStarter @Inject constructor(
             bootstrapInstaller.installerFor(
                 origins = setOf(productUrl.toUri().origin()),
                 hostSessionId = hostSessionId,
+                pageOrigin = pageOpen.pageOrigin,
             )
         }.getOrElse { return Result.failure(it) }
 

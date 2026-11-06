@@ -57,11 +57,13 @@ class TrUAPISessionStarterTest {
     private val events = mutableListOf<HostEvent>()
     private val capture = HostEventCapture { events += it() }
     private val clock = HostMonotonicTimeProvider { OPEN_REQUESTED_AT }
+    private val taps = HostPocketTaps(clock, { TAPPED_AT_EPOCH }, capture)
+    private val installedOrigins = mutableListOf<HostPageOrigin?>()
     private val pageOpenTelemetry = HostPageOpenTelemetry(
         originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
         timeProvider = clock,
         capture = capture,
-        taps = HostPocketTaps(clock, capture),
+        taps = taps,
     )
     private val hostLoads = mutableListOf<HostLoadContext>()
     private val revealedListeners = mutableListOf<(PageReveal) -> Unit>()
@@ -226,6 +228,17 @@ class TrUAPISessionStarterTest {
         assertEquals("theme" to installerSessionId.captured, revealed.tags["via"] to revealed.tags["host.session_id"])
     }
 
+    // The page times its own load from the tap, so it gets the tap's wall-clock time; nothing else does.
+    @Test
+    fun `only the page a card tap opened is handed the tap time`() = runBlocking<Unit> {
+        taps.tapped(PRODUCT_ID.value)
+        startPage(this)
+        startPage(this)
+
+        assertEquals(listOf(TAPPED_AT_EPOCH, null), installedOrigins.map { it?.openedAtEpochMs })
+        assertEquals("pocket_card", installedOrigins.first()?.openSource)
+    }
+
     private suspend fun startPage(scope: CoroutineScope) {
         starter.start(
             provider = provider,
@@ -254,7 +267,11 @@ class TrUAPISessionStarterTest {
         every { hostBridgeFactory.create(any()) } returns bridge
         coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
         coEvery { chainDirectory.resolve() } returns chains
-        every { bootstrapInstaller.installerFor(any(), capture(installerSessionId)) } returns { { } }
+        every { bootstrapInstaller.installerFor(any(), capture(installerSessionId), any()) } answers {
+            installedOrigins += thirdArg<HostPageOrigin?>()
+            val installer: (String) -> (WebView) -> Unit = { { } }
+            installer
+        }
         coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
         coEvery { provider.loadInitialContent() } just Runs
         every { provider.useTrUAPIPermissions(any(), any()) } just Runs
@@ -280,6 +297,7 @@ class TrUAPISessionStarterTest {
     private companion object {
         const val PRODUCT_URL = "https://product.paseo/app"
         const val OPEN_REQUESTED_AT = 1_000L
+        const val TAPPED_AT_EPOCH = 1_793_880_000_000L
         val PRODUCT_ID = ProductId.parse("product.paseo").getOrThrow()
     }
 }

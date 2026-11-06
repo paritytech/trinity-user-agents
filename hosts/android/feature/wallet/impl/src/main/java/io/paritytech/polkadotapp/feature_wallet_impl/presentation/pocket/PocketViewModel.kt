@@ -248,16 +248,24 @@ class PocketViewModel @Inject constructor(
         if (selectedCardId.value != null) dismissCard()
         hideCollectiblesSketchbook()
         removalCandidate.value = null
-        selectCard(card, request.pageQuery)
+        // A link, not a tap: the page it opens carries no tap time.
+        select(card, request.pageQuery)
     }
 
+    /** The user tapped [card]. */
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+        // First, before anything moves, so the page's load can be timed from the tap itself.
+        if (card is PocketCardUiModel.ProductCard) interactor.cardTapped(card.key)
+        select(card, pageQuery)
+    }
+
+    private fun select(card: PocketCardUiModel, pageQuery: String) {
         if (collectiblesShown.value) return
 
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
-            interactor.cardTapped(card.key)
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
             lookUpOpeningFace(card)

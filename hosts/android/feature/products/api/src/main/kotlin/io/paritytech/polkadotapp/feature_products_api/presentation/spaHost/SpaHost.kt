@@ -67,4 +67,7 @@ interface SpaHostSession {
     fun pauseConnections()
 
     fun resumeConnections()
+
+    /** The page, held from an earlier open, is shown again at a tap rather than loaded anew. */
+    fun onShownAgain() = Unit
 }

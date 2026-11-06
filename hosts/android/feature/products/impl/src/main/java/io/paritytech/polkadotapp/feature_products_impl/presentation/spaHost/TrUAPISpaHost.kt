@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.debugServedUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.HostPageOpenTelemetry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
@@ -45,6 +46,7 @@ class TrUAPISpaHost @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
     private val debugPocketCards: DebugPocketCards,
+    private val pageOpenTelemetry: HostPageOpenTelemetry,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
@@ -75,13 +77,15 @@ class TrUAPISpaHost @Inject constructor(
         )
 
         val cardFaceRequests = if (underCard) CardFaceRequests() else null
-        val bridge = sessionStarter.start(
+        val pageOpen = pageOpenTelemetry.open()
+        val bridge = sessionStarter.startPage(
             webViewProvider,
             pageUrl,
             scope,
             hostApiNavigation,
             card = cardFaceRequests,
             explicitProductId = servedPage?.productId,
+            pageOpen = pageOpen,
         )
 
         val currentUrlFlow = MutableStateFlow(pageUrl)
@@ -113,6 +117,7 @@ class TrUAPISpaHost @Inject constructor(
             webViewProvider,
             bridge,
             cardFaceRequests?.requests ?: emptyFlow(),
+            pageOpen,
         )
     }
 
@@ -148,6 +153,7 @@ private class TrUAPISpaHostSession(
     private val provider: BrowserWebViewProvider,
     private val bridge: ProductTrUAPIHostBridge,
     override val faceShownRequests: Flow<FaceShownRequest>,
+    private val pageOpen: HostPageOpenTelemetry.PageOpen,
 ) : SpaHostSession {
     override val isPageRevealed: StateFlow<Boolean> = provider.isPageRevealed
 
@@ -157,5 +163,14 @@ private class TrUAPISpaHostSession(
 
     override fun resumeConnections() {
         provider.resumeConnections()
+    }
+
+    // The tap is taken now, at the tap; the page counts as visible once its next frame is drawn.
+    override fun onShownAgain() {
+        val tap = pageOpen.reuseTap() ?: return
+        val view = provider.getWebViewOrNull() ?: return pageOpen.reused(tap)
+        view.postVisualStateCallback(0L, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) = pageOpen.reused(tap)
+        })
     }
 }

@@ -29,9 +29,13 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>, hostSessionId: String?): (bootstrap: String) -> (WebView) -> Unit {
+    fun installerFor(
+        origins: Set<String>,
+        hostSessionId: String?,
+        pageOrigin: HostPageOrigin? = null,
+    ): (bootstrap: String) -> (WebView) -> Unit {
         val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
-            runCatching { hostTelemetryScript(context, hostSessionId) }
+            runCatching { hostTelemetryScript(context, hostSessionId, pageOrigin) }
                 .logFailure("Native host telemetry unavailable")
                 .getOrNull()
         } else {
@@ -55,9 +59,20 @@ class TrUAPIBootstrapInstaller @Inject constructor(
     }
 }
 
+/**
+ * How a page was opened, for the page to start its own load timing at the user's tap. Set only for the
+ * page a Pocket card tap opened; the fields are optional, so the bootstrap's schema version stays.
+ */
+class HostPageOrigin(val openedAtEpochMs: Long, val openSource: String) {
+    companion object {
+        const val POCKET_CARD = "pocket_card"
+    }
+}
+
 internal fun hostTelemetryScript(
     context: Context,
     hostSessionId: String,
+    pageOrigin: HostPageOrigin? = null,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
     val telemetry = hostTelemetryJson.encodeToString(
@@ -70,6 +85,8 @@ internal fun hostTelemetryScript(
             osVersion = Build.VERSION.RELEASE?.takeIf(String::isNotBlank),
             truapiHostVersion = truapiHostVersion().takeIf(String::isNotBlank),
             schemaVersion = "1",
+            openedAtEpochMs = pageOrigin?.openedAtEpochMs,
+            openSource = pageOrigin?.openSource,
         ),
     )
 
@@ -98,4 +115,6 @@ private data class HostTelemetryBootstrap(
     val osVersion: String?,
     val truapiHostVersion: String?,
     val schemaVersion: String,
+    val openedAtEpochMs: Long? = null,
+    val openSource: String? = null,
 )

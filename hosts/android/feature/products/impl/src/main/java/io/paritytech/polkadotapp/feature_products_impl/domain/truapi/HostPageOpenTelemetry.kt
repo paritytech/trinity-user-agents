@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTap
 import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
 import io.paritytech.polkadotapp.common.data.telemetry.stepEvent
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -12,7 +13,10 @@ import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
-/** A product page's load and reveal, each timed from when its open was asked for. */
+/**
+ * A product page's load and reveal, each timed from when its open was asked for, and the Pocket card
+ * tap that opened it or showed it again.
+ */
 class HostPageOpenTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
@@ -27,15 +31,25 @@ class HostPageOpenTelemetry @Inject internal constructor(
 
         @Volatile private var sessionId: String? = null
 
-        @Volatile private var tappedAtMillis: Long? = null
+        @Volatile private var tap: HostPocketTap? = null
         private val loadReported = AtomicBoolean(false)
         private val revealReported = AtomicBoolean(false)
+
+        /** Handed to the page, so its own timing starts at the tap that opened it. Null for any other open. */
+        val pageOrigin: HostPageOrigin?
+            get() = tap?.let { HostPageOrigin(it.atEpochMillis, HostPageOrigin.POCKET_CARD) }
 
         fun opened(productId: ProductId, sessionId: String) {
             this.productId = productId
             this.sessionId = sessionId
-            tappedAtMillis = taps.consume(productId.value)
+            tap = taps.consume(productId.value)?.also { reportTap(it, HostEventOutcome.OPENED) }
         }
+
+        /** The tap that shows this page again, held and loaded already; null when no tap asked for it. */
+        fun reuseTap(): HostPocketTap? = productId?.let { taps.consume(it.value) }
+
+        /** Reports [tap] as having shown this page again, now that the page is visible. */
+        fun reused(tap: HostPocketTap) = reportTap(tap, HostEventOutcome.REUSED)
 
         /** A page that is not a product's (the debug browser opening any URL) has no load to report. */
         fun notAProduct() {
@@ -59,14 +73,22 @@ class HostPageOpenTelemetry @Inject internal constructor(
         private fun reportLoad(outcome: HostEventOutcome) {
             if (!loadReported.compareAndSet(false, true)) return
             report(PAGE_LOADED_EVENT_NAME, outcome, emptyMap()) { now ->
-                tappedAtMillis?.let { mapOf("tap_ms" to now - it) }.orEmpty()
+                tap?.let { mapOf("tap_ms" to now - it.atMillis) }.orEmpty()
             }
         }
+
+        // Timed from the tap: to the load starting when it opened the page, to the page being visible
+        // when it showed a held one again.
+        private fun reportTap(tap: HostPocketTap, outcome: HostEventOutcome) =
+            report(CARD_TAPPED_EVENT_NAME, outcome, emptyMap(), startedAtMillis = tap.atMillis) { now ->
+                if (outcome == HostEventOutcome.REUSED) mapOf("reuse_ms" to now - tap.atMillis) else emptyMap()
+            }
 
         private fun report(
             name: String,
             outcome: HostEventOutcome,
             tags: Map<String, String>,
+            startedAtMillis: Long = requestedAtMillis,
             extras: (now: Long) -> Map<String, Any>,
         ) {
             runCatching {
@@ -76,7 +98,7 @@ class HostPageOpenTelemetry @Inject internal constructor(
                         name = name,
                         outcome = outcome,
                         monotonicMs = now,
-                        durationMs = now - requestedAtMillis,
+                        durationMs = now - startedAtMillis,
                         sessionId = sessionId,
                         tags = productId?.let { mapOf("product.id" to it.value) }.orEmpty() + tags,
                         extras = extras(now),
@@ -89,5 +111,6 @@ class HostPageOpenTelemetry @Inject internal constructor(
     companion object {
         const val PAGE_LOADED_EVENT_NAME = "host.webview.page_loaded"
         const val REVEALED_EVENT_NAME = "host.webview.revealed"
+        const val CARD_TAPPED_EVENT_NAME = "host.pocket.card_tapped"
     }
 }

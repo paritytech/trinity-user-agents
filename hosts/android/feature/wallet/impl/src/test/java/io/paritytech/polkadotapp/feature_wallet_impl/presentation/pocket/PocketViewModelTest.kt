@@ -428,6 +428,20 @@ class PocketViewModelTest {
         assertNull(cardOpenRequests.requested.value)
     }
 
+    // The page a link opens was not opened by a tap, so it must not carry a tap time.
+    @Test
+    fun `a card a link opens records no tap`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        cardOpenRequests.request(card.key)
+
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
+        verify(exactly = 0) { interactor.cardTapped(any()) }
+    }
+
     // A request outlives the screen that answers it, since it is held for a tab that may not exist
     // yet. Left standing once answered, it would open the card again on every change to the
     // collection, after the user had already closed it.
