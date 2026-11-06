@@ -273,7 +273,7 @@ fn clearing_a_product_forgets_only_its_key() {
 	signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID));
 
 	assert_eq!(
-		(remembered(&signing_host, PRODUCT_ID), remembered(&signing_host, "other.dot"),),
+		(remembered(&signing_host, PRODUCT_ID), remembered(&signing_host, "other.dot")),
 		(None, Some(SECRET)),
 		"clearing a product's state must forget its key and keep the others"
 	);

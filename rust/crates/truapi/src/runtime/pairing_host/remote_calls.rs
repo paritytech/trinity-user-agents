@@ -278,8 +278,7 @@ impl PairingHost {
 		self.session.call(cx, session, request).await?
 	}
 
-	/// Ask the paired signing host to allocate product resources, keeping any
-	/// returned grants.
+	/// Ask the paired signing host to allocate product resources and keep the grants.
 	///
 	/// `lifecycle_epoch` is the grant revision read before the allocation was
 	/// confirmed, so a product reset during the review discards the result.

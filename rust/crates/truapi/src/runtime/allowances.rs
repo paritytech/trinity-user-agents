@@ -59,7 +59,7 @@ impl AllowanceCacheKey {
 		}
 	}
 
-	/// Whether this key belongs to the given SSO session.
+	/// Whether this key belongs to `session`.
 	pub fn is_for_session(&self, session: GrantScope) -> bool {
 		self.session == session
 	}

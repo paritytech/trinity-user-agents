@@ -194,14 +194,17 @@ impl ProductAccounts {
 		self.authority.ring_vrf_sign(cx, session, self.request(request)).await
 	}
 
-	/// Revision of the kept grants, read before a review whose result must not
-	/// outlive a reset.
+	/// Revision of the kept grants.
+	///
+	/// Read it before a review whose result must not outlive a reset.
 	pub fn grant_revision(&self) -> u64 {
 		self.authority.grant_revision()
 	}
 
-	/// Allocate resources for this product, kept only while the grants are still
-	/// at `grant_revision`.
+	/// Allocate resources for this product.
+	///
+	/// The grants are kept only while this host's grants are still at
+	/// `grant_revision`.
 	pub async fn allocate_resources(
 		&self,
 		cx: &CallContext,

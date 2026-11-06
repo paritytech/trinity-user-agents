@@ -262,7 +262,7 @@ impl SigningHost {
 		session: &AuthoritySession,
 	) -> Result<(SessionInfo, u64), AuthorityError> {
 		let lifecycle = self.grants.lifecycle();
-		let (current, _) = self.require_current_session(session)?;
+		let current = self.require_current_session(session)?;
 		Ok((current, lifecycle.revision()))
 	}
 
@@ -272,7 +272,7 @@ impl SigningHost {
 		grant_revision: u64,
 		product_id: &ProductId,
 	) -> Result<(), AuthorityError> {
-		let (current, _) = self.require_current_session(session)?;
+		let current = self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy)?;
 		if root.public.to_bytes() != session.public_key {
@@ -299,7 +299,7 @@ impl SigningHost {
 		product_id: &ProductId,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<StatementStoreAllowanceKey, allowance::AllowanceAllocationError> {
-		let (current, _) = self.require_current_session(session)?;
+		let current = self.require_current_session(session)?;
 		let allocation = allowance::allocate_statement_store_allowance(
 			&self.services,
 			self,
@@ -334,8 +334,9 @@ impl SigningHost {
 				.is_ok_and(|key| key.is_some())
 	}
 
-	/// Clear one product's grants and Allow once answers, keeping the wallet
-	/// and other products.
+	/// Clear one product's grants and Allow once answers.
+	///
+	/// The wallet session and other products' grants are kept.
 	pub fn clear_product_state(&self, product_id: &ProductId) {
 		self.consent.forget_allowed_once_for(product_id);
 		self.grants.lifecycle().revoke_product(product_id);
@@ -427,14 +428,14 @@ impl SigningHost {
 	fn require_current_session(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<(SessionInfo, u64), AuthorityError> {
+	) -> Result<SessionInfo, AuthorityError> {
 		let generation =
 			self.activation_generation.lock().expect("activation generation mutex poisoned");
 		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
 		if local_session_validation_id(&current, *generation) != session.validation_id {
 			return Err(AuthorityError::Disconnected);
 		}
-		Ok((current, *generation))
+		Ok(current)
 	}
 
 	fn ring_vrf_entropy(
@@ -689,7 +690,7 @@ impl SigningHost {
 		self.require_current_session(session)?;
 		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
 		let keypair = self.product_keypair(&request.account)?;
-		let (current, _) = self.require_current_session(session)?;
+		let current = self.require_current_session(session)?;
 		let calling_product_id = caller.product_id().ok_or(AuthorityError::Rejected)?;
 		let owner = &request.account.dot_ns_identifier;
 		let auto_signing = matches!(caller, AccountCaller::Local { .. }) &&
@@ -845,7 +846,7 @@ impl ProductAuthority for SigningHost {
 		// `grant_auto_signing` refuses to keep a key whose owner is not the
 		// session's own key, so the session carries the owner a key is kept
 		// under and no root derivation is needed to answer this.
-		let (current, _) = self.require_current_session(session)?;
+		let current = self.require_current_session(session)?;
 		if super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier) ||
 			self.keeps_auto_signing_key(&current, calling_product_id, &account.dot_ns_identifier)
 				.await

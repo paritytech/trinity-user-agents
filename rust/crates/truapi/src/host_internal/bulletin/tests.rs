@@ -128,6 +128,10 @@ fn builds_large_preimage_without_pathological_cost() {
 
 #[test]
 fn rejects_secret_of_wrong_shape() {
-	let error = BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap_err();
-	assert!(error.to_string().contains("invalid bulletin allowance key"), "{error}");
+	assert_eq!(
+		BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).map(|_| ()),
+		Err(crate::runtime::AuthorityError::Unavailable {
+			reason: "invalid bulletin allowance key".to_string()
+		})
+	);
 }

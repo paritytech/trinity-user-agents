@@ -424,7 +424,7 @@ pub enum AccountGrant {
 }
 
 /// How a host keeps the grants its account holder issues.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(PartialEq)]
 pub enum GrantKeeping {
 	/// The wallet's own host: grants last one wallet activation.
 	Wallet,
@@ -563,12 +563,16 @@ pub trait ProductAuthority: Send + Sync {
 		request: ProductRequest<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
-	/// Revision of this host's kept grants. Read before a review, it lets a
-	/// product reset during the review discard the grants it confirmed.
+	/// Revision of this host's kept grants.
+	///
+	/// Read before a review, it lets a product reset during the review discard
+	/// the grants it confirmed.
 	fn grant_revision(&self) -> u64;
 
-	/// Ask the account authority to allocate product-scoped resources, keeping
-	/// them only while the grants are still at `grant_revision`.
+	/// Ask the account authority to allocate product-scoped resources.
+	///
+	/// The grants are kept only while this host's grants are still at
+	/// `grant_revision`.
 	async fn allocate_resources(
 		&self,
 		cx: &CallContext,
