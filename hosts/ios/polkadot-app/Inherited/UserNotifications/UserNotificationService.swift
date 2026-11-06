@@ -257,7 +257,13 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
-        if !presentationOptions.isEmpty {
+        if presentationOptions.isEmpty {
+            productNotificationDiagnostics.suppressed(
+                identifier: notification.request.identifier,
+                userInfo: notification.request.content.userInfo,
+                deliveredAt: notification.date
+            )
+        } else {
             productNotificationDiagnostics.shown(
                 identifier: notification.request.identifier,
                 userInfo: notification.request.content.userInfo,
