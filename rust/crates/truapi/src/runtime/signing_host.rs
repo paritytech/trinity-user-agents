@@ -25,7 +25,7 @@ use super::{
 	HostSession, RuntimeServices,
 	allowances::AllowanceResource,
 	authority::{
-		AccountCaller, AccountGrant, AuthorityError, AuthoritySession, AutoSigningGrant,
+		AccountCaller, Allowance, AuthorityError, AuthoritySession, AutoSigningGrant,
 		AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, GrantKeeping,
 		ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		StatementStoreAllowanceKey, authority_session_validation_id,
@@ -315,7 +315,7 @@ impl SigningHost {
 				&current,
 				grant_revision,
 				product_id,
-				&AccountGrant::StatementStore { key: key.clone(), period: Some(allocation.period) },
+				&Allowance::StatementStore { key: key.clone(), period: Some(allocation.period) },
 			)
 			.await?;
 		Ok(key)
@@ -1258,7 +1258,7 @@ impl ProductAuthority for SigningHost {
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
 		let period = statement_allowance::slot::current_period(allowance::current_unix_secs()?);
-		if let Some(AccountGrant::StatementStore { key, period: Some(kept_period) }) = self
+		if let Some(Allowance::StatementStore { key, period: Some(kept_period) }) = self
 			.grants
 			.cached_allowance(
 				&current,

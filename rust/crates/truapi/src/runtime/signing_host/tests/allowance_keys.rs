@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::{allowances::AllowanceResource, authority::AccountGrant};
+use crate::runtime::{allowances::AllowanceResource, authority::Allowance};
 
 use futures::FutureExt;
 use parity_scale_codec::Encode;
@@ -113,7 +113,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 		&session,
 		revision,
 		&ProductId::for_test(product_id),
-		&AccountGrant::StatementStore { key: secret_key(), period: Some(period) },
+		&Allowance::StatementStore { key: secret_key(), period: Some(period) },
 	))
 	.unwrap();
 }
@@ -129,10 +129,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 		AllowanceResource::StatementStore,
 	))
 	.unwrap()
-	.map(|grant| match grant {
-		AccountGrant::StatementStore { key, .. } => *key.as_secret_bytes(),
-		_ => panic!("expected statement-store grant"),
-	})
+	.map(|allowance| *allowance.as_secret_bytes())
 }
 
 /// The key the host serves for the product, bounded so a lookup that falls
@@ -315,7 +312,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		&session,
 		revision,
 		&ProductId::for_test(PRODUCT_ID),
-		&AccountGrant::StatementStore { key: secret_key(), period: Some(PERIOD) },
+		&Allowance::StatementStore { key: secret_key(), period: Some(PERIOD) },
 	));
 	assert_eq!(
 		(remembered_stale.map(|_| ()), remembered(&signing_host, PRODUCT_ID)),

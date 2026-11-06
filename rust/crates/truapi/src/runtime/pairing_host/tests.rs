@@ -5,7 +5,7 @@ use crate::{
 	runtime::{
 		ProductRuntimeHost,
 		allowances::AllowanceResource,
-		authority::{AccountGrant, AutoSigningKey, StatementStoreAllowanceKey},
+		authority::{Allowance, AutoSigningKey, StatementStoreAllowanceKey},
 		tests::{
 			auto_signing_test_platform, cache_test_product_subtree, install_pairing_session,
 			request_auto_signing, withdrawn_requests,
@@ -1267,12 +1267,12 @@ async fn retain_allowance_key(
 	secret: Vec<u8>,
 ) -> Result<(), AuthorityError> {
 	let grant = match resource {
-		AllowanceResource::StatementStore => AccountGrant::StatementStore {
+		AllowanceResource::StatementStore => Allowance::StatementStore {
 			key: StatementStoreAllowanceKey::from_secret_bytes(secret)?,
 			period: None,
 		},
 		AllowanceResource::Bulletin => {
-			AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(secret)?)
+			Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(secret)?)
 		},
 	};
 	pairing_host
@@ -1287,7 +1287,7 @@ async fn cached_allowance_key(
 	session: &SessionInfo,
 	grant_revision: u64,
 	product_id: &ProductId,
-) -> Result<Option<AccountGrant>, AuthorityError> {
+) -> Result<Option<Allowance>, AuthorityError> {
 	pairing_host
 		.grants
 		.cached_allowance(session, grant_revision, product_id, resource)

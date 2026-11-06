@@ -3,7 +3,7 @@
 use super::{
 	allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope},
 	authority::{
-		AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey, GrantKeeping,
+		Allowance, AuthorityError, AutoSigningKey, BulletinAllowanceKey, GrantKeeping,
 		StatementStoreAllowanceKey,
 	},
 	product_subtree,
@@ -353,22 +353,15 @@ impl HostGrantStore {
 	///
 	/// A paired host writes the key before caching it and removes it again if
 	/// the cache update is refused. Fails with [`AuthorityError::Disconnected`]
-	/// when `grant_revision` is stale or `session` is no longer selected, and
-	/// with [`AuthorityError::Rejected`] for a grant that is not an allowance.
+	/// when `grant_revision` is stale or `session` is no longer selected.
 	pub async fn retain_allowance(
 		&self,
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
-		allowance: &AccountGrant,
+		allowance: &Allowance,
 	) -> Result<(), AuthorityError> {
-		let (resource, secret) = match allowance {
-			AccountGrant::StatementStore { key, .. } => {
-				(AllowanceResource::StatementStore, key.as_secret_bytes())
-			},
-			AccountGrant::Bulletin(key) => (AllowanceResource::Bulletin, key.as_secret_bytes()),
-			_ => return Err(AuthorityError::Rejected),
-		};
+		let resource = allowance.resource();
 		let _storage = self.persistence().await;
 		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
@@ -379,7 +372,7 @@ impl HostGrantStore {
 				session,
 				product_id,
 				resource,
-				secret.to_vec(),
+				allowance.as_secret_bytes().to_vec(),
 			)
 			.await?;
 		}
@@ -400,26 +393,25 @@ impl HostGrantStore {
 		session: &SessionInfo,
 		grant_revision: u64,
 		product_id: &ProductId,
-		allowance: &AccountGrant,
+		allowance: &Allowance,
 	) -> Result<(), AuthorityError> {
 		let lifecycle = self.lifecycle();
 		if !lifecycle.is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
 		match allowance {
-			AccountGrant::StatementStore { key, period } => {
+			Allowance::StatementStore { key, period } => {
 				self.caches().statement_store_allowances.insert(
 					AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore),
 					(*period, key.clone()),
 				);
 			},
-			AccountGrant::Bulletin(key) => {
+			Allowance::Bulletin(key) => {
 				self.caches().bulletin_allowances.insert(
 					AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin),
 					key.clone(),
 				);
 			},
-			_ => return Err(AuthorityError::Rejected),
 		}
 		Ok(())
 	}
@@ -435,7 +427,7 @@ impl HostGrantStore {
 		grant_revision: u64,
 		product_id: &ProductId,
 		resource: AllowanceResource,
-	) -> Result<Option<AccountGrant>, AuthorityError> {
+	) -> Result<Option<Allowance>, AuthorityError> {
 		let cache_key = AllowanceCacheKey::new(session, product_id, resource);
 		let _storage = self.persistence().await;
 		if !self.session_secret_allocation_is_current(session, grant_revision) {
@@ -447,13 +439,13 @@ impl HostGrantStore {
 				.statement_store_allowances
 				.get(&cache_key)
 				.cloned()
-				.map(|(period, key)| AccountGrant::StatementStore { key, period }),
+				.map(|(period, key)| Allowance::StatementStore { key, period }),
 			AllowanceResource::Bulletin => self
 				.caches()
 				.bulletin_allowances
 				.get(&cache_key)
 				.cloned()
-				.map(AccountGrant::Bulletin),
+				.map(Allowance::Bulletin),
 		};
 		if cached.is_some() {
 			return Ok(cached);
@@ -469,12 +461,12 @@ impl HostGrantStore {
 				return Ok(None);
 			};
 			match resource {
-				AllowanceResource::StatementStore => AccountGrant::StatementStore {
+				AllowanceResource::StatementStore => Allowance::StatementStore {
 					key: StatementStoreAllowanceKey::from_secret_bytes(secret)?,
 					period: None,
 				},
 				AllowanceResource::Bulletin => {
-					AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(secret)?)
+					Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(secret)?)
 				},
 			}
 		};

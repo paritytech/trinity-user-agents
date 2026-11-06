@@ -4,7 +4,7 @@ use super::{
 	super::{
 		allowances::AllowanceResource,
 		authority::{
-			AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
+			AccountGrant, Allowance, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
 			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
@@ -352,7 +352,7 @@ impl PairingHost {
 		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		let grant_revision = self.grants.lifecycle().revision();
-		if let Some(AccountGrant::StatementStore { key, .. }) = self
+		if let Some(Allowance::StatementStore { key, .. }) = self
 			.grants
 			.cached_allowance(
 				session,
@@ -381,7 +381,7 @@ impl PairingHost {
 						session,
 						grant_revision,
 						product_id,
-						&AccountGrant::StatementStore { key: key.clone(), period: None },
+						&Allowance::StatementStore { key: key.clone(), period: None },
 					)
 					.await?;
 				Ok(key)
@@ -399,7 +399,7 @@ impl PairingHost {
 		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let grant_revision = self.grants.lifecycle().revision();
-		if let Some(AccountGrant::Bulletin(key)) = self
+		if let Some(Allowance::Bulletin(key)) = self
 			.grants
 			.cached_allowance(session, grant_revision, product_id, AllowanceResource::Bulletin)
 			.await?
@@ -463,7 +463,7 @@ impl PairingHost {
 						session,
 						grant_revision,
 						product_id,
-						&AccountGrant::Bulletin(key.clone()),
+						&Allowance::Bulletin(key.clone()),
 					)
 					.await?;
 				Ok(key)
@@ -482,8 +482,10 @@ impl PairingHost {
 		grant: AccountGrant,
 	) -> Result<(), AuthorityError> {
 		match grant {
-			grant @ (AccountGrant::StatementStore { .. } | AccountGrant::Bulletin(_)) => {
-				self.grants.retain_allowance(session, grant_revision, product_id, &grant).await
+			AccountGrant::Allowance(allowance) => {
+				self.grants
+					.retain_allowance(session, grant_revision, product_id, &allowance)
+					.await
 			},
 			AccountGrant::AutoSigning(key) => {
 				let expected =
@@ -500,14 +502,14 @@ impl PairingHost {
 fn decode_grant(resource: SsoAllocatedResource) -> Result<AccountGrant, AuthorityError> {
 	Ok(match resource {
 		SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-			AccountGrant::StatementStore {
+			AccountGrant::Allowance(Allowance::StatementStore {
 				key: StatementStoreAllowanceKey::from_secret_bytes(slot_account_key)?,
 				period: None,
-			}
+			})
 		},
-		SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-			AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(slot_account_key)?)
-		},
+		SsoAllocatedResource::BulletinAllowance { slot_account_key } => AccountGrant::Allowance(
+			Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(slot_account_key)?),
+		),
 		SsoAllocatedResource::SmartContractAllowance => AccountGrant::SmartContract,
 		SsoAllocatedResource::AutoSigning { product_root_private_key, ring_vrf_domain_entropy } => {
 			AccountGrant::AutoSigning(AutoSigningKey::from_parts(

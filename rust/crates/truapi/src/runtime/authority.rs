@@ -2,7 +2,7 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use super::product_consent::ProductConsent;
+use super::{allowances::AllowanceResource, product_consent::ProductConsent};
 use crate::platform::{ProductContext, ProductId};
 use truapi::{
 	CallContext, CancellationReason,
@@ -406,8 +406,8 @@ impl StatementStoreAllowanceKey {
 	}
 }
 
-/// Issued capability material, ready for the host to validate and retain.
-pub enum AccountGrant {
+/// Allowance key that gives a product access to one chain resource.
+pub enum Allowance {
 	/// Statement signing material and a known on-chain allocation period, if supplied.
 	StatementStore {
 		/// Validated statement signing key.
@@ -417,6 +417,30 @@ pub enum AccountGrant {
 	},
 	/// Dedicated Bulletin allowance key.
 	Bulletin(BulletinAllowanceKey),
+}
+
+impl Allowance {
+	/// Chain resource this key grants access to.
+	pub fn resource(&self) -> AllowanceResource {
+		match self {
+			Self::StatementStore { .. } => AllowanceResource::StatementStore,
+			Self::Bulletin(_) => AllowanceResource::Bulletin,
+		}
+	}
+
+	/// sr25519 secret of the allowance account.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		match self {
+			Self::StatementStore { key, .. } => key.as_secret_bytes(),
+			Self::Bulletin(key) => key.as_secret_bytes(),
+		}
+	}
+}
+
+/// Issued capability material, ready for the host to validate and retain.
+pub enum AccountGrant {
+	/// Allowance key for one chain resource.
+	Allowance(Allowance),
 	/// Funded product account.
 	SmartContract,
 	/// Exported product signing material.
