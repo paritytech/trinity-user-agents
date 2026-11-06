@@ -22,6 +22,7 @@ struct RustRuntimeEnvironment {
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
     let logger: LoggerProtocol
+    let telemetry: HostLoadTelemetry
 
     /// The rust pieces a runtime needs: the opened execution and its chain
     /// connection pool for lifecycle control.
@@ -90,7 +91,6 @@ private extension RustRuntimeEnvironment {
         purpose: ExecutionPurpose,
         hostSessionId: UUID?
     ) throws -> ExecutionModel {
-        let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
         let chainConnections = TrUAPIV2SpecConnectionPool(
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),

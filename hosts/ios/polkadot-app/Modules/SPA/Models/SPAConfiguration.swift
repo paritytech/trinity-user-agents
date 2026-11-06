@@ -53,7 +53,7 @@ struct SPAConfiguration {
     let presentation: SPAPresentation
     let browserTabId: UUID?
     /// The tap that opened this page, which its host telemetry carries to the page.
-    let openTap: HostOpenTap?
+    let openTap: SPAOpenTap?
 
     init(
         title: String?,
@@ -63,7 +63,7 @@ struct SPAConfiguration {
         contentSource: SPAContentSource = .dotNs,
         presentation: SPAPresentation = .pushed,
         browserTabId: UUID? = nil,
-        openTap: HostOpenTap? = nil
+        openTap: SPAOpenTap? = nil
     ) {
         self.title = title
         self.isRootScreen = isRootScreen

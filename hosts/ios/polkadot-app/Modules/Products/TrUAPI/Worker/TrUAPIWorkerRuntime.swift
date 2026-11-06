@@ -106,19 +106,18 @@ actor TrUAPIWorkerRuntime {
         let createStartedAt = boot?.now()
         let jsEngine = engineFactory()
         do {
+            if let boot, let reporting = jsEngine as? JSEngineWebViewCreationReporting {
+                await reporting.onWebViewCreated { boot.markWebViewCreated(since: createStartedAt) }
+            }
             await jsEngine.registerJSDeviceCapabilityHandler(
                 executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
                     execution: executionModel.execution
                 )
             )
             await jsEngine.onTermination(onEngineLost)
-            boot?.add(.webViewCreate, since: createStartedAt)
             try checkNotDisposed()
-
-            // The web view itself is built inside `initialize`, with the blank page it loads.
-            let initializeStartedAt = boot?.now()
             try await jsEngine.initialize(with: scripts)
-            boot?.add(.blankReady, since: initializeStartedAt)
+            boot?.markBlankReady()
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }
             try checkNotDisposed()
         } catch {

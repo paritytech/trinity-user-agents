@@ -11,6 +11,7 @@ public final class HostCacheHitLedger: Sendable {
         let trigger: HostLoadTrigger
     }
 
+    private static let capacity = 4_096
     private let claimed = OSAllocatedUnfairLock(initialState: Set<Key>())
 
     public init() {}
@@ -23,6 +24,10 @@ public final class HostCacheHitLedger: Sendable {
             trigger: context.sessionID == nil ? context.trigger : .open
         )
 
-        return claimed.withLock { $0.insert(key).inserted }
+        return claimed.withLock { claimed in
+            // Bounded: a long session opens many products, and an old key only risks one repeated report.
+            if claimed.count >= Self.capacity { claimed.removeAll() }
+            return claimed.insert(key).inserted
+        }
     }
 }

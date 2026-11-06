@@ -8,12 +8,14 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     private(set) var deviceCapabilityHandler: JSDeviceCapabilityHandler?
     private(set) var mediaHandlerWasInstalledAtInitialization = false
     var onInitialize: (@Sendable () async -> Void)?
+    private(set) var webViewCreatedHandler: (@Sendable () -> Void)?
     var onDestroy: (@Sendable () async -> Void)?
     private var handlers: [String: JSNativeHandler] = [:]
 
     func getState() async -> JSEngineState { .ready }
 
     func initialize(with scripts: [JSEngineScript]) async throws {
+        webViewCreatedHandler?()
         mediaHandlerWasInstalledAtInitialization = deviceCapabilityHandler != nil
         initializedScripts = scripts
         await onInitialize?()
@@ -72,5 +74,11 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
         let handler = terminationHandler
         terminationHandler = nil
         handler?()
+    }
+}
+
+extension MockJSEngine: JSEngineWebViewCreationReporting {
+    func onWebViewCreated(_ handler: @escaping @Sendable () -> Void) async {
+        webViewCreatedHandler = handler
     }
 }

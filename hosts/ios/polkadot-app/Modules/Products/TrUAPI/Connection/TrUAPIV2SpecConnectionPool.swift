@@ -228,7 +228,7 @@ private extension TrUAPIV2SpecConnectionPool {
     /// Reports a connection's first frame, or its close before one; later frames find no dial.
     func report(_ dial: ChainDial, outcome: HostEventOutcome, at answeredAt: Int) {
         telemetry.record { origin, now in
-            .rpcConnected(
+            HostLoadEvent.rpcConnected(
                 chain: TrUAPISupportedChains.telemetryLabel(for: dial.chainId) ?? dial.genesisHash.toHex(),
                 executable: executable,
                 outcome: outcome,

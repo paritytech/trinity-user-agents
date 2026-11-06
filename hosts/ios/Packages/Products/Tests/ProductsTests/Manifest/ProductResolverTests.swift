@@ -182,9 +182,9 @@ struct ProductResolverTests {
         #expect(resolved.displayName == "HackM3")
     }
 
-    /// A read that reaches the chain is `ok`; the answer the resolver already holds is a cache hit,
-    /// reported once per session however often it is asked for.
-    @Test func reportsTheChainReadAndTheFirstCacheHitUnderTheCallersSession() async throws {
+    /// One `product.resolved` per product and session: the chain read, and nothing for the answers the
+    /// resolver serves from memory after it.
+    @Test func aSessionReportsTheChainReadOnly() async throws {
         let recorder = RecordingHostEventRecorder()
         let telemetry = HostLoadTelemetry.recording(into: recorder)
         let session = UUID()
@@ -196,15 +196,28 @@ struct ProductResolverTests {
             _ = try await resolver.resolve(ProductId("hackm3.dot"))
         }
 
-        #expect(recorder.events.map(\.name) == ["host.product.resolved", "host.product.resolved"])
-        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok"])
         let event = try #require(recorder.events.first)
         #expect(event.tags["product.id"] == "hackm3.dot")
-        #expect(event.tags["trigger"] == "open")
-        #expect(event.extras["duration_ms"] == .integer(10))
+        #expect(event.tags["load.trigger"] == "open")
+        #expect(event.durationMilliseconds == 10)
         #expect(event.extras["event.monotonic_ms"] == .integer(20))
         #expect(event.tags["host.session_id"] == session.uuidString.lowercased())
-        #expect(event.extras["host.session_id"] == .string(session.uuidString.lowercased()))
+    }
+
+    /// Outside a session the memo is a cache hit, reported once per trigger however often it is asked.
+    @Test func aPrewarmReportsTheChainReadAndTheFirstCacheHit() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
+
+        try await telemetry.withContext(session: nil, trigger: .prewarm) {
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
     }
 
     /// A refresh or prewarm that lands while a page is open is not that page's load.
@@ -219,7 +232,7 @@ struct ProductResolverTests {
             }
         }
 
-        #expect(recorder.events.map { $0.tags["trigger"] } == ["refresh"])
+        #expect(recorder.events.map { $0.tags["load.trigger"] } == ["refresh"])
         #expect(recorder.events.first?.tags["host.session_id"] == nil)
     }
 
@@ -291,8 +304,8 @@ struct ProductResolverTests {
         repository.release()
         _ = try await (prewarm.value, open.value)
 
-        let prewarmed = recorder.events.first { $0.tags["trigger"] == "prewarm" }
-        let opened = recorder.events.first { $0.tags["trigger"] == "open" }
+        let prewarmed = recorder.events.first { $0.tags["load.trigger"] == "prewarm" }
+        let opened = recorder.events.first { $0.tags["load.trigger"] == "open" }
         #expect(recorder.events.count == 2)
         #expect(prewarmed?.tags["outcome"] == "ok")
         #expect(opened?.tags["outcome"] == "ok")

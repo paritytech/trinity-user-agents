@@ -46,6 +46,9 @@ protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     /// Runs `operation` as part of this page opening, so the loads it makes report under the page's session.
     func asPageOpen<R>(_ operation: () async throws -> R) async rethrows -> R
 
+    /// The open failed before the page could load.
+    func failedToOpen() async
+
     /// The clock a page load is timed on, read where WebKit reports it; nil when nothing is reported.
     func pageLoadTimestamp() -> Int?
 

@@ -96,9 +96,16 @@ struct RealPocketFaceSource: PocketFaceSourcing {
                 } catch {
                     logger.error("[pocket] the face stream for \(key.cardId.value) ended: \(error)")
 
-                    if !(error is CancellationError) {
+                    if error is CancellationError {
+                        load?.finish(.abandoned)
+                    } else {
                         load?.finish(.error)
                     }
+                }
+
+                // A stream that ended before drawing anything did not load the face.
+                if !drewLiveFace, !Task.isCancelled {
+                    load?.finish(.error)
                 }
 
                 continuation.finish()
@@ -130,7 +137,7 @@ private final class PocketFaceLoad: Sendable {
     private let telemetry: HostLoadTelemetry
     private let timeout: Duration
     private let requestedAt: Int
-    private let worker: HostWorkerTemperature
+    private let worker: HostWorkerState
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     init?(
@@ -199,7 +206,7 @@ private final class PocketFaceLoad: Sendable {
         let hostSessionId = streams.workerStatus(of: key.productId).hostSessionId
 
         telemetry.record { origin, now in
-            .pocketFaceLoaded(
+            HostLoadEvent.pocketFaceLoaded(
                 productID: key.productId.rawValue,
                 outcome: outcome,
                 worker: worker,

@@ -13,17 +13,19 @@ public struct HostEvent: Sendable, Equatable {
     public let name: String
     public let tags: [String: String]
     public let extras: [String: HostEventValue]
+    /// How long a step took; nil for a point event. Charted as a distribution named after the event.
+    public let durationMilliseconds: Int?
 
-    public init(name: String, tags: [String: String], extras: [String: HostEventValue]) {
+    public init(
+        name: String,
+        tags: [String: String],
+        extras: [String: HostEventValue],
+        durationMilliseconds: Int? = nil
+    ) {
         self.name = name
         self.tags = tags
         self.extras = extras
-    }
-
-    public var durationMilliseconds: Int? {
-        guard case let .integer(duration)? = extras["duration_ms"] else { return nil }
-
-        return duration
+        self.durationMilliseconds = durationMilliseconds
     }
 
     /// An event carrying the fields every host event shares; `tags` and `extras` add its own.
@@ -98,7 +100,7 @@ public struct HostEvent: Sendable, Equatable {
             hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID, "trigger": trigger.rawValue]
+            tags: ["product.id": productID, "load.trigger": trigger.rawValue]
         )
     }
 
@@ -124,139 +126,8 @@ public struct HostEvent: Sendable, Equatable {
             hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["trigger": trigger.rawValue],
+            tags: ["load.trigger": trigger.rawValue],
             extras: extras
-        )
-    }
-
-    public static func rpcConnected(
-        chain: String,
-        executable: HostExecutableOwner?,
-        outcome: HostEventOutcome,
-        durationMilliseconds: Int,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        var tags = ["chain": chain]
-        tags["product.id"] = executable?.productID
-        tags["executable.kind"] = executable?.kind.rawValue
-
-        return step(
-            name: "host.rpc.connected",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: executable?.hostSessionID,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: tags
-        )
-    }
-
-    public static func pocketFaceLoaded(
-        productID: String,
-        outcome: HostEventOutcome,
-        worker: HostWorkerTemperature,
-        durationMilliseconds: Int,
-        hostSessionID: UUID?,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        step(
-            name: "host.pocket.face_loaded",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: hostSessionID,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID, "worker": worker.rawValue]
-        )
-    }
-
-    public static func workerBoot(
-        productID: String,
-        outcome: HostEventOutcome,
-        phases: HostWorkerBootPhases,
-        durationMilliseconds: Int,
-        hostSessionID: UUID?,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        var extras: [String: HostEventValue] = [:]
-        extras["resolve_ms"] = phases.resolve.map(HostEventValue.integer)
-        extras["execution_open_ms"] = phases.executionOpen.map(HostEventValue.integer)
-        extras["webview_create_ms"] = phases.webViewCreate.map(HostEventValue.integer)
-        extras["blank_ready_ms"] = phases.blankReady.map(HostEventValue.integer)
-
-        return step(
-            name: "host.worker.boot",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: hostSessionID,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID],
-            extras: extras
-        )
-    }
-
-    public static func runtimeBoot(
-        outcome: HostEventOutcome,
-        durationMilliseconds: Int,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        step(
-            name: "host.runtime.boot",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: nil,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: [:]
-        )
-    }
-
-    public static func webViewPageLoaded(
-        hostSessionID: UUID,
-        productID: String,
-        outcome: HostEventOutcome,
-        durationMilliseconds: Int,
-        tapMilliseconds: Int? = nil,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        step(
-            name: "host.webview.page_loaded",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: hostSessionID,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID],
-            extras: tapMilliseconds.map { ["tap_ms": .integer($0)] } ?? [:]
-        )
-    }
-
-    /// The user tapping a Pocket card, or following a link to one. `opened` is timed to the new page's
-    /// load starting; `reused` to the first frame drawn with the held page shown, also as `reuse_ms`.
-    public static func pocketCardTapped(
-        productID: String,
-        outcome: HostEventOutcome,
-        source: HostOpenSource,
-        durationMilliseconds: Int,
-        hostSessionID: UUID?,
-        origin: HostEventOrigin,
-        monotonicMilliseconds: Int
-    ) -> HostEvent {
-        step(
-            name: "host.pocket.card_tapped",
-            outcome: outcome,
-            durationMilliseconds: durationMilliseconds,
-            hostSessionID: hostSessionID,
-            origin: origin,
-            monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID, "open.source": source.rawValue],
-            extras: outcome == .reused ? ["reuse_ms": .integer(durationMilliseconds)] : [:]
         )
     }
 }
@@ -275,23 +146,19 @@ public enum HostEventOutcome: String, Sendable {
 public enum HostOpenSource: String, Sendable {
     case pocketCard = "pocket_card"
     case deeplink
-    case other
 }
 
 /// The moment the user asked for a page, read where they asked, carried to the page it opens.
 public struct HostOpenTap: Sendable, Equatable {
-    public let hostSessionID: UUID
     public let source: HostOpenSource
     public let openedAtEpochMilliseconds: Int64
     public let monotonicMilliseconds: Int
 
     public init(
-        hostSessionID: UUID,
         source: HostOpenSource,
         openedAtEpochMilliseconds: Int64,
         monotonicMilliseconds: Int
     ) {
-        self.hostSessionID = hostSessionID
         self.source = source
         self.openedAtEpochMilliseconds = openedAtEpochMilliseconds
         self.monotonicMilliseconds = monotonicMilliseconds
@@ -305,47 +172,9 @@ public enum HostLoadTrigger: String, Sendable {
     case prewarm
 }
 
-public enum HostExecutableKind: String, Sendable {
-    case page
-    case worker
-}
-
-public enum HostWorkerTemperature: String, Sendable {
-    case warm
-    case cold
-}
-
-public struct HostExecutableOwner: Sendable, Equatable {
-    public let productID: String
-    public let kind: HostExecutableKind
-    public let hostSessionID: UUID?
-
-    public init(productID: String, kind: HostExecutableKind, hostSessionID: UUID?) {
-        self.productID = productID
-        self.kind = kind
-        self.hostSessionID = hostSessionID
-    }
-}
-
-public struct HostWorkerBootPhases: Sendable, Equatable {
-    public var resolve: Int?
-    public var executionOpen: Int?
-    public var webViewCreate: Int?
-    public var blankReady: Int?
-
-    public init(resolve: Int? = nil, executionOpen: Int? = nil, webViewCreate: Int? = nil, blankReady: Int? = nil) {
-        self.resolve = resolve
-        self.executionOpen = executionOpen
-        self.webViewCreate = webViewCreate
-        self.blankReady = blankReady
-    }
-}
-
-private extension UUID {
-    var telemetryValue: String { uuidString.lowercased() }
-}
-
-private extension HostEvent {
+public extension HostEvent {
+    /// A timed step: `outcome` and the session are tags, which Sentry can search, and the session stays an
+    /// extra too. Steps also carry the OS version and the launch id they join `host.process.started` on.
     static func step(
         name: String,
         outcome: HostEventOutcome,
@@ -361,17 +190,29 @@ private extension HostEvent {
         var stepTags = tags
         stepTags["outcome"] = outcome.rawValue
         stepTags["host.session_id"] = session
+        stepTags["host.os_version"] = origin.osVersion
 
         var stepExtras = extras
         stepExtras["duration_ms"] = .integer(durationMilliseconds)
         stepExtras["host.session_id"] = session.map(HostEventValue.string)
+        stepExtras["app.launch_id"] = .string(origin.launchID.telemetryValue)
 
-        return make(
+        let event = make(
             name: name,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
             tags: stepTags,
             extras: stepExtras
         )
+        return HostEvent(
+            name: event.name,
+            tags: event.tags,
+            extras: event.extras,
+            durationMilliseconds: durationMilliseconds
+        )
     }
+}
+
+private extension UUID {
+    var telemetryValue: String { uuidString.lowercased() }
 }

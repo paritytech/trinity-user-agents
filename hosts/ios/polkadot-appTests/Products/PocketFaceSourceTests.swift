@@ -80,6 +80,21 @@ struct PocketFaceSourceTests {
         #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
     }
 
+    /// A stream that ends having drawn nothing did not load the face, as Android reports it.
+    @Test
+    func aStreamThatEndsWithoutAFaceIsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(StubFaceStreams(faces: [])),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
+    }
+
     @Test
     func aStreamThatFailsAfterItsFirstFaceReportsOnlyTheFace() async throws {
         let recorder = RecordingHostEventRecorder()
@@ -125,7 +140,7 @@ struct PocketFaceSourceTests {
 
         for await _ in source.faces(for: loyalty) {}
 
-        #expect(recorder.events.first?.tags["worker"] == "warm")
+        #expect(recorder.events.first?.tags["worker.state"] == "warm")
         #expect(recorder.events.first?.tags["host.session_id"] == session.uuidString.lowercased())
     }
 
@@ -145,7 +160,7 @@ struct PocketFaceSourceTests {
         await drawing.value
 
         #expect(recorder.events.map { $0.tags["outcome"] } == ["timeout"])
-        #expect(recorder.events.first?.tags["worker"] == "cold")
+        #expect(recorder.events.first?.tags["worker.state"] == "cold")
     }
 
     @Test

@@ -59,7 +59,7 @@ struct TrUAPIV2SpecConnectionPoolTests {
         let event = try #require(recorder.events.first)
         #expect(event.name == "host.rpc.connected")
         #expect(event.tags["outcome"] == "ok")
-        #expect(event.tags["chain"] == genesis.toHex())
+        #expect(event.tags["rpc.chain"] == genesis.toHex())
         #expect(event.extras["duration_ms"] == .integer(436))
         #expect(event.extras["event.monotonic_ms"] == .integer(7_352))
         #expect(event.tags["host.session_id"] == nil)

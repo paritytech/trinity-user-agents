@@ -53,3 +53,9 @@ public extension JSEngineProtocol {
 
     func onTermination(_: @escaping @Sendable () -> Void) async {}
 }
+
+/// An engine whose `initialize` builds a web view, and can say when that view exists, so the time to build
+/// it can be told apart from the time its blank page takes to load.
+public protocol JSEngineWebViewCreationReporting: AnyObject {
+    func onWebViewCreated(_ handler: @escaping @Sendable () -> Void) async
+}

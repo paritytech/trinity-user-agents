@@ -133,7 +133,7 @@ final class ProductPocketService: @unchecked Sendable {
         gameReminders: any ProductGameReminderScheduling,
         themeManager: any ThemeManagerProtocol
     ) {
-        let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
+        let telemetry = flowState.telemetry
         let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
                 environment: { [weak runtimeProvider, logger] in
@@ -147,7 +147,8 @@ final class ProductPocketService: @unchecked Sendable {
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
                         themeManager: themeManager,
-                        logger: logger
+                        logger: logger,
+                        telemetry: telemetry
                     )
                 },
                 contentLoader: flowState.contentLoader,

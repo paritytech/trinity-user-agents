@@ -53,9 +53,7 @@ public final class DotNsResolver: DotNsResolverProtocol {
         let startedAt = telemetry.loadStepStart()
 
         if let applied = appliedContentDirectory(of: dotNsName) {
-            if telemetry.isFirstCacheHit(of: Self.fetchStep, productID: dotNsName) {
-                report(BulletinFetch.applied(domain: dotNsName, startedAt: startedAt), outcome: .cacheHit, bytes: nil)
-            }
+            report(BulletinFetch.applied(domain: dotNsName, startedAt: startedAt), outcome: .cacheHit, bytes: nil)
             return applied
         }
 
@@ -93,7 +91,8 @@ public final class DotNsResolver: DotNsResolverProtocol {
         )
 
         if let cachedDir = contentStorage.getContentDirectory(contentHash: hexHash) {
-            report(fetch, outcome: .cacheHit, bytes: nil)
+            // The content hash was a real chain read; only the download was saved.
+            report(fetch, outcome: .ok, bytes: nil)
             return DotNsResolvedContent(contentHash: hexHash, localURL: cachedDir)
         }
 
@@ -173,7 +172,11 @@ private extension DotNsResolver {
     static let fetchStep = "host.bulletin.fetch"
 
     func report(_ fetch: BulletinFetch?, outcome: HostEventOutcome, bytes: Int64?) {
-        guard let fetch, let context = telemetry.context else { return }
+        guard
+            let fetch,
+            let context = telemetry.context,
+            telemetry.shouldReport(Self.fetchStep, productID: fetch.domain, outcome: outcome)
+        else { return }
 
         telemetry.record { origin, now in
             .bulletinFetch(

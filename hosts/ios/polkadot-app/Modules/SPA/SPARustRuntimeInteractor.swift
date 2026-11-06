@@ -214,6 +214,7 @@ private extension SPARustRuntimeInteractor {
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
+                    await newRuntime.failedToOpen()
                     self?.logger.error("SPA(rust): Setup failed: \(error)")
                     self?.presenter?.didFail(error: error)
                 }

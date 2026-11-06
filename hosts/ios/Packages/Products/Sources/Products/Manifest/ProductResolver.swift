@@ -67,15 +67,15 @@ public actor ProductResolver: ProductResolving {
             baseName = try await resolveBaseName(of: productId)
         } catch {
             if !(error is CancellationError) {
-                reportResolved(productId, outcome: .error, startedAt: startedAt)
+                // The same form `ok` and `cache_hit` report: the product's own name, without a prefix.
+                let reported = (try? productIdOwner(productId: productId)) ?? productId
+                reportResolved(reported, outcome: .error, startedAt: startedAt)
             }
             throw error
         }
 
         if let cached = cache[baseName] {
-            if telemetry.isFirstCacheHit(of: Self.resolvedStep, productID: baseName.rawValue) {
-                reportResolved(baseName, outcome: .cacheHit, startedAt: startedAt)
-            }
+            reportResolved(baseName, outcome: .cacheHit, startedAt: startedAt)
             return cached
         }
 
@@ -151,7 +151,11 @@ private extension ProductResolver {
     }
 
     func reportResolved(_ baseName: ProductId, outcome: HostEventOutcome, startedAt: Int?) {
-        guard let startedAt, let context = telemetry.context else { return }
+        guard
+            let startedAt,
+            let context = telemetry.context,
+            telemetry.shouldReport(Self.resolvedStep, productID: baseName.rawValue, outcome: outcome)
+        else { return }
 
         telemetry.record { origin, now in
             .productResolved(

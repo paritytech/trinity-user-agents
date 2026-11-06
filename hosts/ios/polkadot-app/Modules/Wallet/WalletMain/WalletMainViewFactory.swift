@@ -26,7 +26,8 @@ enum WalletMainViewFactory {
         let interactor = WalletMainInteractor(
             pocketPrewarmer: PocketPrewarmer(
                 products: context.flowState.productResolver,
-                dotNsResolver: context.flowState.dotNsResolver
+                dotNsResolver: context.flowState.dotNsResolver,
+                telemetry: context.flowState.telemetry
             ),
             pocket: .current,
             tldProvider: DotNsTldProviderFacade.shared,

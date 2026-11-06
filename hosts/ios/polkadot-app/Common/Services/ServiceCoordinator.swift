@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
@@ -154,8 +155,8 @@ final class ServiceCoordinator {
 
 extension ServiceCoordinator: ServiceCoordinatorProtocol {}
 
+@MainActor
 extension ServiceCoordinator {
-    @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinator? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
@@ -231,6 +232,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            telemetry: HostLoadTelemetry(recorder: IssueMonitoringFactory.createHostEventRecorder()),
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)

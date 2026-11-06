@@ -22,7 +22,7 @@ private func makeConfiguration(
         showMoreButton: false,
         page: ProductPage(host: host),
         contentSource: contentSource,
-        openTap: openTap
+        openTap: openTap.map(SPAOpenTap.init)
     )
 }
 
@@ -271,7 +271,8 @@ struct SPARustRuntimeTests {
         #expect(recorder.events.map { $0.tags["outcome"] } == ["abandoned"])
     }
 
-    @Test func aRuntimeNeverStartedReportsNoPage() async throws {
+    /// Counted from the runtime's creation: the user who leaves while the product still resolves gave up.
+    @Test func aPageClosedBeforeItStartedIsAbandoned() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let recorder = RecordingHostEventRecorder()
         let runtime = try makeRuntime(
@@ -281,7 +282,22 @@ struct SPARustRuntimeTests {
 
         await runtime.dispose()
 
-        #expect(recorder.events.isEmpty)
+        #expect(recorder.events.map(\.name) == ["host.webview.page_loaded"])
+        #expect(recorder.events.first?.tags["outcome"] == "abandoned")
+    }
+
+    @Test func anOpenThatFailedBeforeStartingIsAnError() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .directURL(directURL)),
+            hostEventRecorder: recorder
+        )
+
+        await runtime.failedToOpen()
+        await runtime.dispose()
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
     }
 
     /// The product's dotNS reads run before its page starts, inside the page's session, so they join
@@ -411,7 +427,6 @@ struct SPARustRuntimeTests {
         let recorder = RecordingHostEventRecorder()
         let clock = SteppingClock(start: 1_000, step: 250)
         let tap = HostOpenTap(
-            hostSessionID: UUID(),
             source: .pocketCard,
             openedAtEpochMilliseconds: 1_793_900_000_000,
             monotonicMilliseconds: 400
@@ -439,7 +454,6 @@ struct SPARustRuntimeTests {
         let recorder = RecordingHostEventRecorder()
         let clock = SteppingClock(start: 1_000, step: 250)
         let tap = HostOpenTap(
-            hostSessionID: UUID(),
             source: .deeplink,
             openedAtEpochMilliseconds: 1_793_900_000_000,
             monotonicMilliseconds: 700
@@ -464,6 +478,30 @@ struct SPARustRuntimeTests {
 
         await runtime.dispose()
         await retry.dispose()
+
+        // The retry has a session of its own and is not timed from the tap.
+        let pages = recorder.events.filter { $0.name == "host.webview.page_loaded" }
+        #expect(pages.count == 2)
+        #expect(pages.first?.extras["tap_ms"] != nil)
+        #expect(pages.last?.extras["tap_ms"] == nil)
+        #expect(pages.first?.tags["host.session_id"] != pages.last?.tags["host.session_id"])
+    }
+
+    /// A tap older than five minutes is not the user waiting for this page.
+    @Test func aStaleTapIsNotHandedToThePage() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let tap = HostOpenTap(source: .pocketCard, openedAtEpochMilliseconds: 0, monotonicMilliseconds: 0)
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .directURL(directURL), openTap: tap),
+            hostEventRecorder: recorder,
+            monotonicMilliseconds: { 300_001 }
+        )
+
+        await runtime.dispose()
+
+        #expect(recorder.events.map(\.name) == ["host.webview.page_loaded"])
+        #expect(recorder.events.first?.extras["tap_ms"] == nil)
     }
 
     @Test func aPageNoTapOpenedHasNoTapTime() async throws {
@@ -482,41 +520,53 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
-    /// The two fields are optional and additive, so the schema version stays 1.
-    @Test func aTappedPagesBootstrapCarriesWhenAndHowItWasOpened() throws {
-        let origin = HostEventOrigin(
-            launchID: UUID(),
+    /// The exact `__trinityHostTelemetry` a page and a worker read, pinned whole so Humanity can use them as
+    /// fixtures. The tap fields are optional and additive, so the schema version stays 1.
+    @Test(arguments: [
+        (
+            HostOpenTap(source: .pocketCard, openedAtEpochMilliseconds: 1_793_900_000_123, monotonicMilliseconds: 0)
+                as HostOpenTap?,
+            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
+                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"pocket_card","#
+                + #""openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1","#
+                + #""truapiHostVersion":"0.9.0"}"#
+        ),
+        (
+            HostOpenTap(source: .deeplink, openedAtEpochMilliseconds: 1_793_900_000_123, monotonicMilliseconds: 0),
+            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
+                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","openSource":"deeplink","#
+                + #""openedAtEpochMs":1793900000123,"osVersion":"18.1","platform":"ios","schemaVersion":"1","#
+                + #""truapiHostVersion":"0.9.0"}"#
+        ),
+        // A page no tap opened, and every worker: a worker is never handed a tap.
+        (
+            nil,
+            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
+                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","osVersion":"18.1","platform":"ios","#
+                + #""schemaVersion":"1","truapiHostVersion":"0.9.0"}"#
+        )
+    ])
+    func theBootstrapIsExactly(tap: HostOpenTap?, json: String) throws {
+        let origin = try HostEventOrigin(
+            launchID: #require(UUID(uuidString: "18a5320e-3a4d-46df-ad7a-ebba4ef3ee3f")),
             osVersion: "18.1",
-            appVersion: nil,
-            appBuild: nil,
-            appVariant: "dev"
+            appVersion: "1.2.3",
+            appBuild: 456,
+            appVariant: "nightly"
         )
-        let tap = HostOpenTap(
-            hostSessionID: UUID(),
-            source: .deeplink,
-            openedAtEpochMilliseconds: 1_793_900_000_123,
-            monotonicMilliseconds: 0
-        )
+        let session = try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
 
-        let tapped = try RustRuntimeScriptsFactory(
+        let script = try RustRuntimeScriptsFactory(
             bootstrapScript: "",
             hostTelemetry: NativeHostTelemetry(
-                hostSessionID: UUID(),
+                hostSessionID: session,
                 origin: origin,
-                truapiHostVersion: "1",
+                truapiHostVersion: "0.9.0",
                 openTap: tap
             )
         ).makeScripts()[0].content
-        let untapped = try RustRuntimeScriptsFactory(
-            bootstrapScript: "",
-            hostTelemetry: NativeHostTelemetry(hostSessionID: UUID(), origin: origin, truapiHostVersion: "1")
-        ).makeScripts()[0].content
 
-        #expect(tapped.contains(#""openedAtEpochMs":1793900000123"#))
-        #expect(tapped.contains(#""openSource":"deeplink""#))
-        #expect(tapped.contains(#""schemaVersion":"1""#))
-        #expect(!untapped.contains("openedAtEpochMs"))
-        #expect(!untapped.contains("openSource"))
+        #expect(script.contains("value: Object.freeze(\(json)),"))
     }
 
     @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {
