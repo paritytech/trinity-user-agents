@@ -4,7 +4,6 @@ import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabTaps
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
@@ -13,7 +12,7 @@ import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequest
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
@@ -58,8 +57,7 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
-    private val cardOpenRequests: PocketCardOpenRequests,
-    tabTaps: BottomTabTaps,
+    private val cardRequests: PocketCardRequests,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -221,9 +219,9 @@ class PocketViewModel @Inject constructor(
     /** Whether the selected card opens with its face shown; null until its product has answered. */
     val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
 
-    // A tab shown for the first time has no product cards until the collection loads.
     init {
-        combine(cards, cardOpenRequests.requested) { held, request ->
+        // A tab shown for the first time has no product cards until the collection loads.
+        combine(cards, cardRequests.requested) { held, request ->
             request?.let {
                 held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == request.key }?.to(request)
             }
@@ -232,12 +230,8 @@ class PocketViewModel @Inject constructor(
             .onEach { (card, request) -> openRequestedCard(card, request) }
             .launchIn(this)
 
-        // Cards have no close button of their own: a tap on any Docklet tab, Pocket included, is their close.
-        tabTaps.taps
-            .onEach {
-                if (selectedCardId.value != null) dismissCard()
-                if (collectiblesShown.value) hideCollectiblesSketchbook()
-            }
+        cardRequests.closes
+            .onEach { returnToList() }
             .launchIn(this)
     }
 
@@ -248,15 +242,14 @@ class PocketViewModel @Inject constructor(
      * the card already open loads its page with the link's params, or leaves them for it to settle with.
      */
     private fun openRequestedCard(card: PocketCardUiModel.ProductCard, request: PocketCardOpenRequest) {
-        cardOpenRequests.consume(request)
+        cardRequests.consume(request)
         if (selectedCardId.value == card.id) {
             selectedPageQuery = request.pageQuery
             if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
             return
         }
 
-        if (selectedCardId.value != null) dismissCard()
-        hideCollectiblesSketchbook()
+        returnToList()
         removalCandidate.value = null
         selectCard(card, request.pageQuery)
     }
@@ -384,6 +377,11 @@ class PocketViewModel @Inject constructor(
         expandedProduct.release()
         forgetOpeningFace()
         selectedCardId.value = null
+    }
+
+    private fun returnToList() {
+        if (selectedCardId.value != null) dismissCard()
+        if (collectiblesShown.value) hideCollectiblesSketchbook()
     }
 
     private companion object {

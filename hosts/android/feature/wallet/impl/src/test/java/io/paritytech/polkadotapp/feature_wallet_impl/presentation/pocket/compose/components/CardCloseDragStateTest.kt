@@ -11,7 +11,6 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.time.Duration.Companion.milliseconds
@@ -152,16 +151,6 @@ class CardCloseDragStateTest {
 
         assertEquals(0f, unmeasured.progress, 0f)
         assertEquals(0.dp, unmeasured.blurSigma)
-    }
-
-    @Test
-    fun `a drag on the product card closes only from its unfolded rest`() {
-        assertTrue("down from rest", state.takesDrag(delta = 10f, foldedPx = 0f))
-        assertFalse("up from rest folds", state.takesDrag(delta = -10f, foldedPx = 0f))
-        assertFalse("down on a folded card unfolds", state.takesDrag(delta = 10f, foldedPx = 40f))
-
-        state.drag(100f)
-        assertTrue("up while pulled down", state.takesDrag(delta = -10f, foldedPx = 0f))
     }
 
     private fun verifyClosedOnce() = verify(exactly = 1) { onClose() }

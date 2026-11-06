@@ -198,7 +198,8 @@ private fun FoldableCard(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { delta ->
-                    if (closeDrag.takesDrag(delta, fold.foldedPx)) closeDrag.drag(delta) else fold.drag(delta)
+                    val closing = closeDrag.offsetPx > 0f || (delta > 0f && fold.foldedPx == 0f)
+                    if (closing) closeDrag.drag(delta) else fold.drag(delta)
                 },
                 onDragStarted = {
                     fold.beginDrag()

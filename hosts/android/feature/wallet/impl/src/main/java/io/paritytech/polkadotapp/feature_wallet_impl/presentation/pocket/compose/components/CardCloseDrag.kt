@@ -46,8 +46,6 @@ internal class CardCloseDragState(windowHeightPx: Float) {
         offsetPx = 0f
     }
 
-    fun takesDrag(delta: Float, foldedPx: Float): Boolean = offsetPx > 0f || (delta > 0f && foldedPx == 0f)
-
     suspend fun beginDrag() {
         animations.mutate(MutatePriority.UserInput) {}
     }

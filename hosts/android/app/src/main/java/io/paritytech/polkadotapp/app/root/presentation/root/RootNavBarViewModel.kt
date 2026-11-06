@@ -9,10 +9,10 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarVisibilityHolder
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
-import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabTaps
 import io.paritytech.polkadotapp.common.utils.stateInBackground
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardRequests
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
@@ -38,7 +38,7 @@ class RootNavBarViewModel @Inject constructor(
     private val tabBarVisibilityHolder: TabBarVisibilityHolder,
     private val tabBarOffsetHolder: TabBarOffsetHolder,
     private val bottomNavHeightProvider: BottomNavHeightProvider,
-    private val tabTaps: BottomTabTaps,
+    private val pocketCardRequests: PocketCardRequests,
     scanPanelRequests: ScanPanelRequests,
 ) : BaseViewModel() {
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
@@ -59,7 +59,7 @@ class RootNavBarViewModel @Inject constructor(
 
     // Selecting a tab always lands on Main (bringing the user there if needed).
     fun onTabSelected(tab: BottomTab) {
-        tabTaps.tap()
+        pocketCardRequests.requestClose()
         navigationHolder.requestTab(tab)
         rootRouter.openMain()
     }
