@@ -406,6 +406,7 @@ struct RustRuntimeBridgeTests {
 
         let review = UserConfirmationReview.signRaw(
             .legacyAccount(
+                account: .identity,
                 request: HostSignRawWithLegacyAccountRequest(signer: "5Ffff", payload: .payload(payload: "hello")),
                 watermarked: true
             )
@@ -550,6 +551,7 @@ struct RustRuntimeBridgeTests {
 
         let review = UserConfirmationReview.signRaw(
             .legacyAccount(
+                account: .identity,
                 request: HostSignRawWithLegacyAccountRequest(signer: "5Ffff", payload: .payload(payload: "hello")),
                 watermarked: true
             )

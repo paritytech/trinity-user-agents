@@ -1,4 +1,3 @@
-// swiftlint:disable file_length
 import Foundation
 import Observation
 import TrUAPIHost
@@ -35,21 +34,14 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     var toast: String?
 
     private(set) var candidates: [FundingCandidate]
-    private(set) var rows: [ProductId: FundingQuoteState] = [:]
-    /// The providers of the core's latest quote list, in its order.
-    private(set) var quoteOrder: [ProductId] = []
     /// The amounts the core says the reported selection takes across every provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
     /// The same for each network a crypto route declares, by network id.
     private(set) var networkLimits: [String: FundingAmountLimits] = [:]
-    /// The provider the core marked as quoting best for the user.
-    private(set) var bestProviderId: ProductId?
     /// What the core knows about each country on the reported rail and asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]
     /// The country the device is set to, which the country list leads with.
     private(set) var detectedCountry: PaymentCountry?
-    private(set) var ask: FundingQuoteAsk?
-    private(set) var brands: [ProductId: FundingProviderBrand] = [:]
     private(set) var isStarting = false
     private(set) var hasStarted = false
     /// Why the chosen provider could not be handed the session.
@@ -58,8 +50,6 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     private(set) var isAnsweringOffer = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
-    /// When the core asks every provider again, and the prices on screen change.
-    private(set) var quotesRefreshAt: Date?
 
     /// Answers the core's `present_funding`; called once.
     var onOutcome: ((FundingPresentOutcome) -> Void)?
@@ -70,20 +60,20 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     /// Leaves the overlay for the history of every session.
     var onHistory: (() -> Void)?
 
+    /// The ask on screen and the core's quotes for it.
+    let quotes: FundingQuotes
+    /// The providers' brands, read once each.
+    let brands: FundingBrands
+
     private let service: FundingFlowServiceProtocol
     private let coreCalls: FundingCoreCallQueue
     private let logger: LoggerProtocol
-    private let clock: any Clock<Duration>
-    @ObservationIgnored private var quoteRequest = FundingQuoteRequest()
-    /// Brands being read, by provider.
-    @ObservationIgnored private var brandReads: [ProductId: Task<Void, Never>] = [:]
     /// The deposit screen starts the session once every provider answered
     /// the ask it was opened on.
     @ObservationIgnored private var startsWhenQuoted = false
     /// Set when the user left before `Started`, which the core discards the
     /// session on.
     @ObservationIgnored private var hasLeft = false
-    @ObservationIgnored private var quoteTask: Task<Void, Never>?
     /// The selection the core was last told of.
     @ObservationIgnored private var reportedSelection: FundingSelection?
 
@@ -101,9 +91,11 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         direction = context.direction
         cash = context.cash
         self.service = service
-        coreCalls = FundingCoreCallQueue(service: service)
+        let coreCalls = FundingCoreCallQueue(service: service)
+        self.coreCalls = coreCalls
         self.logger = logger
-        self.clock = clock
+        quotes = FundingQuotes(intent: context.intent, coreCalls: coreCalls, clock: clock)
+        brands = FundingBrands(service: service)
         amountText = context.amount.flatMap { context.cash.decimal($0) }.map(Self.text(for:)) ?? ""
 
         let options = service.options(intent: context.intent)
@@ -112,6 +104,7 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         rail = .default(candidates: candidates, direction: context.direction)
         detectedCountry = FundingCountries.localeRegion().flatMap { FundingCountries.country(code: $0) }
         country = detectedCountry
+        quotes.onShown = { [weak self] in self?.startIfQuoted() }
         if let options {
             apply(options)
         } else {
@@ -129,11 +122,7 @@ extension FundingFlowModel {
         rail = newRail
         network = nil
         asset = nil
-        rows = [:]
-        quoteOrder = []
-        bestProviderId = nil
-        ask = nil
-        quoteRequest.drop()
+        quotes.drop()
         reportSelection()
         amountChanged()
     }
@@ -141,7 +130,7 @@ extension FundingFlowModel {
     func continueFromAmount() {
         guard canContinue else { return }
 
-        quoteTask?.cancel()
+        quotes.cancelPause()
         switch rail {
         case .crypto:
             path.append(.network)
@@ -213,7 +202,7 @@ extension FundingFlowModel {
     /// An ended session leaves for a new one in the same direction, from the
     /// start.
     func startOver() {
-        quoteTask?.cancel()
+        quotes.cancelPause()
         balanceTask?.cancel()
         onStartOver?()
     }
@@ -277,7 +266,7 @@ extension FundingFlowModel {
         rail = session.choice?.rail ?? rail
         asset = session.choice?.asset
         chosenProviderId = session.providerId
-        loadBrands([session.providerId].compactMap(\.self))
+        brands.load([session.providerId].compactMap(\.self))
         hasStarted = true
         refreshSession()
         path = [.progress]
@@ -355,14 +344,8 @@ extension FundingFlowModel {
     /// Takes the core's quote list when it answers the latest ask. The core
     /// keeps refreshing the last ask after a rail change drops it, and a list
     /// can arrive before the core's id for its ask does.
-    func receive(quotes: FundingQuoteList) {
-        guard quoteRequest.shows(quotes) else { return }
-
-        rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
-        quoteOrder = quotes.rows.map(\.providerId)
-        bestProviderId = quotes.best
-        quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
-        startIfQuoted()
+    func receive(quotes list: FundingQuoteList) {
+        quotes.receive(list)
     }
 }
 
@@ -372,25 +355,18 @@ extension FundingFlowModel {
     /// Returns once the quote waiting on the keypad pause, every core call
     /// made so far and every brand read have finished.
     func settled() async {
-        await quoteTask?.value
+        await quotes.pauseSettled()
         await coreCalls.idle()
-        for read in brandReads.values {
-            await read.value
-        }
+        await brands.settled()
     }
 
     /// Called on every keypad change: quotes the new amount once the user
     /// pauses, so the screen can show a provider's limit before Continue.
     func amountChanged() {
-        quoteTask?.cancel()
+        quotes.cancelPause()
         guard rail != .crypto, amount > 0 else { return }
 
-        quoteTask = Task {
-            try? await clock.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-
-            requestQuote()
-        }
+        quotes.askAfterPause { [weak self] in self?.requestQuote() }
     }
 }
 
@@ -408,7 +384,7 @@ private extension FundingFlowModel {
     }
 
     func leave() {
-        quoteTask?.cancel()
+        quotes.cancelPause()
         balanceTask?.cancel()
         guard !hasStarted, !hasLeft else { return }
 
@@ -444,15 +420,6 @@ private extension FundingFlowModel {
         start()
     }
 
-    func loadBrands(_ providerIds: [ProductId]) {
-        for providerId in providerIds where brands[providerId] == nil && brandReads[providerId] == nil {
-            brandReads[providerId] = Task { [service] in
-                brands[providerId] = await service.brand(for: providerId)
-                brandReads[providerId] = nil
-            }
-        }
-    }
-
     /// Takes what the core offers for the reported selection, and reports
     /// the selection again when that changes it.
     func apply(_ options: FundingOptions?) {
@@ -464,7 +431,7 @@ private extension FundingFlowModel {
         ) { _, latest in latest }
         limits = options.limits
         networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
-        loadBrands(candidates.map(\.providerId))
+        brands.load(candidates.map(\.providerId))
         reportSelection()
     }
 
@@ -488,24 +455,12 @@ private extension FundingFlowModel {
     }
 
     /// Asks every provider to quote what is on screen, unless they were
-    /// asked exactly that last.
+    /// asked exactly that last. The core is told of the selection first.
     func requestQuote() {
-        guard let newAsk = currentAsk(), newAsk != ask else { return }
+        guard let newAsk = currentAsk(), newAsk != quotes.ask else { return }
 
-        ask = newAsk
         startsWhenQuoted = false
-        quotesRefreshAt = nil
-        bestProviderId = nil
-        rows = Dictionary(uniqueKeysWithValues: candidates.map { ($0.providerId, .pending) })
-        quoteOrder = []
-        let askNumber = quoteRequest.ask()
         reportSelection()
-        coreCalls.run { [intent] service in
-            await service.requestQuote(newAsk, intent: intent)
-        } then: { [weak self] requestId in
-            guard let self, let early = quoteRequest.take(requestId, ofAsk: askNumber) else { return }
-
-            receive(quotes: early)
-        }
+        quotes.request(newAsk, from: candidates.map(\.providerId))
     }
 }

@@ -811,6 +811,29 @@ fn legacy_sign_payload_rejects_identity_account() {
 }
 
 #[test]
+fn legacy_sign_payload_review_names_the_product_account() {
+	let platform = Arc::new(StubPlatform::default());
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+	let request = v01::HostSignPayloadWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: sign_payload_data(),
+	};
+
+	futures::executor::block_on(host.sign_payload_with_legacy_account(
+		&CallContext::default(),
+		HostSignPayloadWithLegacyAccountRequest::V1(request.clone()),
+	))
+	.unwrap_err();
+
+	assert_eq!(
+		*platform.sign_payload_reviews.lock().unwrap(),
+		vec![SignPayloadReview::LegacyAccount { account: account_id("myapp.dot", 0), request }]
+	);
+}
+
+#[test]
 fn legacy_sign_raw_rejects_signer_mismatch() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
@@ -871,12 +894,11 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("legacy-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0))
-				.to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
 	let HostSignRawWithLegacyAccountResponse::V1(inner) = response;
@@ -904,6 +926,14 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		truapi::latest::RawPayload::Bytes { bytes }
 			if bytes == b"hello"
 	));
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Product(account_id("myapp.dot", 0)),
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]
@@ -967,11 +997,11 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("identity-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(identity).to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(identity).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
@@ -985,6 +1015,14 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		panic!("expected legacy raw signing request");
 	};
 	assert_eq!(request.account, identity);
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]

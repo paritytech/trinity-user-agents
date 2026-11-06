@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
+import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -21,6 +22,7 @@ import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
+import uniffi.truapi.LegacySigningAccount
 import uniffi.truapi.NftPurseDrainDestination
 import uniffi.truapi.NftPurseDrainReview
 import uniffi.truapi.NftPurseOwner
@@ -60,6 +62,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Transaction
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.account)
         assertArrayEquals(byteArrayOf(0xde.toByte(), 0xad.toByte()), body.payload.method)
         assertEquals(listOf("CheckNonce", "CheckWeight"), body.payload.signedExtensions)
@@ -71,8 +74,10 @@ class ConfirmationReviewMappingTest {
     /** The core exposes this method, so refusing the variant denied it silently. */
     @Test
     fun `sign payload legacy hex signer maps to transaction legacy`() {
-        val body = legacySignPayload(signer = "0x0102") as SigningRequestBody.TransactionLegacy
+        val review = legacySignPayload(signer = "0x0102")
+        val body = review.signingRequest() as SigningRequestBody.TransactionLegacy
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertArrayEquals(byteArrayOf(1, 2), body.payload.account.value)
         assertArrayEquals(byteArrayOf(0xde.toByte(), 0xad.toByte()), body.payload.method)
         assertEquals(listOf("CheckNonce", "CheckWeight"), body.payload.signedExtensions)
@@ -82,22 +87,25 @@ class ConfirmationReviewMappingTest {
     /** The wire carries "SS58 or hex"; UTF-8 bytes of an SS58 string match nothing. */
     @Test
     fun `sign payload legacy ss58 signer decodes to an account id`() {
-        val body = legacySignPayload(signer = ALICE_SS58) as SigningRequestBody.TransactionLegacy
+        val body = legacySignPayload(signer = ALICE_SS58).signingRequest() as SigningRequestBody.TransactionLegacy
 
         assertArrayEquals(aliceAccountId(), body.payload.account.value)
     }
 
     @Test
     fun `a legacy signer that is neither hex nor ss58 is unsupported`() {
-        assertThrows(UnsupportedReviewException::class.java) { legacySignPayload(signer = "not-an-address") }
+        assertThrows(UnsupportedReviewException::class.java) {
+            legacySignPayload(signer = "not-an-address").signingRequest()
+        }
     }
 
-    private fun legacySignPayload(signer: String): SigningRequestBody =
+    private fun legacySignPayload(signer: String) =
         UserConfirmationReview.SignPayload(
             SignPayloadReview.LegacyAccount(
-                HostSignPayloadWithLegacyAccountRequest(signer = signer, payload = signPayloadData()),
+                account = nativeAccount(),
+                request = HostSignPayloadWithLegacyAccountRequest(signer = signer, payload = signPayloadData()),
             ),
-        ).signingRequest()
+        )
 
     @Test
     fun `sign raw product bytes maps to raw`() {
@@ -114,6 +122,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Raw
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.account)
         val content = body.payload.type as RawPayloadContent.Bytes
         assertArrayEquals(byteArrayOf(0xca.toByte(), 0xfe.toByte()), content.data)
@@ -123,6 +132,7 @@ class ConfirmationReviewMappingTest {
     fun `sign raw legacy hex signer maps to raw legacy`() {
         val review = UserConfirmationReview.SignRaw(
             SignRawReview.LegacyAccount(
+                account = LegacySigningAccount.Identity,
                 request = HostSignRawWithLegacyAccountRequest(
                     signer = "0x0102",
                     payload = RawPayload.Payload("hello"),
@@ -132,6 +142,8 @@ class ConfirmationReviewMappingTest {
         )
 
         val body = review.signingRequest() as SigningRequestBody.RawLegacy
+
+        assertEquals(SigningAccount.IdentityAccount, review.signingAccount())
 
         assertArrayEquals(byteArrayOf(1, 2), body.payload.account.value)
         assertEquals("hello", (body.payload.type as RawPayloadContent.Payload).data)
@@ -151,6 +163,7 @@ class ConfirmationReviewMappingTest {
         )
         val legacy = UserConfirmationReview.SignRaw(
             SignRawReview.LegacyAccount(
+                account = LegacySigningAccount.Identity,
                 request = HostSignRawWithLegacyAccountRequest(signer = "0x0102", payload = RawPayload.Payload("hello")),
                 watermarked = false,
             ),
@@ -184,6 +197,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.CreateTransaction
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.payload.signer)
         val extension = body.payload.extensions.single()
         assertEquals("CheckNonce", extension.id)
@@ -193,22 +207,47 @@ class ConfirmationReviewMappingTest {
 
     @Test
     fun `create transaction legacy maps raw signer`() {
-        val review = UserConfirmationReview.CreateTransaction(
-            CreateTransactionReview.LegacyAccount(
-                LegacyAccountTxPayload(
-                    signer = ByteArray(32) { 5 },
-                    genesisHash = ByteArray(32) { 3 },
-                    callData = byteArrayOf(9),
-                    extensions = emptyList(),
-                    txExtVersion = 0u,
-                ),
-            ),
-        )
-
-        val body = review.signingRequest() as SigningRequestBody.CreateTransactionLegacy
+        val body = legacyCreateTransaction(LegacySigningAccount.Identity).signingRequest()
+            as SigningRequestBody.CreateTransactionLegacy
 
         assertArrayEquals(ByteArray(32) { 5 }, body.payload.signer.value)
     }
+
+    /**
+     * The sheet names the signer and decodes a transaction with its origin, which only a source for
+     * an account the app knows can build, so the account must be the one the core resolved.
+     */
+    @Test
+    fun `legacy reviews are shown as the account the core resolved`() {
+        listOf(::legacyCreateTransaction, ::legacySignRaw).forEach { review ->
+            assertEquals(SigningAccount.IdentityAccount, review(LegacySigningAccount.Identity).signingAccount())
+            assertEquals(
+                SigningAccount.Product(demoAccount()),
+                review(LegacySigningAccount.Product(nativeAccount())).signingAccount(),
+            )
+        }
+    }
+
+    private fun legacySignRaw(account: LegacySigningAccount) = UserConfirmationReview.SignRaw(
+        SignRawReview.LegacyAccount(
+            account = account,
+            request = HostSignRawWithLegacyAccountRequest(signer = "0x0102", payload = RawPayload.Payload("hello")),
+            watermarked = true,
+        ),
+    )
+
+    private fun legacyCreateTransaction(account: LegacySigningAccount) = UserConfirmationReview.CreateTransaction(
+        CreateTransactionReview.LegacyAccount(
+            account = account,
+            payload = LegacyAccountTxPayload(
+                signer = ByteArray(32) { 5 },
+                genesisHash = ByteArray(32) { 3 },
+                callData = byteArrayOf(9),
+                extensions = emptyList(),
+                txExtVersion = 0u,
+            ),
+        ),
+    )
 
     @Test
     fun `sign vrf maps transcript`() {
@@ -227,6 +266,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.SignVrf
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertEquals(ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u)), body.account)
         assertArrayEquals("pop:airdrop".toByteArray(), body.transcriptLabel)
         val item = body.items.single()
@@ -404,6 +444,12 @@ class ConfirmationReviewMappingTest {
 
     private fun UserConfirmationReview.signingRequest(): SigningRequestBody =
         (toConfirmation(caller) as TrUAPIConfirmation.Signing).request
+
+    private fun UserConfirmationReview.signingAccount(): SigningAccount =
+        (toConfirmation(caller) as TrUAPIConfirmation.Signing).account
+
+    private fun demoAccount() =
+        ProductAccountId(ProductId.parse("demo-product.dot").getOrThrow(), DerivationIndex32.fromUInt(7u))
 
     private fun nativeAccount() = NativeProductAccountId(
         dotNsIdentifier = ProductId.parse("demo-product.dot").getOrThrow(),

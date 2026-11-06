@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction
 
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.domain.model.toSubstrateAddress
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.SigningFailedPresentationError
@@ -120,15 +119,7 @@ class TransactionSignViewModel @Inject constructor(
             )
 
             SigningAccount.IdentityAccount -> SigningAccountUi.IdentityAccount
-
-            is SigningAccount.Legacy -> SigningAccountUi.Legacy(accountId.toSubstrateAddress(GENERIC_SS58_PREFIX))
         }
-    }
-
-    private companion object {
-        // The sheet has no chain for a legacy account, so it shows the
-        // network-agnostic form rather than implying one.
-        const val GENERIC_SS58_PREFIX: Short = 42
     }
 
     private fun ParsedSigningContent.toSigningContent(humanReadable: String): SigningContent {
