@@ -893,6 +893,8 @@ mod truapi_core;
 mod test_support;
 #[cfg(feature = "runtime")]
 mod unix_time;
+#[cfg(feature = "runtime")]
+mod wake;
 
 // Dispatch must keep serving deprecated APIs while clients migrate.
 #[cfg(feature = "runtime")]
