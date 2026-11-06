@@ -20,6 +20,7 @@ import io.mockk.mockk
 import io.mockk.slot
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.design.components.avatar.AVATAR_REFRESH_PARAMETER
+import io.paritytech.polkadotapp.design.components.avatar.AvatarNotFoundException
 import io.paritytech.polkadotapp.feature_chats_api.domain.profile.publicProfileAvatarUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.CancellationException
@@ -141,7 +142,19 @@ class PublicProfileAvatarInterceptorTest {
 
         val result = interceptor.intercept(chain)
 
-        assertTrue(result is ErrorResult)
+        assertEquals(AvatarNotFoundException::class, (result as ErrorResult).throwable::class)
+        coVerify(exactly = 0) { chain.proceed(any()) }
+    }
+
+    @Test
+    fun `a lookup failure is distinct from an avatar being removed`() = runTest {
+        val failure = IllegalStateException("offline")
+        coEvery { runtime.resolvePublicProfile(any(), any()) } throws failure
+        val chain = chain(force = true)
+
+        val result = interceptor.intercept(chain)
+
+        assertSame(failure, (result as ErrorResult).throwable)
         coVerify(exactly = 0) { chain.proceed(any()) }
     }
 
