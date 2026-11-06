@@ -13,18 +13,19 @@ use parity_scale_codec::{Decode, Encode};
 use rusqlite::{Transaction, named_params};
 use tracing::error;
 
+use super::PackedSession;
 pub(super) use crate::store::Db;
 use crate::{
-	host_logic::funding::{FundingSession, FundingSessionError, FundingSessionSummary},
+	host_logic::funding::{FundingSession, FundingSessionError},
 	store::DbError,
 };
 
 /// Format of a stored session. The stored enums pin their SCALE indexes, so
 /// variants added later decode alongside the ones a row was written with; a
 /// field added to a stored struct or variant takes a new format.
-const SESSION_FORMAT: u16 = 4;
+const SESSION_FORMAT: u16 = 5;
 /// Format of a stored summary.
-const SUMMARY_FORMAT: u16 = 1;
+const SUMMARY_FORMAT: u16 = 2;
 
 /// A table of records keyed by intent, with its queries.
 struct Table {
@@ -64,7 +65,7 @@ impl From<DbError> for FundingSessionError {
 /// the registry, which writes only after a load, leaves every row as it is.
 pub(super) async fn load(
 	db: &Db,
-) -> Result<(Vec<FundingSession>, Vec<FundingSessionSummary>), FundingSessionError> {
+) -> Result<(Vec<FundingSession>, Vec<PackedSession>), FundingSessionError> {
 	db.write(|tx| {
 		let sessions = scan(tx, &SESSIONS)?;
 		let summaries = scan(tx, &SUMMARIES)?;
@@ -82,7 +83,7 @@ pub(super) async fn write(
 	db: &Db,
 	sessions: &[&FundingSession],
 	removed: Vec<String>,
-	summaries: &[FundingSessionSummary],
+	summaries: &[PackedSession],
 ) -> Result<(), FundingSessionError> {
 	let sessions: Vec<_> = sessions
 		.iter()
@@ -90,7 +91,7 @@ pub(super) async fn write(
 		.collect();
 	let summaries: Vec<_> = summaries
 		.iter()
-		.map(|summary| (summary.intent.clone(), (SUMMARY_FORMAT, summary).encode()))
+		.map(|packed| (packed.summary.intent.clone(), (SUMMARY_FORMAT, packed).encode()))
 		.collect();
 	db.write(move |tx| {
 		upsert(tx, &SESSIONS, &sessions)?;

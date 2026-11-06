@@ -217,6 +217,9 @@ pub struct ScriptedChainHead {
 	pub finishes_calls: bool,
 	/// How many header reads get dotli's halt error before one is served.
 	pub halted_headers: usize,
+	/// How many header reads go unanswered, so a test can close the
+	/// connection under them.
+	pub unanswered_headers: usize,
 }
 
 impl Default for ScriptedChainHead {
@@ -226,6 +229,7 @@ impl Default for ScriptedChainHead {
 			refusal: FollowRefusal::ChainHalted,
 			finishes_calls: true,
 			halted_headers: 0,
+			unanswered_headers: 0,
 		}
 	}
 }
@@ -243,6 +247,7 @@ impl ScriptedChainHead {
 		let finalized = H256(blake2_256(&header.encode()));
 		let follows = AtomicUsize::new(0);
 		let headers = AtomicUsize::new(0);
+		let unanswered = AtomicUsize::new(0);
 		let operations = AtomicUsize::new(0);
 		let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 			let request: Value = serde_json::from_str(request).unwrap();
@@ -277,6 +282,11 @@ impl ScriptedChainHead {
 						"finalizedBlockRuntime": null
 					})),
 				],
+				"chainHead_v1_header"
+					if unanswered.fetch_add(1, Ordering::SeqCst) < self.unanswered_headers =>
+				{
+					Vec::new()
+				},
 				"chainHead_v1_header"
 					if headers.fetch_add(1, Ordering::SeqCst) < self.halted_headers =>
 				{
