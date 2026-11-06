@@ -22,6 +22,7 @@ mod dotns_lookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;

@@ -358,8 +358,8 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 - A card expands in place rather than into a sheet: the wallet's Pocket screen moves the same card element to the top
   of a full-screen page with the shared-element transition the native cards use, and hosts the product under it through
   `SpaHost` (`api/presentation/spaHost`, with `ProductWebViewHost`). `ExpandedProductPage` keeps one session at a time
-  and cancels its scope when the card collapses. The RFC expands into the `widget` executable; Android has no widget
-  host, so the launch URL is the product's app with `?card=<id>`.
+  and cancels its scope when the card collapses. The page opens at the product's own origin with `?card=<id>` and is
+  served the product's `widget` executable, or its app when the product publishes no widget.
 
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
