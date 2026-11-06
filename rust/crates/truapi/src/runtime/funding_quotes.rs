@@ -268,7 +268,7 @@ impl RuntimeServices {
 		loop {
 			// The providers changing starts the next round at once, so one
 			// dotNS answered for meanwhile is asked too.
-			let providers_changed = self.funding_providers().on_change();
+			let mut providers_changed = self.funding_providers().on_change();
 			self.refresh_funding_providers();
 			let targets = self.funding_providers().quote_targets();
 			// A row keeps its last answer until the provider answers again.
@@ -304,7 +304,7 @@ impl RuntimeServices {
 			rows = list.rows;
 			let wait = refresh_at_ms.saturating_sub(current_unix_millis());
 			let wait = futures_timer::Delay::new(Duration::from_millis(wait));
-			let _ = future::select(wait, providers_changed).await;
+			let _ = future::select(wait, providers_changed.next()).await;
 		}
 	}
 

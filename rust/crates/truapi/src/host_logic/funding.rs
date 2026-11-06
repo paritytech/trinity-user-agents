@@ -98,12 +98,6 @@ pub struct FundingSessionSummary {
 	pub reference: Option<String>,
 }
 
-impl From<FundingSession> for FundingSessionSummary {
-	fn from(session: FundingSession) -> Self {
-		session.summary()
-	}
-}
-
 impl FundingSession {
 	/// The session as history keeps it, leaving the session as it is.
 	pub fn summary(&self) -> FundingSessionSummary {
@@ -874,14 +868,7 @@ impl FundingSession {
 				Some(*settled_at_ms)
 			},
 			(FundingStep::Received, _) if self.direction == FundingDirection::In => {
-				first(|update| {
-					matches!(
-						update,
-						FundingUpdate::In(FundingInboundUpdate::PaymentReceived { .. }) |
-							FundingUpdate::In(FundingInboundUpdate::Converting) |
-							FundingUpdate::In(FundingInboundUpdate::Crediting { .. })
-					)
-				})
+				first(FundingUpdate::is_inbound_progress)
 			},
 			(FundingStep::Added, FundingStage::Delivered { settled_at_ms, .. }) => {
 				Some(*settled_at_ms)
@@ -1028,44 +1015,37 @@ impl FundingSession {
 	/// The line under the session's milestones at `now_ms`.
 	fn band(&self, now_ms: u64) -> FundingBand {
 		match self.status(now_ms) {
-			FundingStatus::ToppedUp => return FundingBand::Added,
-			FundingStatus::Sent | FundingStatus::PaidOutAfterCancel => return FundingBand::Sent,
-			FundingStatus::Retrying | FundingStatus::RetryingPayout => {
-				return FundingBand::Retrying;
-			},
-			FundingStatus::TakingLonger => return FundingBand::Delayed,
-			FundingStatus::CancelRequested |
-			FundingStatus::CancelOffered { .. } |
-			FundingStatus::CancelRefused { .. } |
-			FundingStatus::Cancelling => return FundingBand::Cancel,
-			FundingStatus::Refunded |
-			FundingStatus::PayoutFailed { .. } |
-			FundingStatus::Failed { .. } |
-			FundingStatus::Cancelled { .. } => return FundingBand::Ended,
-			_ => {},
-		}
-		match (self.direction, &self.stage) {
-			(FundingDirection::Out, FundingStage::Released { .. }) => {
-				let converting = self.updates.iter().any(|record| {
-					matches!(record.update, FundingUpdate::Out(FundingOutboundUpdate::Converting))
-				});
-				if converting { FundingBand::Sending } else { FundingBand::PreparingPayout }
-			},
-			(FundingDirection::Out, _) => FundingBand::Converting,
-			(FundingDirection::In, _) => match self.last_ranked_update() {
-				None | Some(FundingUpdate::In(FundingInboundUpdate::AwaitingPayment)) => {
-					FundingBand::AwaitingPayment
-				},
+			FundingStatus::WaitingForTransfer |
+			FundingStatus::WaitingForPayment |
+			FundingStatus::WaitingForDeposit => FundingBand::AwaitingPayment,
+			FundingStatus::ConvertingToCash => match self.last_ranked_update() {
 				Some(FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
 					finalized: false,
 					..
 				})) => FundingBand::CheckingPayment,
-				Some(
-					FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
-					FundingUpdate::In(FundingInboundUpdate::Delivered),
-				) => FundingBand::Adding,
-				Some(_) => FundingBand::OnItsWay,
+				_ => FundingBand::OnItsWay,
 			},
+			FundingStatus::AddingToBalance => FundingBand::Adding,
+			FundingStatus::TransactionInitiated => FundingBand::Converting,
+			FundingStatus::ConvertingTo { .. } | FundingStatus::PreparingPayout => {
+				if self.has_converting() {
+					FundingBand::Sending
+				} else {
+					FundingBand::PreparingPayout
+				}
+			},
+			FundingStatus::ToppedUp => FundingBand::Added,
+			FundingStatus::Sent | FundingStatus::PaidOutAfterCancel => FundingBand::Sent,
+			FundingStatus::Retrying | FundingStatus::RetryingPayout => FundingBand::Retrying,
+			FundingStatus::TakingLonger => FundingBand::Delayed,
+			FundingStatus::CancelRequested |
+			FundingStatus::CancelOffered { .. } |
+			FundingStatus::CancelRefused { .. } |
+			FundingStatus::Cancelling => FundingBand::Cancel,
+			FundingStatus::Refunded |
+			FundingStatus::PayoutFailed { .. } |
+			FundingStatus::Failed { .. } |
+			FundingStatus::Cancelled { .. } => FundingBand::Ended,
 		}
 	}
 
@@ -1155,13 +1135,7 @@ impl FundingSession {
 			self.detail = Some(FundingDetailRecord { detail, step: self.step(), at_ms: now_ms });
 			return Ok(());
 		}
-		if matches!(
-			update,
-			FundingUpdate::In(FundingInboundUpdate::PaymentReceived { .. }) |
-				FundingUpdate::In(FundingInboundUpdate::Converting) |
-				FundingUpdate::In(FundingInboundUpdate::Crediting { .. })
-		) && self.takes_late_arrival(now_ms)
-		{
+		if update.is_inbound_progress() && self.takes_late_arrival(now_ms) {
 			self.reopen_for_late_arrival();
 		}
 		if matches!(
@@ -1258,9 +1232,7 @@ impl FundingSession {
 			record.named_at_ms = Some(now_ms);
 			self.refund = Some(FundingRefund { top_up: record.clone(), refunded: None });
 		} else {
-			let converting = self.updates.iter().any(|record| {
-				matches!(record.update, FundingUpdate::Out(FundingOutboundUpdate::Converting))
-			});
+			let converting = self.has_converting();
 			// A payout that lands although the user accepted a cancel won the
 			// race: the session ends as paid out. Anything else on the way to
 			// a payout is refused once the cancel was accepted.
@@ -1384,6 +1356,13 @@ impl FundingSession {
 	/// Whether the user accepted the provider's cancel offer.
 	fn is_cancel_accepted(&self) -> bool {
 		matches!(self.cancel, Some(FundingCancel::Accepted { .. }))
+	}
+
+	/// Whether the provider reported converting a withdrawal's funds.
+	fn has_converting(&self) -> bool {
+		self.updates.iter().any(|record| {
+			matches!(record.update, FundingUpdate::Out(FundingOutboundUpdate::Converting))
+		})
 	}
 
 	/// The provider's payout outcome, once it reported one.
@@ -1917,6 +1896,19 @@ impl FundingUpdate {
 			},
 			_ => None,
 		}
+	}
+
+	/// Whether this update says the user's payment arrived and is on its way
+	/// to the balance.
+	fn is_inbound_progress(&self) -> bool {
+		matches!(
+			self,
+			FundingUpdate::In(
+				FundingInboundUpdate::PaymentReceived { .. } |
+					FundingInboundUpdate::Converting |
+					FundingInboundUpdate::Crediting { .. }
+			)
+		)
 	}
 
 	/// This update's order within a session: a later update ranks higher,
