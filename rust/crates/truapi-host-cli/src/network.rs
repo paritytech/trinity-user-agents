@@ -9,13 +9,15 @@ use truapi::{
 
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
-pub mod built_in;
+mod built_in;
 mod checks;
 mod polkadot_fork;
 mod source;
 mod stack;
 #[cfg(test)]
 mod testing;
+
+pub use built_in::ensure_built_in_runnable;
 
 /// Networks the headless hosts know by name, each a test network this build
 /// ships a signed stack copy of. The CLI account store saves BIP-39 mnemonics
@@ -28,9 +30,6 @@ pub enum Network {
 	#[value(name = "paseo-next-v2")]
 	#[default]
 	PaseoNextV2,
-	// The id the playground and dotli already use for this network
-	// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so `HostChainSet::network`
-	// reads the same string a product sees everywhere else.
 	/// Previewnet test network.
 	#[value(name = "previewnet")]
 	Previewnet,
@@ -56,13 +55,13 @@ pub async fn within_check_timeout<T>(
 	})
 }
 
-/// The namespace of `--network polkadot`, which earlier releases stored
-/// mainnet sessions under.
+/// The namespace no stack runs under, since it may contain sessions of real
+/// Polkadot identities.
 const RETIRED_POLKADOT_NAMESPACE: &str = "polkadot";
 
 /// The product namespace of the stack `id`: `id` without a trailing `-fork`,
 /// except that the `polkadot-fork` namespace is its full `id` rather than the
-/// retired `polkadot` one.
+/// `polkadot` one.
 fn namespace_of(id: &str) -> &str {
 	id.strip_suffix("-fork")
 		.filter(|source| *source != RETIRED_POLKADOT_NAMESPACE)
@@ -93,7 +92,7 @@ pub struct StackArg {
 /// The stack a command runs against, connected to over `--chain-backend`.
 /// Built only by [`Stack::new`], which decodes every field the accessors
 /// read, so none of them fails.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Stack {
 	descriptor: Descriptor,
 	chain_backend: ChainBackend,

@@ -28,7 +28,7 @@ async fn serve_chain(genesis: [u8; 32], network_suffix: Option<&'static str>) ->
 
 /// Every role on a loopback port nothing listens on.
 fn stack_on_closed_ports() -> Stack {
-	Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
+	Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).with_edit(|descriptor| {
 		for (port, chain) in (1..).zip(descriptor["chains"].as_array_mut().unwrap()) {
 			chain["rpc"] = serde_json::json!([format!("ws://127.0.0.1:{port}")]);
 		}
@@ -37,7 +37,8 @@ fn stack_on_closed_ports() -> Stack {
 
 /// The stack on closed ports with People served by `url`.
 fn stack_with_people_at(url: &str) -> Stack {
-	stack_on_closed_ports().edited_chain("People", |chain| chain["rpc"] = serde_json::json!([url]))
+	stack_on_closed_ports()
+		.with_chain_edit("People", |chain| chain["rpc"] = serde_json::json!([url]))
 }
 
 /// The stack on closed ports with a loopback People that reports its own
@@ -126,7 +127,7 @@ async fn test_network_suffix_absent_or_unreachable() {
 /// the RPC endpoints, has none of them checked.
 #[tokio::test]
 async fn test_polkadot_fork_check_wiring() {
-	let polkadot_people = stack_on_closed_ports().edited_chain("People", |chain| {
+	let polkadot_people = stack_on_closed_ports().with_chain_edit("People", |chain| {
 		chain["genesisHash"] =
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
@@ -144,7 +145,7 @@ async fn test_polkadot_fork_check_wiring() {
 /// the light client's bundled specs cannot sync.
 #[test]
 fn test_light_client_after_restart_error() {
-	let restarted = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).edited_chain(
+	let restarted = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).with_chain_edit(
 		"People",
 		|chain| {
 			chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();

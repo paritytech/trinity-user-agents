@@ -18,7 +18,7 @@ fn read_stack(descriptor: Descriptor) -> Result<Stack> {
 fn test_stack_from_descriptor() {
 	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let stack = paseo
-		.edited(|descriptor| {
+		.with_edit(|descriptor| {
 			descriptor["id"] = "staging-fork".into();
 			descriptor["tld"] = "testnet".into();
 			descriptor["services"] = serde_json::json!([
@@ -27,7 +27,7 @@ fn test_stack_from_descriptor() {
 			descriptor["dotns"] =
 				serde_json::json!({ "popController": format!("0x{}", "ab".repeat(20)) });
 		})
-		.edited_chain("People", |chain| {
+		.with_chain_edit("People", |chain| {
 			chain["rpc"] = serde_json::json!(["ws://127.0.0.1:9944", "wss://b.example"]);
 			chain["genesisHash"] = format!("0x{}", "11".repeat(32)).into();
 		});
@@ -81,7 +81,7 @@ fn test_stack_namespace() {
 		("pcf-devnet", "pcf-devnet"),
 		("pcf-devnet-fork", "pcf-devnet"),
 	] {
-		let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).edited(|descriptor| {
+		let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).with_edit(|descriptor| {
 			descriptor["id"] = id.into();
 			descriptor["tld"] = "dot".into();
 		});

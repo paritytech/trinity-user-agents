@@ -60,7 +60,7 @@ fn test_polkadot_chains_from_reference() {
 	let stack =
 		Network::PaseoNextV2
 			.bundled_stack(ChainBackend::Rpc)
-			.edited_chain("People", |chain| {
+			.with_chain_edit("People", |chain| {
 				chain["genesisHash"] = format!("0x{POLKADOT_PEOPLE_GENESIS}").into();
 			});
 	let reference = polkadot_reference();

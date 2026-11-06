@@ -14,14 +14,14 @@ impl Stack {
 	/// `descriptor` connected to over `chain_backend`. Fails when People,
 	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
 	/// when the TLD is not one the core serves, when the namespace is not a
-	/// lowercase label or is the retired `polkadot` one, and when the stack has
+	/// lowercase label or is the `polkadot` one, and when the stack has
 	/// no `dub` service or no `dotns.popController`.
 	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
 			id != RETIRED_POLKADOT_NAMESPACE,
-			"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which earlier \
-			 releases used for Polkadot mainnet; use a stack with another id"
+			"a stack cannot run under the {RETIRED_POLKADOT_NAMESPACE} namespace, which may \
+			 contain sessions of real Polkadot identities; use a stack with another id"
 		);
 		ensure!(
 			truapi::platform::is_dns_label(namespace_of(id)),
@@ -57,11 +57,6 @@ impl Stack {
 			)
 		})?;
 		Ok(Self { descriptor, chain_backend, chains, identity_backend, pop_controller })
-	}
-
-	/// Fails as [`Stack::new`] does.
-	pub fn check(descriptor: &Descriptor) -> Result<()> {
-		Self::new(descriptor.clone(), ChainBackend::Rpc).map(drop)
 	}
 }
 

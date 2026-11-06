@@ -44,7 +44,7 @@ impl PolkadotChain<'_> {
 	pub async fn ensure_fork(&self) -> Result<()> {
 		let ws = &self.endpoint.ws;
 		let (height, fork_hash, polkadot_hash) =
-			self.finalized_hashes().await.map_err(|reason| {
+			self.fetch_finalized_hashes().await.map_err(|reason| {
 				anyhow!(
 					"cannot tell {ws} from Polkadot ({reason:#}); a chain with Polkadot's genesis \
 					 runs only once it shows a fork"
@@ -60,7 +60,7 @@ impl PolkadotChain<'_> {
 
 	/// The lower of the endpoint's and Polkadot's finalized block numbers, and
 	/// the block hash each reports there, or which side did not answer.
-	async fn finalized_hashes(&self) -> Result<(u32, String, String)> {
+	async fn fetch_finalized_hashes(&self) -> Result<(u32, String, String)> {
 		let ws = &self.endpoint.ws;
 		let ((fork, fork_finalized), (polkadot, polkadot_finalized, polkadot_ws)) = futures::try_join!(
 			async { within_check_timeout(connect_finalized(ws)).await.context(ws.clone()) },
@@ -69,12 +69,12 @@ impl PolkadotChain<'_> {
 		let height = fork_finalized.min(polkadot_finalized);
 		let (fork_hash, polkadot_hash) = futures::try_join!(
 			async {
-				within_check_timeout(block_hash(&fork, height))
+				within_check_timeout(fetch_block_hash(&fork, height))
 					.await
 					.with_context(|| format!("{ws}: its block {height}"))
 			},
 			async {
-				within_check_timeout(block_hash(&polkadot, height))
+				within_check_timeout(fetch_block_hash(&polkadot, height))
 					.await
 					.with_context(|| format!("Polkadot's {polkadot_ws}: its block {height}"))
 			},
@@ -86,7 +86,7 @@ impl PolkadotChain<'_> {
 /// A connection to `ws` and the number of its finalized block.
 async fn connect_finalized(ws: &str) -> Result<(RpcClient, u32)> {
 	let rpc = RpcClient::connect(ws).await?;
-	let finalized = finalized_number(&rpc).await.context("its finalized block")?;
+	let finalized = fetch_finalized_number(&rpc).await.context("its finalized block")?;
 	Ok((rpc, finalized))
 }
 
@@ -110,7 +110,7 @@ async fn connect_first_finalized(nodes: &[String]) -> Result<(RpcClient, u32, &s
 }
 
 /// The number of the block `rpc` reports as finalized.
-async fn finalized_number(rpc: &RpcClient) -> Result<u32> {
+async fn fetch_finalized_number(rpc: &RpcClient) -> Result<u32> {
 	let head = rpc.finalized_head().await?;
 	let header = rpc.call("chain_getHeader", json!([head])).await?;
 	let number = header["number"].as_str().context("a header without a number")?;
@@ -118,7 +118,7 @@ async fn finalized_number(rpc: &RpcClient) -> Result<u32> {
 }
 
 /// The hash of `rpc`'s block at `height`.
-async fn block_hash(rpc: &RpcClient, height: u32) -> Result<String> {
+async fn fetch_block_hash(rpc: &RpcClient, height: u32) -> Result<String> {
 	let hash = rpc.call("chain_getBlockHash", json!([height])).await?;
 	hash.as_str().map(str::to_owned).context("no block at that height")
 }

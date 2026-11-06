@@ -17,7 +17,7 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
-	network::built_in::ensure_built_in_runnable,
+	network::ensure_built_in_runnable,
 	platform,
 	stack_descriptor::{
 		FETCH_TIMEOUT, describe_pin_change, fetch, pointer_of, read_stack, reads_same, refused,

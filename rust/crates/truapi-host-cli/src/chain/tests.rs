@@ -8,7 +8,7 @@ use crate::network::Network;
 fn build_network_with_people_at(people_ws: &str) -> Stack {
 	Network::default()
 		.bundled_stack(ChainBackend::Rpc)
-		.edited_chain("People", |chain| chain["rpc"] = serde_json::json!([people_ws]))
+		.with_chain_edit("People", |chain| chain["rpc"] = serde_json::json!([people_ws]))
 }
 
 /// A loopback server that sends `open` on every connection, then closes it.

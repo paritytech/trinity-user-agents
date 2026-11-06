@@ -30,7 +30,7 @@ impl BuiltInStack {
 		Pointer::from_link(self.link.trim()).expect("invalid built-in stack link")
 	}
 
-	fn bundled(&self) -> Descriptor {
+	fn open_bundled(&self) -> Descriptor {
 		trinity_stack::open(self.bundle, &self.pointer())
 			.expect("invalid bundled stack")
 			.descriptor
@@ -63,7 +63,8 @@ const POLKADOT_REFERENCE_STACK: BuiltInStack = BuiltInStack {
 
 /// The bundled copy of real Polkadot's descriptor, opened once per process.
 pub fn polkadot_reference() -> &'static Descriptor {
-	static REFERENCE: LazyLock<Descriptor> = LazyLock::new(|| POLKADOT_REFERENCE_STACK.bundled());
+	static REFERENCE: LazyLock<Descriptor> =
+		LazyLock::new(|| POLKADOT_REFERENCE_STACK.open_bundled());
 	&REFERENCE
 }
 
@@ -75,7 +76,7 @@ pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> R
 	let is_built_in = Network::value_variants()
 		.iter()
 		.any(|network| network.built_in_stack().pointer().stack_id() == stack_id);
-	if is_built_in && let Err(error) = Stack::check(descriptor) {
+	if is_built_in && let Err(error) = Stack::new(descriptor.clone(), ChainBackend::Rpc) {
 		bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
 	}
 	Ok(())
@@ -94,7 +95,8 @@ impl Network {
 	/// `chain_backend`, without fetching anything.
 	#[cfg(test)]
 	pub fn bundled_stack(self, chain_backend: ChainBackend) -> Stack {
-		Stack::new(self.built_in_stack().bundled(), chain_backend).expect("invalid bundled stack")
+		Stack::new(self.built_in_stack().open_bundled(), chain_backend)
+			.expect("invalid bundled stack")
 	}
 
 	/// The published descriptor when it is newer than the bundled copy,

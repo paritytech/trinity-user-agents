@@ -40,7 +40,7 @@ fn test_built_in_runnable_check() {
 	assert!(error.to_string().contains("no dub service"));
 	ensure_built_in_runnable(&POLKADOT_REFERENCE_STACK.pointer(), &without_dub)
 		.expect("a stack other than a built-in network checked");
-	ensure_built_in_runnable(&paseo, &Network::PaseoNextV2.built_in_stack().bundled())
+	ensure_built_in_runnable(&paseo, &Network::PaseoNextV2.built_in_stack().open_bundled())
 		.expect("bundled paseo-next-v2 copy not runnable");
 }
 

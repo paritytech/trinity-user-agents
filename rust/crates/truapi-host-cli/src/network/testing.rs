@@ -53,7 +53,7 @@ impl Stack {
 	}
 
 	/// This stack with its descriptor edited as JSON.
-	pub fn edited(&self, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
+	pub fn with_edit(&self, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
@@ -61,8 +61,8 @@ impl Stack {
 	}
 
 	/// This stack with the chain of `role` edited as JSON.
-	pub fn edited_chain(&self, role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
-		self.edited(|descriptor| {
+	pub fn with_chain_edit(&self, role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Self {
+		self.with_edit(|descriptor| {
 			let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
 			edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
 		})
@@ -71,7 +71,7 @@ impl Stack {
 	/// This stack with its `dub` service at `url`, so its identity backend is
 	/// `url` with `/api/v1` appended.
 	pub fn with_dub(&self, url: &str) -> Self {
-		self.edited(|descriptor| {
+		self.with_edit(|descriptor| {
 			let services = descriptor["services"].as_array_mut().expect("services not an array");
 			for service in services.iter_mut().filter(|service| service["kind"] == "dub") {
 				service["urls"] = serde_json::json!([url]);
@@ -81,7 +81,7 @@ impl Stack {
 
 	/// This stack with every chain's RPC list set to `url` alone.
 	pub fn with_rpc(&self, url: &str) -> Self {
-		self.edited(|descriptor| {
+		self.with_edit(|descriptor| {
 			for chain in descriptor["chains"].as_array_mut().expect("chains not an array") {
 				chain["rpc"] = serde_json::json!([url]);
 			}
