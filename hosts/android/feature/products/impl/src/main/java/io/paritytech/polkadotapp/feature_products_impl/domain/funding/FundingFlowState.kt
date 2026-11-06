@@ -248,8 +248,8 @@ data class FundingFlowState(
     fun requested(id: ULong): FundingFlowState = copy(requestId = maxOf(requestId ?: id, id))
 
     /**
-     * The core's latest list, unless it answers an earlier request than the one on screen. A row back to pending at
-     * a refresh keeps its last quote greyed until it answers.
+     * The core's latest list, unless it answers an earlier request than the one on screen. A row still pending after
+     * the same ask went out again keeps its last quote greyed until it answers.
      */
     fun receiving(list: FundingQuoteList): FundingFlowState {
         val latest = requestId
