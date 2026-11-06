@@ -23,7 +23,7 @@ pub fn insert_receive_key(
 const RECEIVE_KEY: &str = "SELECT purse, creator FROM nft_receive_key WHERE key = :key";
 
 /// Where the cheques of a receive key go, and who made it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ReceiveKeyRecord {
 	/// The purse its cheques go into.
 	pub purse: PurseId,

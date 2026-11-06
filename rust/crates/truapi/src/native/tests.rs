@@ -853,7 +853,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 	platform.auth_state_changed(crate::platform::AuthState::Pairing {
 		deeplink: "polkadotapp://pair?handshake=00".to_string(),
 	});
-	platform.auth_state_changed(crate::platform::AuthState::Connected(
+	platform.auth_state_changed(crate::platform::AuthState::Connected(Box::new(
 		crate::platform::SessionUiInfo {
 			public_key: [7; 32],
 			identity_account_id: None,
@@ -864,14 +864,14 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
-	));
+	)));
 	platform.auth_state_changed(crate::platform::AuthState::Disconnected);
 
 	assert_eq!(
 		callbacks.auth_states.lock().expect("auth state mutex poisoned").as_slice(),
 		&[
 			AuthState::Pairing { deeplink: "polkadotapp://pair?handshake=00".to_string() },
-			AuthState::Connected(crate::platform::SessionUiInfo {
+			AuthState::Connected(Box::new(crate::platform::SessionUiInfo {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
@@ -880,7 +880,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				device_statement_account_id: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
-			}),
+			})),
 			AuthState::Disconnected,
 		]
 	);
@@ -3124,4 +3124,39 @@ fn a_funding_change_carries_the_sessions_progress() {
 			.map(|(announced, _, progress)| (announced.clone(), progress.clone())),
 		Some((intent, Some(session.progress())))
 	);
+}
+
+/// The bridge hands its markers to a host without passing through the tracing
+/// layer, so the table check and the detail cap are applied on that path too.
+mod bridge_lines {
+	use super::*;
+	use crate::{logging::HOST_SINK_DETAIL_MAX_CHARS, native::runtime::forward_bridge_line};
+
+	fn recorded(marker: &str, detail: &str) -> Vec<(String, String)> {
+		let callbacks = EventCallbacks::new();
+		forward_bridge_line(&callbacks, marker, detail);
+		callbacks.logs.lock().expect("logs mutex poisoned").clone()
+	}
+
+	#[test]
+	fn a_listed_marker_reaches_the_host() {
+		let logs = recorded("truapi.ws_bridge.started", "port=1 runtime_id=2");
+		assert_eq!(
+			logs,
+			vec![("truapi.ws_bridge.started".to_string(), "port=1 runtime_id=2".to_string())]
+		);
+	}
+
+	#[test]
+	fn an_unlisted_marker_is_dropped() {
+		assert!(recorded("truapi.ws_bridge.invented", "anything").is_empty());
+	}
+
+	#[test]
+	fn a_long_detail_is_capped_on_this_path_too() {
+		let detail = "x".repeat(HOST_SINK_DETAIL_MAX_CHARS * 3);
+		let logs = recorded("truapi.ws_bridge.read_error", &detail);
+		assert_eq!(logs.len(), 1);
+		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
+	}
 }

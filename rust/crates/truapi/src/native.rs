@@ -387,5 +387,21 @@ pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);
 }
 
+/// Every marker the core may address to a host, keyed by its dotted target.
+///
+/// A host reads this once and looks each marker it is handed up in the result.
+/// A target the map does not hold stays on the device, because nothing has
+/// said what its detail carries. The core refuses such a target before a host
+/// is handed it, so this is the host's backstop rather than its first line.
+/// Pure and stateless, so a host may call it whenever it likes, though reading
+/// it once at startup is what it is for.
+#[uniffi::export]
+pub fn core_markers() -> std::collections::HashMap<String, crate::markers::MarkerClass> {
+	crate::markers::MARKERS
+		.iter()
+		.map(|marker| (marker.target.to_string(), marker.class))
+		.collect()
+}
+
 #[cfg(test)]
 mod tests;

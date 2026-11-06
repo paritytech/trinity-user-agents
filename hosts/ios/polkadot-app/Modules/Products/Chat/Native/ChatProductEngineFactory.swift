@@ -18,7 +18,7 @@ enum ChatProductEngineFactory {
 
     static func makeContext(
         source: ProductWorkerSource,
-        productFileProvider: ChatProductFileProviding,
+        productFileProvider: any ProductFileProviding,
         logger: LoggerProtocol
     ) throws -> EngineContext {
         let schemeHandler = ProductScriptSchemeHandler(
