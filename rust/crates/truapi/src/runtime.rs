@@ -124,9 +124,10 @@ use truapi::{
 			HostFundingStatusSubscribeRequest,
 		},
 		funding_provider::{
-			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
-			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse,
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -386,7 +387,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 
@@ -590,6 +591,11 @@ impl ProductConnection {
 	/// Release one core-held reference on this connection's product worker.
 	pub fn release_worker_reference(&self) {
 		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
@@ -1691,21 +1697,39 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
+					!platform.provider_has_app(&self.connection.product).await
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				}
 				let outcome = platform
 					.present_provider_frame(&self.connection.product, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				platform.close_provider_frame(&self.connection.product, intent);
+				Ok(())
 			})
 			.await
 	}
@@ -1882,6 +1906,14 @@ impl ProductRuntimeHost {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 

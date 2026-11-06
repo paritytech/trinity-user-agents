@@ -379,6 +379,37 @@ export interface FundingPresentation {
 }
 
 /**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. Ids only grow, and a list can reach the host before the call that
+   * returns its id does, so a host shows a list only when its id is at
+   * least the latest it has seen, and drops the rest.
+   */
+  requestId: bigint;
+
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: ProductId;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. Each
+   * row keeps its answer until the provider answers again.
+   */
+  refreshAtMs: bigint;
+}
+
+/**
  * One provider's place in the list a quote request fills in.
  */
 export interface FundingQuoteRow {
@@ -1180,6 +1211,19 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
 );
 
 /**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      requestId: S.u64,
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(ProductId),
+      refreshAtMs: S.u64,
+    }) as S.Codec<FundingQuoteList>,
+);
+
+/**
  * One provider's place in the list a quote request fills in.
  */
 export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
@@ -1958,6 +2002,29 @@ export interface FundingPlatform {
   ): Promise<FundingFrameOutcome>;
 
   /**
+   * Close the frame `present_provider_frame` shows for `provider`'s
+   * session `intent`, answering that call `Closed`, and show the
+   * session's progress in its place. Does nothing when no frame is
+   * open for it.
+   */
+  closeProviderFrame(provider: ProductContext, intent: string): void;
+
+  /**
+   * Whether `provider` ships an App, so an App route of its can be shown.
+   * A provider without one shows only external pages.
+   */
+  providerHasApp?(provider: ProductContext): Promise<boolean>;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
+
+  /**
    * Observe a session's status change, for host UI such as the in-flight
    * pill.
    */
@@ -1967,11 +2034,11 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again.
    */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
 }
 
 /**

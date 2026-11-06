@@ -181,6 +181,8 @@ impl HostCallbacks for EventCallbacks {
 			.push((product_id, transition));
 	}
 
+	fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
+
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.paired_devices.lock().expect("paired device mutex poisoned").push(device);
 	}
@@ -1916,6 +1918,8 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
+
+		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
@@ -2106,6 +2110,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
+
+		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
@@ -3052,17 +3058,23 @@ fn screening_normalizes_and_trims() {
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
 
-/// A native funding overlay the user starts at once, recording each change
-/// the core hands it.
+/// A session change as the core pushed it: the intent, the session and its
+/// progress.
+type PushedChange = (
+	String,
+	Option<crate::host_logic::funding::FundingSession>,
+	Option<crate::host_logic::funding::FundingProgress>,
+);
+
+/// A native funding overlay the user starts at once, recording what the
+/// core hands it.
 #[derive(Default)]
 struct RecordingNativeFunding {
-	changes: Mutex<
-		Vec<(
-			String,
-			v01::HostFundingStatusSubscribeItem,
-			Option<crate::host_logic::funding::FundingProgress>,
-		)>,
-	>,
+	changes: Mutex<Vec<PushedChange>>,
+	/// The intents whose options the overlay held when it was shown.
+	options_before_shown: Mutex<Vec<String>>,
+	options: Mutex<Vec<String>>,
+	in_progress: Mutex<Vec<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -3074,6 +3086,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 		_direction: v01::FundingDirection,
 		_amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection> {
+		let options = self.options.lock().expect("options mutex poisoned").clone();
+		*self.options_before_shown.lock().expect("options mutex poisoned") = options;
 		Ok(crate::platform::FundingPresentOutcome::Started)
 	}
 
@@ -3086,25 +3100,50 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 		Ok(v01::FundingFrameOutcome::Closed)
 	}
 
+	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
+
+	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
+		true
+	}
+
 	fn funding_session_changed(
 		&self,
 		intent: String,
-		status: v01::HostFundingStatusSubscribeItem,
+		_status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
 		self.changes
 			.lock()
 			.expect("changes mutex poisoned")
-			.push((intent, status, progress));
+			.push((intent, session, progress));
 	}
 
-	fn funding_quote_changed(&self, _intent: String, _row: crate::platform::FundingQuoteRow) {}
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
+	}
+
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		_options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+		self.options.lock().expect("options mutex poisoned").push(intent);
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		None
+	}
+
+	fn funding_quotes_changed(&self, _intent: String, _quotes: crate::platform::FundingQuoteList) {}
 }
 
-// The host draws a session from what the change hands it, so the change
-// carries the session's progress as the core holds it.
+// The host draws a session only from what the core pushes: the overlay's
+// options arrive before it is shown, and each change carries the session
+// and its progress as the core holds them, followed by whether a provider
+// works on any session.
 #[test]
-fn a_funding_change_carries_the_sessions_progress() {
+fn the_core_pushes_what_the_host_draws() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
@@ -3118,13 +3157,24 @@ fn a_funding_change_carries_the_sessions_progress() {
 			.expect("opened")
 			.expect("started");
 
-	let session = host.funding_session(intent.clone()).expect("session kept");
 	let changes = funding.changes.lock().expect("changes mutex poisoned").clone();
+	let (announced, session, progress) = changes.last().cloned().expect("a change");
+	let session = session.expect("session kept");
 	assert_eq!(
-		changes
-			.last()
-			.map(|(announced, _, progress)| (announced.clone(), progress.clone())),
-		Some((intent, Some(session.progress())))
+		(
+			announced,
+			session.intent.clone(),
+			progress,
+			funding.options_before_shown.lock().expect("options mutex poisoned").clone(),
+			funding.in_progress.lock().expect("in-progress mutex poisoned").last().copied(),
+		),
+		(
+			intent.clone(),
+			intent.clone(),
+			Some(session.progress(crate::unix_time::current_unix_millis())),
+			vec![intent],
+			Some(false),
+		)
 	);
 }
 
