@@ -15,6 +15,10 @@ struct AssetDetailsView: View {
         @State private var testDataMode = CoinageTestDataMode.live
         /// Plain or varied coins, while the two are being compared. Debug builds only.
         @State private var coinSet = CoinageScene.CoinSet.shipped
+        /// The light and the coins held still by the dials, for looking at the depiction from a
+        /// chosen angle. Debug builds only.
+        @State private var fixedLight: CoinageTilt.Turn?
+        @State private var fixedLean: CoinageTilt.Turn?
     #endif
 
     init(
@@ -63,7 +67,9 @@ struct AssetDetailsView: View {
                 if viewModel.balanceCardModel != nil {
                     CoinageBalanceBreakdownView(
                         breakdown: testDataMode.applied(to: viewModel.coinageBreakdown ?? .testDataPlaceholder),
-                        coinSet: coinSet
+                        coinSet: coinSet,
+                        fixedLight: fixedLight,
+                        fixedLean: fixedLean
                     )
                 }
             #else
@@ -87,6 +93,8 @@ struct AssetDetailsView: View {
                 CoinageTestDataSwitch(mode: $testDataMode)
 
                 CoinageCoinSetSwitch(set: $coinSet)
+
+                CoinageLightPad(turn: $fixedLight, lean: $fixedLean)
             #endif
 
             #if TESTNET_FEATURE
