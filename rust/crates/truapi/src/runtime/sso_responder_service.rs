@@ -322,13 +322,11 @@ pub struct SsoResponderService {
 	unpublished_answers: UnpublishedAnswers,
 }
 
-/// Answers to a request that ran, kept while the People chain refuses them
-/// so that delivering the request again publishes them instead of running it
-/// again.
+/// Refused answers, published when their request is redelivered instead of
+/// running it again.
 ///
-/// A peer's request channel holds only its newest statement, so only the
-/// newest request can be delivered again and one request per peer is kept.
-/// They are kept in memory, so a process restart loses them.
+/// Holds the newest request per peer, the only one its channel can redeliver.
+/// In memory only.
 #[derive(Default)]
 struct UnpublishedAnswers {
 	by_peer: Mutex<HashMap<SsoReplayScope, (String, Vec<RemoteMessage>)>>,
