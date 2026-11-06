@@ -448,7 +448,7 @@ resolver reads the chain on each call.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry.
 
-iOS contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
+iOS contacts and chat views resolve profile metadata first, then reuse Kingfisher's CID-keyed disk cache without a freshness expiry.
 
 ### Trinity stack descriptors
 

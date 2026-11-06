@@ -1,5 +1,6 @@
 import Foundation
-import PolkadotUI
+import Kingfisher
+@testable import PolkadotUI
 import Testing
 import TrUAPIHost
 import UIKit
@@ -8,129 +9,207 @@ import UIKit
 @MainActor
 struct PublicProfileAvatarViewModelFactoryTests {
     @Test
-    func loadsTheRequestedPersonsAvatarThroughTheExistingImageViewModel() async {
-        let username = "factory-\(UUID().uuidString)"
+    func metadataRefreshWithTheSameCIDDoesNotDownloadAgain() async {
+        let username = UUID().uuidString
+        let avatar = ProfileAvatar(cid: username, format: .png)
         let resolver = MockPublicProfileAvatarResolver(
-            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2)))
+            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2))), avatar: avatar
         )
-        let factory = PublicProfileAvatarViewModelFactory { username, force in
-            try await resolver.loadAvatar(username: username, force: force)
-        }
-        let imageView = UIImageView()
-        let viewModel = factory.createViewModel(for: username, refresh: false)
-
-        let succeeded = await load(viewModel, on: imageView)
-
-        #expect(succeeded)
-        #expect(imageView.image != nil)
-        #expect(await resolver.requestedUsernames == [username])
+        let factory = makeFactory(resolver)
+        let first = await load(factory.createViewModel(for: username, refresh: false), on: UIImageView())
+        let second = await load(factory.createViewModel(for: username, refresh: true), on: UIImageView())
+        #expect(await (first, second, resolver.requests, resolver.imageRequests) == (
+            true, true,
+            [.init(username: username, force: false), .init(username: username, force: true)], [avatar]
+        ))
     }
 
     @Test
-    func missingAvatarClearsThePreviousPersonsImage() async {
-        let imageView = UIImageView(image: UIImage(systemName: "person.fill"))
-        let factory = PublicProfileAvatarViewModelFactory { _, _ in
-            throw ImageError.Unavailable(reason: "no profile avatar")
+    func changingTheCIDLoadsTheNewImageAndRemovingItClearsTheView() async {
+        let username = UUID().uuidString
+        let first = ProfileAvatar(cid: UUID().uuidString, format: .png)
+        let second = ProfileAvatar(cid: UUID().uuidString, format: .png)
+        let resolver = MockPublicProfileAvatarResolver(
+            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2))), avatar: first
+        )
+        let factory = makeFactory(resolver)
+        let imageView = UIImageView()
+        _ = await load(factory.createViewModel(for: username, refresh: false), on: imageView)
+        await resolver.setAvatar(second, bytes: testPicturePNG(size: CGSize(width: 5, height: 4)))
+        _ = await load(factory.createViewModel(for: username, refresh: true), on: imageView)
+        let replaced = imageView.image?.cgImage?.width
+        await resolver.setAvatar(nil)
+        let removed = await load(factory.createViewModel(for: username, refresh: true), on: imageView)
+        #expect(await (replaced, removed, imageView.image, resolver.imageRequests) == (5, false, nil, [first, second]))
+    }
+
+    @Test
+    func repeatedChatUpdatesOnlyForceMetadataOnTheFirstLoad() async {
+        let username = UUID().uuidString
+        let avatar = ProfileAvatar(cid: username, format: .png)
+        let resolver = MockPublicProfileAvatarResolver(
+            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2))), avatar: avatar
+        )
+        let viewModel = makeFactory(resolver).createViewModel(for: username, refresh: true)
+        let imageView = UIImageView()
+        let first = await withCheckedContinuation { continuation in
+            viewModel
+                .loadImage(on: imageView, settings: .originalImage, animated: false) {
+                    continuation.resume(returning: $0)
+                }
+            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false, completion: nil)
         }
-        let viewModel = factory.createViewModel(for: "missing-\(UUID().uuidString)", refresh: false)
+        let second = await load(viewModel, on: imageView)
+        #expect(await (first, second, resolver.requests, resolver.imageRequests) == (
+            true, true,
+            [.init(username: username, force: true), .init(username: username, force: false)], [avatar]
+        ))
+    }
 
-        let succeeded = await load(viewModel, on: imageView)
-
+    @Test
+    func aFailedMetadataRefreshShowsThePlaceholder() async {
+        let factory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            throw ImageError.Unavailable(reason: "offline")
+        }, loadAvatar: { _ in
+            Issue.record("Failed metadata must not load image bytes")
+            return Data()
+        })
+        let current = UIImage(systemName: "person.fill")
+        let imageView = UIImageView(image: current)
+        let succeeded = await load(factory.createViewModel(for: "alice.01", refresh: true), on: imageView)
         #expect(!succeeded)
         #expect(imageView.image == nil)
     }
 
-    /// Opening a chat rereads the profile, and later loads find the new avatar in the cache.
-    @Test
-    func aRefreshReplacesTheCachedAvatar() async {
-        let username = "refresh-\(UUID().uuidString)"
+    @Test(arguments: [false, true])
+    func olderMetadataCannotReplaceTheNextContactsImage(fails: Bool) async {
+        let (started, didStart) = AsyncStream<Void>.makeStream()
+        let gate = ProfileResolutionGate()
+        let (finished, didFinish) = AsyncStream<Bool>.makeStream()
+        let factory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            await gate.wait { didStart.yield(()) }
+            defer { didFinish.yield(Task.isCancelled); didFinish.finish() }
+            if fails { throw ImageError.Unavailable(reason: "offline") }
+            return PublicProfile(avatar: ProfileAvatar(cid: UUID().uuidString, format: .png))
+        }, loadAvatar: { _ in
+            Issue.record("Obsolete metadata must not load image bytes")
+            return Data()
+        })
+        let imageView = UIImageView()
+        let viewModel = factory.createViewModel(for: "alice.01", refresh: false)
+        viewModel.loadImage(on: imageView, settings: .originalImage, animated: false) { _ in
+            Issue.record("Obsolete metadata must not call the replaced completion")
+        }
+        for await _ in started {
+            break
+        }
+        let avatar = ProfileAvatar(cid: UUID().uuidString, format: .png)
         let resolver = MockPublicProfileAvatarResolver(
-            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2)))
+            result: .success(testPicturePNG(size: CGSize(width: 5, height: 4))), avatar: avatar
         )
-        let factory = makeFactory(resolver: resolver)
-        _ = await load(factory.createViewModel(for: username, refresh: false), on: UIImageView())
-        await resolver.setResult(.success(testPicturePNG(size: CGSize(width: 5, height: 4))))
-        let refreshed = UIImageView()
-        let later = UIImageView()
+        let replacement = makeFactory(resolver).createViewModel(for: "bob.02", refresh: false)
+        _ = await load(replacement, on: imageView)
+        await gate.release()
+        var completed = finished.makeAsyncIterator()
+        #expect(await completed.next() == true)
+        #expect(imageView.image?.cgImage?.width == 5)
+    }
 
-        _ = await load(factory.createViewModel(for: username, refresh: true), on: refreshed)
-        _ = await load(factory.createViewModel(for: username, refresh: false), on: later)
-        let requests = await resolver.requests
-
-        #expect(
-            ([pixelSize(of: refreshed), pixelSize(of: later)], requests) == (
-                [CGSize(width: 5, height: 4), CGSize(width: 5, height: 4)],
-                [.init(username: username, force: false), .init(username: username, force: true)]
+    @Test(arguments: [false, true])
+    func switchingToAStaticImageOrDismantlingCancelsMetadata(dismantle: Bool) async {
+        let gate = ProfileResolutionGate()
+        let (started, didStart) = AsyncStream<Void>.makeStream()
+        let (finished, didFinish) = AsyncStream<Bool>.makeStream()
+        let factory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            await gate.wait { didStart.yield(()) }
+            defer { didFinish.yield(Task.isCancelled); didFinish.finish() }
+            return PublicProfile(avatar: nil)
+        }, loadAvatar: { _ in
+            Issue.record("A replaced view must not fetch bytes")
+            return Data()
+        })
+        let viewModel = factory.createViewModel(for: "alice.01", refresh: false)
+        let represented = AsyncImageView(viewModel: viewModel)
+        let coordinator = represented.makeCoordinator()
+        let imageView = UIImageView()
+        coordinator.load(viewModel, on: imageView, settings: .originalImage, animated: false)
+        for await _ in started {
+            break
+        }
+        let replacement = dismantle ? nil : UIImage(systemName: "person.fill")
+        if dismantle {
+            AsyncImageView.dismantleUIView(imageView, coordinator: coordinator)
+        } else {
+            coordinator.load(
+                StaticImageViewModel(image: replacement),
+                on: imageView,
+                settings: .originalImage,
+                animated: false
             )
-        )
+        }
+        await gate.release()
+        var completed = finished.makeAsyncIterator()
+        #expect(await completed.next() == true)
+        #expect(imageView.image === replacement)
     }
 
-    /// The chat header loads its avatar again on every chat update, which must not reread the profile each time.
     @Test
-    func loadsDuringARefreshReadTheProfileOnce() async {
-        let username = "refresh-once-\(UUID().uuidString)"
-        let resolver = MockPublicProfileAvatarResolver(
-            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2)))
-        )
-        let viewModel = makeFactory(resolver: resolver).createViewModel(for: username, refresh: true)
+    func aQueuedKingfisherImageCannotReplaceTheNewAvatar() async throws {
+        let bytes = testPicturePNG(size: CGSize(width: 3, height: 2))
+        let provider = RawImageDataProvider(data: bytes, cacheKey: UUID().uuidString)
+        let cache = ImageCache(name: UUID().uuidString)
+        try cache.store(#require(UIImage(data: bytes)), forKey: provider.cacheKey, toDisk: false)
+        let callbackQueue = DispatchQueue(label: "old-avatar-callback")
+        let release = DispatchSemaphore(value: 0)
+        callbackQueue.async { release.wait() }
+        defer { release.signal() }
+        let (completed, didComplete) = AsyncStream<Void>.makeStream()
         let imageView = UIImageView()
-
-        let refreshed = await withCheckedContinuation { continuation in
-            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false) { succeeded in
-                continuation.resume(returning: succeeded)
-            }
-            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false, completion: nil)
+        imageView.kf.setImage(
+            with: provider,
+            options: [.targetCache(cache), .callbackQueue(.dispatch(callbackQueue))]
+        ) { _ in didComplete.yield(()); didComplete.finish() }
+        let avatar = ProfileAvatar(cid: UUID().uuidString, format: .png)
+        let resolver = MockPublicProfileAvatarResolver(
+            result: .success(testPicturePNG(size: CGSize(width: 5, height: 4))), avatar: avatar
+        )
+        _ = await load(makeFactory(resolver).createViewModel(for: "alice.01", refresh: false), on: imageView)
+        release.signal()
+        for await _ in completed {
+            break
         }
-        let reloaded = await load(viewModel, on: imageView)
-        let requests = await resolver.requests
-
-        #expect((refreshed, reloaded, requests) == (true, true, [.init(username: username, force: true)]))
+        #expect(imageView.image?.cgImage?.width == 5)
     }
 
-    /// A refresh draws the cached avatar while it loads, and a failed one, for example offline, keeps it.
-    @Test
-    func aRefreshKeepsTheCachedAvatarUntilItLoads() async {
-        let username = "refresh-offline-\(UUID().uuidString)"
-        let resolver = MockPublicProfileAvatarResolver(
-            result: .success(testPicturePNG(size: CGSize(width: 3, height: 2)))
-        )
-        let factory = makeFactory(resolver: resolver)
-        _ = await load(factory.createViewModel(for: username, refresh: false), on: UIImageView())
-        await resolver.setResult(.failure(.Unavailable(reason: "offline")))
-        let viewModel = factory.createViewModel(for: username, refresh: true)
-        let imageView = UIImageView()
-        var whileLoading: CGSize?
+    private func makeFactory(_ resolver: MockPublicProfileAvatarResolver) -> PublicProfileAvatarViewModelFactory {
+        PublicProfileAvatarViewModelFactory(resolveProfile: { username, force in
+            await resolver.resolve(username: username, force: force)
+        }, loadAvatar: { avatar in
+            try await resolver.loadAvatar(avatar)
+        })
+    }
 
-        let refreshed = await withCheckedContinuation { continuation in
-            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false) { succeeded in
-                continuation.resume(returning: succeeded)
+    private func load(_ viewModel: any ImageViewModelProtocol, on imageView: UIImageView) async -> Bool {
+        await withCheckedContinuation { continuation in
+            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false) {
+                continuation.resume(returning: $0)
             }
-            whileLoading = pixelSize(of: imageView)
         }
-
-        #expect(
-            (refreshed, whileLoading, pixelSize(of: imageView)) ==
-                (false, CGSize(width: 3, height: 2), CGSize(width: 3, height: 2))
-        )
     }
 }
 
-private extension PublicProfileAvatarViewModelFactoryTests {
-    func makeFactory(resolver: MockPublicProfileAvatarResolver) -> PublicProfileAvatarViewModelFactory {
-        PublicProfileAvatarViewModelFactory { username, force in
-            try await resolver.loadAvatar(username: username, force: force)
+private actor ProfileResolutionGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait(onStart: @Sendable () -> Void) async {
+        await withCheckedContinuation {
+            continuation = $0
+            onStart()
         }
     }
 
-    func pixelSize(of imageView: UIImageView) -> CGSize? {
-        imageView.image.map { CGSize(width: $0.size.width * $0.scale, height: $0.size.height * $0.scale) }
-    }
-
-    func load(_ viewModel: any ImageViewModelProtocol, on imageView: UIImageView) async -> Bool {
-        await withCheckedContinuation { continuation in
-            viewModel.loadImage(on: imageView, settings: .originalImage, animated: false) { succeeded in
-                continuation.resume(returning: succeeded)
-            }
-        }
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
