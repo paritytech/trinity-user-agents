@@ -81,8 +81,12 @@ export const productChatKey = (network: string, walletId: string): string =>
   `truapi-web-signing-host:network:${network}:product-chat:${walletId}:v1`;
 
 export const NOT_SIGNED_IN = "Chat needs a signed-in wallet.";
+/**
+ * Why `registerBot` is refused. Products tell an unsupported bot from a
+ * failed one by "not supported" in the reason, as the iOS host words it.
+ */
 export const BOTS_UNSUPPORTED =
-  "This host does not register chat bots. Create a room instead.";
+  "Bot registration is not supported by this host. Create a room instead.";
 
 /** What the room keeps of a message the product posted. */
 function contentOf(

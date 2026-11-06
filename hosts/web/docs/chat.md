@@ -40,7 +40,8 @@ inspector's TrUAPI view decodes their frames.
 
 ### Rooms and messages
 
-- The host serves TrUAPI Chat (`src/chat/product-chat.ts`). It refuses `registerBot`, as iOS does.
+- The host serves TrUAPI Chat (`src/chat/product-chat.ts`). It refuses `registerBot`, as iOS does, with a reason that
+  says "not supported", which products read as unsupported rather than failed. The worker's rooms work without a bot.
 - It keeps rooms and the last 200 messages of each per network and wallet in
   `truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`.
 - The core screens what a worker sends. The host stores and draws it. iOS and Android accept only `Text` and `Custom`.

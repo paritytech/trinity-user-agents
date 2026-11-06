@@ -97,6 +97,9 @@ describe("product chat", () => {
         icon: ICON,
       }),
     ).rejects.toThrow(BOTS_UNSUPPORTED);
+    // Products count a refusal saying "not supported" as the host's answer,
+    // not as a failure (jollity-worker's registerBot handling).
+    expect(BOTS_UNSUPPORTED).toMatch(/not supported/i);
     await platform.createChatRoom(worker("game.paseo"), {
       roomId: "lobby",
       name: "Lobby",
