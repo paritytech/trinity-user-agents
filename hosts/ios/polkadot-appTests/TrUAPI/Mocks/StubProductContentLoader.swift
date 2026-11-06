@@ -28,7 +28,8 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private let updateStream = AsyncStream<ExecutableRelease>.makeStream()
 
     private let product: ResolvedProduct?
-    private static let contextReader = HostLoadTelemetry(recorder: NoopHostEventRecorder())
+    /// A disabled telemetry reads no context, so the reader needs a recording one; nothing is recorded through it.
+    private static let contextReader = HostLoadTelemetry(recorder: RecordingHostEventRecorder())
 
     init(product: ResolvedProduct? = nil) {
         self.product = product
