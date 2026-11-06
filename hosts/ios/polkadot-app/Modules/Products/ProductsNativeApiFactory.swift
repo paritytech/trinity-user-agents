@@ -132,6 +132,7 @@ final class ProductsNativeApiFactory: ProductsNativeApiMaking {
             createProofHandler: personhoodHandlerFactory.makeCreateProofHandler(callingProductId: productId),
             aliasHandler: personhoodHandlerFactory.makeAliasHandler(callingProductId: productId),
             signVrfHandler: personhoodHandlerFactory.makeSignVrfHandler(callingProductId: productId),
+            listRingVrfKeysHandler: personhoodHandlerFactory.makeListRingVrfKeysHandler(callingProductId: productId),
             resourceKeyManager: resourceKeyManager,
             sponsorFactory: sponsorFactory,
             themeManager: themeManager,
