@@ -151,9 +151,10 @@ avoids a dotNS read. The returned CID selects the image-library request, so an i
 cache hit cannot skip profile resolution. Hosts do not keep a second username-to-image
 freshness cache.
 
-Coil and Kingfisher cache verified bytes by CID on disk and decoded images in memory;
-processed variants may add size or processing details to their keys. A disk hit can
-repopulate memory after a restart. There is no image freshness expiry: the bytes named
+Coil and Kingfisher cache verified bytes by CID on disk and decoded images in memory.
+Processed variants may also persist on disk, with format and processing details in
+their keys. A disk hit can repopulate memory after a restart. There is no image
+freshness expiry: the bytes named
 by a CID do not change. Library capacity limits, eviction and explicit cache clearing
 still apply. After eviction, a later request fetches and verifies the bytes again.
 Cached bytes must still match the profile's declared format.
