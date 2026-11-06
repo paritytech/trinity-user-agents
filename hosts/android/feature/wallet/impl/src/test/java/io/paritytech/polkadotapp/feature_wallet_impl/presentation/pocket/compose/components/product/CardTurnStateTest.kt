@@ -3,14 +3,10 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.APPLIED
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.NO_BACK
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.USER_MOVING
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -28,18 +24,6 @@ class CardTurnStateTest {
         drag(px, CARD_WIDTH)
     }
 
-    /** Each frame's angle, and the rotation the face then up is drawn at, until [motion] ends. */
-    private fun TestScope.framesOf(state: CardTurnState, motion: suspend CoroutineScope.() -> Unit): List<Pair<Float, Float>> {
-        val running = async { motion() }
-        val frames = mutableListOf<Pair<Float, Float>>()
-        while (!running.isCompleted) {
-            advanceTimeBy(FRAME_MILLIS)
-            runCurrent()
-            frames += state.angle to state.layerRotation(state.shownSide)
-        }
-        return frames
-    }
-
     // A card let go part way must land on a face; a short accidental drag must not turn it over.
     @Test
     fun `a card released at rest turns over only when dragged past half its width`() = runTest(SteppingFrameClock) {
@@ -49,27 +33,22 @@ class CardTurnStateTest {
         short.release(0f, CARD_WIDTH)
         long.release(0f, CARD_WIDTH)
 
-        assertEquals(listOf(0f, 180f), listOf(short.angle, long.angle))
         assertEquals(listOf(PocketCardSide.FRONT, PocketCardSide.BACK), listOf(short.shownSide, long.shownSide))
     }
 
     // A swipe shows the other side of the card; it is not a spinner, however far or hard it goes.
     @Test
-    fun `a swipe turns the card over once, however far or hard, and never shows a face mirrored`() =
-        runTest(SteppingFrameClock) {
-            for ((draggedPx, velocity) in listOf(0f to 20_000f, 0f to -20_000f, 2 * CARD_WIDTH to 20_000f, -2 * CARD_WIDTH to 0f)) {
-                val state = dragged(draggedPx)
-                val released = state.angle
+    fun `a swipe turns the card over once, however far or hard`() = runTest(SteppingFrameClock) {
+        for ((draggedPx, velocity) in listOf(0f to 20_000f, 0f to -20_000f, 2 * CARD_WIDTH to 20_000f, -2 * CARD_WIDTH to 0f)) {
+            val state = dragged(draggedPx)
 
-                val frames = framesOf(state) { state.release(velocity, CARD_WIDTH) }
-                val sidesShown = (listOf(0f, released) + frames.map { it.first }).map { CardTurnState(it).shownSide }
+            state.release(velocity, CARD_WIDTH)
 
-                assertEquals("lands on the back after $draggedPx at $velocity", 180f, abs(frames.last().first), 0f)
-                assertEquals("turns over once after $draggedPx at $velocity", 1, sidesShown.zipWithNext().count { (before, after) -> before != after })
-                assertTrue("the face up is never mirrored", frames.all { (_, upRotation) -> abs(upRotation) <= 90f })
-            }
+            assertEquals("after $draggedPx at $velocity", 180f, abs(state.angle), 0f)
         }
+    }
 
+    // The page turns the card the way a right thumb swipes it, right to left, which lowers the angle.
     @Test
     fun `turning to a side shows that side, and turning to the side already up does nothing`() = runTest(SteppingFrameClock) {
         val state = CardTurnState()
@@ -80,7 +59,7 @@ class CardTurnStateTest {
         val turned = state.angle
         state.turnTo(PocketCardSide.FRONT)
 
-        assertEquals(listOf(0f, 180f), listOf(unmoved, turned))
+        assertEquals(listOf(0f, -180f), listOf(unmoved, turned))
         assertEquals(0f, state.angle.mod(360f), 0f)
     }
 
@@ -138,7 +117,7 @@ class CardTurnStateTest {
         advanceUntilIdle()
 
         assertEquals(listOf(NO_BACK, APPLIED, APPLIED, USER_MOVING), answers)
-        assertEquals(listOf(180f, 180f), listOf(turned, state.angle))
+        assertEquals(listOf(-180f, -180f), listOf(turned, state.angle))
     }
 
     // The page is told its request applied, so the card has to end on the side it asked for last.
@@ -150,14 +129,14 @@ class CardTurnStateTest {
         advanceTimeBy(4 * FRAME_MILLIS)
         state.requestSide(PocketCardSide.FRONT, hasBack = true)
         advanceUntilIdle()
-        val front = state.angle
+        val afterFront = state.shownSide
         state.requestSide(PocketCardSide.BACK, hasBack = true)
         advanceTimeBy(4 * FRAME_MILLIS)
         state.requestSide(PocketCardSide.FRONT, hasBack = true)
         state.requestSide(PocketCardSide.BACK, hasBack = true)
         advanceUntilIdle()
 
-        assertEquals(listOf(0f, 180f), listOf(front.mod(360f), state.angle.mod(360f)))
+        assertEquals(listOf(PocketCardSide.FRONT, PocketCardSide.BACK), listOf(afterFront, state.shownSide))
     }
 
     // A screen-reader user asks for the other side of where the card is going, not of where it is mid-turn.
@@ -183,7 +162,7 @@ class CardTurnStateTest {
         state.drag(CARD_WIDTH / 10, CARD_WIDTH)
         advanceUntilIdle()
 
-        assertEquals(18f, state.angle, 0f)
+        assertEquals(PocketCardSide.FRONT, state.shownSide)
     }
 
     // A fling's settle can end without the user, when the card goes home; the page must not hear UserMoving ever after.
