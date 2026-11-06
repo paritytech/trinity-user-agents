@@ -10,9 +10,10 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use tracing::{instrument, warn};
 
-pub use record::ProfileRecord;
+pub use record::ProfileAvatar;
 #[cfg(test)]
-pub use record::{ProfileAvatar, ProfileEntry};
+use record::ProfileEntry;
+use record::ProfileRecord;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{store::DbError, unix_time::current_unix_secs};
@@ -33,8 +34,20 @@ const PROFILE_RECORD_KEY: &str = "profile";
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
 
+/// The understood metadata in a dotNS public profile.
+///
+/// Image bytes are loaded separately by CID. Missing or malformed records have no avatar.
+#[derive(Debug, PartialEq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PublicProfile {
+	/// The first understood avatar, if the record names one.
+	pub avatar: Option<ProfileAvatar>,
+}
+
 /// Why a public profile could not be resolved.
 #[derive(Debug, thiserror::Error, derive_more::From)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), uniffi(flat_error))]
 pub enum PublicProfileError {
 	/// Not a username the core resolves.
 	#[error("not a dotNS username")]
@@ -143,7 +156,7 @@ impl PublicProfiles {
 		&self,
 		username: &str,
 		force: bool,
-	) -> Result<ProfileRecord, PublicProfileError> {
+	) -> Result<PublicProfile, PublicProfileError> {
 		validate_username(username)?;
 		let db = self.services.core_db()?;
 		let now = current_unix_secs();
@@ -152,7 +165,7 @@ impl PublicProfiles {
 			let cached =
 				db.read(move |conn| dao::fresh_record(conn, &cached_username, now)).await?;
 			if let Some(record) = cached {
-				return Ok(record);
+				return Ok(PublicProfile { avatar: record.avatar() });
 			}
 		}
 
@@ -162,7 +175,7 @@ impl PublicProfiles {
 			dao::store_record(tx, &stored_username, &stored_record, now, now + RECORD_TTL_SECS)
 		})
 		.await?;
-		Ok(record)
+		Ok(PublicProfile { avatar: record.avatar() })
 	}
 
 	/// Resolves a profile directly from the chain.
@@ -175,9 +188,10 @@ impl PublicProfiles {
 		&self,
 		username: &str,
 		_force: bool,
-	) -> Result<ProfileRecord, PublicProfileError> {
+	) -> Result<PublicProfile, PublicProfileError> {
 		validate_username(username)?;
-		self.read_record(username).await
+		let record = self.read_record(username).await?;
+		Ok(PublicProfile { avatar: record.avatar() })
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {

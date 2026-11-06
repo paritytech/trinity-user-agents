@@ -24,7 +24,8 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, ResponderExit, SigningHostRuntime,
+	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
+	ResponderExit, SigningHostRuntime,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -781,6 +782,18 @@ impl NativeTrUApiHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
 		self.runtime.core_database_status().await.map_err(Into::into)
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Records expire after one hour; `force` skips the cache. Invalid usernames and
+	/// lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: String,
+		force: bool,
+	) -> Result<PublicProfile, PublicProfileError> {
+		self.runtime.resolve_public_profile(&username, force).await
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and
