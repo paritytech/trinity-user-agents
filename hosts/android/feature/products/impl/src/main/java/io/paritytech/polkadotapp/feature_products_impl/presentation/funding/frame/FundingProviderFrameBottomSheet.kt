@@ -19,7 +19,8 @@ import javax.inject.Inject
  * The provider product's page, over the whole screen, hosted the way the SPA sheet hosts a product.
  *
  * Brought back after process death, the frame has lost the call that opened it, so it closes at once; the core asks
- * for it again once the provider's worker is back.
+ * for it again once the provider's worker is back. A frame answered while another screen sat on it closes once it is
+ * back on top.
  */
 @AndroidEntryPoint
 class FundingProviderFrameBottomSheet : BaseComposeBottomSheet<FundingProviderFrameViewModel>() {
@@ -64,7 +65,11 @@ class FundingProviderFrameBottomSheet : BaseComposeBottomSheet<FundingProviderFr
 
     override fun onResume() {
         super.onResume()
-        if (!orphaned) viewModel.resumeConnections()
+        when {
+            orphaned -> Unit
+            frame.isAnswered -> dismissAllowingStateLoss()
+            else -> viewModel.resumeConnections()
+        }
     }
 
     companion object {

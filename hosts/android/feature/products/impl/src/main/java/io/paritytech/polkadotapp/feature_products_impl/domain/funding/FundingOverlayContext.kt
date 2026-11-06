@@ -23,16 +23,34 @@ class FundingOverlayContext(
     val mode: FundingOverlayMode,
 ) {
     private val outcome = CompletableDeferred<FundingOverlayOutcome>()
+    private val shown = CompletableDeferred<Unit>()
+
+    /** Set once the sheet should be gone; a sheet that could not be closed under another screen closes on its return. */
+    @Volatile
+    var isClosed: Boolean = false
+        private set
 
     /** What the user picked on the sheet, as last reported to the core. */
     @Volatile
     var selection: FundingSelection? = null
 
+    /** Called by the sheet once it holds this context. */
+    fun markShown() {
+        shown.complete(Unit)
+    }
+
     fun answer(answer: FundingOverlayOutcome) {
         outcome.complete(answer)
+        shown.complete(Unit)
+    }
+
+    fun close() {
+        isClosed = true
     }
 
     suspend fun awaitOutcome(): FundingOverlayOutcome = outcome.await()
+
+    suspend fun awaitShownOrAnswered() = shown.await()
 }
 
 /** The overlays on screen, keyed by session, so a sheet finds the one it was opened for. */

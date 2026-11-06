@@ -23,7 +23,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -37,6 +37,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.FundingAmountLimits
@@ -73,12 +74,10 @@ class FundingViewModelTest {
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
-        every { sessionChanges("intent") } returns emptyFlow()
+        every { session("intent") } returns flowOf(null)
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
         coEvery { selectProvider("intent", ramp, "q-1") } returns Result.success(true)
-        every { progress("intent") } returns null
-        every { session("intent") } returns null
     }
 
     @Before
@@ -191,6 +190,39 @@ class FundingViewModelTest {
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
         coVerify(exactly = 0) { router.closeFundingOverlay(any()) }
         stopFollowingDeposit(model)
+    }
+
+    @Test
+    fun `a crypto top-up the user went back from does not start when its quotes arrive`() = runTest(testDispatcher) {
+        pushedOptions.value = options(cryptoCandidate(providerA))
+        coEvery { interactor.selectProvider("intent", providerA, "q-a") } returns Result.success(true)
+        val model = viewModel()
+        advanceUntilIdle()
+
+        model.onPreset(BigDecimal("50"))
+        model.onContinueFromAmount()
+        model.onNetworkChosen("ethereum")
+        model.onTokenChosen("USDT")
+        runCurrent()
+        model.onBack()
+        quoteLists.emit(list(FundingQuoteRow(providerA, FundingQuoteState.Quoted(quote().copy(quoteId = "q-a"))), best = providerA))
+        runCurrent()
+
+        coVerify(exactly = 0) { interactor.selectProvider(any(), any(), any()) }
+        assertFalse(context.isClosed)
+        stopFollowingDeposit(model)
+    }
+
+    @Test
+    fun `closing marks the sheet closed, so one left under another screen closes on its return`() = runTest(testDispatcher) {
+        val model = viewModel()
+        advanceUntilIdle()
+
+        model.onClose()
+        advanceUntilIdle()
+
+        assertTrue(context.isClosed)
+        coVerify { router.closeFundingOverlay("intent") }
     }
 
     @Test

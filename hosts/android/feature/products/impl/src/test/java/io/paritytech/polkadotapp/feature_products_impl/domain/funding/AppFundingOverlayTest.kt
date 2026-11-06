@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,7 +48,11 @@ class AppFundingOverlayTest {
         every { sessions } returns this@AppFundingOverlayTest.sessions
         every { endedSummaries } returns MutableStateFlow(emptySet())
     }
-    private val router = mockk<ProductsRouter>(relaxed = true)
+
+    // A sheet that appears marks itself shown, as the real one does once it finds its context.
+    private val router = mockk<ProductsRouter>(relaxed = true) {
+        coEvery { openFundingOverlay(any()) } answers { contexts.get(firstArg())?.markShown() }
+    }
     private val overlay = AppFundingOverlay(contexts, frames, runtime, router)
 
     @Test
@@ -150,6 +156,53 @@ class AppFundingOverlayTest {
         requireNotNull(contexts.get("intent")).answer(FundingOverlayOutcome.STARTED)
 
         assertEquals(FundingOverlayOutcome.STARTED, outcome.await())
+    }
+
+    @Test
+    fun `a sheet that never appears is answered dismissed and leaves the session free to open again`() = runTest {
+        coEvery { router.openFundingOverlay(any()) } returns Unit
+
+        val outcome = overlay.present(FundingOverlayRequest(null, "intent", FundingDirection.IN, null))
+
+        assertEquals(FundingOverlayOutcome.DISMISSED, outcome)
+        assertNull(contexts.get("intent"))
+        coVerify { router.closeFundingOverlay("intent") }
+    }
+
+    @Test
+    fun `a resumed sheet that never appears can be opened again`() = runTest {
+        push(session(FundingRail.CARD, FundingStage.Open))
+        coEvery { router.openFundingOverlay(any()) } returns Unit
+
+        assertTrue(overlay.reopen("intent"))
+        assertNull(contexts.get("intent"))
+
+        coEvery { router.openFundingOverlay(any()) } answers { contexts.get(firstArg())?.markShown() }
+        assertTrue(overlay.reopen("intent"))
+        assertEquals(FundingOverlayMode.Resumed, contexts.get("intent")?.mode)
+        coVerify(exactly = 2) { router.openFundingOverlay("intent") }
+    }
+
+    // The core pushes an ended session until it is acknowledged; it shows on its outcome, not as a sheet in flight.
+    @Test
+    fun `an ended session the core still holds does not reopen as a sheet`() = runTest {
+        push(session(FundingRail.CARD, FundingStage.Delivered("50000000", settledAtMs = 1uL)))
+
+        assertFalse(overlay.reopen("intent"))
+        assertNull(contexts.get("intent"))
+        coVerify(exactly = 0) { router.openFundingOverlay(any()) }
+    }
+
+    @Test
+    fun `a sheet the core stopped waiting on is marked closed`() = runTest {
+        val outcome = async { overlay.present(FundingOverlayRequest(null, "intent", FundingDirection.IN, null)) }
+        runCurrent()
+        val sheet = requireNotNull(contexts.get("intent"))
+
+        outcome.cancel()
+        runCurrent()
+
+        assertTrue(sheet.isClosed)
     }
 
     @Test

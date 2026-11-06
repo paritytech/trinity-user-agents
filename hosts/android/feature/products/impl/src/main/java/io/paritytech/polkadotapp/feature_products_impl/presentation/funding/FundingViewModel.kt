@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.common.presentation.loading.asLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
@@ -25,6 +24,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Job
@@ -46,6 +46,7 @@ import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
@@ -54,17 +55,6 @@ import java.math.BigDecimal
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
-
-/** Whether the session has been handed to a provider, and why it failed once it has. */
-data class FundingStartState(
-    val isStarting: Boolean,
-    val failed: Boolean,
-    val started: Boolean,
-    val failure: FundingFailureReason?,
-    val isCancelling: Boolean,
-    /** The user's cancel as the core holds it, once money has moved and the provider decides it. */
-    val cancel: FundingCancel?,
-)
 
 /** Built for the overlay [context] its sheet found when it opened, which the overlay may have dropped since. */
 @HiltViewModel(assistedFactory = FundingViewModel.Factory::class)
@@ -94,7 +84,9 @@ class FundingViewModel @AssistedInject constructor(
     )
     private val progress = MutableStateFlow<FundingProgress?>(null)
     private var quoteJob: Job? = null
-    private var startsWhenQuoted = false
+
+    /** The ask a crypto top-up starts on once every provider answered it, while its deposit screen is on top. */
+    private var startsWhenQuoted: FundingQuoteAsk? = null
 
     private val brands = MutableStateFlow<Map<ProductId, FundingProviderBrand>>(emptyMap())
     private val brandsLoading = mutableSetOf<ProductId>()
@@ -124,11 +116,11 @@ class FundingViewModel @AssistedInject constructor(
 
     init {
         launch { interactor.quoteLists(intent).collect { onQuoteList(it) } }
-        launch { interactor.sessionChanges(intent).collect { refreshSession() } }
         launchUnit {
             val initial = initialState()
             flow.value = initial
             if (context.mode == FundingOverlayMode.Resumed) resume()
+            launch { followSession() }
             launch { interactor.options(intent).filterNotNull().collect(::onOptions) }
             reportSelection()
         }
@@ -148,7 +140,7 @@ class FundingViewModel @AssistedInject constructor(
         requestQuote()
 
         if (current.direction == CoreFundingDirection.IN) {
-            startsWhenQuoted = true
+            startsWhenQuoted = flow.value?.ask
             push(FundingScreen.DEPOSIT)
         } else {
             push(FundingScreen.SUMMARY)
@@ -183,7 +175,6 @@ class FundingViewModel @AssistedInject constructor(
             .onFailure { leaveCancelConfirm(RCommon.string.funding_error_cancel_failed) }
 
         start.update { it.copy(isCancelling = false) }
-        refreshSession()
     }
 
     /** Shows the provider's cancel offer again, after the user went back from it. */
@@ -257,28 +248,14 @@ class FundingViewModel @AssistedInject constructor(
         val quoteId = current.rows[providerId]?.quote?.quoteId ?: return
         if (start.value.isStarting || start.value.started) return
 
-        start.value = FundingStartState(
-            isStarting = true,
-            failed = false,
-            started = false,
-            failure = null,
-            isCancelling = false,
-            cancel = null,
-        )
+        start.update { it.copy(isStarting = true, failed = false) }
         launchUnit {
             val selected = interactor.selectProvider(intent, providerId, quoteId)
                 .logFailure("Funding provider selection failed")
                 .getOrDefault(false)
 
-            start.value = FundingStartState(
-                isStarting = false,
-                failed = !selected,
-                started = selected,
-                failure = null,
-                isCancelling = false,
-                cancel = null,
-            )
-            if (selected) didStart(current.rail) else refreshSession()
+            start.update { it.copy(isStarting = false, failed = !selected, started = selected) }
+            if (selected) didStart(current.rail)
         }
     }
 
@@ -301,7 +278,10 @@ class FundingViewModel @AssistedInject constructor(
         contexts.remove(context)
     }
 
-    private fun closeSheet() = launchUnit { router.closeFundingOverlay(intent) }
+    private fun closeSheet() = launchUnit {
+        context.close()
+        router.closeFundingOverlay(intent)
+    }
 
     private suspend fun initialState(): FundingFlowState {
         val cash = interactor.cash()
@@ -324,6 +304,7 @@ class FundingViewModel @AssistedInject constructor(
     }
 
     private fun pop() {
+        if (path.value.lastOrNull() == FundingScreen.DEPOSIT) startsWhenQuoted = null
         path.update { it.dropLast(1) }
     }
 
@@ -333,16 +314,22 @@ class FundingViewModel @AssistedInject constructor(
         if (updated === current) return
         flow.value = updated
 
-        if (startsWhenQuoted && updated.allAnswered) {
-            startsWhenQuoted = false
+        val armed = startsWhenQuoted
+        if (armed != null && updated.ask == armed && updated.allAnswered && path.value.lastOrNull() == FundingScreen.DEPOSIT) {
+            startsWhenQuoted = null
             onStart()
         }
     }
 
-    /** The core pushed the session again: draw it, and leave once it is over. A failed one stays up with its reason. */
-    private fun refreshSession() {
-        progress.value = interactor.progress(intent)
-        val session = interactor.session(intent)
+    /** Draws the session as the core holds it, and leaves once it is over. A failed one stays up with its reason. */
+    private suspend fun followSession() {
+        combine(interactor.session(intent), start.map { it.started }.distinctUntilChanged()) { entry, _ -> entry }
+            .collect(::onSession)
+    }
+
+    private fun onSession(entry: FundingSessionEntry?) {
+        progress.value = entry?.progress
+        val session = entry?.session
         followCancel(session?.cancel)
         val stage = session?.stage
         val failure = stage?.failure?.toReason()
@@ -359,8 +346,8 @@ class FundingViewModel @AssistedInject constructor(
     }
 
     /** A session the user left running, shown on its deposit screen as the sheet had it once it started. */
-    private fun resume() {
-        val session = interactor.session(intent) ?: return
+    private suspend fun resume() {
+        val session = interactor.session(intent).first()?.session ?: return
         val choice = session.choice
         session.providerId?.let { loadBrands(listOf(it)) }
 
@@ -368,16 +355,8 @@ class FundingViewModel @AssistedInject constructor(
             state?.let { if (choice != null) it.withRail(choice.rail).withAsset(choice.asset) else it }
                 ?.let { updated -> session.providerId?.let(updated::withChosenProvider) ?: updated }
         }
-        start.value = FundingStartState(
-            isStarting = false,
-            failed = false,
-            started = true,
-            failure = null,
-            isCancelling = false,
-            cancel = null,
-        )
+        start.update { it.copy(started = true) }
         path.value = listOf(FundingScreen.DEPOSIT)
-        refreshSession()
     }
 
     private fun leaveCancelConfirm(message: Int) {
@@ -399,7 +378,6 @@ class FundingViewModel @AssistedInject constructor(
             .onFailure { leaveCancelOffer(RCommon.string.funding_error_cancel_failed) }
 
         start.update { it.copy(isCancelling = false) }
-        refreshSession()
     }
 
     private fun CancelConfirmation.message(): Int? = when (this) {
@@ -429,7 +407,6 @@ class FundingViewModel @AssistedInject constructor(
 
     private fun didStart(rail: FundingRail) {
         context.answer(FundingOverlayOutcome.STARTED)
-        refreshSession()
 
         when (rail) {
             FundingRail.CARD -> closeSheet()

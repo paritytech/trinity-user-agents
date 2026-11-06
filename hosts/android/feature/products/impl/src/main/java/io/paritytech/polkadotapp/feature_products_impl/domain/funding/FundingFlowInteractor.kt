@@ -1,20 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingOptions
-import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
-import uniffi.truapi.FundingSession
 import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import javax.inject.Inject
@@ -46,9 +45,8 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun selectOptions(intent: String, selection: FundingSelection) = runtime.selectOptions(intent, selection)
 
-    fun session(intent: String): FundingSession? = runtime.session(intent)
-
-    fun progress(intent: String): FundingProgress? = runtime.progress(intent)
+    /** Session [intent] with its progress as the core holds it, `null` until the core announces it. */
+    fun session(intent: String): Flow<FundingSessionEntry?> = runtime.sessions.map { it[intent] }.distinctUntilChanged()
 
     suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
 
@@ -64,6 +62,4 @@ class FundingFlowInteractor @Inject constructor(
     fun paymentMoved(intent: String): Boolean = runtime.paymentMoved(intent)
 
     fun quoteLists(intent: String): Flow<FundingQuoteList> = runtime.quoteLists(intent)
-
-    fun sessionChanges(intent: String): Flow<Unit> = runtime.sessionChanges().filter { it == intent }.map { }
 }
