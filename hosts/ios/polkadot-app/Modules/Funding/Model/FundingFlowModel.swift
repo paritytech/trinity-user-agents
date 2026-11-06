@@ -229,7 +229,7 @@ extension FundingFlowModel {
                     // Nothing was paid, so the second cancel ends the session.
                     outcome = try await service.cancel(intent: intent)
                 }
-                switch FundingCancelPresentation.after(outcome) {
+                switch outcome.followUp {
                 case .close:
                     close()
                 case let .toast(message):
@@ -254,7 +254,7 @@ extension FundingFlowModel {
             defer { isAnsweringOffer = false }
             do {
                 let answer = try await service.confirmCancel(intent: intent, terms: terms)
-                toast = FundingCancelPresentation.after(answer)
+                toast = answer.toast
             } catch {
                 logger.error("[funding] \(intent): answering the cancel offer failed: \(error)")
                 toast = String(localized: .Funding.errorCancelFailed)
