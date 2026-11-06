@@ -25,7 +25,6 @@ sealed interface SigningContent {
 sealed interface SigningAccountUi {
     data class Product(val productId: ProductId, val derivationIndex: String) : SigningAccountUi
     data object IdentityAccount : SigningAccountUi
-    data class Legacy(val address: String) : SigningAccountUi
 }
 
 data class TransactionSignUiState(

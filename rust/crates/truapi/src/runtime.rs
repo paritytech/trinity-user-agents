@@ -92,7 +92,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
@@ -198,8 +198,17 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product,
+	Product(latest::ProductAccountId),
 	Identity([u8; 32]),
+}
+
+impl LegacySigner {
+	fn review_account(&self) -> LegacySigningAccount {
+		match self {
+			Self::Product(account) => LegacySigningAccount::Product(account.clone()),
+			Self::Identity(_) => LegacySigningAccount::Identity,
+		}
+	}
 }
 
 #[derive(derive_more::From)]
@@ -979,7 +988,10 @@ impl ProductRuntimeHost {
 		}
 		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product);
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
 		}
 		Err(LegacySignerError::Unavailable)
 	}

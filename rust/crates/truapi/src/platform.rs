@@ -1684,8 +1684,25 @@ pub enum SignPayloadReview {
 		/// Signing request.
 		request: HostSignPayloadRequest,
 	},
-	/// Legacy-account signing request.
-	LegacyAccount(HostSignPayloadWithLegacyAccountRequest),
+	/// Legacy-account signing request, which only the product's account at
+	/// index 0 may sign.
+	LegacyAccount {
+		/// Account that will sign.
+		account: ProductAccountId,
+		/// Signing request.
+		request: HostSignPayloadWithLegacyAccountRequest,
+	},
+}
+
+/// Account a legacy-account request resolved to, so a host knows the signer
+/// without resolving the request's address itself.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum LegacySigningAccount {
+	/// The wallet's identity account.
+	Identity,
+	/// The requesting product's account at derivation index 0.
+	Product(ProductAccountId),
 }
 
 /// Review shown before a sign-raw request is sent to the paired wallet.
@@ -1706,6 +1723,8 @@ pub enum SignRawReview {
 	},
 	/// Legacy-account raw signing request.
 	LegacyAccount {
+		/// Account that will sign.
+		account: LegacySigningAccount,
 		/// Raw signing request.
 		request: HostSignRawWithLegacyAccountRequest,
 		/// Whether the signer applies the `<Bytes>` transaction-payload protection.
@@ -1742,7 +1761,12 @@ pub enum CreateTransactionReview {
 		payload: ProductAccountTxPayload,
 	},
 	/// Legacy-account transaction request.
-	LegacyAccount(LegacyAccountTxPayload),
+	LegacyAccount {
+		/// Account that will sign.
+		account: LegacySigningAccount,
+		/// Transaction request.
+		payload: LegacyAccountTxPayload,
+	},
 }
 
 /// Review shown before a product derives a contextual alias (RFC 0004).

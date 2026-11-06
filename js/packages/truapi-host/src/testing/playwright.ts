@@ -49,6 +49,7 @@ import { createTestHostServer } from "./server.js";
 export { fromNetworks } from "./networks.js";
 export type { LoopbackStatements, NetworkConfig } from "./networks.js";
 import { accountNames, deepLinkUrl, hostPageUrl } from "./host-page-url.js";
+import type { LoginRequestBehavior } from "./login-requests.js";
 import type { TestHostServer } from "./server.js";
 
 // Re-exported so a test file imports the fixture and the chain constants from
@@ -77,6 +78,7 @@ export type {
   SigningLogEntry,
 } from "../web/create-mock-host.js";
 export type { LoginBehavior } from "./host-page.js";
+export type { LoginRequestBehavior } from "./login-requests.js";
 
 /** Selector for the product iframe the host page creates. */
 const PRODUCT_FRAME = `#${PRODUCT_FRAME_ID}`;
@@ -434,12 +436,19 @@ export interface TestHost {
   injectChatAction(action: unknown): Promise<void>;
 
   /**
-   * Change the login behaviour after boot.
-   *
-   * Always throws, and says what to do instead: the host page reads it once at
-   * start, so it is a `loginBehavior` option on `createTestHostFixture`.
+   * Answer a product's login request while the host is signed out, as a user
+   * would on a real host. `"success"` signs in `account`, or the first account
+   * when none is named, and the product gets `Success`. `"reject"` answers
+   * `Rejected`. Unset, a signed-out host answers `Rejected`, and a signed-in
+   * one answers `AlreadyConnected` either way, as does a second request made
+   * while the first is signing in. A withdrawn request gets `Cancelled`.
+   * `reset` unsets it. Whether the host starts signed in is the
+   * `loginBehavior` fixture option.
    */
-  setLoginBehavior(behavior: "auto" | "manual"): Promise<never>;
+  setLoginBehavior(
+    behavior: LoginRequestBehavior,
+    account?: string,
+  ): Promise<void>;
 }
 
 /**
@@ -456,12 +465,6 @@ const NO_PAYMENT_SEAM =
   "native and Rust hosts, since the browser host-callback bridge cannot carry " +
   "the payment platforms yet, so this host answers every payment call " +
   "Unsupported. See the payment platforms in rust/crates/truapi/RUNTIME.md.";
-
-/** Why login behaviour is fixed once the host page has booted. */
-const LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME =
-  "cannot be changed after boot in the TrUAPI test host: the host page reads " +
-  'it once at start. Pass `loginBehavior: "auto" | "manual"` to ' +
-  "createTestHostFixture instead.";
 
 /** Why a product account cannot be pinned to a chosen key. */
 const NO_PINNED_PRODUCT_ACCOUNT =
@@ -774,10 +777,16 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
             if (!host) throw new Error("test host is not running on this page");
             return host.injectChatAction(value);
           }, action as never),
-        setLoginBehavior: () => {
-          throw new Error(
-            `testHost.setLoginBehavior ${LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME}`,
-          );
+        setLoginBehavior: (behavior, account) => {
+          // A function cannot cross into the page, so the old package's custom
+          // answer has no equivalent here.
+          if (typeof behavior === "function") {
+            throw new Error(
+              'testHost.setLoginBehavior takes "success" or "reject". A ' +
+                "function cannot reach the host page, which answers the request.",
+            );
+          }
+          return call("setLoginBehavior", behavior, account);
         },
       };
 

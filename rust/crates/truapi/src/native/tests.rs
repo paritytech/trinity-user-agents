@@ -31,7 +31,7 @@ use super::{
 	platform::{CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform},
 	runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime},
 };
-use crate::platform::CreateTransactionReview;
+use crate::platform::{CreateTransactionReview, LegacySigningAccount};
 use truapi::{Bytes32, v01::LegacyAccountTxPayload};
 
 pub type PreimageFixtureEntries = Vec<(Vec<u8>, Option<Vec<u8>>)>;
@@ -2713,15 +2713,17 @@ fn bytes32_lift_rejects_wrong_length() {
 
 #[test]
 fn bytes32_fields_survive_the_ffi_roundtrip() {
-	let review = UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount(
-		LegacyAccountTxPayload {
-			signer: [13; 32],
-			genesis_hash: [14; 32],
-			call_data: vec![15],
-			extensions: vec![],
-			tx_ext_version: 0,
-		},
-	));
+	let review =
+		UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			payload: LegacyAccountTxPayload {
+				signer: [13; 32],
+				genesis_hash: [14; 32],
+				call_data: vec![15],
+				extensions: vec![],
+				tx_ext_version: 0,
+			},
+		});
 
 	let mut buf = Vec::new();
 	<UserConfirmationReview as uniffi::Lower<crate::UniFfiTag>>::write(review.clone(), &mut buf);
