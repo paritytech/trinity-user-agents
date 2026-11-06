@@ -161,6 +161,15 @@ struct Link {
 	catch_up: CatchUp,
 }
 
+/// Every provider's worker connection, and who waits for one to connect.
+#[derive(Default)]
+struct Links {
+	/// Each provider's worker connection, by product id.
+	by_provider: HashMap<ProductId, Link>,
+	/// Callers waiting for a provider's worker to connect, by product id.
+	waiters: HashMap<ProductId, Signal>,
+}
+
 /// Whether a worker connection has been handed every session it serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CatchUp {
@@ -263,10 +272,8 @@ pub struct FundingRegistry {
 	feed: OnceLock<Arc<dyn FundingFeed>>,
 	/// The core database the sessions are stored in.
 	db: OnceLock<store::Db>,
-	/// Each provider's worker connection, by product id.
-	links: Mutex<HashMap<ProductId, Link>>,
-	/// Callers waiting for a provider's worker to connect, by product id.
-	link_waiters: Mutex<HashMap<ProductId, Vec<oneshot::Sender<()>>>>,
+	/// Each provider's worker connection, and who waits for one.
+	links: Mutex<Links>,
 	/// The generation the next link takes.
 	next_generation: AtomicU64,
 	/// Each session's hold on its provider's worker, kept in line with the
@@ -366,14 +373,19 @@ impl FundingRegistry {
 	pub fn link(&self, provider_id: &ProductId, link: Arc<dyn FundingProviderLink>) {
 		let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
 		self.lock_links()
+			.by_provider
 			.insert(provider_id.clone(), Link { link, generation, catch_up: CatchUp::Connecting });
 	}
 
 	/// Drop `link`, unless a newer one replaced it.
 	pub fn unlink(&self, provider_id: &ProductId, link: &Arc<dyn FundingProviderLink>) {
 		let mut links = self.lock_links();
-		if links.get(provider_id).is_some_and(|held| Arc::ptr_eq(&held.link, link)) {
-			links.remove(provider_id);
+		if links
+			.by_provider
+			.get(provider_id)
+			.is_some_and(|held| Arc::ptr_eq(&held.link, link))
+		{
+			links.by_provider.remove(provider_id);
 		}
 	}
 
@@ -388,12 +400,13 @@ impl FundingRegistry {
 		let readied = {
 			let mut links = self.lock_links();
 			let readied = links
+				.by_provider
 				.get_mut(provider_id)
 				.filter(|held| held.catch_up == CatchUp::Connecting)
 				.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
 				.is_some();
-			for waiter in lock(&self.link_waiters).remove(provider_id).unwrap_or_default() {
-				let _ = waiter.send(());
+			if let Some(mut waiters) = links.waiters.remove(provider_id) {
+				waiters.fire();
 			}
 			readied
 		};
@@ -403,14 +416,9 @@ impl FundingRegistry {
 	}
 
 	/// The link to `provider_id`'s worker once that worker has connected,
-	/// waiting for it when it has not. A caller holds the worker meanwhile,
-	/// so the host runs it, and bounds the wait itself.
-	pub async fn connected_link(&self, provider_id: &ProductId) -> Arc<dyn FundingProviderLink> {
-		self.connected_link_besides(provider_id, None).await
-	}
-
-	/// As [`Self::connected_link`], but waiting past `besides`, a link a call
-	/// just failed on, for the connection that follows it.
+	/// waiting for it when it has not, and past `besides`, a link a call just
+	/// failed on, for the connection that follows it. A caller holds the
+	/// worker meanwhile, so the host runs it, and bounds the wait itself.
 	pub async fn connected_link_besides(
 		&self,
 		provider_id: &ProductId,
@@ -418,16 +426,14 @@ impl FundingRegistry {
 	) -> Arc<dyn FundingProviderLink> {
 		loop {
 			let connected = {
-				let links = self.lock_links();
-				if let Some(held) = links.get(provider_id).filter(|held| {
+				let mut links = self.lock_links();
+				if let Some(held) = links.by_provider.get(provider_id).filter(|held| {
 					held.catch_up != CatchUp::Connecting &&
 						!besides.is_some_and(|failed| Arc::ptr_eq(&held.link, failed))
 				}) {
 					return held.link.clone();
 				}
-				let (sender, connected) = oneshot::channel();
-				lock(&self.link_waiters).entry(provider_id.clone()).or_default().push(sender);
-				connected
+				links.waiters.entry(provider_id.clone()).or_default().wait()
 			};
 			let _ = connected.await;
 		}
@@ -1191,6 +1197,7 @@ impl FundingRegistry {
 	fn catch_up_links(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
 		let due: Vec<(ProductId, u64, Arc<dyn FundingProviderLink>)> = self
 			.lock_links()
+			.by_provider
 			.iter_mut()
 			.filter_map(|(provider, held)| match held.catch_up {
 				CatchUp::Due { not_before_ms } if not_before_ms <= now_ms => {
@@ -1222,7 +1229,10 @@ impl FundingRegistry {
 		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
 		let due = {
 			let mut links = self.lock_links();
-			let held = links.get_mut(provider_id).filter(|held| held.generation == generation);
+			let held = links
+				.by_provider
+				.get_mut(provider_id)
+				.filter(|held| held.generation == generation);
 			let due = !answered ||
 				held.as_ref().is_some_and(|held| held.catch_up == CatchUp::RunningThenDue);
 			if let Some(held) = held {
@@ -1243,7 +1253,10 @@ impl FundingRegistry {
 	fn call_unanswered(&self, provider_id: &ProductId, generation: u64) {
 		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
 		let mut links = self.lock_links();
-		let Some(held) = links.get_mut(provider_id).filter(|held| held.generation == generation)
+		let Some(held) = links
+			.by_provider
+			.get_mut(provider_id)
+			.filter(|held| held.generation == generation)
 		else {
 			return;
 		};
@@ -1271,6 +1284,7 @@ impl FundingRegistry {
 		};
 		let link = self
 			.lock_links()
+			.by_provider
 			.values()
 			.filter_map(|held| match held.catch_up {
 				CatchUp::Due { not_before_ms } => Some(not_before_ms),
@@ -1303,6 +1317,7 @@ impl FundingRegistry {
 		};
 		let Some((link, generation)) = self
 			.lock_links()
+			.by_provider
 			.get(provider_id)
 			.map(|held| (held.link.clone(), held.generation))
 		else {
@@ -1572,8 +1587,8 @@ impl FundingRegistry {
 		lock(&self.subscribers)
 	}
 
-	fn lock_links(&self) -> MutexGuard<'_, HashMap<ProductId, Link>> {
-		self.links.lock().unwrap_or_else(PoisonError::into_inner)
+	fn lock_links(&self) -> MutexGuard<'_, Links> {
+		lock(&self.links)
 	}
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
@@ -1589,6 +1604,32 @@ impl FundingRegistry {
 /// funding modules guard stays valid between statements.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Callers waiting for one kind of change, each woken by the next
+/// [`Self::fire`]. A waiter that went away is dropped by the next
+/// [`Self::wait`], so a change that never comes holds no more than the
+/// callers still waiting for it.
+#[derive(Default)]
+pub struct Signal(Vec<oneshot::Sender<()>>);
+
+impl Signal {
+	/// Resolves at the next [`Self::fire`], or with `Canceled` should the
+	/// signal be dropped first.
+	pub fn wait(&mut self) -> oneshot::Receiver<()> {
+		self.0.retain(|waiter| !waiter.is_canceled());
+		let (waiter, fired) = oneshot::channel();
+		self.0.push(waiter);
+		fired
+	}
+
+	/// Wake every caller waiting.
+	pub fn fire(&mut self) {
+		for waiter in self.0.drain(..) {
+			// A caller that went away has nothing to hear.
+			let _ = waiter.send(());
+		}
+	}
 }
 
 /// Funds a provider's worker asks the host to move for a session.
@@ -2402,10 +2443,11 @@ mod tests {
 	fn an_unanswered_call_leaves_a_connecting_or_running_catch_up_alone() {
 		let registry = FundingRegistry::default();
 		registry.link(&ramp(), Arc::new(IdleLink));
-		let state = || registry.lock_links()[&ramp()].catch_up;
-		let set =
-			|catch_up| registry.lock_links().get_mut(&ramp()).expect("linked").catch_up = catch_up;
-		let generation = registry.lock_links()[&ramp()].generation;
+		let state = || registry.lock_links().by_provider[&ramp()].catch_up;
+		let set = |catch_up| {
+			registry.lock_links().by_provider.get_mut(&ramp()).expect("linked").catch_up = catch_up
+		};
+		let generation = registry.lock_links().by_provider[&ramp()].generation;
 
 		registry.call_unanswered(&ramp(), generation);
 		let connecting = state();
@@ -2441,6 +2483,21 @@ mod tests {
 		registry.connected(&ramp);
 
 		assert!(waited && Arc::ptr_eq(&block_on(next), &started));
+	}
+
+	// Every quote asked of a provider that never connects waits for it and
+	// then gives up; what is left behind is at most the last waiter, not one
+	// per ask.
+	#[test]
+	fn waiting_for_a_provider_that_never_connects_leaves_no_trail() {
+		let registry = FundingRegistry::default();
+		let ramp = ramp();
+		for _ in 0..3 {
+			let asked = registry.connected_link_besides(&ramp, None);
+			assert!(futures::FutureExt::now_or_never(asked).is_none());
+		}
+
+		assert_eq!(registry.lock_links().waiters[&ramp].0.len(), 1);
 	}
 
 	// A deadline already past belongs to funds whose call is still in

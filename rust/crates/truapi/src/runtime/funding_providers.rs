@@ -19,7 +19,11 @@ use truapi::latest::{FundingDirection, FundingRail};
 use futures::{channel::oneshot, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
 
-use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
+use super::{
+	funding::{Signal, lock},
+	product_manifest::worker_manifest,
+	services::RuntimeServices,
+};
 use crate::{
 	host_logic::{
 		funding::FundingSessionError,
@@ -62,18 +66,14 @@ pub struct FundingProviders {
 	learned_store: AsyncMutex<bool>,
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
-	changed: Mutex<Vec<oneshot::Sender<()>>>,
+	changed: Mutex<Signal>,
 }
 
 impl FundingProviders {
 	/// Resolves once the providers the core goes by next change: the host
 	/// lists others, or dotNS answers for one with what it serves.
 	pub fn on_change(&self) -> oneshot::Receiver<()> {
-		let (sender, changed) = oneshot::channel();
-		let mut waiting = lock(&self.changed);
-		waiting.retain(|waiter| !waiter.is_canceled());
-		waiting.push(sender);
-		changed
+		lock(&self.changed).wait()
 	}
 
 	/// Every provider serving `direction`, in the host's order. What their
@@ -371,9 +371,7 @@ impl RuntimeServices {
 	/// its options again, and every watched quote list asks again at once,
 	/// so a provider read after the overlay opened still shows and quotes.
 	fn funding_providers_changed(&self) {
-		for waiter in lock(&self.funding_providers().changed).drain(..) {
-			let _ = waiter.send(());
-		}
+		lock(&self.funding_providers().changed).fire();
 		for intent in self.funding().presenting() {
 			self.send_funding_options(&intent);
 		}
