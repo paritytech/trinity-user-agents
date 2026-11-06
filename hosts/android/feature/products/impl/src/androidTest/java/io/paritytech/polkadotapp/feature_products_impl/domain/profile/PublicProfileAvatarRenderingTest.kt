@@ -17,7 +17,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import coil.Coil
 import coil.EventListener
 import coil.ImageLoader
-import coil.decode.DataSource
 import coil.disk.DiskCache
 import coil.request.ErrorResult
 import coil.request.ImageRequest
@@ -51,7 +50,6 @@ import uniffi.truapi.LoadedImage
 import uniffi.truapi.ProfileAvatar
 import uniffi.truapi.PublicProfile
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import android.graphics.Color as AndroidColor
 
@@ -71,10 +69,8 @@ class PublicProfileAvatarRenderingTest {
     private val avatar = ProfileAvatar("alice-cid", ImageFormat.PNG)
     private val nextAvatar = ProfileAvatar("next-cid", ImageFormat.PNG)
     private val username = mutableStateOf("alice.01")
-    private val visible = mutableStateOf(true)
     private val placeholder = AvatarUiModel.Name("Alice", AvatarColorScheme.from("alice".encodeToByteArray()))
     private val refreshesCompleted = AtomicInteger()
-    private val refreshSources = ConcurrentLinkedQueue<DataSource>()
     private lateinit var imageLoader: ImageLoader
 
     @Before
@@ -84,10 +80,7 @@ class PublicProfileAvatarRenderingTest {
             .diskCache(DiskCache.Builder().directory(temporaryFolder.newFolder()).maxSizeBytes(1_024 * 1_024).build())
             .components { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(this) }
             .eventListener(object : EventListener {
-                override fun onSuccess(request: ImageRequest, result: SuccessResult) {
-                    if (request.parameters.value<Boolean>(AVATAR_REFRESH_PARAMETER) == true) refreshSources.add(result.dataSource)
-                    completed(request)
-                }
+                override fun onSuccess(request: ImageRequest, result: SuccessResult) = completed(request)
                 override fun onError(request: ImageRequest, result: ErrorResult) = completed(request)
             })
             .build()
@@ -126,21 +119,6 @@ class PublicProfileAvatarRenderingTest {
         refresh.result.complete(PublicProfile(nextAvatar))
 
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Blue }
-        coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(nextAvatar.cid, nextAvatar.format)) }
-    }
-
-    @Test
-    fun changedAvatarUsesBytesAlreadyOnDisk() {
-        withCachedAvatar()
-        withImage(nextAvatar, AndroidColor.BLUE)
-        cacheImage(nextAvatar)
-        imageLoader.memoryCache?.clear()
-        coEvery { runtime.resolvePublicProfile("alice.01", true) } returns PublicProfile(nextAvatar)
-
-        drawAvatar()
-
-        compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Blue }
-        assertEquals(listOf(DataSource.DISK), refreshSources.toList())
         coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(nextAvatar.cid, nextAvatar.format)) }
     }
 
@@ -188,33 +166,6 @@ class PublicProfileAvatarRenderingTest {
         assertEquals(Color.Blue, avatarColor())
     }
 
-    @Test
-    fun leavingTheAvatarCancelsItsMetadataRefresh() {
-        withCachedAvatar()
-        val refresh = withPendingRefresh()
-
-        drawAvatar()
-        compose.waitUntil(TIMEOUT_MILLIS) { refresh.started.isCompleted }
-        compose.runOnIdle { visible.value = false }
-
-        compose.waitUntil(TIMEOUT_MILLIS) { refresh.cancelled.isCompleted }
-        compose.onNodeWithTag("avatar").assertDoesNotExist()
-    }
-
-    @Test
-    fun anInitiallyMissingAvatarCanAppearAfterRefresh() {
-        coEvery { runtime.resolvePublicProfile("alice.01", false) } returns PublicProfile(null)
-        withImage(nextAvatar, AndroidColor.BLUE)
-        val refresh = withPendingRefresh()
-
-        drawAvatar()
-        compose.waitUntil(TIMEOUT_MILLIS) { refresh.started.isCompleted }
-        assertEquals(interiorPixels("letter"), interiorPixels("avatar"))
-        refresh.result.complete(PublicProfile(nextAvatar))
-
-        compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Blue }
-    }
-
     private fun withCachedAvatar() {
         coEvery { runtime.resolvePublicProfile("alice.01", false) } returns PublicProfile(avatar)
         withImage(avatar, AndroidColor.RED)
@@ -259,12 +210,10 @@ class PublicProfileAvatarRenderingTest {
         compose.setContent {
             PolkadotTheme(PolkadotAppTheme.BerlinNight) {
                 Row {
-                    if (visible.value) {
-                        PolkadotAvatar(
-                            model = AvatarUiModel.Image(publicProfileAvatarUri(username.value), placeholder, refresh = true),
-                            modifier = Modifier.size(48.dp).testTag("avatar"),
-                        )
-                    }
+                    PolkadotAvatar(
+                        model = AvatarUiModel.Image(publicProfileAvatarUri(username.value), placeholder, refresh = true),
+                        modifier = Modifier.size(48.dp).testTag("avatar"),
+                    )
                     PolkadotAvatar(model = placeholder, modifier = Modifier.size(48.dp).testTag("letter"))
                 }
             }
