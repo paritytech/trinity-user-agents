@@ -123,7 +123,7 @@ struct PocketHandlersTests {
         let handlers = makeHandlers(
             workers: workersRunning(gameProductId),
             published: published,
-            telemetry: HostLoadTelemetry(recorder: NoopHostEventRecorder())
+            telemetry: HostLoadTelemetry(recorder: RecordingHostEventRecorder())
         )
 
         _ = await handlers.reconcile([loyalty])
@@ -137,7 +137,7 @@ struct PocketHandlersTests {
     func aProductWhoseWorkerFailsToStartIsUnserved() async throws {
         let handlers = makeHandlers(
             workers: StubWorkerManager(startupWindow: .milliseconds(10)),
-            telemetry: HostLoadTelemetry(recorder: NoopHostEventRecorder())
+            telemetry: HostLoadTelemetry(recorder: RecordingHostEventRecorder())
         )
 
         _ = await handlers.reconcile([loyalty])
