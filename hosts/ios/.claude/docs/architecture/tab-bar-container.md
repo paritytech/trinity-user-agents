@@ -87,7 +87,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 
 ## Bar Row
 
-`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them. Each slot is a `TabBarSlotView(index:model:)`, and each shelf cell takes its chip and the model. They call `TabBarBarViewModel` handlers at tap time, so no closures are passed to them.
+`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them. A build with Browse lists chat, wallet, browse and the Apps slot (`.action(.spaTabs)`). A build without Browse lists chat, wallet, settings and the Network slot (`.action(.connectionStatus)`). `FEATURE_PRODUCTS` picks the list. Each slot is a `TabBarSlotView(index:model:)`, and each shelf cell takes its chip and the model. They call `TabBarBarViewModel` handlers at tap time, so no closures are passed to them.
 
 
 
@@ -102,9 +102,11 @@ The bar row is an accessibility container with the tab-bar trait.
 - A tab: that tab's slot.
 - A mounted product with the shelf closed: the Apps slot.
 - A mounted product with the shelf open: no bar slot. The pill draws behind that product's cell in the shelf (`dsTabBarSelectionPill(isSelected:)`), so it is drawn once.
+- A build without Browse: the current content tab. A Presented product is never mounted, so the pill never moves to the Network slot.
 
 - A tab slot selects a tab. Taps are plain taps. There is no drag across tabs.
-- The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
+- The Apps slot opens the shelf (with Browse). It shows the open-product count and reads as active while the shelf is open or a product is mounted.
+- Without Browse, the Network slot opens the Shelf instead. It holds chain status rows, not products.
 - `TabBarSlotMap` converts between bar position (item index) and tab position (tab index). Only tab indices cross into `TabBarContainer`.
 - Titles appear under the icons only when the interactor enables labels (`setLabels(visible:)`).
 - While the bar is tucked, no slot is reachable. A drag from the grab zone restores the bar. Opening the Scan panel from a screen also restores it (`openPanelShowingDocklet`, used by "add contact" in Contacts), because the panel lives in the Docklet. A tap on the Edge glow, a Slot or a tip never restores it.
@@ -196,10 +198,12 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 ## Shelf
 
-The Apps slot opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
+The Apps slot (with Browse) or the Network slot (without Browse) opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
 
 - The top row holds a connection status icon and a settings icon. Neither is a tab. Connection status opens as a page sheet. Settings opens as a modal navigation stack. Both close the shelf first. `MainTabBarWireframe` builds that stack through the injected `TabFactoryProtocol`. Opening device details while the Settings stack is the topmost presented controller pushes onto it.
 - The grid holds one cell per open product. Tapping a cell mounts that product and closes the shelf. A long press opens a context menu with Close. The cell's Close accessibility action does the same.
+
+Without Browse, the shelf holds only the chain status rows. `setChainStatus` feeds them from `MainTabBarViewController.showChainStatus`, and `ConnectionStatusPanelView(rows:)` draws them. It has no settings icon, no product cells and no grid. The Network slot toggles it, and it does not open the connection status sheet.
 
 ## Panels
 
@@ -357,6 +361,8 @@ A fixed-height strip sits at the top of the container. It shows one ring per con
 - The strip paints no fill. The container's background shows behind the system status bar and the strip.
 - `installStatusBar()` runs before `installChromeController()`, so the bar stays above the strip. Mounted children insert at index 0, so they sit below it.
 
+A Presented product covers the container, so it draws its own strip with the same parts: the `StatusBarTitleButton` menu, built by the shared `SPAMenuElements.swift`, and the `ChainConnectionStatusBarView` rings.
+
 ## Mounting and Re-tap
 
 `TabBarContainer` mounts one child at a time, full bleed into the container's view. A tab switch cross-fades. The outgoing view is removed when the fade completes. Non-animated mounts skip the fade.
@@ -375,14 +381,16 @@ While an SPA is mounted, a tap on the selected tab switches back to the tab. It 
 
 `TabBarContentSelection` is `.tab(Int)` or `.spa(UUID)`. An SPA is a peer of the tabs. It is not pushed onto a stack or presented over the container. `MainTabBarViewController` conforms to `SPAHosting`. `ModuleNavigator`, `ProductsNavigationRouter`, `SPAWireframe` and `ProductOpener` reach it through `UIApplication.shared.mainTabBarController`.
 
-Opening a product:
+Opening a product with Browse:
 
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
 2. `SPAControllerPool` vends one `SPAViewController` per tab id.
 3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and cross-fades the controller in.
 4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `tucked`. The bar tucks and contributes no clearance.
 
-`presentProduct(page:)` is the one-shot path for funding products. It presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
+`presentProduct(page:)` is the one-shot path for funding products. In both builds it presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
+
+Without Browse, `openProduct(page:)` presents a Presented product instead of mounting one. `SPAViewFactory.createView(page:flowState:presentation:)` builds an `SPASimplifiedViewController` with `.fullScreen` presentation. It is presented full screen on `UIWindow.keyWindow?.topmostViewController` without dismissing anything first, so a second product stacks on top. It never enters the tab store, so there is no Mounted product, no chip and no Selection pill move. Its strip's Close app item dismisses it through `SPAWireframe.dismiss(view:)`.
 
 **Chips.** `MainTabBarInteractor` sends the open tabs to the presenter (`didReceiveSPATabs`). The presenter maps them through `SPATabChipViewModelFactory`, and the view passes them to the chrome as `TabBarShelfChip`. `applyChips()` runs on every mount and unmount, so the selected chip follows the mounted product.
 
@@ -395,11 +403,11 @@ The bar has four fixed slots. `DSTabBarContainer` lays out exactly four slot vie
 1. Add a case to `TabBarItem` with a localized `title` and an image.
 2. Build its controller in `TabFactory.view(for:)`.
 3. Add an entry to `AccessibilityID.Tab` so that `AccessibilityID.Tab.item(for:)` returns it.
-4. Place the new slot in the presenter's slot list. Its position in the list is its position in the bar.
+4. Place the new slot in `MainTabBarPresenter.slots` in both `#if FEATURE_PRODUCTS` arms, with Browse and without Browse. Its position in each list is its position in the bar.
 
 A fifth slot needs `DSTabBarContainer` to take a fifth view. Items past the fourth are not rendered, and a missing fourth item leaves a blank column.
 
 ## Gotchas
 
 - **Size the center panel from the chrome's width.** The hosting view has zero width when the chrome first lays out. A height computed from it starts the scan panel at the wrong size. SwiftUI then routes the first taps on the embedded UIKit panel to its own host view, so the search field ignores them until the panel is reopened.
-- **Two actions have no slot.** `TabBarAction.scan` and `TabBarAction.connectionStatus` have no bar slot. The center control and the shelf open them directly, so the branches for them in `handleAction` are not reached from a slot tap.
+- **Scan has no slot. Connection status has one only without Browse.** `TabBarAction.scan` has no bar slot in either build, so the center control opens it. With Browse, `TabBarAction.connectionStatus` has no slot. The shelf's top row opens it through `onShelfConnectionStatusTapped`, so the `.connectionStatus` branch of `handleAction` is not reached from a slot tap. Without Browse that branch is the Network slot, and it toggles the Shelf.
