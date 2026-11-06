@@ -627,17 +627,17 @@ impl AccountHolder for WalletAccountHolder {
 			Ok::<_, RingVrfError>(MemberCandidate { member: vrf.member(&entropy)? })
 		})?;
 		let resolved = self.ring_resolver.resolve(&request.ring_location, &[candidate]).await?;
-		self.with_keys(session, |keys| {
-			let entropy = keys.ring_vrf_entropy(&key_handle)?;
-			let context = context_bytes(&request.context);
-			let (proof, alias) =
-				create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
-			Ok(api::HostAccountCreateProofResponse {
-				proof,
-				contextual_alias: api::ContextualAlias { context, alias: alias.to_vec() },
-				ring_index: resolved.ring_index,
-				ring_revision: resolved.ring_revision,
-			})
+		// Proved outside the wallet lock, which would otherwise stall every
+		// signing call, lock and wallet switch for the whole proof.
+		let entropy = self.with_keys(session, |keys| keys.ring_vrf_entropy(&key_handle))?;
+		let context = context_bytes(&request.context);
+		let (proof, alias) = create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
+		self.require_current_session(session)?;
+		Ok(api::HostAccountCreateProofResponse {
+			proof,
+			contextual_alias: api::ContextualAlias { context, alias: alias.to_vec() },
+			ring_index: resolved.ring_index,
+			ring_revision: resolved.ring_revision,
 		})
 	}
 

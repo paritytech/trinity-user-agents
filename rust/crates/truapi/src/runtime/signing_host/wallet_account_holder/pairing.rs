@@ -4,18 +4,13 @@ use super::WalletAccountHolder;
 use crate::{
 	host_logic::{
 		session::SsoSessionInfo,
-		sso::pairing::{
-			bootstrap_topic, encrypt_v2_handshake_response, establish_responder_session_info, v2,
-		},
-		statement_store::build_signed_statement,
+		sso::pairing::{establish_responder_session_info, v2},
 	},
 	runtime::{
 		authority::{AuthorityError, AuthoritySession},
-		sso_remote::fresh_statement_expiry,
-		sso_responder_service::PairedSsoPeer,
+		sso_responder_service::{PairedSsoPeer, prepare_handshake_answer},
 	},
 };
-use parity_scale_codec::Encode;
 
 impl WalletAccountHolder {
 	/// Derive transport material for a peer under the selected activation.
@@ -58,31 +53,9 @@ impl WalletAccountHolder {
 				device_enc_pub_key,
 				root_entropy_source: keys.root_entropy_source(),
 			}));
-			let statement = prepare_handshake_answer(&transport, peer, &response)?;
+			let statement = prepare_handshake_answer(&transport, peer, &response)
+				.map_err(|reason| AuthorityError::Unknown { reason })?;
 			Ok((transport, statement))
 		})
 	}
-
-	/// Sign a pairing notice only while its original wallet is selected.
-	pub fn pairing_notice(
-		&self,
-		session: &AuthoritySession,
-		peer: PairedSsoPeer,
-		response: &v2::EncryptedResponse,
-	) -> Result<Vec<u8>, AuthorityError> {
-		let transport = self.sso_session(session, peer)?;
-		prepare_handshake_answer(&transport, peer, response)
-	}
-}
-
-fn prepare_handshake_answer(
-	session: &SsoSessionInfo,
-	peer: PairedSsoPeer,
-	response: &v2::EncryptedResponse,
-) -> Result<Vec<u8>, AuthorityError> {
-	let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)
-		.map_err(|reason| AuthorityError::Unknown { reason })?;
-	let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-	build_signed_statement(session, topic, topic, handshake.encode(), fresh_statement_expiry())
-		.map_err(|reason| AuthorityError::Unknown { reason })
 }

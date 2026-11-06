@@ -597,7 +597,15 @@ impl ProductAuthority for SigningHost {
 			.await?;
 		let mut outcomes = Vec::new();
 		while let Some(outcome) = grants.next().await {
-			outcomes.push(match outcome? {
+			// A lock partway through reports the rest unavailable rather than
+			// failing the call, so the product still learns what it was granted.
+			let outcome = match outcome {
+				Err(error @ AuthorityError::Disconnected) => {
+					AccountGrantOutcome::NotAvailable { reason: Some(error.to_string()) }
+				},
+				outcome => outcome?,
+			};
+			outcomes.push(match outcome {
 				AccountGrantOutcome::Allocated(grant) => {
 					match self.retain_grant(session, grant_revision, product_id, grant).await {
 						Ok(()) => v01::AllocationOutcome::Allocated,

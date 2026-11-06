@@ -26,6 +26,7 @@ use futures::{
 	future::{Fuse, FusedFuture},
 	pin_mut,
 };
+use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 
 use crate::{
@@ -40,9 +41,10 @@ use crate::{
 	host_logic::{
 		session::SsoSessionInfo,
 		sso::pairing::{
-			PairingDeeplinkDecodeError, VersionedHandshakeProposal, decode_pairing_deeplink, v2,
+			PairingDeeplinkDecodeError, VersionedHandshakeProposal, bootstrap_topic,
+			decode_pairing_deeplink, encrypt_v2_handshake_response, v2,
 		},
-		statement_store::parse_new_statements_result,
+		statement_store::{build_signed_statement, parse_new_statements_result},
 		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
@@ -356,17 +358,18 @@ impl SsoResponderService {
 	) -> Result<AnnouncedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let wallet_session = self.wallet_session()?;
-		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
-		let statement = self
+		let transport = self
 			.wallet
-			.pairing_notice(&wallet_session, peer, &pending)
+			.sso_session(&wallet_session, peer)
 			.map_err(|error| error.to_string())?;
+		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
+		let statement = prepare_handshake_answer(&transport, peer, &pending)?;
 		self.services
 			.statement_store
 			.submit(statement, "sso-responder allowance allocation")
 			.await?;
 		debug!("told pairing host that allowance allocation started");
-		Ok(AnnouncedPairing { wallet: self.wallet.clone(), session: wallet_session, peer })
+		Ok(AnnouncedPairing { transport, peer })
 	}
 
 	/// Tell the pairing host that pairing failed, so it reports `reason` and offers
@@ -376,14 +379,11 @@ impl SsoResponderService {
 		announced: &AnnouncedPairing,
 		reason: String,
 	) -> Result<(), String> {
-		let statement = announced
-			.wallet
-			.pairing_notice(
-				&announced.session,
-				announced.peer,
-				&v2::EncryptedResponse::Failed(reason),
-			)
-			.map_err(|error| error.to_string())?;
+		let statement = prepare_handshake_answer(
+			&announced.transport,
+			announced.peer,
+			&v2::EncryptedResponse::Failed(reason),
+		)?;
 		self.services
 			.statement_store
 			.submit(statement, "sso-responder pairing failure")
@@ -393,11 +393,24 @@ impl SsoResponderService {
 	}
 }
 
-/// Wallet activation and peer bound to an in-progress pairing notice.
+/// Transport and peer of an in-progress pairing notice.
+///
+/// The transport is derived once, when the allocation is announced, so the
+/// failure notice can still be signed after the wallet locks or switches.
 pub struct AnnouncedPairing {
-	wallet: Arc<WalletAccountHolder>,
-	session: AuthoritySession,
+	transport: SsoSessionInfo,
 	peer: PairedSsoPeer,
+}
+
+/// Encrypt `response` to `peer` and sign it on the handshake topic.
+pub fn prepare_handshake_answer(
+	transport: &SsoSessionInfo,
+	peer: PairedSsoPeer,
+	response: &v2::EncryptedResponse,
+) -> Result<Vec<u8>, String> {
+	let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
+	let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
+	build_signed_statement(transport, topic, topic, handshake.encode(), fresh_statement_expiry())
 }
 
 /// Serve inbound session statements until the session ends.

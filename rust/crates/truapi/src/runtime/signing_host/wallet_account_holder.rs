@@ -146,16 +146,21 @@ impl PersonhoodSigner for WalletPersonhoodSigner<'_> {
 		context: &[u8],
 		message: &[u8],
 	) -> Result<Vec<u8>, StatementAllowanceError> {
-		self.wallet.with_keys(self.session, |keys| {
-			proof::ring_vrf_proof(
-				&self.vrf,
-				proof::domain_for_ring_exponent(ring.exponent)?,
-				&keys.personhood_entropy(ring.collection),
-				&ring.members,
-				context,
-				message,
-			)
-		})
+		// The proof takes long enough that holding the wallet lock through it
+		// would stall every signing call, lock and wallet switch.
+		let entropy = self.wallet.with_keys::<_, AuthorityError>(self.session, |keys| {
+			Ok(keys.personhood_entropy(ring.collection))
+		})?;
+		let proof = proof::ring_vrf_proof(
+			&self.vrf,
+			proof::domain_for_ring_exponent(ring.exponent)?,
+			&entropy,
+			&ring.members,
+			context,
+			message,
+		)?;
+		self.wallet.require_current_session(self.session)?;
+		Ok(proof)
 	}
 }
 

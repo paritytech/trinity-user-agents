@@ -372,7 +372,6 @@ impl WalletAccountHolder {
 		self.require_current_session(&session)?;
 		let mut report =
 			renew_targets(&context, period, &resolved, self.renewal.registration_lock()).await;
-		self.require_current_session(&session)?;
 		report.pruned = pruned;
 		Ok(report)
 	}

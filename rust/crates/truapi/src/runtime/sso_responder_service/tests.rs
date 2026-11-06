@@ -290,6 +290,30 @@ fn pairing_without_an_observer_still_answers_the_handshake() {
 	.expect("the handshake is answered without an observer");
 }
 
+/// The pairing host waits on the failure notice with no deadline, so a
+/// wallet change between the two notices must not silence it.
+#[test]
+fn a_pairing_failure_is_sent_after_the_wallet_changes() {
+	let peer = PairedSsoPeer {
+		statement_account_id: [0x31; 32],
+		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
+	};
+	let (services, signing_host) = pairing_fixture("new");
+	let responder = SsoResponderService::new(services, signing_host.clone());
+	let announced = futures::executor::block_on(
+		responder.notify_pairing_allowance_allocation(&pairing_deeplink(peer)),
+	)
+	.expect("the allocation is announced");
+
+	futures::executor::block_on(signing_host.activate_local_session(vec![0xCD; 16]))
+		.expect("another wallet activates");
+
+	futures::executor::block_on(
+		responder.notify_pairing_failed(&announced, "no free StatementStore slot".to_string()),
+	)
+	.expect("the failure notice is still sent");
+}
+
 /// The peer writes what the pairing prompt calls it. Rendering that as
 /// sent lets it reorder or pad out the prompt's own words around itself.
 #[test]
