@@ -261,10 +261,24 @@ impl PairingHostRuntime {
 		}
 	}
 
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
 	/// The image `reference` names, checked against its CID and the image policy.
 	///
-	/// A username resolves its public profile first. Missing images and failed
-	/// lookups return `ImageError`; dropping the future cancels the load.
+	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
+	/// Dropping the future cancels the load.
 	pub async fn load_image(
 		&self,
 		reference: crate::ImageReference,
@@ -1174,6 +1188,20 @@ impl SigningHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, crate::store::DbError> {
 		self.services.core_db()?.status().await
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.

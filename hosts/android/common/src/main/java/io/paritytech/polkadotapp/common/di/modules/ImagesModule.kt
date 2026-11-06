@@ -4,8 +4,6 @@ import android.content.Context
 import coil.ImageLoader
 import coil.decode.SvgDecoder
 import coil.decode.VideoFrameDecoder
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -25,16 +23,6 @@ import javax.inject.Singleton
 class ImagesModule {
     @Provides
     @Singleton
-    fun memoryCache(@ApplicationContext context: Context): MemoryCache = MemoryCache.Builder(context).build()
-
-    @Provides
-    @Singleton
-    fun diskCache(@ApplicationContext context: Context): DiskCache = DiskCache.Builder()
-        .directory(context.cacheDir.resolve("image_cache"))
-        .build()
-
-    @Provides
-    @Singleton
     fun provideJsImageFetcherFactory(
         @ApplicationContext context: Context,
         dispatchers: CoroutineDispatchers,
@@ -46,12 +34,8 @@ class ImagesModule {
         @ApplicationContext context: Context,
         jsImageFetcherFactory: JsImageFetcher.Factory,
         componentRegistrars: Set<@JvmSuppressWildcards ImageLoaderComponentRegistrar>,
-        memoryCache: MemoryCache,
-        diskCache: DiskCache,
     ) =
         ImageLoader.Builder(context)
-            .memoryCache(memoryCache)
-            .diskCache(diskCache)
             .components {
                 add(ImageLoaderInterceptor())
 

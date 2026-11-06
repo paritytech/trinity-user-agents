@@ -80,6 +80,7 @@ pub enum ProfileEntry {
 ///
 /// The declaration does not validate the image bytes; the image loader checks them before use.
 #[derive(Debug, PartialEq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProfileAvatar {
 	/// Bulletin CID of the image bytes, raw codec, blake2b-256.
 	pub cid: BulletinCid,

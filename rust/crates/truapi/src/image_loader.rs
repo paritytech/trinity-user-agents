@@ -14,7 +14,6 @@ use tracing::{debug, instrument, warn};
 
 use crate::{
 	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},
-	public_profile::{PublicProfileError, PublicProfiles},
 	runtime::services::RuntimeServices,
 	time::{Timer, retry_on},
 };
@@ -80,14 +79,6 @@ pub enum ImageReference {
 		/// are rejected.
 		declared_format: Option<ImageFormat>,
 	},
-	/// The avatar in a dotNS public profile.
-	Username {
-		/// A dotNS username, such as `alice` or `alice.01`.
-		username: String,
-		/// Read the profile from the chain instead of the native record cache. Browsers
-		/// always read the chain.
-		force: bool,
-	},
 }
 
 /// An image that passed every check.
@@ -119,7 +110,7 @@ pub enum ImageError {
 		/// Which check failed.
 		reason: String,
 	},
-	/// The profile could not name an image, or Bulletin did not return its bytes.
+	/// Bulletin did not return the image bytes.
 	#[error("image unavailable: {reason}")]
 	Unavailable {
 		/// What failed.
@@ -142,28 +133,11 @@ impl ImageLoader {
 
 	/// Loads the image named by `reference`.
 	///
-	/// Dropping the future stops the load. A username without an avatar is immediately
-	/// unavailable; a later call can refresh its record with `force`.
+	/// Dropping the future stops the load. Unsupported CIDs, unavailable bytes and image
+	/// policy failures return errors.
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
-		let (cid, declared_format) = match reference {
-			ImageReference::Bulletin { cid, declared_format } => (cid, declared_format),
-			ImageReference::Username { username, force } => {
-				let record = PublicProfiles::new(self.services.clone())
-					.resolve(&username, force)
-					.await
-					.map_err(|error| match error {
-						PublicProfileError::InvalidUsername => {
-							ImageError::Unsupported { reason: error.to_string() }
-						},
-						_ => ImageError::Unavailable { reason: error.to_string() },
-					})?;
-				let avatar = record.avatar().ok_or_else(|| ImageError::Unavailable {
-					reason: "the public profile names no avatar".to_string(),
-				})?;
-				(avatar.cid, Some(avatar.format))
-			},
-		};
+		let ImageReference::Bulletin { cid, declared_format } = reference;
 		let bytes = self.read_verified(&cid, || self.read(&cid)).await?;
 		let format = ImageFormat::validate(&bytes, declared_format)?;
 		Ok(LoadedImage { bytes, format, content_key: cid })

@@ -440,12 +440,13 @@ request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
 host's disk cache. JavaScript bindings are deferred.
 
-For avatars, `ImageReference::Username { username, force }` resolves a
+For avatars, `resolvePublicProfile(username, force)` resolves a
 [dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
-hosts cache records for one hour; `force` refreshes them. The Rust WASM resolver
-reads the chain on each call.
+hosts cache records for one hour; `force` refreshes them. The returned avatar CID
+selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
+resolver reads the chain on each call.
 
-Android contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
+Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry.
 
 iOS contacts and chat views load avatars through the shared loader and cache them on disk for one hour.
 
