@@ -833,48 +833,12 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Live quotes for funding session `intent`: one row per funding
-	/// provider, whatever routes its manifest declares, `Pending` and then
-	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
-	/// The stream ends once every provider has, or once a newer ask for the
-	/// session starts, and never errors; dropping it withdraws the asks still
-	/// open.
-	pub fn get_funding_quote(
-		&self,
-		intent: &str,
-		ask: latest::FundingQuoteAsk,
-	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
-		self.services.get_funding_quote(intent, ask)
-	}
-
-	/// Quotes for funding session `intent`, for hosts that take the list
-	/// through [`FundingPlatform::funding_quotes_changed`]: every provider is
-	/// asked again at the list's `refresh_at_ms` until the session is handed
-	/// to a provider or ends, the host asks for another `ask`, or calls
-	/// [`Self::stop_funding_quotes`]. Returns the request id each list
-	/// carries; once any of those happens, no list of this request arrives
-	/// any more.
+	/// Quotes for funding session `intent`, sent through
+	/// [`FundingPlatform::funding_quotes_changed`] until the session is handed
+	/// to a provider, ends or leaves the overlay, or the host asks for another
+	/// `ask`. Returns the request id each list carries.
 	pub fn request_funding_quotes(&self, intent: &str, ask: latest::FundingQuoteAsk) -> u64 {
-		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
-		let platform = self.services.funding().platform();
-		let services = self.services.clone();
-		let intent = intent.to_string();
-		(self.services.spawner)(Box::pin(async move {
-			let Some(platform) = platform else {
-				return;
-			};
-			futures::pin_mut!(lists);
-			while let Some(list) = futures::StreamExt::next(&mut lists).await {
-				platform.funding_quotes_changed(intent.clone(), list);
-				services.send_funding_options(&intent);
-			}
-		}));
-		request_id
-	}
-
-	/// Stop asking again for funding session `intent`'s quotes.
-	pub fn stop_funding_quotes(&self, intent: &str) {
-		self.services.funding_quotes().stop_watching(intent);
+		self.services.request_funding_quotes(intent, ask)
 	}
 
 	/// Record what the user picked in funding session `intent`'s overlay;

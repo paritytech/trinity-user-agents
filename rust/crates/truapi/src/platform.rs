@@ -3167,8 +3167,8 @@ pub struct FundingQuoteList {
 	/// until the user picks another: the least to pay inbound, the most to
 	/// receive outbound. `None` until one quotes.
 	pub best: Option<ProductId>,
-	/// When the core asks every provider again, in Unix milliseconds. The
-	/// rows go back to `Pending` then.
+	/// When the core asks every provider again, in Unix milliseconds. Each
+	/// row keeps its answer until the provider answers again.
 	pub refresh_at_ms: u64,
 }
 

@@ -10,7 +10,9 @@ use std::{
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use crate::platform::ProductId;
+use core::time::Duration;
+
+use crate::{platform::ProductId, time::Backoff};
 
 /// What the host does with a product's worker after demand on it changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,19 +34,17 @@ pub trait WorkerController: Send + Sync {
 	/// The product's worker crashed `crashes` times in a row while it was
 	/// needed, so the host tells the user it is not working. The core keeps
 	/// starting it again, waiting longer each time.
-	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
-		let _ = (product_id, crashes);
-	}
+	fn worker_crashing(&self, _product_id: &ProductId, _crashes: u32) {}
 }
 
 /// An exit more than this long after the previous one starts a new run of
 /// crashes, in milliseconds.
 const CRASH_RUN_WINDOW_MS: u64 = 60_000;
-/// The wait before restarting a worker after its second crash in a run, in
-/// milliseconds; it doubles with each further crash.
-const RESTART_BACKOFF_BASE_MS: u64 = 1_000;
-/// The longest wait before restarting a crashed worker, in milliseconds.
-const RESTART_BACKOFF_MAX_MS: u64 = 5 * 60_000;
+/// The wait before restarting a worker after its second crash in a run; it
+/// doubles with each further crash.
+const RESTART_BACKOFF_FIRST: Duration = Duration::from_secs(1);
+/// The longest wait before restarting a crashed worker.
+const RESTART_BACKOFF_LONGEST: Duration = Duration::from_secs(5 * 60);
 /// The crash in a run on which the host is told the worker is not working.
 const CRASH_NOTICE_AFTER: u32 = 3;
 
@@ -58,6 +58,8 @@ enum LedgerEvent {
 struct CrashRun {
 	/// Crashes in the run so far.
 	crashes: u32,
+	/// The waits before the run's next restarts.
+	backoff: Backoff,
 	/// When the last one was reported, in Unix milliseconds.
 	last_exit_ms: u64,
 	/// Whether a restart waits out its backoff.
@@ -145,8 +147,8 @@ impl WorkerLedger {
 	/// anew after [`CRASH_RUN_WINDOW_MS`] without one. The first crash of a
 	/// run requests [`WorkerTransition::Start`] at once and answers `None`.
 	/// A later one answers the wait before the caller calls
-	/// [`Self::restart`]: [`RESTART_BACKOFF_BASE_MS`], doubling with each
-	/// crash up to [`RESTART_BACKOFF_MAX_MS`]. The run's
+	/// [`Self::restart`]: [`RESTART_BACKOFF_FIRST`], doubling with each
+	/// crash up to [`RESTART_BACKOFF_LONGEST`]. The run's
 	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
 	/// [`WorkerController::worker_crashing`].
 	pub(crate) fn exited(&self, product_id: &ProductId, now_ms: u64) -> Option<u64> {
@@ -157,16 +159,19 @@ impl WorkerLedger {
 			}
 			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
 				crashes: 0,
+				backoff: Backoff::new(RESTART_BACKOFF_FIRST, RESTART_BACKOFF_LONGEST),
 				last_exit_ms: now_ms,
 				restart_pending: false,
 			});
 			if now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
 				run.crashes = 0;
+				run.backoff.reset();
 			}
 			run.crashes = run.crashes.saturating_add(1);
 			run.last_exit_ms = now_ms;
 			let crashes = run.crashes;
-			let wait_ms = restart_backoff_ms(crashes);
+			// The first crash of a run restarts at once.
+			let wait_ms = (crashes > 1).then(|| run.backoff.next_pause().as_millis() as u64);
 			run.restart_pending = wait_ms.is_some();
 			if crashes == CRASH_NOTICE_AFTER {
 				state.pending.push_back(LedgerEvent::Crashing(product_id.clone(), crashes));
@@ -281,18 +286,6 @@ impl WorkerLedger {
 			}
 		}
 	}
-}
-
-/// The wait before restarting a worker on the `crashes`th crash of a run:
-/// none on the first, then [`RESTART_BACKOFF_BASE_MS`] doubling up to
-/// [`RESTART_BACKOFF_MAX_MS`].
-fn restart_backoff_ms(crashes: u32) -> Option<u64> {
-	let doublings = crashes.checked_sub(2)?;
-	Some(
-		RESTART_BACKOFF_BASE_MS
-			.saturating_mul(1u64.checked_shl(doublings).unwrap_or(u64::MAX))
-			.min(RESTART_BACKOFF_MAX_MS),
-	)
 }
 
 /// Clears [`LedgerState::draining`] for a drain that ends without clearing it
@@ -449,8 +442,8 @@ mod tests {
 					Some(64_000),
 					Some(128_000),
 					Some(256_000),
-					Some(RESTART_BACKOFF_MAX_MS),
-					Some(RESTART_BACKOFF_MAX_MS),
+					Some(RESTART_BACKOFF_LONGEST.as_millis() as u64),
+					Some(RESTART_BACKOFF_LONGEST.as_millis() as u64),
 				],
 				// The restart once, not twice, then the new run's at once.
 				2,

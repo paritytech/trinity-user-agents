@@ -1055,22 +1055,10 @@ impl FundingRegistry {
 	}
 
 	fn reconcile_work(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
-		self.retain_quotes(services);
 		self.hold_workers(services);
 		self.follow_settlements(services);
 		self.resolve_starts(services, now_ms);
 		self.catch_up_links(services, now_ms);
-	}
-
-	/// Keep quotes only for open sessions still waiting on a provider.
-	fn retain_quotes(&self, services: &RuntimeServices) {
-		let quoting: HashSet<String> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| !session.is_terminal() && session.provider_id.is_none())
-			.map(|session| session.intent.clone())
-			.collect();
-		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
 	}
 
 	/// Every assigned open session holds its provider's worker. The
@@ -1910,7 +1898,7 @@ impl RuntimeServices {
 		if assigned {
 			// The others' answers can no longer be used, so the quotes still
 			// asked of them stop and let their workers go.
-			self.funding_quotes().end_quotes(intent);
+			self.funding_quotes().end(intent);
 		}
 		Ok(assigned)
 	}
@@ -2187,6 +2175,7 @@ impl RuntimeServices {
 			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
 			.collect();
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.
 		registry.hold_workers(&self);
