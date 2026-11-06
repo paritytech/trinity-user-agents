@@ -428,7 +428,7 @@ class PocketViewModelTest {
         assertNull(cardOpenRequests.requested.value)
     }
 
-    // The page a link opens was not opened by a tap, so it must not carry a tap time.
+    // The link's handler marked the open already; a tap mark here would overwrite it.
     @Test
     fun `a card a link opens records no tap`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
@@ -440,6 +440,22 @@ class PocketViewModelTest {
 
         assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
         verify(exactly = 0) { interactor.cardTapped(any()) }
+    }
+
+    // Closing the card on screen to open the linked one must not forget when the link was handled.
+    @Test
+    fun `a link that replaces the open card keeps the link's mark`() = runTest(testDispatcher) {
+        val shown = productCard("loyalty")
+        val linked = productCard("prizes")
+        every { interactor.observeProductCards() } returns flowOf(listOf(shown, linked))
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first { it.key == shown.key }
+        viewModel.selectCard(uiCard)
+
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { interactor.cardClosed() }
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist

@@ -245,10 +245,11 @@ class PocketViewModel @Inject constructor(
             return
         }
 
-        if (selectedCardId.value != null) dismissCard()
+        // Not dismissCard: that would forget the link the card is about to be opened for.
+        if (selectedCardId.value != null) dismiss()
         hideCollectiblesSketchbook()
         removalCandidate.value = null
-        // A link, not a tap: the page it opens carries no tap time.
+        // A link, not a tap: its handler already marked when it was asked for.
         select(card, request.pageQuery)
     }
 
@@ -304,6 +305,10 @@ class PocketViewModel @Inject constructor(
 
     fun dismissCard() {
         interactor.cardClosed()
+        dismiss()
+    }
+
+    private fun dismiss() {
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null

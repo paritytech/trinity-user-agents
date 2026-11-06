@@ -60,14 +60,11 @@ class TrUAPIBootstrapInstaller @Inject constructor(
 }
 
 /**
- * How a page was opened, for the page to start its own load timing at the user's tap. Set only for the
- * page a Pocket card tap opened; the fields are optional, so the bootstrap's schema version stays.
+ * Set only for the page a Pocket card tap or a link opened, so the page can start its own load timing
+ * at the user's ask. Optional fields, so the bootstrap's schema version stays. [openSource] is
+ * `pocket_card` or `deeplink`.
  */
-class HostPageOrigin(val openedAtEpochMs: Long, val openSource: String) {
-    companion object {
-        const val POCKET_CARD = "pocket_card"
-    }
-}
+class HostPageOrigin(val openedAtEpochMs: Long, val openSource: String)
 
 internal fun hostTelemetryScript(
     context: Context,

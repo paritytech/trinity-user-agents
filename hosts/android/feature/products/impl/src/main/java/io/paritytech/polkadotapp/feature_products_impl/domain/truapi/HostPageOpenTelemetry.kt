@@ -37,7 +37,7 @@ class HostPageOpenTelemetry @Inject internal constructor(
 
         /** Handed to the page, so its own timing starts at the tap that opened it. Null for any other open. */
         val pageOrigin: HostPageOrigin?
-            get() = tap?.let { HostPageOrigin(it.atEpochMillis, HostPageOrigin.POCKET_CARD) }
+            get() = tap?.let { HostPageOrigin(it.atEpochMillis, it.source.tag) }
 
         fun opened(productId: ProductId, sessionId: String) {
             this.productId = productId
@@ -77,12 +77,16 @@ class HostPageOpenTelemetry @Inject internal constructor(
             }
         }
 
-        // Timed from the tap: to the load starting when it opened the page, to the page being visible
-        // when it showed a held one again.
-        private fun reportTap(tap: HostPocketTap, outcome: HostEventOutcome) =
-            report(CARD_TAPPED_EVENT_NAME, outcome, emptyMap(), startedAtMillis = tap.atMillis) { now ->
-                if (outcome == HostEventOutcome.REUSED) mapOf("reuse_ms" to now - tap.atMillis) else emptyMap()
-            }
+        // Timed from the tap or link: to the load starting when it opened the page, to the page being
+        // visible when it showed a held one again.
+        private fun reportTap(tap: HostPocketTap, outcome: HostEventOutcome) = report(
+            CARD_TAPPED_EVENT_NAME,
+            outcome,
+            mapOf("open.source" to tap.source.tag),
+            startedAtMillis = tap.atMillis,
+        ) { now ->
+            if (outcome == HostEventOutcome.REUSED) mapOf("reuse_ms" to now - tap.atMillis) else emptyMap()
+        }
 
         private fun report(
             name: String,
