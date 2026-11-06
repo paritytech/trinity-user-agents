@@ -492,8 +492,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `set_funding_providers`, `get_funding_quote`, `stop_funding_quotes`,
-  `select_funding_options`, `select_funding_provider`, `cancel_funding`,
+  `set_funding_providers`, `get_funding_quote`, `select_funding_options`, `select_funding_provider`, `cancel_funding`,
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
   reports something the user did or the host owns. The host reads back only
   `funding_history`, whenever it shows history. Everything else it draws,
@@ -607,14 +606,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   most to receive outbound, the earliest row on a tie, among providers the
   session can be handed to), which the host selects until the user picks
   another, and `refresh_at_ms`. The core asks every provider again each
-  minute, the rows going back to `Pending`, until the session is assigned or
-  ends, the host asks for another ask, or calls `stop_funding_quotes`; from
-  then on no list of that request arrives, mid round too. The options are
-  sent again after each list, since a refusal can teach the core new limits.
-  At most eight providers are asked at once, each with its own deadline.
-  Answers are reused for 30 seconds within the session that asked, never
-  across sessions, and a newer ask for the session withdraws the one before
-  it, its late rows and the quotes it offered. A quote that does not price
+  minute, each row keeping its answer until the provider answers again,
+  until the session is assigned, ends or leaves the overlay, or the host asks
+  for another ask; from then on no list of that request arrives, mid round
+  too, and the quotes still asked end with the workers they held. The
+  options are sent again after each list, since a refusal can teach the core
+  new limits. At most eight providers are asked at once, each with its own
+  deadline. A session can be handed only a quote from the list its host was
+  last shown, so a quote never crosses sessions. A quote that does not price
   the ask's amount, moves nothing, charges more in fees than the user sends,
   has an unusable id or has expired shows as the provider being unable to
   serve the ask.
