@@ -237,32 +237,26 @@ public struct HostEvent: Sendable, Equatable {
         )
     }
 
-    /// The user tapping a Pocket card, or following a link to one: `opened` starts a page load,
-    /// `reused` shows the page already held, `reuseMilliseconds` after the tap.
+    /// The user tapping a Pocket card, or following a link to one. `opened` is timed to the new page's
+    /// load starting; `reused` to the first frame drawn with the held page shown, also as `reuse_ms`.
     public static func pocketCardTapped(
         productID: String,
         outcome: HostEventOutcome,
         source: HostOpenSource,
-        reuseMilliseconds: Int?,
+        durationMilliseconds: Int,
         hostSessionID: UUID?,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        let session = hostSessionID?.telemetryValue
-
-        var tags = ["product.id": productID, "outcome": outcome.rawValue, "open.source": source.rawValue]
-        tags["host.session_id"] = session
-
-        var extras: [String: HostEventValue] = [:]
-        extras["reuse_ms"] = reuseMilliseconds.map(HostEventValue.integer)
-        extras["host.session_id"] = session.map(HostEventValue.string)
-
-        return make(
+        step(
             name: "host.pocket.card_tapped",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: tags,
-            extras: extras
+            tags: ["product.id": productID, "open.source": source.rawValue],
+            extras: outcome == .reused ? ["reuse_ms": .integer(durationMilliseconds)] : [:]
         )
     }
 }
