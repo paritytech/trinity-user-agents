@@ -1732,8 +1732,8 @@ a fork. A fork made less than Polkadot's finality lag ago therefore cannot run
 until Polkadot finalizes past the fork. An endpoint with no Polkadot genesis is
 not compared. `network-check`, which contacts no chain, does not compare.
 
-A stack with the id `polkadot` cannot run, since earlier releases stored
-`--network polkadot` sessions under that namespace.
+A stack with the id `polkadot` cannot run, since that namespace may contain
+sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
 ships a signed copy of each in `stacks/<name>.json`, with the link that carries
@@ -1789,19 +1789,14 @@ refused with `--stack`, since the light client syncs only the networks
 `truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
 be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
-not share the retired `polkadot` namespace.
+not share the `polkadot` namespace.
 
 #### `network-check`
 
 A stack is the only source of a network's routing: a fork or a local network
 runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
 URLs are `ws://` and `http://` on loopback. An error about a stack names where
-it came from, `--stack` or `HOST_CLI_STACK`. Setting a routing env var earlier
-releases read (`HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`,
-`HOST_CLI_BULLETIN_WS`, `HOST_CLI_IDENTITY_BACKEND_BASE`,
-`HOST_CLI_DOTNS_POP_CONTROLLER`, `HOST_CLI_LOCAL_NETWORK_CONFIG`) to a non-blank
-value is an error, so a harness that still sets one does not run against
-another network than it describes.
+it came from, `--stack` or `HOST_CLI_STACK`.
 
 `network-check` resolves the network as any command does, fetching only the
 descriptor, and prints as JSON `schema_version`, `network` (the product

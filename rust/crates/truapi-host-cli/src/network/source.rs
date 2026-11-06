@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, ensure};
 
 use super::{
-	NetworkSource, STACK_ENV, Stack,
+	NetworkSource, Stack,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
 	checks::{refuse_light_client, verify_chains},
 };
@@ -14,23 +14,12 @@ use crate::{
 	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
 };
 
-/// Env vars earlier releases read to route a network, which a stack
-/// descriptor now describes.
-const REMOVED_ENV: [&str; 6] = [
-	"HOST_CLI_PEOPLE_WS",
-	"HOST_CLI_ASSET_HUB_WS",
-	"HOST_CLI_BULLETIN_WS",
-	"HOST_CLI_IDENTITY_BACKEND_BASE",
-	"HOST_CLI_DOTNS_POP_CONTROLLER",
-	"HOST_CLI_LOCAL_NETWORK_CONFIG",
-];
-
 impl NetworkSource {
 	/// The network a command runs against, the built-in network or the stack,
 	/// once its chains pass the checks. Fails as [`Stack::new`] and
-	/// [`verify_chains`] do, for `--network` with a stack, for a removed
-	/// routing env var, for an unreachable or expired `--stack`, and when the
-	/// light client cannot serve the network. A built-in network whose
+	/// [`verify_chains`] do, for `--network` with a stack, for an unreachable
+	/// or expired `--stack`, and when the light client cannot serve the
+	/// network. A built-in network whose
 	/// published descriptor is unreachable runs on its bundled copy; when that
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
@@ -65,7 +54,6 @@ impl NetworkSource {
 		fetch_timeout: Duration,
 	) -> Result<(Stack, Option<BuiltInOrigin>)> {
 		self.ensure_compatible()?;
-		ensure_removed_env_unset(|name| std::env::var(name).ok())?;
 		let (stack, built_in) = match &self.stack {
 			Some(stack_arg) => {
 				let stack = load_descriptor(&stack_arg.value)
@@ -105,20 +93,6 @@ impl NetworkSource {
 		);
 		Ok(())
 	}
-}
-
-/// Fails when `env_value` returns a non-blank value for a routing env var
-/// earlier releases read, so a harness that still sets one does not run
-/// against another network than it describes.
-fn ensure_removed_env_unset(env_value: impl Fn(&str) -> Option<String>) -> Result<()> {
-	for name in REMOVED_ENV {
-		ensure!(
-			env_value(name).is_none_or(|value| value.trim().is_empty()),
-			"{name} is no longer read; describe the network as a stack descriptor and pass it \
-			 with --stack or {STACK_ENV}"
-		);
-	}
-	Ok(())
 }
 
 #[cfg(test)]

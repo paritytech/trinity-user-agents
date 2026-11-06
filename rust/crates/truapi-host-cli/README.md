@@ -1083,11 +1083,8 @@ reference lists for that chain contacted at once. At the lower of the endpoint's
 Polkadot's finalized block, an equal block hash stops the command: the endpoint is
 Polkadot itself, or a fork that has not finalized past its fork point. It also stops when
 the endpoint, or every Polkadot node, does not answer within 3 seconds at a step, and the
-error names that side. A stack with the id `polkadot` (where earlier releases stored
-`--network polkadot` sessions) cannot run. Setting `HOST_CLI_PEOPLE_WS`,
-`HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS`, `HOST_CLI_IDENTITY_BACKEND_BASE`,
-`HOST_CLI_DOTNS_POP_CONTROLLER` or `HOST_CLI_LOCAL_NETWORK_CONFIG`, which earlier
-releases read, is an error that points at `--stack`.
+error names that side. A stack with the id `polkadot` cannot run, since that namespace
+may contain sessions of real Polkadot identities.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \

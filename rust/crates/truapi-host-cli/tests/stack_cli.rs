@@ -487,8 +487,8 @@ fn test_network_check_url_and_link() {
 	assert!(stderr(&wrong_key).contains("bad-signature"));
 }
 
-/// A stack never runs under the retired `polkadot` namespace, where earlier releases stored mainnet
-/// sessions. A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
+/// A stack never runs under the `polkadot` namespace, which may contain sessions of real Polkadot
+/// identities. A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
 /// namespace: whether its chains are Polkadot itself is checked against the chains before a command
 /// runs, which `network-check` does not contact.
 #[test]
@@ -557,26 +557,6 @@ fn test_blank_stack_variable() {
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
 	assert!(!report["people"]["ws"].as_str().unwrap().starts_with("ws://127.0.0.1"));
-}
-
-/// A harness that still sets a routing variable earlier releases read would otherwise run against
-/// the built-in network instead of the chain it meant, so the command fails and prints the
-/// variable; a blank one is unset.
-#[test]
-fn test_removed_routing_variable_error() {
-	for name in [
-		"HOST_CLI_PEOPLE_WS",
-		"HOST_CLI_ASSET_HUB_WS",
-		"HOST_CLI_BULLETIN_WS",
-		"HOST_CLI_IDENTITY_BACKEND_BASE",
-		"HOST_CLI_DOTNS_POP_CONTROLLER",
-		"HOST_CLI_LOCAL_NETWORK_CONFIG",
-	] {
-		let output = host_with_env(&["network-check"], &[(name, "x")]);
-		assert!(!output.status.success());
-		assert!(stderr(&output).contains(&format!("{name} is no longer read")));
-		assert!(host_with_env(&["network-check"], &[(name, " ")]).status.success());
-	}
 }
 
 /// Runs `truapi-host <args>` with `env` set and no `HOST_CLI_STACK` inherited.
