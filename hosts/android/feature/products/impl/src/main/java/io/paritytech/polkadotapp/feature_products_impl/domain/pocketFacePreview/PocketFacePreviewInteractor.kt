@@ -24,6 +24,7 @@ class PocketFacePreviewInteractor @Inject constructor(
     suspend fun resolveImage(faceUrl: String, source: JsImageSource): Result<String> = when (source) {
         is JsImageSource.Archive -> runCatching { archiveImageUrl(faceUrl, source.path) }
         is JsImageSource.Bulletin -> ipfsContentLookup.getIpfsLinkFor(source.cid)
+        is JsImageSource.Inline -> Result.failure(IllegalArgumentException("inline image bytes need no lookup"))
     }
 
     // Each segment is a literal file name, as the archive reads it, so the address cannot leave the face's server.

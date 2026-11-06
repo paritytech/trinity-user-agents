@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
@@ -53,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import uniffi.truapi.PocketCardSide
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -66,6 +68,7 @@ fun ProductPocketCardDetails(
     modifier: Modifier = Modifier,
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
+    backBindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     cardIndex: Int,
@@ -75,6 +78,7 @@ fun ProductPocketCardDetails(
     BackHandler { onBack() }
 
     val fold = rememberExpandedCardFoldState()
+    val turn = rememberCardTurnState()
 
     // One WebView per product: a screen still drawn for another card must not take it.
     val session = shownProduct?.takeIf { card.key.launches(it.url) }?.session
@@ -108,7 +112,7 @@ fun ProductPocketCardDetails(
             val handling = launch {
                 try {
                     snapshotFlow { settled }.first { it }
-                    request.reply.complete(fold.showFace(request.shown))
+                    request.reply.complete(answer(request, fold, turn, hasBack = backBindings.face.value != null))
                 } finally {
                     request.reply.complete(FaceShownAnswer.NOT_PRESENTED)
                 }
@@ -135,14 +139,15 @@ fun ProductPocketCardDetails(
         )
 
         FoldableCard(fold = fold) {
-            ProductPocketCard(
+            TurningPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
                     .pocketCardSharedElement(cardIndex),
                 card = card,
-                bindings = bindings,
-                onOpen = null,
-                onRemoveRequested = null
+                front = bindings,
+                back = backBindings,
+                leaving = leaving,
+                turn = turn,
             )
 
             VerticalSpacer { mediumIncreased }
@@ -257,3 +262,15 @@ private fun ProductLoadProgress(progress: DotNsLoadProgress) {
 
 private val PRODUCT_PROGRESS_SIZE = 48.dp
 internal val PRODUCT_PROGRESS_DELAY = 1500.milliseconds
+
+/** The page's request to show or hide the face, or to turn the card, answered by whichever of the two it moves. */
+internal suspend fun answer(
+    request: FaceShownRequest,
+    fold: ExpandedCardFoldState,
+    turn: CardTurnState,
+    hasBack: Boolean,
+): FaceShownAnswer = when {
+    fold.dragging || turn.dragging -> FaceShownAnswer.USER_MOVING
+    !request.back -> fold.showFace(request.shown)
+    else -> turn.requestSide(side = if (request.shown) PocketCardSide.BACK else PocketCardSide.FRONT, hasBack = hasBack)
+}

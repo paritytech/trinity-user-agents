@@ -23,8 +23,10 @@ class PrefsDebugPocketCardsTest {
         title: String? = null,
         previewUrl: String? = DEV_FACE,
         faceShown: Boolean = true,
+        backUrl: String? = null,
     ) {
         whenever(prefs.getBoolean("game.dot.face_shown", true)).thenReturn(faceShown)
+        whenever(prefs.getString("game.dot.back_url", null)).thenReturn(backUrl)
         whenever(prefs.getString("game.dot.card_id", null)).thenReturn(cardId)
         whenever(prefs.getString("game.dot.title", null)).thenReturn(title)
         whenever(prefs.getString("game.dot.preview_url", null)).thenReturn(previewUrl)
@@ -113,13 +115,28 @@ class PrefsDebugPocketCardsTest {
         assertEquals(true, cards().get(productId)?.toDefinition()?.faceShown)
     }
 
+    /** A developer serves the back beside the front, and a card without one cannot turn. */
     @Test
-    fun `the face preference is stored beside the card`() {
+    fun `a stored back url gives the card a back, and none gives it none`() {
+        stored(cardId = "loyalty", backUrl = DEV_BACK)
+        val withBack = cards().get(productId)?.toDefinition()?.back
+        stored(cardId = "loyalty")
+        val withoutBack = cards().get(productId)?.toDefinition()?.back
+
+        assertEquals(PocketCardPreview.Url(DEV_BACK) to null, withBack to withoutBack)
+    }
+
+    @Test
+    fun `the face preference and the back are stored beside the card`() {
         val editor = editingPrefs()
 
-        cards().set(productId, DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = false))
+        cards().set(
+            productId,
+            DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = false, backUrl = DEV_BACK),
+        )
 
         verify(editor).putBoolean("game.dot.face_shown", false)
+        verify(editor).putString("game.dot.back_url", DEV_BACK)
     }
 
     private fun editingPrefs(): SharedPreferences.Editor =
@@ -186,5 +203,6 @@ class PrefsDebugPocketCardsTest {
     private companion object {
         const val DEV_APP = "http://127.0.0.1:5173/"
         const val DEV_FACE = "http://127.0.0.1:5173/faces/loyalty.json"
+        const val DEV_BACK = "http://127.0.0.1:5173/faces/loyalty-back.json"
     }
 }

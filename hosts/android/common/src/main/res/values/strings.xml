@@ -272,6 +272,7 @@
     <string name="debug_menu_pocket_face_preview">Pocket face preview</string>
     <string name="pocket_face_preview_title">Pocket face preview</string>
     <string name="pocket_face_preview_url_hint">Face JSON URL</string>
+    <string name="pocket_face_preview_back_url_hint">Back JSON URL (optional)</string>
     <string name="pocket_face_preview_draw">Draw</string>
     <string name="pocket_face_preview_empty">Serve a renderer tree over HTTP and enter its URL to see it drawn at card size.</string>
     <string name="pocket_face_preview_failed">The face could not be drawn.</string>
@@ -279,6 +280,7 @@
     <string name="product_bot_management_card_id_hint">Pocket card id (optional)</string>
     <string name="product_bot_management_card_title_hint">Pocket card title</string>
     <string name="product_bot_management_preview_url_hint">Pocket card face URL</string>
+    <string name="product_bot_management_back_url_hint">Pocket card back face URL (optional)</string>
     <string name="product_bot_management_app_url_hint">App URL</string>
     <string name="product_bot_management_face_away_label">Open with the face away</string>
     <string name="product_bot_management_name_hint">product%1$s</string>
@@ -914,6 +916,7 @@
     <string name="pocket_digital_dollar_title">Purse</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
     <string name="pocket_collectibles_title">Collectibles</string>
+    <string name="pocket_card_turn_over">Turn over</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>

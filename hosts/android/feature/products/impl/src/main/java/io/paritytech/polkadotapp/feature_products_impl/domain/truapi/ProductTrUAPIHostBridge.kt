@@ -254,6 +254,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
             card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+
+        override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
+            card?.setBackShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
