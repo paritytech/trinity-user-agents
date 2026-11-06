@@ -187,24 +187,20 @@ impl PreparedEvmTransaction<'_> {
 ///
 /// Returns ABI data or a transport, dispatch, revert or decoding error for each input,
 /// in input order. The runtime transport determines concurrency and the block context.
-pub async fn read_batch(
-	runtime: &mut impl RuntimeApiCaller,
+/// The batch completes before returning an owned iterator that decodes its results.
+pub async fn read_batch<Runtime: RuntimeApiCaller>(
+	runtime: &mut Runtime,
 	contract: &[u8; 20],
 	inputs: Vec<Vec<u8>>,
-) -> Vec<Result<Vec<u8>, EvmContractError>> {
+) -> impl Iterator<Item = Result<Vec<u8>, EvmContractError>> + use<Runtime> {
 	let calls = inputs
 		.iter()
 		.map(|input| ReviveApiCallArgs::new(&VIEW_CALL_ORIGIN, contract, input).encode())
 		.collect();
-	runtime
-		.call_batch("ReviveApi_call", calls)
-		.await
-		.into_iter()
-		.map(|output| {
-			let output = output.map_err(|error| EvmContractError::Simulation(error.into()))?;
-			Ok(Simulation::decode(&output)?.output)
-		})
-		.collect()
+	runtime.call_batch("ReviveApi_call", calls).await.into_iter().map(|output| {
+		let output = output.map_err(|error| EvmContractError::Simulation(error.into()))?;
+		Ok(Simulation::decode(&output)?.output)
+	})
 }
 
 async fn simulate(
