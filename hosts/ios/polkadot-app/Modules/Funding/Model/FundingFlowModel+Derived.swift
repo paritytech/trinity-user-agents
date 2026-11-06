@@ -144,12 +144,12 @@ extension FundingFlowModel {
     /// ends the session. The core says when it is too late.
     var canRequestCancel: Bool {
         guard hasStarted, let progress, progress.status.isInFlight else { return false }
-        return FundingCancelPresentation.canCancel(progress.status, moneyMoved: progress.moneyMoved)
+        return progress.status.canCancel(moneyMoved: progress.moneyMoved)
     }
 
     /// The cancel action's title for the session's status.
     var cancelTitle: String {
-        progress.map { FundingCancelPresentation.cancelTitle($0.status) } ?? String(localized: .Funding.depositCancel)
+        progress.map(\.status.cancelTitle) ?? String(localized: .Funding.depositCancel)
     }
 }
 

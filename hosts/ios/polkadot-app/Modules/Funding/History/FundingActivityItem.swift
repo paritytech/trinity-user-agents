@@ -49,24 +49,7 @@ extension FundingActivityItem {
         rail = record.rail
         amount = (record.settledAmount ?? record.requestedAmount).flatMap { Balance($0) }
         date = record.settledAt
-
-        switch record.outcome {
-        case .delivered:
-            status = .toppedUp
-        case .released:
-            if case .failed = record.payout {
-                status = .payoutFailed(refunded: record.refundedAmount)
-            } else {
-                status = .sent
-            }
-        case .refunded:
-            status = .refunded
-        case .cancelled,
-             .failed(.cancelled):
-            status = .cancelled(refunded: record.refundedAmount)
-        case let .failed(failure):
-            status = .failed(failure)
-        }
+        status = record.outcome.activityStatus(payout: record.payout, refunded: record.refundedAmount)
     }
 
     var isInProgress: Bool {
@@ -78,6 +61,30 @@ extension FundingActivityItem {
     var isDelayed: Bool {
         guard case let .inProgress(status) = status else { return false }
         return status.isDelayed
+    }
+}
+
+private extension FundingRecord.Outcome {
+    /// The row's status for a record that ended this way; a release whose
+    /// payout failed reads as a failed payout.
+    func activityStatus(payout: FundingRecord.Payout?, refunded: U128?) -> FundingActivityItem.Status {
+        switch self {
+        case .delivered:
+            .toppedUp
+        case .released:
+            if case .failed = payout {
+                .payoutFailed(refunded: refunded)
+            } else {
+                .sent
+            }
+        case .refunded:
+            .refunded
+        case .cancelled,
+             .failed(.cancelled):
+            .cancelled(refunded: refunded)
+        case let .failed(failure):
+            .failed(failure)
+        }
     }
 }
 

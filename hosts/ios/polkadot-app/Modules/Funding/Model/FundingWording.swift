@@ -63,7 +63,7 @@ enum FundingWording {
         _ status: FundingStatus,
         direction: FundingDirection
     ) -> String {
-        if let line = FundingCancelPresentation.line(for: status, compact: true) {
+        if let line = status.cancelLine(compact: true) {
             return line.text
         }
         return switch status {
