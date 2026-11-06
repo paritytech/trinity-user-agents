@@ -156,6 +156,41 @@ describe("createMockHost callbacks", () => {
     expect(host.sentRpc()).toEqual(["rpc-1"]);
   });
 
+  it("declines reviews after setConfirmUserActions(false), until reset", async () => {
+    const host = createMockHost();
+    const review = {
+      tag: "ResourceAllocation" as const,
+      value: { callingProductId: asProductId("mock.dot"), resources: [] },
+    };
+    const confirm = () =>
+      host.callbacks.userConfirmation.confirmUserAction(review);
+    const permission = () =>
+      host.callbacks.userConfirmation.confirmPermission(review);
+
+    expect(await confirm()).toBe(true);
+    host.setConfirmUserActions(false);
+    expect(await confirm()).toBe(false);
+    expect(await permission()).toBe("Deny");
+    host.setConfirmUserActions(true);
+    expect(await confirm()).toBe(true);
+
+    host.setConfirmUserActions(false);
+    host.reset();
+    expect(await confirm()).toBe(true);
+  });
+
+  it("restores a declining boot value on reset", async () => {
+    const host = createMockHost({ confirmUserActions: false });
+    host.setConfirmUserActions(true);
+    host.reset();
+    expect(
+      await host.callbacks.userConfirmation.confirmUserAction({
+        tag: "ResourceAllocation",
+        value: { callingProductId: asProductId("mock.dot"), resources: [] },
+      }),
+    ).toBe(false);
+  });
+
   it("replays scripted chain frames", async () => {
     const host = createMockHost({ chainResponses: ["f1", "f2"] });
     const conn = await host.callbacks.chain.connect(new Uint8Array(32));
@@ -1089,6 +1124,29 @@ describe("statement injection through the chain connection", () => {
         },
       },
     });
+  });
+
+  it("reports the channel, expiry and decryption key a statement carries", () => {
+    const host = createMockHost();
+    const channel = `0x${"cc".repeat(32)}`;
+    const decryptionKey = `0x${"dd".repeat(32)}`;
+    const injected = host.injectStatement({
+      topics: [`0x${"aa".repeat(32)}`],
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(injected).toMatchObject({
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(host.getStatements()[0]).toMatchObject({ channel, decryptionKey });
+
+    const plain = host.injectStatement({ topics: [] });
+    expect(plain.channel).toBeUndefined();
+    expect(plain.expiry).toBeUndefined();
+    expect(plain.decryptionKey).toBeUndefined();
   });
 
   it("retains a statement injected before the product subscribes", async () => {

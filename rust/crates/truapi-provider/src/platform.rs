@@ -1,5 +1,7 @@
 //! Chain access interfaces a host implements and the server runtime consumes.
 
+use core::time::Duration;
+
 use crate::ProviderError;
 use futures::stream::BoxStream;
 
@@ -27,6 +29,23 @@ pub trait JsonRpcConnection: Send + Sync {
 
 	/// Stream of JSON-RPC response strings.
 	fn responses(&self) -> BoxStream<'static, String>;
+
+	/// How long a message that is still arriving has gone without a byte, or
+	/// `None` when no message is partly received or the transport cannot tell.
+	///
+	/// [`responses`](Self::responses) yields whole messages only, so a large
+	/// message on its way looks like silence there. A caller that times out
+	/// silence asks this as well, so that a slow download does not read as a
+	/// dead connection. Keepalive traffic between messages is no message on its
+	/// way, so it does not answer here.
+	///
+	/// Only a transport written in Rust sees bytes below a whole message, so
+	/// this is hidden from the rustdoc the host codegen reads, and JS hosts
+	/// are not offered a method the WASM bridge would never call.
+	#[doc(hidden)]
+	fn mid_message_silence(&self) -> Option<Duration> {
+		None
+	}
 
 	/// Close the connection lease.
 	///

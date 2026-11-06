@@ -15,7 +15,6 @@ use super::NftPurseOwner;
 /// grant that is merely undetermined does not change the answer, because the OS
 /// resolves its own gate when the capability is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
-#[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 #[cfg_attr(test, derive(strum::VariantArray))]
 #[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
