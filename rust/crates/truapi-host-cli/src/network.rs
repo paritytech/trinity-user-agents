@@ -68,16 +68,20 @@ fn namespace_of(id: &str) -> &str {
 		.unwrap_or(id)
 }
 
-/// Where a command's network comes from: `--chain-backend`, `--network` and
-/// `--stack`.
-#[derive(Clone)]
+/// Where a command's network comes from: `--chain-backend`, and `--network`
+/// or `--stack`. Built only by [`NetworkSource::new`], which refuses the
+/// flag combinations no command can run.
 pub struct NetworkSource {
-	/// How the command connects to the chains.
-	pub chain_backend: ChainBackend,
-	/// paseo-next-v2 when neither this nor `stack` is set.
-	pub network: Option<Network>,
-	/// The stack to run against instead of a built-in network.
-	pub stack: Option<StackArg>,
+	chain_backend: ChainBackend,
+	network: NetworkChoice,
+}
+
+/// The network a command runs on, before anything is fetched.
+enum NetworkChoice {
+	/// `--network`, or paseo-next-v2 when no stack is given.
+	BuiltIn(Network),
+	/// `--stack` or [`STACK_ENV`].
+	Stack(StackArg),
 }
 
 /// A `--stack` value and where it came from, for error messages.

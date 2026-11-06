@@ -336,22 +336,25 @@ concurrent peers under one host do not share a trace key.
 
 `--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
 default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
-explicit flag over it. The option is global. A combination the light client
-cannot serve fails when the command resolves its network, before it starts.
+explicit flag over it. The option is global. With a stack it fails at
+startup, for every command; another combination the light client cannot serve
+fails when the command resolves its network, before it starts.
 
 ### 4.4 Global stack option
 
 `--stack <descriptor URL | stack link | file>` runs a command against a Trinity
 stack instead of a built-in network (§14.1). `HOST_CLI_STACK` supplies the same
-value when the flag is absent, and a blank value is unset. The option is global;
-`stack` and `update` ignore it.
+value when the flag is absent, and a blank value is unset. The option is global.
+`stack` and `update` do not run against it, but still refuse it next to
+`--network` or `--chain-backend light-client`.
 
 ### 4.5 Global network option
 
 `--network <paseo-next-v2|previewnet|pcf-devnet>` selects the built-in network
 every command that resolves one runs against, `paseo-next-v2` when neither it
-nor a stack is given (§14.1). It cannot be combined with `--stack` or a
-non-blank `HOST_CLI_STACK`. The option is global, so it is accepted before or
+nor a stack is given (§14.1). Combined with `--stack` or a non-blank
+`HOST_CLI_STACK` it fails at startup, for every command, on whichever side of
+the subcommand each is given. The option is global, so it is accepted before or
 after the subcommand.
 
 ## 5. `pairing-host`

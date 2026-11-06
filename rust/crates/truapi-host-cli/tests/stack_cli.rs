@@ -532,6 +532,11 @@ fn test_network_and_stack_conflict() {
 		"--stack",
 	);
 	assert_conflict(
+		&["--network", "previewnet", "network-check", "--stack", &file],
+		&[],
+		"--stack",
+	);
+	assert_conflict(
 		&["network-check", "--network", "previewnet"],
 		&[("HOST_CLI_STACK", &file)],
 		"HOST_CLI_STACK",

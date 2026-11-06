@@ -599,6 +599,15 @@ async fn main() -> Result<()> {
 		tracing::warn!(%error, "could not restore saved log level; using fallback");
 	}
 
+	// Read here rather than through clap's `env`, so an exported blank value is
+	// unset rather than a `--stack` next to `--network`.
+	let stack = match normalized(cli.stack) {
+		Some(value) => Some(StackArg { value, source: "--stack" }),
+		None => normalized(std::env::var(STACK_ENV).ok())
+			.map(|value| StackArg { value, source: STACK_ENV }),
+	};
+	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
 	// so it cannot corrupt the full-screen display. The command then waits for
@@ -609,14 +618,6 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	// Read here rather than through clap's `env`, so an exported blank value is
-	// unset rather than a `--stack` next to `--network`.
-	let stack = match normalized(cli.stack) {
-		Some(value) => Some(StackArg { value, source: "--stack" }),
-		None => normalized(std::env::var(STACK_ENV).ok())
-			.map(|value| StackArg { value, source: STACK_ENV }),
-	};
-	let source = NetworkSource { chain_backend: cli.chain_backend, network: cli.network, stack };
 	let outcome = dispatch(cli.command, log_filter, log_controller, debugger, source).await;
 
 	if let Some(check) = check {
