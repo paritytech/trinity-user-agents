@@ -84,7 +84,7 @@ pub fn sr25519_secret_from_bytes(secret: &[u8; 64]) -> Result<SecretKey, String>
 pub struct Sr25519Signer {
 	#[debug("\"<redacted>\"")]
 	secret: SecretKey,
-	#[debug("{}", hex::encode(public.to_bytes()))]
+	#[debug("{}", crate::logging::Account::new(&public.to_bytes()))]
 	public: PublicKey,
 }
 

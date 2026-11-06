@@ -176,6 +176,12 @@ public protocol HostBridge: AnyObject, Sendable {
     /// runs no workers.
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
 
+    /// The product's worker crashed `crashes` times in a row while it was
+    /// needed: tell the user that product is not working. The core keeps
+    /// starting it again, waiting longer each time, so this needs no answer.
+    /// Can arrive on any thread. Defaults to a no-op.
+    func workerCrashing(productId: ProductId, crashes: UInt32)
+
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
     func beginOperation(productId: ProductId, label: String) async throws -> UInt32
@@ -427,6 +433,7 @@ public extension HostBridge {
         ExtensionVersionMap(chains: [])
     }
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
+    func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
     func currentInstallation() async throws -> Data {
@@ -676,6 +683,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
+    }
+
+    func workerCrashing(productId: ProductId, crashes: UInt32) {
+        bridge.workerCrashing(productId: productId, crashes: crashes)
     }
 
     func devicePaired(device: PairedSsoPeer) {

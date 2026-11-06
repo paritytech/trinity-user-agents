@@ -215,8 +215,8 @@ pub struct StubPlatform {
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
-	/// Reasons the next `connect` calls fail with, in order. Then `connect`
-	/// succeeds.
+	/// Reasons the next `connect` calls fail with, in order, each as a
+	/// transport failure a later attempt can outlast. Then `connect` succeeds.
 	pub chain_connect_failures: Mutex<std::collections::VecDeque<&'static str>>,
 	/// When set, `connect` to this one chain fails, while every other chain
 	/// still connects.
@@ -1898,7 +1898,7 @@ impl ChainProvider for StubPlatform {
 			.expect("chain connect failure mutex poisoned")
 			.pop_front();
 		if let Some(reason) = failure {
-			return Err(ProviderError::Host { reason: reason.to_string() });
+			return Err(ProviderError::Transport { reason: reason.to_string() });
 		}
 		if self.unreachable_genesis == Some(genesis_hash) {
 			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });

@@ -1533,6 +1533,7 @@ fn only_acknowledged_follows_hold_a_slot_in_the_budget() {
 		abort: None,
 		sender: mpsc::unbounded().0,
 		cancelled: Arc::new(AtomicBool::new(false)),
+		activity: FollowActivity::new(),
 	};
 	follows.insert("acknowledged-b".to_string(), intended(Some("REMOTE-B")));
 	follows.insert("intent-only".to_string(), intended(None));
@@ -2585,4 +2586,85 @@ fn is_call_end_for(item: &Option<RemoteChainHeadFollowItem>, operation: &str) ->
 		item,
 		Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
 	)
+}
+
+/// The budget line tells a follow nobody ended from one in use: how long it
+/// has been open, whether the node still sends it events, how recently a call
+/// was made on it, and whether its receiver is still open.
+#[test]
+fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_used() {
+	let opened = SystemTime::now();
+	let at = |seconds| opened + Duration::from_secs(seconds);
+	let (sender, receiver) = mpsc::unbounded();
+	let mut follow = FollowState {
+		with_runtime: false,
+		client_subscription_id: None,
+		remote_subscription_id: Some("REMOTE".to_string()),
+		abort: None,
+		sender,
+		cancelled: Arc::new(AtomicBool::new(false)),
+		activity: FollowActivity {
+			opened_at: opened,
+			last_event_at: None,
+			calls: 0,
+			last_call_at: None,
+		},
+	};
+	assert_eq!(
+		follow.describe_activity(at(600)),
+		"open 600 s, last event never, 0 calls, last call never, receiver open"
+	);
+
+	follow.activity.last_event_at = Some(at(594));
+	follow.activity.calls = 3;
+	follow.activity.last_call_at = Some(at(60));
+	drop(receiver);
+	assert_eq!(
+		follow.describe_activity(at(600)),
+		"open 600 s, last event 6 s ago, 3 calls, last call 540 s ago, receiver dropped"
+	);
+}
+
+/// A node that cannot be reached may be reachable later, so the read waits on
+/// it. A provider that refuses, whatever reason it gives, answers the same way
+/// every time, so the read reports it at once.
+#[test]
+fn only_an_unreachable_node_is_a_transient_connect_failure() {
+	struct Refusing(fn() -> ProviderError);
+
+	#[async_trait::async_trait]
+	impl ChainProvider for Refusing {
+		async fn connect(
+			&self,
+			_genesis_hash: [u8; 32],
+		) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+			Err((self.0)())
+		}
+	}
+
+	let kind_for = |error: fn() -> ProviderError| {
+		let provider = HostChainProvider::new(Arc::new(Refusing(error)));
+		match futures::executor::block_on(RuntimeChainProvider::connect(&provider, vec![0xab; 32]))
+		{
+			Ok(_) => panic!("the refusing provider connected"),
+			Err(failure) => failure.kind(),
+		}
+	};
+	let transient = [
+		(|| ProviderError::Handshake { url: "wss://node".into(), reason: "dns".into() })
+			as fn() -> ProviderError,
+		|| ProviderError::Transport { reason: "socket".into() },
+	];
+	for error in transient {
+		assert_eq!(kind_for(error), RuntimeFailureKind::Unavailable, "{}", error());
+	}
+	let refused = [
+		(|| ProviderError::UnknownGenesis { genesis: [0xab; 32] }) as fn() -> ProviderError,
+		|| ProviderError::UnknownRelay { relay: [0xcd; 32] },
+		|| ProviderError::Host { reason: "chain provider unavailable".into() },
+		|| ProviderError::MissingRuntime,
+	];
+	for error in refused {
+		assert_eq!(kind_for(error), RuntimeFailureKind::HostFailure, "{}", error());
+	}
 }

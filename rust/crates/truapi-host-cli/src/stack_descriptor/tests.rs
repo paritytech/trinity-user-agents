@@ -60,3 +60,89 @@ async fn test_fetch_http_status_error() {
 		.expect_err("closed port accepted");
 	assert!(matches!(closed_port_error, FetchError::Transport(_)));
 }
+
+/// A descriptor with every role, a `dub` service and a `popController`, edited.
+fn stack_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
+	let chain = |role: &str, byte: &str, para_id: Option<u32>| {
+		let mut chain = serde_json::json!({
+			"role": role,
+			"genesisHash": format!("0x{}", byte.repeat(32)),
+			"rpc": [format!("ws://127.0.0.1:99{byte}")],
+		});
+		if let Some(para_id) = para_id {
+			chain["paraId"] = para_id.into();
+		}
+		chain
+	};
+	let mut document = serde_json::json!({
+		"$v": 1, "sequence": 1, "generation": "g1", "id": "local", "name": "Local",
+		"network": "local", "tld": "paseo",
+		"services": [{ "kind": "dub", "urls": ["http://127.0.0.1:8080/"] }],
+		"dotns": { "popController": format!("0x{}", "ab".repeat(20)) },
+		"chains": [
+			chain("Relay", "01", None),
+			chain("People", "02", Some(1004)),
+			chain("AssetHub", "03", Some(1000)),
+			chain("Bulletin", "04", Some(1010)),
+		],
+	});
+	edit(&mut document);
+	Descriptor::from_json(document).unwrap()
+}
+
+/// An edit to a descriptor's JSON.
+type DescriptorEdit = Box<dyn FnOnce(&mut serde_json::Value)>;
+
+/// The runtime notice and `stack bundle --skip-same-projection` read one list
+/// of fields: a change to any of them is news, and a change elsewhere is not.
+#[test]
+fn test_reads_same_by_field() {
+	let base = stack_descriptor(|_| {});
+	let people = |edit: fn(&mut serde_json::Value)| {
+		move |descriptor: &mut serde_json::Value| edit(&mut descriptor["chains"][1])
+	};
+	let differs: [(&str, DescriptorEdit); 8] = [
+		("id", Box::new(|descriptor| descriptor["id"] = "other".into())),
+		("tld", Box::new(|descriptor| descriptor["tld"] = "testnet".into())),
+		("generation", Box::new(|descriptor| descriptor["generation"] = "g2".into())),
+		(
+			"dub",
+			Box::new(|descriptor| {
+				descriptor["services"][0]["urls"] = serde_json::json!(["http://127.0.0.1:8081/"]);
+			}),
+		),
+		(
+			"popController",
+			Box::new(|descriptor| {
+				descriptor["dotns"]["popController"] = format!("0x{}", "cd".repeat(20)).into();
+			}),
+		),
+		(
+			"role genesis",
+			Box::new(people(|chain| {
+				chain["genesisHash"] = format!("0x{}", "05".repeat(32)).into()
+			})),
+		),
+		(
+			"role rpc",
+			Box::new(people(|chain| {
+				chain["rpc"].as_array_mut().unwrap().push("ws://127.0.0.1:9999".into());
+			})),
+		),
+		(
+			"role first rpc",
+			Box::new(people(|chain| chain["rpc"] = serde_json::json!(["ws://127.0.0.1:9998"]))),
+		),
+	];
+	let unnoticed: Vec<&str> = differs
+		.into_iter()
+		.filter_map(|(field, edit)| reads_same(&base, &stack_descriptor(edit)).then_some(field))
+		.collect();
+	assert_eq!(unnoticed, Vec::<&str>::new());
+
+	let renamed = stack_descriptor(|descriptor| {
+		descriptor["name"] = "Renamed".into();
+		descriptor["sequence"] = 2.into();
+	});
+	assert!(reads_same(&base, &renamed));
+}

@@ -291,7 +291,10 @@ export type CreateTransactionReview =
   /**
    * Legacy-account transaction request.
    */
-  | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
+  | {
+      tag: "LegacyAccount";
+      value: { account: LegacySigningAccount; payload: LegacyAccountTxPayload };
+    };
 
 /**
  * A kind of signature a product makes with another product's account.
@@ -373,6 +376,37 @@ export interface FundingPresentation {
    * Amount the caller asked for, or ``undefined`` to let the user choose.
    */
   amount?: bigint;
+}
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. Ids only grow, and a list can reach the host before the call that
+   * returns its id does, so a host shows a list only when its id is at
+   * least the latest it has seen, and drops the rest.
+   */
+  requestId: bigint;
+
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: ProductId;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. Each
+   * row keeps its answer until the provider answers again.
+   */
+  refreshAtMs: bigint;
 }
 
 /**
@@ -546,6 +580,20 @@ export interface IdentityDisclosureReview {
    */
   productId: ProductId;
 }
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export type LegacySigningAccount =
+  /**
+   * The wallet's identity account.
+   */
+  | { tag: "Identity"; value?: undefined }
+  /**
+   * The requesting product's account at derivation index 0.
+   */
+  | { tag: "Product"; value: ProductAccountId };
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -768,9 +816,16 @@ export type SignPayloadReview =
       value: { callingProductId?: ProductId; request: HostSignPayloadRequest };
     }
   /**
-   * Legacy-account signing request.
+   * Legacy-account signing request, which only the product's account at
+   * index 0 may sign.
    */
-  | { tag: "LegacyAccount"; value: HostSignPayloadWithLegacyAccountRequest };
+  | {
+      tag: "LegacyAccount";
+      value: {
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      };
+    };
 
 /**
  * Review shown before a sign-raw request is sent to the paired wallet.
@@ -795,6 +850,7 @@ export type SignRawReview =
   | {
       tag: "LegacyAccount";
       value: {
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       };
@@ -1068,7 +1124,13 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
         callingProductId?: ProductId;
         payload: ProductAccountTxPayload;
       }>,
-      LegacyAccount: LegacyAccountTxPayload,
+      LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
+        payload: LegacyAccountTxPayload,
+      }) as S.Codec<{
+        account: LegacySigningAccount;
+        payload: LegacyAccountTxPayload;
+      }>,
     }),
 );
 
@@ -1146,6 +1208,19 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      requestId: S.u64,
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(ProductId),
+      refreshAtMs: S.u64,
+    }) as S.Codec<FundingQuoteList>,
 );
 
 /**
@@ -1277,6 +1352,15 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
     (): S.Codec<IdentityDisclosureReview> =>
       S.Struct({ productId: ProductId }) as S.Codec<IdentityDisclosureReview>,
   );
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
+  (): S.Codec<LegacySigningAccount> =>
+    S.TaggedUnion({ Identity: S._void, Product: ProductAccountId }),
+);
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -1427,7 +1511,13 @@ export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
         callingProductId?: ProductId;
         request: HostSignPayloadRequest;
       }>,
-      LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
+      LegacyAccount: S.Struct({
+        account: ProductAccountId,
+        request: HostSignPayloadWithLegacyAccountRequest,
+      }) as S.Codec<{
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      }>,
     }),
 );
 
@@ -1449,9 +1539,11 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
         watermarked: boolean;
       }>,
       LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
       }) as S.Codec<{
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       }>,
@@ -1910,6 +2002,29 @@ export interface FundingPlatform {
   ): Promise<FundingFrameOutcome>;
 
   /**
+   * Close the frame `present_provider_frame` shows for `provider`'s
+   * session `intent`, answering that call `Closed`, and show the
+   * session's progress in its place. Does nothing when no frame is
+   * open for it.
+   */
+  closeProviderFrame(provider: ProductContext, intent: string): void;
+
+  /**
+   * Whether `provider` ships an App, so an App route of its can be shown.
+   * A provider without one shows only external pages.
+   */
+  providerHasApp?(provider: ProductContext): Promise<boolean>;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
+
+  /**
    * Observe a session's status change, for host UI such as the in-flight
    * pill.
    */
@@ -1919,11 +2034,11 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again.
    */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
 }
 
 /**
