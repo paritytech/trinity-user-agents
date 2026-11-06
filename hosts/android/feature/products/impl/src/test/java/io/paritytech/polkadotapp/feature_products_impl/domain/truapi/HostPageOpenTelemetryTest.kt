@@ -3,15 +3,20 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionIds
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.PageReveal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ProductId
 
@@ -21,15 +26,18 @@ class HostPageOpenTelemetryTest {
     private val timeProvider = HostMonotonicTimeProvider { now }
     private val captured = mutableListOf<HostEvent>()
     private val capture = HostEventCapture { captured += it() }
-    private val taps = HostPocketTaps(timeProvider, { TAPPED_AT_EPOCH }, capture)
-    private val telemetry = HostPageOpenTelemetry(originProvider, timeProvider, capture, taps)
+    private var minted = 0
+    private val sessionIds = HostSessionIds { "session-${++minted}" }
+    private val cacheHits = HostCacheHits()
+    private val taps = HostOpenMarks(timeProvider, { TAPPED_AT_EPOCH }, capture, sessionIds, cacheHits)
+    private val telemetry = HostPageOpenTelemetry(originProvider, timeProvider, capture, taps, sessionIds, cacheHits)
 
     @Test
     fun `reports the page load under its session, timed from the open and from the card tap`() {
         taps.tapped("humanity.dot")
         now = OPEN_REQUESTED_AT
         val page = telemetry.open()
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
         now = LOADED_AT
 
         page.finished(loaded = true)
@@ -43,14 +51,16 @@ class HostPageOpenTelemetryTest {
                     "host.app_flavor" to "gp",
                     "host.native_app_version" to "1.2.3",
                     "outcome" to "ok",
-                    "host.session_id" to "session-42",
+                    "host.os_version" to "15",
+                    "host.session_id" to "session-1",
                     "product.id" to "humanity.dot",
                 ),
                 extras = mapOf(
                     "host.app_build" to 123L,
                     "event.monotonic_ms" to LOADED_AT,
                     "duration_ms" to LOADED_AT - OPEN_REQUESTED_AT,
-                    "host.session_id" to "session-42",
+                    "app.launch_id" to "launch-7",
+                    "host.session_id" to "session-1",
                     "tap_ms" to LOADED_AT - TAPPED_AT,
                 ),
                 durationMs = LOADED_AT - OPEN_REQUESTED_AT,
@@ -59,18 +69,42 @@ class HostPageOpenTelemetryTest {
         )
     }
 
+    // The tap's own fetch already reports under this session, so the page's lookups join it.
+    @Test
+    fun `a page takes the session its tap minted, and one nothing asked for mints its own`() {
+        taps.tapped("humanity.dot")
+        val tapSession = taps.pendingSession("humanity.dot")
+
+        val tapped = telemetry.open().opened(HUMANITY)
+        val untapped = telemetry.open().opened(HUMANITY)
+
+        assertEquals(listOf("session-1", "session-1", "session-2"), listOf(tapSession, tapped, untapped))
+    }
+
+    // Each page claims one report per step in its session; claims outliving the page would only grow.
+    @Test
+    fun `closing a page forgets what its session reported`() {
+        val page = telemetry.open()
+        val load = HostLoadContext(HostLoadTrigger.OPEN, page.opened(HUMANITY))
+        cacheHits.isFirst("host.product.resolved", "humanity.dot", load)
+
+        page.closed()
+
+        assertTrue(cacheHits.isFirst("host.product.resolved", "humanity.dot", load))
+    }
+
     @Test
     fun `the tap that opens a page is reported as opened, and handed to the page`() {
         taps.tapped("humanity.dot")
         now = OPEN_REQUESTED_AT
         val page = telemetry.open()
 
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
 
         val tapped = captured.single()
         assertEquals("host.pocket.card_tapped" to "opened", tapped.name to tapped.tags["outcome"])
         assertEquals("pocket_card", tapped.tags["open.source"])
-        assertEquals("session-42" to "humanity.dot", tapped.tags["host.session_id"] to tapped.tags["product.id"])
+        assertEquals("session-1" to "humanity.dot", tapped.tags["host.session_id"] to tapped.tags["product.id"])
         assertEquals(OPEN_REQUESTED_AT - TAPPED_AT, tapped.durationMs)
         assertEquals(TAPPED_AT_EPOCH to "pocket_card", page.pageOrigin?.openedAtEpochMs to page.pageOrigin?.openSource)
     }
@@ -81,7 +115,7 @@ class HostPageOpenTelemetryTest {
         taps.linked("humanity.dot", link)
         val page = telemetry.open()
 
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
 
         assertEquals(TAPPED_AT_EPOCH to "deeplink", page.pageOrigin?.openedAtEpochMs to page.pageOrigin?.openSource)
         val tapped = captured.single()
@@ -91,7 +125,7 @@ class HostPageOpenTelemetryTest {
     // A held page shown again starts no load, so without this the tap would go unreported.
     @Test
     fun `a tap that shows a held page again is reported as reused, timed to the page being visible`() {
-        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        val page = telemetry.open().apply { opened(HUMANITY) }
         now = 5_000L
         taps.tapped("humanity.dot")
 
@@ -102,14 +136,14 @@ class HostPageOpenTelemetryTest {
         val reused = captured.single()
         assertEquals("host.pocket.card_tapped" to "reused", reused.name to reused.tags["outcome"])
         assertEquals(120L, reused.extras["reuse_ms"])
-        assertEquals("session-42", reused.tags["host.session_id"])
+        assertEquals("session-1", reused.tags["host.session_id"])
     }
 
     @Test
     fun `a page opened without a tap hands the page no open time`() {
         val page = telemetry.open()
 
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
 
         assertEquals(null, page.pageOrigin)
         assertEquals(emptyList<HostEvent>(), captured)
@@ -118,7 +152,7 @@ class HostPageOpenTelemetryTest {
     @Test
     fun `a page opened without a card tap carries no tap time`() {
         val page = telemetry.open()
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
 
         page.finished(loaded = true)
 
@@ -127,7 +161,7 @@ class HostPageOpenTelemetryTest {
 
     @Test
     fun `a page whose main document failed is reported as an error`() {
-        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        val page = telemetry.open().apply { opened(HUMANITY) }
 
         page.finished(loaded = false)
 
@@ -137,7 +171,7 @@ class HostPageOpenTelemetryTest {
     // Without it, a page the user gave up on is missing from the data rather than counted as slow.
     @Test
     fun `a page closed before it finished loading is reported as abandoned, and only that`() {
-        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        val page = telemetry.open().apply { opened(HUMANITY) }
 
         page.closed()
         page.finished(loaded = true)
@@ -147,7 +181,7 @@ class HostPageOpenTelemetryTest {
 
     @Test
     fun `closing a page that already loaded reports nothing more`() {
-        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        val page = telemetry.open().apply { opened(HUMANITY) }
 
         page.finished(loaded = true)
         page.closed()
@@ -167,15 +201,15 @@ class HostPageOpenTelemetryTest {
 
     @Test
     fun `the first reveal reports what showed the page`() {
-        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        val page = telemetry.open().apply { opened(HUMANITY) }
         now = LOADED_AT
 
         page.revealed(PageReveal.FALLBACK)
         page.revealed(PageReveal.THEME)
 
         val event = captured.single()
-        assertEquals("host.webview.revealed" to "fallback", event.name to event.tags["via"])
-        assertEquals("session-42", event.tags["host.session_id"])
+        assertEquals("host.webview.revealed" to "fallback", event.name to event.tags["reveal.via"])
+        assertEquals("session-1", event.tags["host.session_id"])
     }
 
     @Test
@@ -191,9 +225,9 @@ class HostPageOpenTelemetryTest {
 
     @Test
     fun `the event is not built when capture drops it`() {
-        val page = HostPageOpenTelemetry(originProvider, timeProvider, HostEventCapture { }, taps).open()
+        val page = HostPageOpenTelemetry(originProvider, timeProvider, HostEventCapture { }, taps, sessionIds, cacheHits).open()
 
-        page.opened(HUMANITY, "session-42")
+        page.opened(HUMANITY)
         page.finished(loaded = true)
 
         verify(exactly = 0) { originProvider.current() }
@@ -212,6 +246,7 @@ class HostPageOpenTelemetryTest {
             platform = "android",
             osVersion = "15",
             appBuild = 123L,
+            launchId = "launch-7",
         )
     }
 }

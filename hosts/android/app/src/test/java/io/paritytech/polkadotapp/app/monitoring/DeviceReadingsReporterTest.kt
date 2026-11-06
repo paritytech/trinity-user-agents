@@ -20,7 +20,14 @@ class DeviceReadingsReporterTest {
         charging = true,
     )
     private val sentGauges = mutableListOf<Triple<String, Double, String?>>()
-    private val metrics = SentryMetricsCapture { key, value, unit -> sentGauges += Triple(key, value, unit) }
+    private val metrics = object : SentryMetricsCapture {
+        override fun gauge(key: String, value: Double, unit: String?) {
+            sentGauges += Triple(key, value, unit)
+        }
+
+        override fun distribution(key: String, value: Double, unit: String?, attributes: Map<String, String>) =
+            error("device readings are gauges")
+    }
 
     @Test
     fun `sends every reading under its own key with its unit`() {

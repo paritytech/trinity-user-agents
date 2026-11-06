@@ -112,7 +112,7 @@ class TrUAPIHostRuntimeProviderTest {
         workerSupervisor = { mockk(relaxed = true) },
         rpcConnectedTelemetry = mockk(relaxed = true),
         runtimeBootTelemetry = HostRuntimeBootTelemetry(
-            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
             timeProvider = { 0L },
             capture = { bootEvents += it() },
         ),

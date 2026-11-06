@@ -11,6 +11,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
+import io.mockk.verifyOrder
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -60,7 +61,8 @@ class PocketViewModelTest {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
-        coEvery { warmUpProduct(any()) } returns Result.success(Unit)
+        coEvery { warmUpProduct(any(), any()) } returns Result.success(Unit)
+        every { openingSession(any()) } returns null
         coEvery { faceShownOnOpen(any()) } returns true
         every { cardTapped(any()) } just Runs
         every { cardClosed() } just Runs
@@ -333,7 +335,7 @@ class PocketViewModelTest {
         val viewModel = createViewModel()
         settledCards(viewModel)
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, null) }
     }
 
     // The page's load reports the time since this tap, and a closed card must not lend its tap to
@@ -362,12 +364,32 @@ class PocketViewModelTest {
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        coVerify(exactly = 0) { interactor.warmUpProduct(any()) }
+        coVerify(exactly = 0) { interactor.warmUpProduct(any(), any()) }
 
         viewModel.selectCard(uiCard)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, any()) }
+    }
+
+    // The tap's own fetch is the open's first load: run as a prewarm, the page's lookups would wait
+    // on it and report the wait as a cache hit, and the read itself would report under no session.
+    @Test
+    fun `a tapped card's fetch runs under the session the tap minted`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        every { interactor.openingSession(card.key) } returns "tap-session"
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(uiCard)
+        advanceUntilIdle()
+
+        verifyOrder {
+            interactor.cardTapped(card.key)
+            interactor.openingSession(card.key)
+        }
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key, "tap-session") }
     }
 
     // The collection re-emits whenever it changes, and a fetch answered from cache still costs a
@@ -384,7 +406,7 @@ class PocketViewModelTest {
         collection.value = listOf(privileged, productCard("loyalty"))
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { interactor.warmUpProduct(privileged.key) }
+        coVerify(exactly = 1) { interactor.warmUpProduct(privileged.key, null) }
     }
 
     // Expanding a card draws a second copy of it, and that copy's first frame shows whatever face it

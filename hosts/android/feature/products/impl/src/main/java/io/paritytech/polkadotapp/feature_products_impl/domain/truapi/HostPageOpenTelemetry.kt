@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTap
-import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMark
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenMarks
+import io.paritytech.polkadotapp.common.data.telemetry.HostSessionIds
 import io.paritytech.polkadotapp.common.data.telemetry.stepEvent
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.PageReveal
@@ -21,7 +23,9 @@ class HostPageOpenTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
     private val capture: HostEventCapture,
-    private val taps: HostPocketTaps,
+    private val marks: HostOpenMarks,
+    private val sessionIds: HostSessionIds,
+    private val cacheHits: HostCacheHits,
 ) {
     /** One open, asked for now. Each of its events is reported at most once. */
     fun open(): PageOpen = PageOpen(timeProvider.nowMillis())
@@ -31,7 +35,7 @@ class HostPageOpenTelemetry @Inject internal constructor(
 
         @Volatile private var sessionId: String? = null
 
-        @Volatile private var tap: HostPocketTap? = null
+        @Volatile private var tap: HostOpenMark? = null
         private val loadReported = AtomicBoolean(false)
         private val revealReported = AtomicBoolean(false)
 
@@ -39,17 +43,24 @@ class HostPageOpenTelemetry @Inject internal constructor(
         val pageOrigin: HostPageOrigin?
             get() = tap?.let { HostPageOrigin(it.atEpochMillis, it.source.tag) }
 
-        fun opened(productId: ProductId, sessionId: String) {
+        /**
+         * Takes the open asked for [productId] and returns the page's host session: the one minted with
+         * the tap or link, which the work started for it already reports under, or a new one.
+         */
+        fun opened(productId: ProductId): String {
             this.productId = productId
-            this.sessionId = sessionId
-            tap = taps.consume(productId.value)?.also { reportTap(it, HostEventOutcome.OPENED) }
+            val mark = marks.consume(productId.value)
+            val session = mark?.sessionId ?: sessionIds.next()
+            sessionId = session
+            tap = mark?.also { reportTap(it, HostEventOutcome.OPENED) }
+            return session
         }
 
         /** The tap that shows this page again, held and loaded already; null when no tap asked for it. */
-        fun reuseTap(): HostPocketTap? = productId?.let { taps.consume(it.value) }
+        fun reuseTap(): HostOpenMark? = productId?.let { marks.consume(it.value) }
 
         /** Reports [tap] as having shown this page again, now that the page is visible. */
-        fun reused(tap: HostPocketTap) = reportTap(tap, HostEventOutcome.REUSED)
+        fun reused(tap: HostOpenMark) = reportTap(tap, HostEventOutcome.REUSED)
 
         /** A page that is not a product's (the debug browser opening any URL) has no load to report. */
         fun notAProduct() {
@@ -63,11 +74,14 @@ class HostPageOpenTelemetry @Inject internal constructor(
         fun failedToStart() = reportLoad(HostEventOutcome.ERROR)
 
         /** The page went away; only a load still outstanding is reported, as abandoned. */
-        fun closed() = reportLoad(HostEventOutcome.ABANDONED)
+        fun closed() {
+            reportLoad(HostEventOutcome.ABANDONED)
+            sessionId?.let(cacheHits::forget)
+        }
 
         fun revealed(via: PageReveal) {
             if (!revealReported.compareAndSet(false, true)) return
-            report(REVEALED_EVENT_NAME, HostEventOutcome.OK, mapOf("via" to via.tag)) { emptyMap() }
+            report(REVEALED_EVENT_NAME, HostEventOutcome.OK, mapOf("reveal.via" to via.tag)) { emptyMap() }
         }
 
         private fun reportLoad(outcome: HostEventOutcome) {
@@ -79,7 +93,7 @@ class HostPageOpenTelemetry @Inject internal constructor(
 
         // Timed from the tap or link: to the load starting when it opened the page, to the page being
         // visible when it showed a held one again.
-        private fun reportTap(tap: HostPocketTap, outcome: HostEventOutcome) = report(
+        private fun reportTap(tap: HostOpenMark, outcome: HostEventOutcome) = report(
             CARD_TAPPED_EVENT_NAME,
             outcome,
             mapOf("open.source" to tap.source.tag),

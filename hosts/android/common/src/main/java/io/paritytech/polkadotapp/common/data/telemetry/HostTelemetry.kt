@@ -7,11 +7,12 @@ data class HostEventOrigin(
     val platform: String,
     val osVersion: String,
     val appBuild: Long,
+    val launchId: String,
 )
 
 /**
  * One host event. Sentry search cannot filter or chart extras, so anything to query by is a tag; a step
- * with a [durationMs] is also sent as a distribution under [name], carrying the tags as attributes.
+ * with a [durationMs] is also sent as a distribution under [name], carrying the tags but the session.
  */
 data class HostEvent(
     val name: String,
@@ -50,9 +51,12 @@ fun HostEventOrigin.stepEvent(
     extras: Map<String, Any> = emptyMap(),
 ) = HostEvent(
     name = name,
-    tags = baseTags() + ("outcome" to outcome.tag) + sessionId.sessionTag() + tags,
+    tags = baseTags() +
+        mapOf("outcome" to outcome.tag, "host.os_version" to osVersion) +
+        sessionId.sessionTag() +
+        tags,
     extras = baseExtras() +
-        mapOf("event.monotonic_ms" to monotonicMs, "duration_ms" to durationMs) +
+        mapOf("event.monotonic_ms" to monotonicMs, "duration_ms" to durationMs, "app.launch_id" to launchId) +
         sessionId.sessionTag() +
         extras,
     durationMs = durationMs,
@@ -71,6 +75,10 @@ fun interface HostEventCapture {
     val enabled: Boolean get() = true
 
     fun capture(event: () -> HostEvent)
+}
+
+fun interface HostSessionIds {
+    fun next(): String
 }
 
 fun interface HostMonotonicTimeProvider {

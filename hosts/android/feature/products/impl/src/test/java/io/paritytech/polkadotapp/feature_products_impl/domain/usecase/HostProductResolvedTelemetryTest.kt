@@ -35,14 +35,16 @@ class HostProductResolvedTelemetryTest {
                     "host.app_flavor" to "gp",
                     "host.native_app_version" to "1.2.3",
                     "outcome" to "ok",
+                    "host.os_version" to "15",
                     "product.id" to "humanity.dot",
                     "host.session_id" to "session-42",
-                    "trigger" to "open",
+                    "load.trigger" to "open",
                 ),
                 extras = mapOf(
                     "host.app_build" to 123L,
                     "event.monotonic_ms" to RESOLVED_AT,
                     "duration_ms" to RESOLVED_AT - STARTED_AT,
+                    "app.launch_id" to "launch-7",
                     "host.session_id" to "session-42",
                     "queue_ms" to QUEUE_MS,
                 ),
@@ -83,7 +85,7 @@ class HostProductResolvedTelemetryTest {
 
         val event = reported { report(HUMANITY, prewarm, STARTED_AT, QUEUE_MS, resolved = true) }
 
-        assertEquals("prewarm", event.tags["trigger"])
+        assertEquals("prewarm", event.tags["load.trigger"])
         assertFalse(event.tags.containsKey("host.session_id"))
     }
 
@@ -121,6 +123,7 @@ class HostProductResolvedTelemetryTest {
             platform = "android",
             osVersion = "15",
             appBuild = 123L,
+            launchId = "launch-7",
         )
     }
 }

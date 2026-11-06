@@ -39,7 +39,7 @@ private fun HostEventOrigin.webViewCreated(
     monotonicMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
-    tags = baseTags() + ("truapi.host_version" to hostVersion),
+    tags = baseTags() + mapOf("truapi.host_version" to hostVersion, "host.session_id" to sessionId),
     extras = baseExtras() + mapOf(
         "host.session_id" to sessionId,
         "event.monotonic_ms" to monotonicMs,

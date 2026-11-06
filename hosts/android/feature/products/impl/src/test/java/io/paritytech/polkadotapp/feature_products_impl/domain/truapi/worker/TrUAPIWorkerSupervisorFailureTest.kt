@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
@@ -68,9 +69,10 @@ class TrUAPIWorkerSupervisorFailureTest {
         refCounter = Lazy { refCounter },
         navigation = mock(),
         bootTelemetry = HostWorkerBootTelemetry(
-            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
             timeProvider = { 0L },
             capture = { bootEvents += it() },
+            cacheHits = HostCacheHits(),
         ),
         dispatchers = testDispatchers(),
     )
@@ -92,6 +94,28 @@ class TrUAPIWorkerSupervisorFailureTest {
         val event = bootEvents.single()
         assertEquals("host.worker.boot" to "error", event.name to event.tags["outcome"])
         assertNotNull(event.tags["host.session_id"])
+    }
+
+    // A face that times out or finds no worker joins the boot by this session, so it is known from the start.
+    @Test
+    fun `the activation's session is known while it boots, and kept once its boot failed`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val supervisor = supervisorWith(FailOnceThenGateScriptResolver(IllegalStateException("boom"), gate))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        val failedSession = supervisor.sessionId(productId)
+        val failedBootSession = bootEvents.single().tags["host.session_id"]
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        val bootingSession = supervisor.sessionId(productId)
+        supervisor.onDemandChanged(productId, WorkerDemand.STOP)
+        advanceUntilIdle()
+
+        assertEquals(failedBootSession, failedSession)
+        assertNotNull(bootingSession)
+        assertTrue(bootingSession != failedSession)
+        assertNull(supervisor.sessionId(productId))
     }
 
     @Test

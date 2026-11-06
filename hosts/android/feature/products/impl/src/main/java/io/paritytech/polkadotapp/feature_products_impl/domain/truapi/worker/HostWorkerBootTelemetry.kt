@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
@@ -16,6 +17,7 @@ class HostWorkerBootTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
     private val capture: HostEventCapture,
+    private val cacheHits: HostCacheHits,
 ) {
     fun nowMillis(): Long = timeProvider.nowMillis()
 
@@ -24,16 +26,36 @@ class HostWorkerBootTelemetry @Inject internal constructor(
 
     inner class WorkerBoot internal constructor(
         private val productId: ProductId,
-        private val sessionId: String,
+        val sessionId: String,
         private val demandedAtMillis: Long,
     ) {
         private val phases = ConcurrentHashMap<String, Long>()
         private val reported = AtomicBoolean(false)
 
+        // Set on the main thread where the WebView is built, read where its blank page reports ready.
+        @Volatile private var webViewCreatedAtMillis: Long? = null
+
         /** Records how long phase [key] took, from [startedAtMillis] to now. Only its first run counts. */
         fun phase(key: String, startedAtMillis: Long) {
             phases.putIfAbsent(key, timeProvider.nowMillis() - startedAtMillis)
         }
+
+        /** The WebView object exists: [WEBVIEW_CREATE_MS] since [createStartedAtMillis]. Only the first counts. */
+        fun webViewCreated(createStartedAtMillis: Long) {
+            if (webViewCreatedAtMillis != null) return
+            val now = timeProvider.nowMillis()
+            webViewCreatedAtMillis = now
+            phases.putIfAbsent(WEBVIEW_CREATE_MS, now - createStartedAtMillis)
+        }
+
+        /** The blank page is ready: [BLANK_READY_MS] since the WebView existed. Only the first counts. */
+        fun blankReady() {
+            val createdAtMillis = webViewCreatedAtMillis ?: return
+            phases.putIfAbsent(BLANK_READY_MS, timeProvider.nowMillis() - createdAtMillis)
+        }
+
+        /** The activation is gone, and nothing loads under its session again. */
+        fun ended() = cacheHits.forget(sessionId)
 
         /** Reports the boot once, as ended at [endedAtMillis], read where the boot returned. */
         fun finish(outcome: HostEventOutcome, endedAtMillis: Long) {

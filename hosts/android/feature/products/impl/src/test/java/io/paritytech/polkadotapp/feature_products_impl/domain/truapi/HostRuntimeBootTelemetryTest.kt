@@ -8,7 +8,7 @@ import org.junit.Test
 class HostRuntimeBootTelemetryTest {
     private val events = mutableListOf<HostEvent>()
     private val telemetry = HostRuntimeBootTelemetry(
-        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
         timeProvider = { BOOTED_AT },
         capture = { events += it() },
     )

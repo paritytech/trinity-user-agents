@@ -49,6 +49,7 @@ internal class RealDotNsResolver @Inject constructor(
         val lookup = currentCoroutineContext()[ContentLookup]?.apply { computed = true }
         Timber.d("resolving content hash for $domainName")
         val lookupStartedAtMillis = fetchTelemetry.nowMillis()
+        val queueMillis = lookup?.let { lookupStartedAtMillis - it.askedAtMillis } ?: 0L
 
         resolveContentHash(domainName)
             .logFailure("failed to resolve content hash for $domainName")
@@ -57,12 +58,20 @@ internal class RealDotNsResolver @Inject constructor(
             .onFailure {
                 lookup?.load?.let { load ->
                     val contentHashMillis = fetchTelemetry.nowMillis() - lookupStartedAtMillis
-                    fetchTelemetry.report(domainName, load, HostEventOutcome.ERROR, contentHashMillis, lookupStartedAtMillis, null)
+                    fetchTelemetry.report(
+                        domainName,
+                        load,
+                        HostEventOutcome.ERROR,
+                        contentHashMillis,
+                        lookupStartedAtMillis,
+                        bytes = null,
+                        queueMillis,
+                    )
                 }
             }
             .flatMap { contentHash ->
                 val contentHashMillis = fetchTelemetry.nowMillis() - lookupStartedAtMillis
-                resolveContentHash(domainName, contentHash, contentHashMillis, lookup?.load)
+                resolveContentHash(domainName, contentHash, contentHashMillis, queueMillis, lookup?.load)
             }
             .logFailure("failed to resolve $domainName")
             // A domain with nothing registered behind it never reaches the download that reports its
@@ -75,13 +84,17 @@ internal class RealDotNsResolver @Inject constructor(
     //  it should be pinned and never auto-updated. A separate UX flow will prompt the user to
     //  acknowledge and update to a newer version when available.
     override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> {
-        val startedAtMillis = fetchTelemetry.nowMillis()
-        val lookup = ContentLookup(load = currentCoroutineContext()[HostLoadContext])
+        val lookup = ContentLookup(
+            load = currentCoroutineContext()[HostLoadContext],
+            askedAtMillis = fetchTelemetry.nowMillis(),
+        )
         return withContext(dispatchers.computation + lookup) {
             localDomainsCache.getOrCompute(dotNsName)
                 .onSuccess {
                     val load = lookup.load
-                    if (!lookup.computed && load != null) fetchTelemetry.reportMemoryHit(dotNsName, load, startedAtMillis)
+                    if (!lookup.computed && load != null) {
+                        fetchTelemetry.reportMemoryHit(dotNsName, load, lookup.askedAtMillis)
+                    }
                 }
                 // Usually a read that did not land; remembered, it would outlast the outage until restart.
                 .onFailure { localDomainsCache.remove(dotNsName) }
@@ -100,12 +113,13 @@ internal class RealDotNsResolver @Inject constructor(
         dotNsName: String,
         contentHashHex: ContentHash,
         contentHashMillis: Long,
+        queueMillis: Long,
         load: HostLoadContext?,
     ): Result<Uri> {
         val contentHash = contentHashHex.fromHex()
         val fetchStartedAtMillis = fetchTelemetry.nowMillis()
         fun reportFetch(outcome: HostEventOutcome, bytes: Long?) = load?.let {
-            fetchTelemetry.report(dotNsName, it, outcome, contentHashMillis, fetchStartedAtMillis, bytes)
+            fetchTelemetry.report(dotNsName, it, outcome, contentHashMillis, fetchStartedAtMillis, bytes, queueMillis)
         }
         Timber.d("resolving content for content hash $contentHashHex ($dotNsName)")
 
@@ -166,7 +180,10 @@ internal class RealDotNsResolver @Inject constructor(
  * One lookup, and the load it reports for, taken when it was asked. [computed] is set by the cache's
  * compute, so a lookup that leaves it false was answered from memory.
  */
-private class ContentLookup(val load: HostLoadContext?) : AbstractCoroutineContextElement(ContentLookup) {
+private class ContentLookup(
+    val load: HostLoadContext?,
+    val askedAtMillis: Long,
+) : AbstractCoroutineContextElement(ContentLookup) {
     @Volatile
     var computed = false
 

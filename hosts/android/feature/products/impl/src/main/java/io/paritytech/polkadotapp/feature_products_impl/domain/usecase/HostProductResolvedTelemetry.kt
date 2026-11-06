@@ -20,9 +20,14 @@ class HostProductResolvedTelemetry @Inject internal constructor(
 ) {
     fun nowMillis(): Long = timeProvider.nowMillis()
 
-    /** A read from the chain, timed from when the resolve lock was taken; [queueMillis] is the wait for it. */
+    /**
+     * A read from the chain, timed from when the resolve lock was taken; [queueMillis] is the wait for it.
+     * A read that landed claims its session's report, so the lookups that waited on it stay silent; a
+     * failed one claims nothing, so the next read still counts.
+     */
     fun report(productId: ProductId, load: HostLoadContext, startedAtMillis: Long, queueMillis: Long, resolved: Boolean) {
         runCatching {
+            if (capture.enabled && resolved && load.sessionId != null) cacheHits.isFirst(EVENT_NAME, productId.value, load)
             capture.capture {
                 event(
                     productId,

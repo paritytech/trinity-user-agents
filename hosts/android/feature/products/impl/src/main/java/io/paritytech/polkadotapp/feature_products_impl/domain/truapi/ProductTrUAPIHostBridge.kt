@@ -106,6 +106,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     // where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
+    // Set on attach(), before the execution can dial.
+    @Volatile
+    private var rpcExecutable: HostRpcExecutable? = null
+
     private val chainProvider = WebSocketChainProvider(
         // Pure lookup against the snapshot resolved on attach(). The core calls
         // this inline on its dispatcher thread, where blocking on the registry
@@ -113,6 +117,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
+        observer = rpcConnectedTelemetry.observer({ rpcExecutable }) { cachedChains.get().label(it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
@@ -133,7 +138,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
-        rpcExecutable: HostRpcExecutable,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId)
@@ -247,10 +251,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? =
-            chainProvider.connect(genesisHash)?.also { connectionId ->
-                rpcConnectedTelemetry.dialled(connectionId, rpcExecutable) { cachedChains.get().label(genesisHash) }
-            }
+        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
             chainProvider.send(connectionId, request)
@@ -301,13 +302,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
             cachedChains.set(chains)
+            rpcExecutable = HostRpcExecutable(productId, kind, hostSessionId)
             val opened = runtime.openProductExecution(
-                bridge = buildBridge(
-                    productId,
-                    navigationPolicy,
-                    card,
-                    HostRpcExecutable(productId, kind, hostSessionId),
-                ),
+                bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
                 game = gameBridge(productId),

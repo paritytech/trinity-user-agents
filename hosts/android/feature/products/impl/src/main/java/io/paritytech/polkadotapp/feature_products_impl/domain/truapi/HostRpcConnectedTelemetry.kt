@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.parity.truapi.ChainConnectionObserver
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
@@ -9,6 +10,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 /** The product execution a chain connection was dialled for. */
@@ -29,8 +31,22 @@ class HostRpcConnectedTelemetry @Inject internal constructor(
 ) {
     private val dialling = ConcurrentHashMap<UInt, Dial>()
 
-    fun dialled(connectionId: UInt, executable: HostRpcExecutable?, chain: () -> String) {
-        dialling[connectionId] = Dial(chain, executable, timeProvider.nowMillis())
+    fun observer(
+        executable: () -> HostRpcExecutable?,
+        chainLabel: (genesisHash: ByteArray) -> String,
+    ): ChainConnectionObserver = object : ChainConnectionObserver {
+        override fun dialling(connectionId: UInt, genesisHash: ByteArray, attempt: Int) {
+            if (!capture.enabled) return
+            if (attempt == 0) {
+                dialling[connectionId] = Dial({ chainLabel(genesisHash) }, executable(), timeProvider.nowMillis())
+            } else {
+                dialling[connectionId]?.failovers?.incrementAndGet()
+            }
+        }
+
+        override fun closingByHost(connectionId: UInt) {
+            dialling.remove(connectionId)?.let { report(it, HostEventOutcome.ABANDONED) }
+        }
     }
 
     fun responded(connectionId: UInt) {
@@ -55,7 +71,8 @@ class HostRpcConnectedTelemetry @Inject internal constructor(
                     monotonicMs = now,
                     durationMs = now - dial.startedAtMillis,
                     sessionId = dial.executable?.sessionId,
-                    tags = mapOf("chain" to dial.chain()) + dial.executable?.tags().orEmpty(),
+                    tags = mapOf("rpc.chain" to dial.chain()) + dial.executable?.tags().orEmpty(),
+                    extras = mapOf("failover_count" to dial.failovers.get()),
                 )
             }
         }.logFailure("Failed to capture native host RPC connected event")
@@ -66,7 +83,9 @@ class HostRpcConnectedTelemetry @Inject internal constructor(
         "executable.kind" to if (kind == ExecutableKind.WORKER) "worker" else "page",
     )
 
-    private class Dial(val chain: () -> String, val executable: HostRpcExecutable?, val startedAtMillis: Long)
+    private class Dial(val chain: () -> String, val executable: HostRpcExecutable?, val startedAtMillis: Long) {
+        val failovers = AtomicInteger(0)
+    }
 
     companion object {
         const val EVENT_NAME = "host.rpc.connected"

@@ -20,4 +20,20 @@ class HostCacheHitsTest {
 
         assertEquals(listOf(true, false, true, true, true, true), firsts)
     }
+
+    @Test
+    fun `a forgotten session reports again while other sessions and prewarms stay claimed`() {
+        val hits = HostCacheHits()
+        val page = HostLoadContext(HostLoadTrigger.OPEN, "page-session")
+        val other = HostLoadContext(HostLoadTrigger.OPEN, "other-session")
+        val prewarm = HostLoadContext(HostLoadTrigger.PREWARM, null)
+        listOf(page, other, prewarm).forEach { hits.isFirst("host.product.resolved", "peopl.dot", it) }
+
+        hits.forget("page-session")
+
+        assertEquals(
+            listOf(true, false, false),
+            listOf(page, other, prewarm).map { hits.isFirst("host.product.resolved", "peopl.dot", it) },
+        )
+    }
 }

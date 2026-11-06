@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.sentry.Sentry
 import io.sentry.metrics.MetricsUnit
+import io.sentry.metrics.SentryMetricsParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -92,13 +93,19 @@ internal class DeviceReadingsInitializer @Inject constructor(
     }
 }
 
-internal fun interface SentryMetricsCapture {
+internal interface SentryMetricsCapture {
     fun gauge(key: String, value: Double, unit: String?)
+
+    fun distribution(key: String, value: Double, unit: String?, attributes: Map<String, String>)
 }
 
 internal class RealSentryMetricsCapture @Inject constructor() : SentryMetricsCapture {
     override fun gauge(key: String, value: Double, unit: String?) {
         Sentry.metrics().gauge(key, value, unit)
+    }
+
+    override fun distribution(key: String, value: Double, unit: String?, attributes: Map<String, String>) {
+        Sentry.metrics().distribution(key, value, unit, SentryMetricsParameters.create(attributes))
     }
 }
 

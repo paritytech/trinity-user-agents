@@ -50,7 +50,7 @@ class RealResolveProductUseCaseTest {
 
     private val reportedOutcomes = mutableListOf<String?>()
     private val telemetry = HostProductResolvedTelemetry(
-        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
         timeProvider = { 0L },
         capture = { event -> reportedOutcomes += event().tags["outcome"] },
         cacheHits = HostCacheHits(),
@@ -145,11 +145,23 @@ class RealResolveProductUseCaseTest {
     }
 
     @Test
-    fun `a resolution read from the chain is reported, then its cached answer once as a cache hit`() = runBlocking<Unit> {
+    fun `inside a session the read reports once and the cached answers after it stay silent`() = runBlocking<Unit> {
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
         val useCase = useCase()
 
         withContext(OPEN) { repeat(3) { useCase.resolve(productId).getOrThrow() } }
+
+        assertEquals(listOf("ok"), reportedOutcomes)
+    }
+
+    // A page opened after a prewarm read the product finds it cached: that is the page's own step.
+    @Test
+    fun `an answer another load read is a cache hit once per session`() = runBlocking<Unit> {
+        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        val useCase = useCase()
+
+        withContext(HostLoadContext(HostLoadTrigger.PREWARM, sessionId = null)) { useCase.resolve(productId).getOrThrow() }
+        withContext(OPEN) { repeat(2) { useCase.resolve(productId).getOrThrow() } }
 
         assertEquals(listOf("ok", "cache_hit"), reportedOutcomes)
     }
@@ -173,7 +185,7 @@ class RealResolveProductUseCaseTest {
         val events = mutableListOf<HostEvent>()
         val times = ArrayDeque(listOf(ASKED_AT, LOCKED_AT, RESOLVED_AT))
         val timed = HostProductResolvedTelemetry(
-            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L, "launch-7") },
             timeProvider = { times.removeFirst() },
             capture = { event -> events += event() },
             cacheHits = HostCacheHits(),

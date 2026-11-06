@@ -47,7 +47,7 @@ class RealProductContentWarmUpTest {
         whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("widget.game.dot")).thenReturn(Result.success(archive))
 
-        val result = warmUp.warmUp(productId)
+        val result = warmUp.warmUp(productId, openSessionId = null)
 
         verify(dotNsResolver).resolveToLocalUri("widget.game.dot")
         assertTrue(result.isSuccess)
@@ -61,7 +61,7 @@ class RealProductContentWarmUpTest {
         whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP)).thenReturn(Result.success("app.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("app.game.dot")).thenReturn(Result.success(archive))
 
-        val result = warmUp.warmUp(productId)
+        val result = warmUp.warmUp(productId, openSessionId = null)
 
         verify(dotNsResolver).resolveToLocalUri("app.game.dot")
         assertTrue(result.isSuccess)
@@ -75,19 +75,20 @@ class RealProductContentWarmUpTest {
         whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("widget.game.dot")).thenReturn(Result.failure(failure))
 
-        val result = warmUp.warmUp(productId)
+        val result = warmUp.warmUp(productId, openSessionId = null)
 
         assertEquals(failure, result.exceptionOrNull())
     }
 
     // A warm-up runs before the page it is for, so its fetch must not be reported as that page's open.
     @Test
-    fun `the archive is fetched as a prewarm`() = runBlocking {
+    fun `the archive is fetched as a prewarm, or as the open's load under the session the tap minted`() = runBlocking {
         whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
-        val triggers = mutableListOf<HostLoadTrigger?>()
+        val loads = mutableListOf<Pair<HostLoadTrigger?, String?>>()
         val recording = object : DotNsResolver {
             override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> {
-                triggers += currentCoroutineContext()[HostLoadContext]?.trigger
+                val load = currentCoroutineContext()[HostLoadContext]
+                loads += load?.trigger to load?.sessionId
                 return Result.success(archive)
             }
 
@@ -97,17 +98,19 @@ class RealProductContentWarmUpTest {
 
             override suspend fun clearCache() = Unit
         }
+        val warmUp = RealProductContentWarmUp(recording, servingHostResolver, runtimeSettings)
 
-        RealProductContentWarmUp(recording, servingHostResolver, runtimeSettings).warmUp(productId)
+        warmUp.warmUp(productId, openSessionId = null)
+        warmUp.warmUp(productId, openSessionId = "tap-session")
 
-        assertEquals(listOf<HostLoadTrigger?>(HostLoadTrigger.PREWARM), triggers)
+        assertEquals(listOf(HostLoadTrigger.PREWARM to null, HostLoadTrigger.OPEN to "tap-session"), loads)
     }
 
     @Test
     fun `a product whose serving host cannot be worked out is not resolved`() = runBlocking {
         whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenThrowUnsafe(IllegalStateException("no manifest"))
 
-        val result = warmUp.warmUp(productId)
+        val result = warmUp.warmUp(productId, openSessionId = null)
 
         verify(dotNsResolver, never()).resolveToLocalUri(anyString())
         assertTrue(result.isFailure)
