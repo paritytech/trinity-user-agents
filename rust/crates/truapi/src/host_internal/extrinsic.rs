@@ -39,7 +39,7 @@ use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
 use web_time::Instant;
 
 use crate::{
-	chain_runtime::{ChainRuntime, encode_hex},
+	chain_runtime::{ChainRuntime, CurrentBlockError, encode_hex},
 	host_logic::product_account::SR25519_SIGNING_CONTEXT,
 };
 
@@ -309,7 +309,12 @@ pub enum LocalTransactionError {
 		/// Versions the runtime metadata declares.
 		declared: Vec<u8>,
 	},
-	/// The runtime metadata needed to choose and encode the format is unavailable.
+	/// The host could not connect to the chain, for instance because it serves
+	/// no such chain.
+	#[display("{_0}")]
+	NoChainConnection(String),
+	/// The node could not be asked for the current block or its runtime, such
+	/// as during a halt, or did not answer in time. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// The caller's extension list does not fit the runtime's pipeline.
@@ -330,17 +335,17 @@ pub async fn build_local_transaction(
 	tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
 	let started = Instant::now();
-	let at_block = async {
-		let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-		})?;
-		client.at_current_block().await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!(
-				"cannot select a metadata block: {error}"
-			))
-		})
-	}
-	.await;
+	let at_block = chain.current_block(&genesis_hash).await.map_err(|error| match error {
+		CurrentBlockError::NoChainConnection(failure) => LocalTransactionError::NoChainConnection(
+			format!("cannot load chain metadata: {failure}"),
+		),
+		CurrentBlockError::ChainUnavailable(reason) => LocalTransactionError::ChainUnavailable(
+			format!("cannot select a metadata block: {reason}"),
+		),
+		CurrentBlockError::Other(reason) => {
+			LocalTransactionError::Other(format!("cannot select a metadata block: {reason}"))
+		},
+	});
 	let waited = started.elapsed();
 	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
 		let genesis = encode_hex(&genesis_hash);

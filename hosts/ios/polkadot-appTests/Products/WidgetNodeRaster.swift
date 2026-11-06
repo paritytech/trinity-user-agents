@@ -30,31 +30,6 @@ enum WidgetNodeRaster {
         return try buckets(of: #require(renderer.uiImage?.cgImage)).mapValues(\.count)
     }
 
-    /// Where each colour bucket the node paints lies, drawn in the app's own
-    /// window so its image loads run, which `ImageRenderer` skips. Drawn again
-    /// until `ready` holds, for up to two seconds, so a picture still loading
-    /// is waited for rather than raced.
-    static func bounds(
-        of node: CustomMessageWidgetNode,
-        in size: CGSize,
-        resolveImage: WidgetImageResolver? = nil,
-        until ready: ([String: CGRect]) -> Bool = { _ in true }
-    ) async throws -> [String: CGRect] {
-        let view = CustomMessageWidgetView(node: node, resolveImage: resolveImage)
-            .frame(width: size.width, height: size.height, alignment: .topLeading)
-            .background(backdropColour)
-        let window = try window(showing: view, in: size)
-        defer { window.isHidden = true }
-
-        var drawn: [String: CGRect] = [:]
-        for _ in 0 ..< 20 {
-            try await Task.sleep(for: .milliseconds(100))
-            drawn = try buckets(of: snapshot(of: window)).mapValues(\.bounds)
-            if ready(drawn) { break }
-        }
-        return drawn
-    }
-
     /// The view drawn on screen in the app's own window under the picked
     /// theme, as RGBA bytes row by row. Offscreen rendering leaves text fields
     /// without the colours a window gives them, so colour checks draw here.

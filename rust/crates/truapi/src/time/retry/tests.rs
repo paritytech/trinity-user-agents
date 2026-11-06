@@ -53,6 +53,46 @@ fn retry_attempts_at_once_then_waits_the_pause_each_failure_asks_for() {
 	);
 }
 
+/// Cancelling during a pause returns the failure that started it, and no
+/// further attempt is made.
+#[test]
+fn retry_on_until_stops_at_a_cancelled_pause() {
+	let timer = PendingTimer;
+	let cancel = CancellationToken::default();
+	let mut attempts = 0;
+
+	let result = block_on(async {
+		let retrying = retry_until_cancelled(
+			&timer,
+			&cancel,
+			|| {
+				attempts += 1;
+				ready(if attempts < 3 {
+					ControlFlow::Continue(attempts)
+				} else {
+					ControlFlow::Break(())
+				})
+			},
+			|_| Duration::from_secs(1),
+		);
+		let cancel = async {
+			cancel.cancel();
+		};
+		futures::join!(retrying, cancel).0
+	});
+
+	assert_eq!((result, attempts), (Err(1), 1));
+}
+
+/// Every wait stays pending, so only a cancellation can end it.
+struct PendingTimer;
+
+impl Timer for PendingTimer {
+	fn sleep(&self, _duration: Duration) -> BoxFuture<'static, ()> {
+		Box::pin(futures::future::pending())
+	}
+}
+
 #[test]
 fn pauses_double_from_the_first_and_hold_at_the_longest() {
 	let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
