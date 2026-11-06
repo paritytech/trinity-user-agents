@@ -79,6 +79,111 @@ struct PocketFaceSourceTests {
 
         #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
     }
+
+    @Test
+    func aStreamThatFailsAfterItsFirstFaceReportsOnlyTheFace() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(FaceThenFailure()),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok"])
+    }
+
+    /// A stream torn down with the card is the card going, not the product failing.
+    @Test
+    func aCancelledStreamIsAbandonedNotFailed() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(CancelledFaceStreams()),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["abandoned"])
+    }
+
+    /// The face is joined to the worker that draws it, and says whether that worker was already up.
+    @Test
+    func aFaceCarriesItsWorkersSessionAndTemperature() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let session = UUID()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(
+                StubFaceStreams(faces: [.string(text: "live")]),
+                status: PocketWorkerStatus(hostSessionId: session, isRunning: true)
+            ),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.first?.tags["worker"] == "warm")
+        #expect(recorder.events.first?.tags["host.session_id"] == session.uuidString.lowercased())
+    }
+
+    @Test
+    func aFaceNotDrawnInItsWindowTimesOutAndTheCardKeepsWaiting() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(SilentFaceStreams()),
+            telemetry: HostLoadTelemetry(recorder: recorder),
+            faceTimeout: .milliseconds(10)
+        )
+
+        let drawing = Task { for await _ in source.faces(for: loyalty) {} }
+        try await recorder.waitForEvents(count: 1)
+        drawing.cancel()
+        await drawing.value
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["timeout"])
+        #expect(recorder.events.first?.tags["worker"] == "cold")
+    }
+
+    @Test
+    func aCardWhoseProductHasNoWorkerReportsNoWorker() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let handlers = UnservedProduct()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: handlers,
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        let drawing = Task { for await _ in source.faces(for: loyalty) {} }
+        handlers.refuse(loyalty.productId)
+        try await recorder.waitForEvents(count: 1)
+        drawing.cancel()
+        await drawing.value
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["no_worker"])
+    }
+
+    @Test
+    func aCardThatGoesBeforeItsFaceIsAbandoned() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(SilentFaceStreams()),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        let drawing = Task { for await _ in source.faces(for: loyalty) {} }
+        try await Task.sleep(for: .milliseconds(20))
+        drawing.cancel()
+        await drawing.value
+        try await recorder.waitForEvents(count: 1)
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["abandoned"])
+    }
 }
 
 // MARK: - Fixtures
@@ -147,14 +252,85 @@ private actor NoFaceStore: PocketCardStore {
 /// A product whose handler is already drawing its cards.
 private struct RunningHandler: PocketFaceStreamsResolving {
     let handler: any PocketFaceStreaming
+    let status: PocketWorkerStatus
 
-    init(_ handler: any PocketFaceStreaming) {
+    init(_ handler: any PocketFaceStreaming, status: PocketWorkerStatus = .none) {
         self.handler = handler
+        self.status = status
     }
 
     func streams(of _: ProductId) -> (any PocketFaceStreaming)? { handler }
 
     func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? { handler }
+
+    func workerStatus(of _: ProductId) -> PocketWorkerStatus { status }
+
+    func unservedProducts() -> AnyAsyncSequence<Set<ProductId>> {
+        AsyncStream<Set<ProductId>> { _ in }.eraseToAnyAsyncSequence()
+    }
+}
+
+/// A product no handler ever starts for, until the test says it has none.
+private final class UnservedProduct: PocketFaceStreamsResolving, @unchecked Sendable {
+    private let unserved = AsyncCurrentValueSubject<Set<ProductId>>([])
+
+    func refuse(_ productId: ProductId) {
+        unserved.send([productId])
+    }
+
+    func streams(of _: ProductId) -> (any PocketFaceStreaming)? { nil }
+
+    func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? {
+        // Never answered: the real handlers keep a card waiting for a later reconcile.
+        try? await Task.sleep(for: .seconds(3_600))
+        return nil
+    }
+
+    func workerStatus(of _: ProductId) -> PocketWorkerStatus { .none }
+
+    func unservedProducts() -> AnyAsyncSequence<Set<ProductId>> {
+        unserved.eraseToAnyAsyncSequence()
+    }
+}
+
+private extension PocketWorkerStatus {
+    static let none = PocketWorkerStatus(hostSessionId: nil, isRunning: false)
+}
+
+private struct FaceThenFailure: PocketFaceStreaming {
+    struct Dropped: Error {}
+
+    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.string(text: "live"))
+            continuation.finish(throwing: Dropped())
+        }
+    }
+
+    func send(action _: String, payload _: Data, for _: PocketCardKey) {}
+}
+
+/// Draws nothing until cancelled.
+private struct SilentFaceStreams: PocketFaceStreaming {
+    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+        AsyncThrowingStream { continuation in
+            let held = Task {
+                try? await Task.sleep(for: .seconds(3_600))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in held.cancel() }
+        }
+    }
+
+    func send(action _: String, payload _: Data, for _: PocketCardKey) {}
+}
+
+private struct CancelledFaceStreams: PocketFaceStreaming {
+    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+        AsyncThrowingStream { $0.finish(throwing: CancellationError()) }
+    }
+
+    func send(action _: String, payload _: Data, for _: PocketCardKey) {}
 }
 
 /// A product with no handler running: it only starts after the card has
@@ -174,5 +350,11 @@ private final class LateHandlers: PocketFaceStreamsResolving, @unchecked Sendabl
         }
 
         return nil
+    }
+
+    func workerStatus(of _: ProductId) -> PocketWorkerStatus { .none }
+
+    func unservedProducts() -> AnyAsyncSequence<Set<ProductId>> {
+        AsyncStream<Set<ProductId>> { _ in }.eraseToAnyAsyncSequence()
     }
 }

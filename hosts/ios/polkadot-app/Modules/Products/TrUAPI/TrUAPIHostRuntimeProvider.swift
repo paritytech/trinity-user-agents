@@ -49,9 +49,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
+    private let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    /// Callers retry a build that failed, so only the first failure is reported.
+    private var bootFailureReported = false
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
     /// Set once at startup, before any product opens. The runtime is built on
@@ -133,6 +136,39 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             return cachedRuntime
         }
 
+        let startedAt = telemetry.now()
+
+        do {
+            let runtime = try buildRuntime()
+            cachedRuntime = runtime
+            reportBoot(.ok, startedAt: startedAt)
+            return runtime
+        } catch {
+            if !bootFailureReported {
+                bootFailureReported = true
+                reportBoot(.error, startedAt: startedAt)
+            }
+            throw error
+        }
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    func reportBoot(_ outcome: HostEventOutcome, startedAt: Int?) {
+        guard let startedAt else { return }
+
+        telemetry.record { origin, now in
+            .runtimeBoot(
+                outcome: outcome,
+                durationMilliseconds: now - startedAt,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
+    }
+
+    /// Called under `lock`.
+    func buildRuntime() throws -> TrUAPIHostRuntime {
         let secret = try entropyManager.fetchRootEntropy()
         let networkSuffix = try tldProvider.currentTldOrError()
         let runtimeConfig = try Self.makeRuntimeConfig(
@@ -189,7 +225,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
-        cachedRuntime = runtime
         return runtime
     }
 }

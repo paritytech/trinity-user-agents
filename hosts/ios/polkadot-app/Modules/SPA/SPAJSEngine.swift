@@ -7,6 +7,7 @@ import WebKit
 final class SPAJSEngine: NSObject, @unchecked Sendable {
     private static let webKitErrorDomain = "WebKitErrorDomain"
     private static let frameLoadInterruptedByPolicyChange = 102
+    private static let firstFailingHTTPStatus = 400
 
     private(set) var state: JSEngineState = .initializing
 
@@ -14,6 +15,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private weak var contentController: WKUserContentController?
     private var initContinuation: CheckedContinuation<Void, Error>?
     private var messageHandlers: [String: (Any) -> Void] = [:]
+    private var mainFrameStatusFailed = false
 
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
 
@@ -227,7 +229,7 @@ extension SPAJSEngine: WKNavigationDelegate {
     }
 
     func webView(_: WKWebView, didFinish _: WKNavigation!) {
-        onPageLoadFinished?(true)
+        onPageLoadFinished?(!mainFrameStatusFailed)
     }
 
     func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
@@ -238,8 +240,22 @@ extension SPAJSEngine: WKNavigationDelegate {
         finishFailedLoad(error)
     }
 
+    func webView(
+        _: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        if navigationResponse.isForMainFrame {
+            mainFrameStatusFailed = (navigationResponse.response as? HTTPURLResponse)
+                .map { $0.statusCode >= Self.firstFailingHTTPStatus } ?? false
+        }
+
+        decisionHandler(.allow)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         logger.error("WebView process terminated, attempting recovery reload")
+        onPageLoadFinished?(false)
         webView.reload()
     }
 

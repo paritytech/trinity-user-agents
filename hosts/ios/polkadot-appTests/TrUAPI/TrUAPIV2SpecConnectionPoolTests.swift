@@ -61,8 +61,30 @@ struct TrUAPIV2SpecConnectionPoolTests {
         #expect(event.tags["outcome"] == "ok")
         #expect(event.tags["chain"] == genesis.toHex())
         #expect(event.extras["duration_ms"] == .integer(436))
-        #expect(event.extras["event.monotonic_ms"] == .integer(6_916))
-        #expect(event.extras["host.session_id"] == nil)
+        #expect(event.extras["event.monotonic_ms"] == .integer(7_352))
+        #expect(event.tags["host.session_id"] == nil)
+        #expect(event.tags["product.id"] == nil)
+        #expect(event.tags["executable.kind"] == nil)
+    }
+
+    /// A product's connection says which product, which of its executables, and which session it serves.
+    @Test func aProductsConnectionNamesItsExecutableAndSession() throws {
+        let socket = MockChainSocket()
+        let recorder = RecordingHostEventRecorder()
+        let session = UUID()
+        let pool = makePool(
+            registry: makeRegistry(serving: [socket]),
+            telemetry: HostLoadTelemetry(recorder: recorder),
+            executable: HostExecutableOwner(productID: "game.paseo", kind: .worker, hostSessionID: session)
+        )
+        _ = try #require(pool.connect(genesisHash: genesis))
+
+        socket.simulateReceive("first")
+
+        let event = try #require(recorder.events.first)
+        #expect(event.tags["product.id"] == "game.paseo")
+        #expect(event.tags["executable.kind"] == "worker")
+        #expect(event.tags["host.session_id"] == session.uuidString.lowercased())
     }
 
     @Test func aSocketDyingBeforeItsFirstFrameReportsAnError() throws {
@@ -391,6 +413,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
         handler: RecordingChainEventHandler? = nil,
         lifecycle: Lifecycle = Lifecycle(),
         telemetry: HostLoadTelemetry = .disabled,
+        executable: HostExecutableOwner? = nil,
         logger: SDKLoggerProtocol = StubLogger()
     ) -> TrUAPIV2SpecConnectionPool {
         let pool = TrUAPIV2SpecConnectionPool(
@@ -399,6 +422,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
             dateProvider: lifecycle.dateProvider,
             resumePolicy: .init(expiryThreshold: 30, probeTimeout: 5),
             telemetry: telemetry,
+            executable: executable,
             logger: logger
         )
         pool.eventHandler = handler

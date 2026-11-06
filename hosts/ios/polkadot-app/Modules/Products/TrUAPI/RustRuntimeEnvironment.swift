@@ -49,9 +49,10 @@ struct RustRuntimeEnvironment {
     /// the pool, so holding `ExecutionModel` pins the whole chain.
     func makeSPAExecution(
         productId: ProductId,
-        routers: ProductRoutersFacadeProtocol
+        routers: ProductRoutersFacadeProtocol,
+        hostSessionId: UUID
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, purpose: .app)
+        try makeExecution(productId: productId, routers: routers, purpose: .app, hostSessionId: hostSessionId)
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -62,12 +63,14 @@ struct RustRuntimeEnvironment {
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging
+        chatMessaging: any ProductChatMessaging,
+        hostSessionId: UUID?
     ) throws -> ExecutionModel {
         try makeExecution(
             productId: productId,
             routers: routers,
-            purpose: .worker(chatMessaging: chatMessaging)
+            purpose: .worker(chatMessaging: chatMessaging),
+            hostSessionId: hostSessionId
         )
     }
 }
@@ -84,13 +87,22 @@ private extension RustRuntimeEnvironment {
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        purpose: ExecutionPurpose
+        purpose: ExecutionPurpose,
+        hostSessionId: UUID?
     ) throws -> ExecutionModel {
+        let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
         let chainConnections = TrUAPIV2SpecConnectionPool(
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
-            telemetry: IssueMonitoringFactory.createHostLoadTelemetry(),
+            telemetry: telemetry,
+            executable: telemetry.isEnabled
+                ? HostExecutableOwner(
+                    productID: productId.rawValue,
+                    kind: purpose.telemetryKind,
+                    hostSessionID: hostSessionId
+                )
+                : nil,
             logger: logger
         )
 
@@ -162,6 +174,13 @@ extension ExecutionPurpose {
     var executionKind: ExecutableKind {
         switch self {
         case .app: .app
+        case .worker: .worker
+        }
+    }
+
+    var telemetryKind: HostExecutableKind {
+        switch self {
+        case .app: .page
         case .worker: .worker
         }
     }

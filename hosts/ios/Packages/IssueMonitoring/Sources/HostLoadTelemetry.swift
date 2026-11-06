@@ -5,25 +5,25 @@ public struct HostLoadTelemetry: Sendable {
 
     private let recorder: (any HostEventRecording)?
     private let origin: HostEventOrigin
-    private let sessions: HostSessionRegistry
+    private let cacheHits: HostCacheHitLedger
     private let monotonicMilliseconds: @Sendable () -> Int
 
     public init(
         recorder: any HostEventRecording,
         origin: HostEventOrigin = .current,
-        sessions: HostSessionRegistry = .shared,
+        cacheHits: HostCacheHitLedger = .shared,
         monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
     ) {
         self.recorder = recorder
         self.origin = origin
-        self.sessions = sessions
+        self.cacheHits = cacheHits
         self.monotonicMilliseconds = monotonicMilliseconds
     }
 
     private init() {
         recorder = nil
         origin = .current
-        sessions = HostSessionRegistry()
+        cacheHits = HostCacheHitLedger()
         monotonicMilliseconds = { 0 }
     }
 
@@ -35,21 +35,53 @@ public struct HostLoadTelemetry: Sendable {
         isEnabled ? monotonicMilliseconds() : nil
     }
 
-    public func openSession(productID: String, sessionID: UUID) {
-        guard isEnabled else { return }
-        sessions.open(productID: productID, sessionID: sessionID)
+    public func makeSessionID() -> UUID? {
+        isEnabled ? UUID() : nil
     }
 
-    public func closeSession(productID: String, sessionID: UUID) {
-        guard isEnabled else { return }
-        sessions.close(productID: productID, sessionID: sessionID)
+    public func withContext<R>(
+        session: UUID?,
+        trigger: HostLoadTrigger,
+        isolation _: isolated (any Actor)? = #isolation,
+        operation: () async throws -> R
+    ) async rethrows -> R {
+        guard isEnabled else { return try await operation() }
+
+        return try await HostLoadContext.$current.withValue(
+            HostLoadContext(sessionID: session, trigger: trigger),
+            operation: operation
+        )
     }
 
-    public func sessionID(forProductOrSubname name: String) -> UUID? {
-        sessions.sessionID(forProductOrSubname: name)
+    /// Steps report only inside a load context: a lookup made for an icon or a name is not a load.
+    public var context: HostLoadContext? {
+        isEnabled ? HostLoadContext.current : nil
+    }
+
+    /// The clock, read only for a step that will report: one run inside a load context.
+    public func loadStepStart() -> Int? {
+        context == nil ? nil : now()
+    }
+
+    public func isFirstCacheHit(of step: String, productID: String) -> Bool {
+        guard let context else { return false }
+
+        return cacheHits.claim(step: step, productID: productID, context: context)
     }
 
     public func record(_ event: (_ origin: HostEventOrigin, _ monotonicMilliseconds: Int) -> HostEvent) {
         recorder?.record(event(origin, monotonicMilliseconds()))
     }
+}
+
+public struct HostLoadContext: Sendable, Equatable {
+    public let sessionID: UUID?
+    public let trigger: HostLoadTrigger
+
+    public init(sessionID: UUID?, trigger: HostLoadTrigger) {
+        self.sessionID = sessionID
+        self.trigger = trigger
+    }
+
+    @TaskLocal static var current: HostLoadContext?
 }

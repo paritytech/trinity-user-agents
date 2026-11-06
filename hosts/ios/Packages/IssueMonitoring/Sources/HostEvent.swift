@@ -20,6 +20,12 @@ public struct HostEvent: Sendable, Equatable {
         self.extras = extras
     }
 
+    public var durationMilliseconds: Int? {
+        guard case let .integer(duration)? = extras["duration_ms"] else { return nil }
+
+        return duration
+    }
+
     /// An event carrying the fields every host event shares; `tags` and `extras` add its own.
     public static func make(
         name: String,
@@ -65,18 +71,21 @@ public struct HostEvent: Sendable, Equatable {
         truapiHostVersion: String,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        make(
+        let session = hostSessionID.telemetryValue
+
+        return make(
             name: "host.webview.created",
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["truapi.host_version": truapiHostVersion],
-            extras: ["host.session_id": .string(hostSessionID.uuidString.lowercased())]
+            tags: ["truapi.host_version": truapiHostVersion, "host.session_id": session],
+            extras: ["host.session_id": .string(session)]
         )
     }
 
     public static func productResolved(
         productID: String,
         outcome: HostEventOutcome,
+        trigger: HostLoadTrigger,
         durationMilliseconds: Int,
         hostSessionID: UUID?,
         origin: HostEventOrigin,
@@ -89,24 +98,23 @@ public struct HostEvent: Sendable, Equatable {
             hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID]
+            tags: ["product.id": productID, "trigger": trigger.rawValue]
         )
     }
 
     public static func bulletinFetch(
         domain: String,
         outcome: HostEventOutcome,
+        trigger: HostLoadTrigger,
         durationMilliseconds: Int,
-        contentHashMilliseconds: Int,
+        contentHashMilliseconds: Int?,
         bytes: Int?,
         hostSessionID: UUID?,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        var extras = [
-            "dotns.domain": HostEventValue.string(domain),
-            "dotns.content_hash_ms": .integer(contentHashMilliseconds)
-        ]
+        var extras = ["dotns.domain": HostEventValue.string(domain)]
+        extras["dotns.content_hash_ms"] = contentHashMilliseconds.map(HostEventValue.integer)
         extras["bulletin.bytes"] = bytes.map(HostEventValue.integer)
 
         return step(
@@ -116,33 +124,40 @@ public struct HostEvent: Sendable, Equatable {
             hostSessionID: hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: [:],
+            tags: ["trigger": trigger.rawValue],
             extras: extras
         )
     }
 
     public static func rpcConnected(
         chain: String,
+        executable: HostExecutableOwner?,
         outcome: HostEventOutcome,
         durationMilliseconds: Int,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        step(
+        var tags = ["chain": chain]
+        tags["product.id"] = executable?.productID
+        tags["executable.kind"] = executable?.kind.rawValue
+
+        return step(
             name: "host.rpc.connected",
             outcome: outcome,
             durationMilliseconds: durationMilliseconds,
-            hostSessionID: nil,
+            hostSessionID: executable?.hostSessionID,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["chain": chain]
+            tags: tags
         )
     }
 
     public static func pocketFaceLoaded(
         productID: String,
         outcome: HostEventOutcome,
+        worker: HostWorkerTemperature,
         durationMilliseconds: Int,
+        hostSessionID: UUID?,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
@@ -150,10 +165,54 @@ public struct HostEvent: Sendable, Equatable {
             name: "host.pocket.face_loaded",
             outcome: outcome,
             durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["product.id": productID, "worker": worker.rawValue]
+        )
+    }
+
+    public static func workerBoot(
+        productID: String,
+        outcome: HostEventOutcome,
+        phases: HostWorkerBootPhases,
+        durationMilliseconds: Int,
+        hostSessionID: UUID?,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        var extras: [String: HostEventValue] = [:]
+        extras["resolve_ms"] = phases.resolve.map(HostEventValue.integer)
+        extras["execution_open_ms"] = phases.executionOpen.map(HostEventValue.integer)
+        extras["webview_create_ms"] = phases.webViewCreate.map(HostEventValue.integer)
+        extras["blank_ready_ms"] = phases.blankReady.map(HostEventValue.integer)
+
+        return step(
+            name: "host.worker.boot",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["product.id": productID],
+            extras: extras
+        )
+    }
+
+    public static func runtimeBoot(
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        step(
+            name: "host.runtime.boot",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
             hostSessionID: nil,
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["product.id": productID]
+            tags: [:]
         )
     }
 
@@ -181,6 +240,56 @@ public enum HostEventOutcome: String, Sendable {
     case ok
     case error
     case cacheHit = "cache_hit"
+    case timeout
+    case noWorker = "no_worker"
+    case abandoned
+}
+
+/// Why a load step ran.
+public enum HostLoadTrigger: String, Sendable {
+    case open
+    case refresh
+    case prewarm
+}
+
+public enum HostExecutableKind: String, Sendable {
+    case page
+    case worker
+}
+
+public enum HostWorkerTemperature: String, Sendable {
+    case warm
+    case cold
+}
+
+public struct HostExecutableOwner: Sendable, Equatable {
+    public let productID: String
+    public let kind: HostExecutableKind
+    public let hostSessionID: UUID?
+
+    public init(productID: String, kind: HostExecutableKind, hostSessionID: UUID?) {
+        self.productID = productID
+        self.kind = kind
+        self.hostSessionID = hostSessionID
+    }
+}
+
+public struct HostWorkerBootPhases: Sendable, Equatable {
+    public var resolve: Int?
+    public var executionOpen: Int?
+    public var webViewCreate: Int?
+    public var blankReady: Int?
+
+    public init(resolve: Int? = nil, executionOpen: Int? = nil, webViewCreate: Int? = nil, blankReady: Int? = nil) {
+        self.resolve = resolve
+        self.executionOpen = executionOpen
+        self.webViewCreate = webViewCreate
+        self.blankReady = blankReady
+    }
+}
+
+private extension UUID {
+    var telemetryValue: String { uuidString.lowercased() }
 }
 
 private extension HostEvent {
@@ -194,12 +303,15 @@ private extension HostEvent {
         tags: [String: String],
         extras: [String: HostEventValue] = [:]
     ) -> HostEvent {
+        let session = hostSessionID?.telemetryValue
+
         var stepTags = tags
         stepTags["outcome"] = outcome.rawValue
+        stepTags["host.session_id"] = session
 
         var stepExtras = extras
         stepExtras["duration_ms"] = .integer(durationMilliseconds)
-        stepExtras["host.session_id"] = hostSessionID.map { HostEventValue.string($0.uuidString.lowercased()) }
+        stepExtras["host.session_id"] = session.map(HostEventValue.string)
 
         return make(
             name: name,

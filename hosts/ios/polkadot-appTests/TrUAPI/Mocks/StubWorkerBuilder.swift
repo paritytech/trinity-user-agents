@@ -72,7 +72,8 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     func makeRuntime(
         productId: ProductId,
-        context _: ProductWorkerContext
+        context _: ProductWorkerContext,
+        boot: WorkerBootTrace?
     ) async throws -> TrUAPIWorkerRuntime {
         if cannotBuild { throw TrUAPIWorkerError.noWorker(productId) }
 
@@ -109,7 +110,8 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
                 let engine = MockJSEngine()
                 self?.state.withLock { $0.engines[productId] = engine }
                 return engine
-            }
+            },
+            boot: boot
         )
     }
 }

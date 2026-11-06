@@ -131,6 +131,7 @@ private extension SPAFlowStateProvider {
                 backgroundExecutor: backgroundExecutor,
                 diagnostics: ProductLoadDiagnostics(reporter: IssueReportingFacade.shared)
             ),
+            telemetry: telemetry,
             logger: Logger.shared
         )
     }
