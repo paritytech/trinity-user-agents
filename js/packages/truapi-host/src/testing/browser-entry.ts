@@ -6,6 +6,7 @@
 
 import { asProductId } from "@parity/truapi";
 import { startTestHost } from "./host-page.js";
+import { productUrlFor } from "./host-page-url.js";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 import type { DevAccount, DevAccountName } from "./dev-accounts.js";
 
@@ -51,7 +52,8 @@ const logLevel = params.get("logLevel") ?? undefined;
 const rawStorage = params.get("storage");
 
 void startTestHost({
-  productUrl,
+  // A deep link on the host page reaches the product, as on a real host.
+  productUrl: productUrlFor(productUrl, window.location),
   container,
   mock: rawMock ? (JSON.parse(rawMock) as MockHostConfig) : undefined,
   runtimeConfig: {
