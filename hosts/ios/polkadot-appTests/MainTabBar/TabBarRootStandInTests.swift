@@ -4,7 +4,7 @@ import UIKit
 
 /// An open Pocket card is pushed over the Wallet, yet Android shows its tab bar
 /// as it does on the Pocket: shown, unfoldable, with the page ending above it,
-/// and a tap on the selected tab leaves the card alone.
+/// and a tap on the selected tab pops the card off the stack.
 @MainActor
 struct TabBarRootStandInTests {
     @Test
@@ -21,7 +21,7 @@ struct TabBarRootStandInTests {
     }
 
     @Test
-    func leavesAStandInAloneWhenItsTabIsTappedAgain() {
+    func popsAStandInWhenItsTabIsTappedAgain() {
         let standingIn = UINavigationController(rootViewController: UIViewController())
         standingIn.setViewControllers([UIViewController(), StandInScreen()], animated: false)
         let pushed = UINavigationController(rootViewController: UIViewController())
@@ -29,18 +29,18 @@ struct TabBarRootStandInTests {
 
         let actions = [standingIn, pushed].map(TabBarReselectionPolicy.action(for:))
 
-        #expect(actions == [.ignore, .popToRoot(pushed)])
+        #expect(actions == [.popToRoot(standingIn), .popToRoot(pushed)])
     }
 
     @Test
-    func collectiblesIsTheTabRootAndIsLeftAloneWhenItsTabIsTappedAgain() {
+    func collectiblesIsTheTabRootAndPopsWhenItsTabIsTappedAgain() {
         let root = UIViewController()
         let collectibles = CollectiblesViewController(product: StubSPAView())
         let navigation = UINavigationController(rootViewController: root)
         navigation.setViewControllers([root, collectibles], animated: false)
 
         #expect(TabBarHiddenPolicy.isTabRoot(in: [root, collectibles], showing: collectibles))
-        #expect(TabBarReselectionPolicy.action(for: navigation) == .ignore)
+        #expect(TabBarReselectionPolicy.action(for: navigation) == .popToRoot(navigation))
     }
 }
 
