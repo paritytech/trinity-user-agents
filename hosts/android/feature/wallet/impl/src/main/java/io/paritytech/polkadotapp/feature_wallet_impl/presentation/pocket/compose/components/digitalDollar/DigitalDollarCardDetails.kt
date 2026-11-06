@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -129,6 +130,7 @@ private fun DigitalDollarCardDetailsContent(
     val closeDrag = rememberCardCloseDragState()
 
     val scrollState = rememberScrollState()
+    val pageAtTop by remember { derivedStateOf { scrollState.value == 0 } }
 
     Column(
         modifier = Modifier
@@ -145,6 +147,7 @@ private fun DigitalDollarCardDetailsContent(
                 .pocketCardSharedElement(cardIndex)
                 .draggable(
                     orientation = Orientation.Vertical,
+                    enabled = pageAtTop,
                     state = rememberDraggableState(closeDrag::drag),
                     onDragStarted = { closeDrag.beginDrag() },
                     onDragStopped = { closeDrag.release(onBack) }
