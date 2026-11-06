@@ -145,6 +145,10 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             }
         }
     }
+
+    func didFinishPageLoad(loaded: Bool) {
+        Task { [runtime] in await runtime?.didFinishPageLoad(loaded: loaded) }
+    }
 }
 
 private extension SPARustRuntimeInteractor {

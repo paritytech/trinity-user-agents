@@ -1,5 +1,6 @@
 import Foundation
 import CarParser
+import IssueMonitoring
 
 public enum DotNsResolverError: Error {
     case resolutionFailed(String)
@@ -32,17 +33,20 @@ public final class DotNsResolver: DotNsResolverProtocol {
     private let carFetcher: CarFetcherProtocol
     private let contentStorage: DotNsContentStorageProtocol
     private let contentHashCache: ContentHashCacheProtocol
+    private let telemetry: HostLoadTelemetry
 
     public init(
         contractApi: DotNsContractApiProtocol,
         carFetcher: CarFetcherProtocol,
         contentStorage: DotNsContentStorageProtocol,
-        contentHashCache: ContentHashCacheProtocol
+        contentHashCache: ContentHashCacheProtocol,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.contractApi = contractApi
         self.carFetcher = carFetcher
         self.contentStorage = contentStorage
         self.contentHashCache = contentHashCache
+        self.telemetry = telemetry
     }
 
     public func resolveToLocalURL(dotNsName: String) async throws -> URL {
@@ -63,35 +67,85 @@ public final class DotNsResolver: DotNsResolverProtocol {
         dotNsName: String,
         onPhase: @escaping ProductLoadPhaseHandler = { _ in }
     ) async throws -> DotNsResolvedContent {
+        let lookupStartedAt = telemetry.now()
         let contentHashBytes = try await contractApi.resolveContentHash(dotNsName: dotNsName)
         let hexHash = contentHashBytes.toHex()
 
+        let fetch = BulletinFetch(domain: dotNsName, lookupStartedAt: lookupStartedAt, startedAt: telemetry.now())
+
         if let cachedDir = contentStorage.getContentDirectory(contentHash: hexHash) {
+            report(fetch, outcome: .cacheHit, bytes: nil)
             return DotNsResolvedContent(contentHash: hexHash, localURL: cachedDir)
         }
 
-        let carFileURL = try await carFetcher.fetchCarToFile(
-            contentHash: contentHashBytes,
-            onProgress: { downloaded, total in
-                onPhase(.downloading(downloadedBytes: downloaded, totalBytes: total))
+        var carBytes: Int64?
+
+        do {
+            let carFileURL = try await carFetcher.fetchCarToFile(
+                contentHash: contentHashBytes,
+                onProgress: { [isRecording = fetch != nil] downloaded, total in
+                    if isRecording {
+                        carBytes = downloaded
+                    }
+                    onPhase(.downloading(downloadedBytes: downloaded, totalBytes: total))
+                }
+            )
+
+            onPhase(.unpacking)
+
+            let contentDir = try saveResolvedContent(
+                carFileURL: carFileURL,
+                hexHash: hexHash,
+                dotNsName: dotNsName
+            )
+
+            report(fetch, outcome: .ok, bytes: carBytes)
+            return DotNsResolvedContent(contentHash: hexHash, localURL: contentDir)
+        } catch {
+            if !(error is CancellationError) {
+                report(fetch, outcome: .error, bytes: carBytes)
             }
-        )
-
-        onPhase(.unpacking)
-
-        let contentDir = try saveResolvedContent(
-            carFileURL: carFileURL,
-            hexHash: hexHash,
-            dotNsName: dotNsName
-        )
-
-        return DotNsResolvedContent(contentHash: hexHash, localURL: contentDir)
+            throw error
+        }
     }
 
     public func clearCache() throws {
         try contentStorage.deleteAll()
         contentHashCache.clearAll()
         contractApi.clearCache()
+    }
+}
+
+private struct BulletinFetch {
+    let domain: String
+    let contentHashMilliseconds: Int
+    let startedAt: Int
+
+    init?(domain: String, lookupStartedAt: Int?, startedAt: Int?) {
+        guard let lookupStartedAt, let startedAt else { return nil }
+
+        self.domain = domain
+        contentHashMilliseconds = startedAt - lookupStartedAt
+        self.startedAt = startedAt
+    }
+}
+
+private extension DotNsResolver {
+    func report(_ fetch: BulletinFetch?, outcome: HostEventOutcome, bytes: Int64?) {
+        guard let fetch else { return }
+
+        telemetry.record { origin, now in
+            .bulletinFetch(
+                domain: fetch.domain,
+                outcome: outcome,
+                durationMilliseconds: now - fetch.startedAt,
+                contentHashMilliseconds: fetch.contentHashMilliseconds,
+                bytes: bytes.map { Int($0) },
+                hostSessionID: telemetry.sessionID(forProductOrSubname: fetch.domain),
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 }
 

@@ -47,7 +47,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             contentLoader: environment.contentLoader,
             schemeHandlerProxy: environment.schemeHandlerProxy,
             logger: environment.rust.logger,
-            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+            telemetry: IssueMonitoringFactory.createHostLoadTelemetry()
         )
     }
 }

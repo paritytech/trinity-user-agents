@@ -5,6 +5,7 @@ import TrUAPIHost
 import ChainRegistry
 import Foundation_iOS
 import FoundationExt
+import IssueMonitoring
 import Products
 import SubstrateSdk
 import KeyDerivation
@@ -146,6 +147,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
+            telemetry: IssueMonitoringFactory.createHostLoadTelemetry(),
             logger: logger
         )
 

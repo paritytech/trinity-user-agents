@@ -73,4 +73,140 @@ public struct HostEvent: Sendable, Equatable {
             extras: ["host.session_id": .string(hostSessionID.uuidString.lowercased())]
         )
     }
+
+    public static func productResolved(
+        productID: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        hostSessionID: UUID?,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        step(
+            name: "host.product.resolved",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["product.id": productID]
+        )
+    }
+
+    public static func bulletinFetch(
+        domain: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        contentHashMilliseconds: Int,
+        bytes: Int?,
+        hostSessionID: UUID?,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        var extras = [
+            "dotns.domain": HostEventValue.string(domain),
+            "dotns.content_hash_ms": .integer(contentHashMilliseconds)
+        ]
+        extras["bulletin.bytes"] = bytes.map(HostEventValue.integer)
+
+        return step(
+            name: "host.bulletin.fetch",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: [:],
+            extras: extras
+        )
+    }
+
+    public static func rpcConnected(
+        chain: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        step(
+            name: "host.rpc.connected",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: nil,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["chain": chain]
+        )
+    }
+
+    public static func pocketFaceLoaded(
+        productID: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        step(
+            name: "host.pocket.face_loaded",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: nil,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["product.id": productID]
+        )
+    }
+
+    public static func webViewPageLoaded(
+        hostSessionID: UUID,
+        productID: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        step(
+            name: "host.webview.page_loaded",
+            outcome: outcome,
+            durationMilliseconds: durationMilliseconds,
+            hostSessionID: hostSessionID,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["product.id": productID]
+        )
+    }
+}
+
+public enum HostEventOutcome: String, Sendable {
+    case ok
+    case error
+    case cacheHit = "cache_hit"
+}
+
+private extension HostEvent {
+    static func step(
+        name: String,
+        outcome: HostEventOutcome,
+        durationMilliseconds: Int,
+        hostSessionID: UUID?,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int,
+        tags: [String: String],
+        extras: [String: HostEventValue] = [:]
+    ) -> HostEvent {
+        var stepTags = tags
+        stepTags["outcome"] = outcome.rawValue
+
+        var stepExtras = extras
+        stepExtras["duration_ms"] = .integer(durationMilliseconds)
+        stepExtras["host.session_id"] = hostSessionID.map { HostEventValue.string($0.uuidString.lowercased()) }
+
+        return make(
+            name: name,
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: stepTags,
+            extras: stepExtras
+        )
+    }
 }

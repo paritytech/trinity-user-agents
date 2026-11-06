@@ -4,6 +4,7 @@ import Products
 import ChainRegistry
 import Foundation_iOS
 import FoundationExt
+import IssueMonitoring
 import SubstrateSdk
 import BulletinChain
 import DesignSystem
@@ -89,6 +90,7 @@ private extension RustRuntimeEnvironment {
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
+            telemetry: IssueMonitoringFactory.createHostLoadTelemetry(),
             logger: logger
         )
 

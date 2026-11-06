@@ -43,6 +43,8 @@ protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     func start(with engine: JSEngineProtocol) async throws -> URL
     func useLatestBuild() async throws
     func servedBuild() async -> DotNsResolvedContent?
+    /// The page WebKit finished loading, or `loaded` false when its load failed.
+    func didFinishPageLoad(loaded: Bool) async
 }
 
 /// One scripts protocol per surface (see `ChatScriptsMaking` in the Products

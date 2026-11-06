@@ -29,6 +29,20 @@ enum TrUAPISupportedChains {
         return HostChainSet(network: network, chains: chains)
     }
 
+    /// How host telemetry names the chain, as the Android host does; nil for a chain with no role here.
+    static func telemetryLabel(for chainId: ChainModel.Id) -> String? {
+        switch chainId {
+        case AppConfig.Chains.peopleChain:
+            "people"
+        case AppConfig.Chains.bulletInChain:
+            "bulletin"
+        case AppConfig.Chains.assethubChain:
+            "asset_hub"
+        default:
+            nil
+        }
+    }
+
     private static var network: String {
         #if UNSTABLE
             "polkadot"

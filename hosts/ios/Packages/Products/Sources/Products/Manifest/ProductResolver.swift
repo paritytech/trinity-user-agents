@@ -1,5 +1,6 @@
 import TrUAPIHost
 import Foundation
+import IssueMonitoring
 import SDKLogger
 
 public enum ProductResolutionError: Error {
@@ -25,6 +26,7 @@ public actor ProductResolver: ProductResolving {
     private let metadataRepository: ProductMetadataRepositoryProtocol
     private let hostProvider: ProductHostProviding
     private let parser: ProductManifestParsing
+    private let telemetry: HostLoadTelemetry
 
     // Successful resolutions only, so a transient read failure stays retryable.
     private var cache: [ProductId: ProductManifest] = [:]
@@ -34,23 +36,27 @@ public actor ProductResolver: ProductResolving {
         metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
         logger: SDKLoggerProtocol,
-        screening: PocketCardScreening
+        screening: PocketCardScreening,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.init(
             metadataRepository: metadataRepository,
             hostProvider: hostProvider,
-            parser: ProductManifestParser(logger: logger, screening: screening)
+            parser: ProductManifestParser(logger: logger, screening: screening),
+            telemetry: telemetry
         )
     }
 
     init(
         metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
-        parser: ProductManifestParsing
+        parser: ProductManifestParsing,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.metadataRepository = metadataRepository
         self.hostProvider = hostProvider
         self.parser = parser
+        self.telemetry = telemetry
     }
 
     public func resolveProductManifest(_ productId: ProductId) async throws -> ProductManifest {
@@ -69,7 +75,7 @@ public actor ProductResolver: ProductResolving {
             return try await running.value
         }
 
-        let task = Task { [self] in try await resolveFromChain(baseName) }
+        let task = Task { [self] in try await resolveFromChainReporting(baseName) }
         inFlight[baseName] = task
 
         defer { inFlight[baseName] = nil }
@@ -88,6 +94,36 @@ private struct ResolvedExecutable: Sendable {
 }
 
 private extension ProductResolver {
+    func resolveFromChainReporting(_ baseName: ProductId) async throws -> ProductManifest {
+        let startedAt = telemetry.now()
+
+        do {
+            let manifest = try await resolveFromChain(baseName)
+            reportResolved(baseName, outcome: .ok, startedAt: startedAt)
+            return manifest
+        } catch {
+            if !(error is CancellationError) {
+                reportResolved(baseName, outcome: .error, startedAt: startedAt)
+            }
+            throw error
+        }
+    }
+
+    func reportResolved(_ baseName: ProductId, outcome: HostEventOutcome, startedAt: Int?) {
+        guard let startedAt else { return }
+
+        telemetry.record { origin, now in
+            .productResolved(
+                productID: baseName.rawValue,
+                outcome: outcome,
+                durationMilliseconds: now - startedAt,
+                hostSessionID: telemetry.sessionID(forProductOrSubname: baseName.rawValue),
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
+    }
+
     func resolveFromChain(_ baseName: ProductId) async throws -> ProductManifest {
         let rootKey = ProductManifest.RecordKey(name: baseName, key: ProductManifestRecords.rootKey)
         let rootText = try await metadataRepository.fetchMetadata(name: rootKey.name.rawValue, key: rootKey.key)

@@ -152,6 +152,10 @@ private extension SPASimplifiedViewController {
             self?.presenter.didRequestDeeplink(url)
         }
 
+        engine.onPageLoadFinished = { [weak self] loaded in
+            self?.presenter.didFinishPageLoad(loaded: loaded)
+        }
+
         presenter.setup(engine: engine)
     }
 

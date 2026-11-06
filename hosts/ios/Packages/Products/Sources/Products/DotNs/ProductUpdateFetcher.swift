@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import IssueMonitoring
 import SDKLogger
 
 public enum ProductUpdateFetchError: Error, Equatable {
@@ -26,19 +27,22 @@ public actor ProductUpdateFetcher {
     private let storage: DotNsLocalStorage
     private let hostProvider: ProductHostProviding
     private let resolverFactory: ProductResolverFactory
+    private let telemetry: HostLoadTelemetry
 
     public init(
         contractApi: DotNsContractApiProtocol,
         carFetcher: CarFetcherProtocol,
         storage: DotNsLocalStorage,
         hostProvider: ProductHostProviding,
-        resolverFactory: ProductResolverFactory
+        resolverFactory: ProductResolverFactory,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.contractApi = contractApi
         self.carFetcher = carFetcher
         self.storage = storage
         self.hostProvider = hostProvider
         self.resolverFactory = resolverFactory
+        self.telemetry = telemetry
     }
 }
 
@@ -54,7 +58,8 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
 
         return try await resolverFactory.makeResolver(
             metadataRepository: ProductMetadataRepository(contractApi: contractApi),
-            hostProvider: hostProvider
+            hostProvider: hostProvider,
+            telemetry: telemetry
         ).resolveProductManifest(productId)
     }
 
@@ -66,7 +71,8 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
             contractApi: contractApi,
             carFetcher: carFetcher,
             contentStorage: storage.content,
-            contentHashCache: storage.contentHashes
+            contentHashCache: storage.contentHashes,
+            telemetry: telemetry
         ).stageContent(dotNsName: contentId.rawValue, onPhase: onPhase)
     }
 }

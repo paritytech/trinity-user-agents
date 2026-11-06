@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import IssueMonitoring
 import Testing
 @testable import Products
 
@@ -179,14 +180,55 @@ struct ProductResolverTests {
 
         #expect(resolved.displayName == "HackM3")
     }
+
+    /// Only a read that reaches the chain is reported; the answer the resolver already holds is not.
+    @Test func reportsTheChainReadOnceUnderTheProductsSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let sessions = HostSessionRegistry()
+        let session = UUID()
+        sessions.open(productID: "hackm3.dot", sessionID: session)
+        let resolver = makeResolver(
+            StubProductMetadataRepository(),
+            telemetry: .recording(into: recorder, sessions: sessions)
+        )
+
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+
+        #expect(recorder.events.count == 1)
+        let event = try #require(recorder.events.first)
+        #expect(event.name == "host.product.resolved")
+        #expect(event.tags["product.id"] == "hackm3.dot")
+        #expect(event.tags["outcome"] == "ok")
+        #expect(event.extras["duration_ms"] == .integer(10))
+        #expect(event.extras["event.monotonic_ms"] == .integer(20))
+        #expect(event.extras["host.session_id"] == .string(session.uuidString.lowercased()))
+    }
+
+    @Test func reportsAFailedChainReadAsAnError() async throws {
+        let stub = StubProductMetadataRepository()
+        stub.readError = URLError(.notConnectedToInternet)
+        let recorder = RecordingHostEventRecorder()
+        let resolver = makeResolver(stub, telemetry: .recording(into: recorder))
+
+        _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+
+        #expect(recorder.events.map(\.name) == ["host.product.resolved"])
+        #expect(recorder.events.first?.tags["outcome"] == "error")
+        #expect(recorder.events.first?.extras["host.session_id"] == nil)
+    }
 }
 
-private func makeResolver(_ stub: StubProductMetadataRepository) -> ProductResolver {
+private func makeResolver(
+    _ stub: StubProductMetadataRepository,
+    telemetry: HostLoadTelemetry = .disabled
+) -> ProductResolver {
     ProductResolver(
         metadataRepository: stub,
         hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
         logger: SilentLogger(),
-        screening: .passingThrough
+        screening: .passingThrough,
+        telemetry: telemetry
     )
 }
 
