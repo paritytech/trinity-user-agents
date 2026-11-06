@@ -290,7 +290,6 @@ class FundingViewModel @AssistedInject constructor(
     /** Before `Started` leaving is the answer the core discards the session on; after it the session runs on. */
     fun onClose() {
         quoteJob?.cancel()
-        stopQuotes()
         context.answer(FundingOverlayOutcome.DISMISSED)
         closeSheet()
     }
@@ -303,10 +302,6 @@ class FundingViewModel @AssistedInject constructor(
     }
 
     private fun closeSheet() = launchUnit { router.closeFundingOverlay(intent) }
-
-    // The core asks every provider again each minute until told to stop. It stops on its own once a provider is
-    // chosen or the session ends, so only leaving the sheet with the session still open needs this.
-    private fun stopQuotes() = launchUnit { interactor.stopQuotes(intent) }
 
     private suspend fun initialState(): FundingFlowState {
         val cash = interactor.cash()

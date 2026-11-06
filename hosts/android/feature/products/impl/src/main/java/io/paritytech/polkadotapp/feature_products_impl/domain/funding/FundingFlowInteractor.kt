@@ -52,8 +52,6 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
 
-    suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
-
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
 

@@ -66,7 +66,6 @@ class FundingCancelViewModelTest {
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
-        coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns sessionChanges
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }

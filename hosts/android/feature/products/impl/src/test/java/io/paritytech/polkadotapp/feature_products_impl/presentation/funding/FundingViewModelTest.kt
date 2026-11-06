@@ -73,7 +73,6 @@ class FundingViewModelTest {
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
-        coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns emptyFlow()
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
@@ -144,8 +143,6 @@ class FundingViewModelTest {
         advanceUntilIdle()
 
         assertEquals(FundingOverlayOutcome.DISMISSED, answer.await())
-        // The core asks every provider again each minute until told otherwise.
-        coVerify { interactor.stopQuotes("intent") }
     }
 
     @Test
