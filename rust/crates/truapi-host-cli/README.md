@@ -546,7 +546,8 @@ truapi-host signing-host --session alice.01 exec '/devices --remove 0x0123456789
 to stdout, diagnostics go to stderr, and the process exits when the command
 finishes. `/pair` finishes when the paired host disconnects. Until then it
 restarts its responder after a failure instead of exiting, so stop it with
-Ctrl-C or SIGTERM. Starting `signing-host` without `--script` or `exec` while
+Ctrl-C or SIGTERM. It exits with an error when the session cannot be served at
+all, for example without an active local session. Starting `signing-host` without `--script` or `exec` while
 either stdin or stdout is not a TTY is an invocation error unless `--serve` is
 used.
 The existing `--script` one-shot mode remains supported. Neither one-shot mode

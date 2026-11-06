@@ -157,6 +157,27 @@ pub enum ResponderExit {
 	SubscriptionEnded,
 }
 
+/// Why [`crate::SigningHostRuntime::resume_pairing`] stopped serving.
+///
+/// Either way the peer is still paired.
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+pub enum ResumePairingError {
+	/// The session could not be served at all: this signing host has no active
+	/// local session, or the session keys could not be derived. Serving again
+	/// fails the same way until the local session changes.
+	#[display("{reason}")]
+	CannotServe {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// Serving failed after it started. Serving again may succeed.
+	#[display("{reason}")]
+	Interrupted {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+}
+
 /// Public key material identifying one pairing host's resumable SSO session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -367,15 +388,21 @@ impl SsoResponderService {
 	}
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
-	pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
+	pub async fn resume_pairing(
+		&self,
+		peer: PairedSsoPeer,
+	) -> Result<ResponderExit, ResumePairingError> {
+		let cannot_serve = |reason| ResumePairingError::CannotServe { reason };
+		let entropy = self.signing_host.root_entropy().map_err(|err| {
+			cannot_serve(format!("signing host has no active local session: {err}"))
+		})?;
 		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
-		serve_session(self, session, peer.replay_scope(root.public.to_bytes())).await
+			.map_err(|err| cannot_serve(format!("root account derivation failed: {err}")))?;
+		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)
+			.map_err(cannot_serve)?;
+		serve_session(self, session, peer.replay_scope(root.public.to_bytes()))
+			.await
+			.map_err(|reason| ResumePairingError::Interrupted { reason })
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.

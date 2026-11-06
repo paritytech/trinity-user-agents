@@ -65,8 +65,8 @@ use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
-	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
-	WsDebugSink,
+	PairingProposal, ResponderExit, ResumePairingError, SigningHostConfig, SigningHostRuntime,
+	StatementRenewalTarget, WsDebugSink,
 	chain::ExtrinsicService,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
@@ -2062,22 +2062,30 @@ const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
 
 /// Serve `host` until it sends `Disconnected`, restarting the responder after
 /// a failure or an ended subscription.
+///
+/// Fails without restarting when the session cannot be served at all, such
+/// as without an active local session.
 async fn supervise_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
 	persisted: Option<(SessionCatalog, SessionProfile)>,
-) {
+) -> Result<(), ResumePairingError> {
 	let peer = paired_sso_peer(&host);
 	let mut pauses = RESPONDER_RETRY_PAUSES;
 	retry(
 		|| async {
 			let started = std::time::Instant::now();
 			let event = match runtime.resume_pairing(peer).await {
-				Ok(ResponderExit::PeerDisconnected) => return ControlFlow::Break(()),
+				Ok(ResponderExit::PeerDisconnected) => return ControlFlow::Break(Ok(())),
 				Ok(exit @ ResponderExit::SubscriptionEnded) => {
 					SystemEvent::SigningHostExit { outcome: format!("{exit:?}") }
 				},
-				Err(error) => SystemEvent::SigningHostError { reason: error.reason },
+				Err(ResumePairingError::Interrupted { reason }) => {
+					SystemEvent::SigningHostError { reason }
+				},
+				Err(error @ ResumePairingError::CannotServe { .. }) => {
+					return ControlFlow::Break(Err(error));
+				},
 			};
 			ControlFlow::Continue((event, started.elapsed()))
 		},
@@ -2089,13 +2097,14 @@ async fn supervise_responder(
 			pauses.next_pause()
 		},
 	)
-	.await;
+	.await?;
 	if let Some((catalog, profile)) = &persisted {
 		forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
 	}
 	terminal_ui::output_event(SystemEvent::SigningHostExit {
 		outcome: format!("{:?}", ResponderExit::PeerDisconnected),
 	});
+	Ok(())
 }
 
 /// Remove a disconnected pairing host from the session and stop renewing its
@@ -2138,11 +2147,15 @@ fn paired_host_catalog(session: &SigningHostSession) -> Option<(SessionCatalog, 
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
 	let statement_account_id = host.statement_account_id();
-	let task = tokio::spawn(supervise_responder(
-		session.runtime.clone(),
-		host,
-		paired_host_catalog(session),
-	));
+	let responder =
+		supervise_responder(session.runtime.clone(), host, paired_host_catalog(session));
+	let task = tokio::spawn(async move {
+		if let Err(error) = responder.await {
+			terminal_ui::output_event(SystemEvent::SigningHostError {
+				reason: format!("stopped serving the paired host: {error}"),
+			});
+		}
+	});
 	session.responders.insert(statement_account_id, task);
 	terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
 }
@@ -2862,7 +2875,11 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 
 async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String) -> Result<()> {
 	let host = establish_paired_host(session, &deeplink).await?;
-	supervise_responder(session.runtime.clone(), host, paired_host_catalog(session)).await;
+	supervise_responder(session.runtime.clone(), host, paired_host_catalog(session))
+		.await
+		.map_err(|error| {
+			SessionOperationError::Pairing(GenericError { reason: error.to_string() })
+		})?;
 	Ok(())
 }
 
@@ -4401,6 +4418,31 @@ mod cli_tests {
 			);
 		}
 		Ok(())
+	}
+
+	/// Without a local session every restart fails the same way, so `/pair`
+	/// has to end with the failure instead of restarting forever.
+	#[tokio::test]
+	async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
+		let profile = tempfile::tempdir().unwrap();
+		let (runtime, _platform) = build_signing_runtime(
+			crate::network::Network::PaseoNextV2.config(),
+			profile.path().to_path_buf(),
+			profile.path().join("storage"),
+			ApprovalPolicy::AutoAccept,
+			None,
+			None,
+			None,
+		)
+		.unwrap();
+		let host = PairedHost::new([0x31; 32], [0x42; 32], PairedHostMetadata::default());
+
+		let served =
+			tokio::time::timeout(Duration::from_secs(5), supervise_responder(runtime, host, None))
+				.await
+				.expect("the responder stops instead of restarting");
+
+		assert!(matches!(served, Err(ResumePairingError::CannotServe { .. })), "{served:?}");
 	}
 
 	#[tokio::test]
