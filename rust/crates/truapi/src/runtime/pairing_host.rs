@@ -2,6 +2,9 @@
 
 mod remote_calls;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::{Arc, Weak};
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -211,32 +214,12 @@ impl PairingHost {
 			.await
 	}
 
-	/// Retained grants, exposed so tests can seed and inspect them.
-	#[cfg(test)]
-	pub fn grants_for_tests(&self) -> &HostGrantStore {
-		&self.grants
-	}
-
-	/// Register fixture material in the actual durable registry.
-	#[cfg(test)]
-	pub async fn register_ring_vrf_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		handle: latest::ProductAccountId,
-		ring: latest::RingLocation,
-		public_key: [u8; 32],
-	) -> Result<(), RingVrfError> {
-		self.ring_vrf_registry
-			.register(session.public_key, handle, ring, public_key)
-			.await
-	}
-
 	/// Whether resolving `product_id`'s subtree would reach the Account Holder,
 	/// i.e. neither the memory cache nor the persisted slot already holds it.
 	///
 	/// A stale or missing session resolves as `false` so a broken state falls
 	/// through to the resolution's own error rather than a spurious prompt.
-	pub async fn subtree_reaches_account_holder(
+	async fn subtree_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
 		product_id: &ProductId,
@@ -538,10 +521,8 @@ impl PairingHost {
 			// against; where it cannot, the call fails rather than producing
 			// the prompt-and-signature an ungranted product would have got.
 			//
-			// The failure is not prompt. An unreachable genesis leaves the
-			// metadata read waiting on the chain, so the caller can sit on the
-			// authority request timeout before it sees anything — the cost of
-			// assembling locally is paid before the grant can be found wanting.
+			// The failure is not prompt: an unreachable genesis holds the
+			// metadata read until its deadline.
 			return Ok(build_local_transaction(
 				&self.chain,
 				&keypair,

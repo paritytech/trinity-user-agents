@@ -31,10 +31,10 @@
   <text x="40" y="46" class="t" style="font-size:25px;font-weight:700">Host telemetry: what leaves the device, and who decides</text>
   <text x="40" y="72" class="sub" style="font-size:13.5px">Border style carries the meaning, not colour: solid green &#10003; = one rule, owned in one place &#183; solid amber = the same rule written out by hand, once per host</text>
 
-  <!-- ===================== PANEL A : TODAY ===================== -->
+  <!-- ===================== PANEL A : BEFORE ===================== -->
   <rect x="24" y="104" width="1432" height="586" rx="10" fill="#ffffff" stroke="#dde3e9"/>
-  <text x="44" y="138" class="ptitle">TODAY</text>
-  <text x="134" y="138" class="sub" style="font-size:13px">one rule for what may leave the device, written out by hand once per host, and nothing compares the copies</text>
+  <text x="44" y="138" class="ptitle">BEFORE</text>
+  <text x="150" y="138" class="sub" style="font-size:13px">one rule for what may leave the device, written out by hand once per host, with nothing comparing the copies</text>
 
   <text x="44"   y="168" class="lane">CORE &#183; RUST</text>
   <text x="334"  y="168" class="lane">BOUNDARY</text>
@@ -129,8 +129,8 @@
   <path class="flow" d="M1150,520 H1165 V475 H1176" marker-end="url(#aGrey)"/>
 
   <rect x="40" y="558" width="1400" height="46" rx="6" fill="#fbfcfd" stroke="#dde3e9"/>
-  <text x="56" y="578" class="sub" style="font-weight:700;letter-spacing:1px">TWO HOSTS TODAY, FOUR SOON</text>
-  <text x="56" y="596" class="sub">iOS and Android each carry a hand-written copy of this rule. Desktop and dot.li would make four copies, in three languages, with nothing comparing them.</text>
+  <text x="56" y="578" class="sub" style="font-weight:700;letter-spacing:1px">TWO HOSTS, FOUR SOON</text>
+  <text x="56" y="596" class="sub">iOS and Android each carried a hand-written copy of this rule. Desktop and dot.li would have made four copies, in three languages, with nothing comparing them.</text>
 
   <line x1="40" y1="618" x2="1440" y2="618" stroke="#dde3e9"/>
   <text x="56"   y="662" class="numr">2</text>
@@ -146,10 +146,10 @@
   <text x="1114" y="654" class="numl">severity is lost, a core error and a core</text>
   <text x="1114" y="671" class="numl">warning both arrive as info, so neither alerts</text>
 
-  <!-- ===================== PANEL B : PROPOSED ===================== -->
+  <!-- ===================== PANEL B : NOW ===================== -->
   <rect x="24" y="714" width="1432" height="356" rx="10" fill="#ffffff" stroke="#dde3e9"/>
-  <text x="44" y="748" class="ptitle">PROPOSED</text>
-  <text x="200" y="748" class="sub" style="font-size:13px">one table in the core, reaching every host through the bindings that already exist</text>
+  <text x="44" y="748" class="ptitle">NOW</text>
+  <text x="120" y="748" class="sub" style="font-size:13px">one table in the core, read by iOS and Android through the bindings that already existed</text>
 
   <text x="44"   y="778" class="lane">CORE &#183; RUST</text>
   <text x="334"  y="778" class="lane">BOUNDARY</text>
@@ -161,7 +161,7 @@
   <circle cx="286" cy="806" r="9" fill="#1f7a4d"/><text x="286" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
   <text x="54" y="815" class="monob">markers.rs</text>
   <text x="54" y="834" class="sub">one table: target &#183; carries &#183; class</text>
-  <text x="54" y="851" class="sub">Local | Export(Severity)</text>
+  <text x="54" y="851" class="sub">Local | Export { severity }</text>
 
   <rect x="330" y="792" width="230" height="70" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
   <circle cx="546" cy="806" r="9" fill="#1f7a4d"/><text x="546" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
@@ -173,18 +173,18 @@
   <circle cx="1136" cy="806" r="9" fill="#1f7a4d"/><text x="1136" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
   <text x="864" y="815" class="monob">table[marker], exact match</text>
   <text x="864" y="834" class="sub">coreMarkers() read once at startup</text>
-  <text x="864" y="851" class="sub">replaces both allowlists and both tag filters</text>
+  <text x="864" y="851" class="sub">both allowlists deleted, the two tag filters stay</text>
   <text x="1012" y="888" class="elab">arrives with every other binding</text>
 
   <rect x="1180" y="792" width="260" height="70" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
   <text x="1194" y="821" class="tb">logs &#183; events &#183; metrics</text>
-  <text x="1194" y="845" class="sub">one rule, read from the core</text>
+  <text x="1194" y="845" class="sub">core lines at the table&#8217;s own severity</text>
 
   <rect x="590" y="900" width="230" height="64" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
   <circle cx="806" cy="914" r="9" fill="#1f7a4d"/><text x="806" y="918" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
   <text x="604" y="921" class="mono" style="font-size:12px;font-weight:600">#[uniffi::export]</text>
   <text x="604" y="939" class="mono" style="font-size:12px;font-weight:600">core_markers()</text>
-  <text x="604" y="957" class="sub">the 14th such function</text>
+  <text x="604" y="957" class="sub">the 25th such function</text>
 
   <rect x="850" y="900" width="300" height="64" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="923" class="monob">uniffi-bindgen</text>
@@ -203,16 +203,16 @@
   <text x="56"   y="1028" class="numg">1</text>
   <text x="88"   y="1020" class="numl">exported table,</text>
   <text x="88"   y="1037" class="numl">zero hand-written copies</text>
-  <text x="396"  y="1028" class="numg">1</text>
-  <text x="428"  y="1020" class="numl">capture senders,</text>
-  <text x="428"  y="1037" class="numl">one shape per platform</text>
+  <text x="396"  y="1028" class="numr">8</text>
+  <text x="428"  y="1020" class="numl">capture senders, unchanged,</text>
+  <text x="428"  y="1037" class="numl">still the next step on #1796</text>
   <text x="736"  y="1028" class="numg">1</text>
-  <text x="768"  y="1020" class="numl">gate, owned by the core</text>
-  <text x="768"  y="1037" class="numl">and read by every host</text>
+  <text x="768"  y="1020" class="numl">export decision, owned by the core,</text>
+  <text x="768"  y="1037" class="numl">with the two tag filters still after it</text>
   <text x="1076" y="1028" class="numg">&#10003;</text>
   <text x="1114" y="1020" class="numl">severity survives, a core error is alertable,</text>
-  <text x="1114" y="1037" class="numl">and marker 49 stays local by construction</text>
+  <text x="1114" y="1037" class="numl">and marker 46 is refused by construction</text>
 
-  <text x="40" y="1104" class="sub">Verified against the tree this lands on</text>
+  <text x="40" y="1104" class="sub">Verified against the tree</text>
   <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>
 </svg>

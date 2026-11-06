@@ -108,8 +108,8 @@ fn secret_key() -> StatementStoreAllowanceKey {
 fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants_for_tests().lifecycle().revision();
-	futures::executor::block_on(signing_host.grants_for_tests().retain_allowance(
+	let revision = signing_host.grants.lifecycle().revision();
+	futures::executor::block_on(signing_host.grants.retain_allowance(
 		&state,
 		&session,
 		revision,
@@ -122,8 +122,8 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 64]> {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants_for_tests().lifecycle().revision();
-	futures::executor::block_on(signing_host.grants_for_tests().cached_allowance(
+	let revision = signing_host.grants.lifecycle().revision();
+	futures::executor::block_on(signing_host.grants.cached_allowance(
 		&state,
 		&session,
 		revision,
@@ -309,18 +309,17 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants_for_tests().lifecycle().revision();
+	let revision = signing_host.grants.lifecycle().revision();
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("re-activation succeeds");
 
-	let remembered_stale =
-		futures::executor::block_on(signing_host.grants_for_tests().retain_allowance(
-			&state,
-			&session,
-			revision,
-			&ProductId::for_test(PRODUCT_ID),
-			&AccountGrant::StatementStore { key: secret_key(), period: Some(PERIOD) },
-		));
+	let remembered_stale = futures::executor::block_on(signing_host.grants.retain_allowance(
+		&state,
+		&session,
+		revision,
+		&ProductId::for_test(PRODUCT_ID),
+		&AccountGrant::StatementStore { key: secret_key(), period: Some(PERIOD) },
+	));
 	assert_eq!(
 		(remembered_stale.map(|_| ()), remembered(&signing_host, PRODUCT_ID)),
 		(Err(AuthorityError::Disconnected), None),

@@ -187,23 +187,6 @@ struct ProductManifestParserTests {
         #expect(!worker.serves(.pocket))
     }
 
-    /// A worker serving no user-facing surface is valid and still launches.
-    @Test func acceptsWorkerServingNoSurface() throws {
-        let executable = parser.parseExecutable(
-            Fixtures.worker(chat: "false", pocket: "false"),
-            kind: .worker,
-            identifier: try! ProductId("worker.hackm3.dot")
-        )
-
-        guard case let .worker(worker)? = executable else {
-            Issue.record("expected a worker executable")
-            return
-        }
-
-        #expect(!worker.serves(.chat))
-        #expect(!worker.serves(.pocket))
-    }
-
     // MARK: - Pocket cards
 
     @Test func parsesPocketCardsAWorkerPublishes() throws {
@@ -374,24 +357,39 @@ struct ProductManifestParserTests {
         return worker
     }
 
-    @Test func rejectsWorkerMissingEntrypointOrIncludes() {
+    @Test func rejectsWorkerMissingEntrypoint() {
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}"#,
             kind: .worker,
             identifier: try! ProductId("w.dot")
         ) == nil)
+    }
 
-        #expect(parser.parseExecutable(
+    @Test func readsAnUnlistedModalityAsNotServed() {
+        let chatOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#
+        )
+        #expect(chatOnly?.serves(.chat) == true)
+        #expect(chatOnly?.serves(.pocket) == false)
+
+        let fundingOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}"#
+        )
+        #expect(fundingOnly?.modalities.isEmpty == true)
+    }
+
+    @Test func rejectsAWorkerThatServesNoModality() {
+        for manifest in [
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
-            kind: .worker,
-            identifier: try! ProductId("w.dot")
-        ) == nil)
-
-        #expect(parser.parseExecutable(
-            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#,
-            kind: .worker,
-            identifier: try! ProductId("w.dot")
-        ) == nil)
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{}}"#,
+            Fixtures.worker(chat: "false", pocket: "false")
+        ] {
+            #expect(parser.parseExecutable(
+                manifest,
+                kind: .worker,
+                identifier: try! ProductId("worker.hackm3.dot")
+            ) == nil)
+        }
     }
 }
 

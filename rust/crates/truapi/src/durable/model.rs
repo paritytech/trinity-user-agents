@@ -182,7 +182,7 @@ pub enum VerdictFailureKind {
 }
 
 /// Which head a question is asked at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum HeadKind {
 	/// The finalized head.
 	Finalized,
@@ -246,7 +246,7 @@ pub struct DurableTxState {
 
 /// A decision about one transaction, written only against the status and
 /// attempt it was derived from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verdict {
 	/// The status to write.
 	pub status: VerdictStatus,

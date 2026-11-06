@@ -50,7 +50,8 @@ fn pending_account_access_tracks_wallet_activation() {
 		assert_eq!(
 			(
 				futures::executor::block_on(account).map(|_| ()),
-				authority.current_session() == Some(session),
+				authority.current_session().map(|current| current.validation_id) ==
+					Some(session.validation_id),
 				platform.account_access_reviews.lock().unwrap().len(),
 			),
 			(expected, change == "reset", 1),
