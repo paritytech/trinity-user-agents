@@ -6,16 +6,16 @@
 //! `get_chain_info`, names the People, Bulletin and Asset Hub chains the core
 //! talks to, and carries the TLD the signing role derives identities under.
 
-use trinity_stack::{Pointer, open};
+use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
 use crate::dotns_name::DOTNS_TLDS;
 
-/// Polkadot's genesis hashes for the chain roles the core reads, Relay, Asset
-/// Hub, People and Bulletin, in lowercase hex as PCF's signed Polkadot
-/// descriptor lists them.
+/// Polkadot's Relay, Asset Hub, People and Bulletin genesis hashes, in
+/// lowercase hex, from PCF's signed Polkadot descriptor. A transaction signed
+/// for a chain with one of them can also be valid on Polkadot itself.
 const RESERVED_GENESIS_HASHES: [&str; 4] = [
 	"91b171bb158e2d3848fa23a9f1c25182fb8e20313b2c1eb49219da7a70ce90c3",
 	"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
@@ -23,8 +23,9 @@ const RESERVED_GENESIS_HASHES: [&str; 4] = [
 	"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
 ];
 
-/// Polkadot's dotNS TLD.
-const RESERVED_TLDS: [&str; 1] = ["dot"];
+/// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
+/// person's Polkadot identities.
+const RESERVED_TLD: &str = "dot";
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
@@ -56,8 +57,8 @@ pub enum StackError {
 	/// The pointer is not a stack link.
 	#[display("stack pointer is not a stack link: {_0}")]
 	Pointer(#[error(not(source))] trinity_stack::Error),
-	/// The pointer carries no key. A host refreshes its stack unseen, so the
-	/// stack must be signed.
+	/// The pointer carries no key. A host runs only a signed stack, so that a
+	/// copy it fetches later verifies against the same key as the bundled one.
 	#[display("stack pointer has no key; a host's stack must be signed")]
 	Unsigned,
 	/// The bundled descriptor breaks a rule or does not verify under the
@@ -76,25 +77,32 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The stack uses one of Polkadot's genesis hashes or its TLD, and the host
-	/// build does not allow this stack to.
-	#[display("stack uses Polkadot's reserved {value}, which this build does not allow")]
-	Reserved {
-		/// The reserved value, as `genesis hash 0x…` or `tld dot`.
-		value: String,
+	/// The stack runs on Polkadot's TLD, which this build does not allow.
+	#[display("stack uses Polkadot's reserved tld {RESERVED_TLD}, which this build does not allow")]
+	ReservedTld,
+	/// A chain, under any role, has one of Polkadot's genesis hashes, which
+	/// this build does not allow.
+	#[display(
+		"stack uses Polkadot's reserved genesis hash 0x{}, which this build does not allow",
+		hex::encode(genesis_hash)
+	)]
+	ReservedGenesis {
+		/// The reserved genesis hash.
+		genesis_hash: [u8; 32],
 	},
 }
 
 impl Stack {
 	/// The stack a host build bundles: `pointer` is the stack's link, such as
-	/// `polkadotapp://stack?key=0x…&url=…`, and `descriptor` the bytes of the
-	/// copy the build verified.
+	/// `polkadotapp://stack?key=0x…&url=…`, and `descriptor` the signed
+	/// envelope the build ships.
 	///
 	/// Fails when the pointer has no key, when the descriptor does not verify
 	/// under it, when it has no People or Bulletin chain, when its TLD is not a
 	/// dotNS TLD the core serves, or when it names a reserved value and
-	/// `allows_reserved_values` is false. Expiry is not checked: a copy past
-	/// `expiresAt` still starts, since nothing fetches a newer one yet.
+	/// `allows_reserved_values` is false. Neither `validUntil` nor `expiresAt`
+	/// is checked: the bundled copy is the only one a host holds, so a stale or
+	/// expired copy still starts.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
@@ -105,25 +113,22 @@ impl Stack {
 			return Err(StackError::Unsigned);
 		}
 		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
-		let genesis_of = |role: &str| descriptor.chain(role).map(|chain| chain.genesis());
 		if !allows_reserved_values {
-			for chain in &descriptor.chains {
-				refuse_reserved_genesis(chain.genesis())?;
-			}
+			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		}
+		let genesis_of = |role: &str| descriptor.chain(role).map(Chain::genesis);
+		let required = |role| genesis_of(role).ok_or(StackError::MissingChain { role });
 		let chains = StackChains {
 			relay: genesis_of("Relay"),
 			asset_hub: genesis_of("AssetHub"),
-			people: genesis_of("People").ok_or(StackError::MissingChain { role: "People" })?,
-			bulletin: genesis_of("Bulletin")
-				.ok_or(StackError::MissingChain { role: "Bulletin" })?,
+			people: required("People")?,
+			bulletin: required("Bulletin")?,
 		};
 		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
 	}
 
-	/// A stack from values a Rust host resolved itself, such as the CLI from a
-	/// local-network file. Native and browser hosts reach only
-	/// [`Self::bundled`].
+	/// A stack from genesis hashes a host resolved itself rather than from a
+	/// bundled descriptor, such as the CLI's.
 	///
 	/// Applies the same TLD and reserved-value rules as [`Self::bundled`].
 	pub fn new(
@@ -136,13 +141,13 @@ impl Stack {
 			return Err(StackError::UnsupportedTld { tld });
 		}
 		if !allows_reserved_values {
-			if RESERVED_TLDS.contains(&tld.as_str()) {
-				return Err(StackError::Reserved { value: format!("tld {tld}") });
+			if tld == RESERVED_TLD {
+				return Err(StackError::ReservedTld);
 			}
-			let StackChains { relay, asset_hub, people, bulletin } = &chains;
-			for hash in [relay, asset_hub].into_iter().flatten().chain([people, bulletin]) {
-				refuse_reserved_genesis(*hash)?;
-			}
+			let StackChains { relay, asset_hub, people, bulletin } = chains;
+			refuse_reserved_genesis(
+				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
+			)?;
 		}
 		Ok(Self { network, tld, chains })
 	}
@@ -166,7 +171,7 @@ impl Stack {
 
 	/// The genesis hash of the chain with this role, or `None` when the stack
 	/// has no such chain.
-	pub fn genesis_hash(&self, chain: ChainIdentifier) -> Option<[u8; 32]> {
+	fn genesis_hash(&self, chain: ChainIdentifier) -> Option<[u8; 32]> {
 		let StackChains { relay, asset_hub, people, bulletin } = self.chains;
 		match chain {
 			ChainIdentifier::Relay => relay,
@@ -193,11 +198,14 @@ impl Stack {
 	}
 }
 
-fn refuse_reserved_genesis(hash: [u8; 32]) -> Result<(), StackError> {
-	let hex_hash = hex::encode(hash);
-	match RESERVED_GENESIS_HASHES.contains(&hex_hash.as_str()) {
-		true => Err(StackError::Reserved { value: format!("genesis hash 0x{hex_hash}") }),
-		false => Ok(()),
+fn refuse_reserved_genesis(
+	genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
+) -> Result<(), StackError> {
+	let is_reserved =
+		|hash: &[u8; 32]| RESERVED_GENESIS_HASHES.contains(&hex::encode(hash).as_str());
+	match genesis_hashes.into_iter().find(is_reserved) {
+		Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
+		None => Ok(()),
 	}
 }
 
