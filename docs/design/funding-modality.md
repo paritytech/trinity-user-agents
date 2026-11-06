@@ -1,0 +1,368 @@
+---
+title: "Funding Modality"
+type: design
+status: draft
+---
+
+# Funding Modality
+
+_How value moves into and out of the user's CASH balance, across product, core, host and provider. Rationale:
+[RFC — Funding modality](../rfcs/funding-modality.md),
+[product manifest](../rfcs/product-manifest.md#funding-configuration)._
+
+## Parts
+
+```mermaid
+flowchart LR
+  product["Product<br/>funding.request · statusSubscribe"]
+
+  subgraph HOST["Host app · iOS / Android"]
+    overlay["Overlay<br/>amount · providers · summary · deposit · cancel"]
+    frame["Provider frame<br/>relative App route or https page"]
+    purse["Purse<br/>dock · Total panel · history"]
+    wallet["Coin wallet<br/>top-ups · payments · balance"]
+    secure["Secure storage<br/>auth tokens"]
+  end
+
+  subgraph CORE["Core · truapi"]
+    sessions["Sessions<br/>expiry · cancel · compaction"]
+    db[("core.sqlite3<br/>sessions · summaries")]
+    quotes["Providers + quotes"]
+    provider["FundingProvider service<br/>report checks"]
+    settle["Settlement"]
+    payments["Payments by id"]
+  end
+
+  subgraph WORKER["Provider worker"]
+    flow["Session flow<br/>rail · conversion · payout"]
+  end
+
+  product --> sessions
+  sessions <--> db
+  sessions <--> overlay
+  sessions --> purse
+  quotes <--> flow
+  provider <--> flow
+  provider --> frame
+  flow --> payments
+  payments <--> wallet
+  provider --> settle --> sessions
+  flow <--> secure
+```
+
+| Who      | Owns                               | Never              |
+| -------- | ---------------------------------- | ------------------ |
+| Host     | screens, coins, secrets            | decides an outcome |
+| Core     | sessions, quotes, outcome, history | moves funds        |
+| Provider | rail, conversion, payout           | declares success   |
+
+## Interfaces
+
+| Trait             | Id         | Methods                                                                                                                                                                                                                                                               | Caller                   |
+| ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `Funding`         | 22         | `request({ direction, amount? })` → `{ intent }` · `statusSubscribe({ intent })`                                                                                                                                                                                      | product                  |
+| `FundingProvider` | 24         | core → worker requests: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` · `closeFrame`                                                                                                                                       | core and provider worker |
+| `Payment`         | 9          | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe`                                                                                                                                                                                 | provider worker          |
+| `AuthTokens`      | 27 (#1780) | `store` · `get` · `remove`                                                                                                                                                                                                                                            | provider worker          |
+| `FundingPlatform` | host       | `present_funding` · `present_provider_frame` · `close_provider_frame` · `provider_has_app` · `detected_country` · `funding_session_changed(intent, status, session, progress)` · `funding_options_changed` · `funding_quotes_changed` · `funding_in_progress_changed` | core → host              |
+| Host runtime      | host       | `select_funding_options` · `request_funding_quotes` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `funding_history()` · `worker_exited`                                                                 | host → core              |
+
+Session id: `fs_` + nanoid(10), for product- and host-opened sessions alike. Another product's session reads as
+`NotFound`.
+
+The core pushes everything the host draws while a session runs. Each `funding_session_changed` carries the session's
+status, the session itself (choice, cancel offer, amounts) and its progress, or only the status once the core keeps just
+the session's summary. `funding_options_changed` carries the overlay's candidates, and the countries and amount limits
+for the rail, asset, network and country the host reports with `select_funding_options`: before the overlay shows, after
+each selection and after each quote list. `funding_in_progress_changed` comes each time funding resumes and again
+whenever it changes. The one read back is `funding_history()`: the host calls it whenever it shows history, and it lists
+every ended session, newest first, as soon as it ends. What the host sends the core is what the user did or what the
+host owns: the selection, the provider picked, a cancel and its answer, an acknowledgement that the user saw how a
+session ended, its providers, its payment engine's statuses, and a worker that stopped without being asked. Every
+session in flight comes again when funding resumes, and so do the 200 newest ended ones not yet acknowledged, as their
+summary, and a session comes again when it starts taking longer. The core awaits one answer to each provider request (10
+s for `quote`, 60 s otherwise); a dropped call is stopped.
+
+Worker payments name their session (`funding`). A session the worker doesn't serve, the wrong direction, or a full
+session (≤3 top-ups/payments) → `FundingNotServed`. A repeat under the same id must ask the same.
+
+Started funds are recorded Pending before the call and Accepted once the host holds them. Only Accepted funds can be
+named in a report, and only once. Unaccepted ones go after 1 h if the engine doesn't hold them.
+
+```mermaid
+flowchart LR
+  core["core requests · worker returns ok(answer)"] --> Q["quote → Quoted | Refused"]
+  core --> A["assign → ack"]
+  core --> C["cancel → Stopped | Offer | Refused"]
+  core --> S["settleCancel(Accepted | Declined) → ack"]
+  report["worker reports"] --> u1["In: AwaitingPayment · PaymentReceived · Converting · Crediting · Delivered · Deposit"]
+  report --> u2["Out: Collecting · Converting · Payout · PayoutRetrying · Refunding"]
+  report --> u3["shared: Failed · Details · Progress"]
+```
+
+## Top-up
+
+```mermaid
+sequenceDiagram
+  participant P as Product
+  participant H as Host
+  participant W as Provider
+  participant C as Core
+  participant D as Core database
+  P->>C: request(In, amount?)
+  C-->>P: intent
+  C->>H: funding_options_changed(candidates)
+  C->>H: request_worker_transition(Start) per provider not running
+  C->>H: present_funding
+  P->>C: statusSubscribe(intent)
+  H->>C: select_funding_options(rail, asset, network, country)
+  C->>H: funding_options_changed(countries, limits)
+  H->>C: request_funding_quotes(ask)
+  C->>W: quote (every provider, 10 s deadline)
+  W-->>C: Quoted
+  C->>H: funding_quotes_changed: rows Pending → Quoted | Unavailable(Refused or Timeout), best · re-asked every 60 s
+  C->>H: funding_options_changed (limits learned from refusals)
+  H->>C: select_funding_provider
+  C->>D: store the session
+  Note over C: the chosen worker keeps running, the others' quotes end
+  C->>W: assign
+  W->>C: presentFrame(card screen)
+  C->>H: present_provider_frame
+  Note over H,W: the user pays on the provider's screen
+  W->>C: closeFrame
+  C->>H: close_provider_frame → frame closes, session sheet shows
+  W->>C: AwaitingPayment, PaymentReceived, Converting
+  C->>D: store each report
+  C->>H: funding_session_changed(intent, status, session, progress)
+  W->>W: keep state, then payment.topUp(id, amount, funding: intent)
+  C->>H: claim into CASH
+  W->>C: Crediting(id, amount), Delivered
+  Note over C: settles from final claims
+  C->>D: Delivered
+  C->>H: funding_session_changed (ended)
+  H->>C: acknowledge_funding_session, once the user saw it
+  C->>P: Delivered(credited)
+```
+
+## Withdrawal
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant C as Core
+  participant W as Provider
+  C->>W: assign (Out)
+  W->>W: keep state, then payment.request(id, amount, funding: intent)
+  C->>H: user approves debit
+  W->>C: Collecting(id, amount)
+  Note over C: Released (debited)
+  W->>C: PayoutRetrying* → Payout
+  alt payout failed
+    W->>C: payment.topUp refund (funding: intent)
+    W->>C: Refunding(top_up_id, amount)
+    Note over C: PayoutFailed { refunded }
+  end
+```
+
+## Session lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> Presenting: request
+  Presenting --> [*]: dismissed → Failed{Cancelled} to watchers
+  Presenting --> Open: user starts (stored)
+  Open --> Assigned: select provider
+  Open --> Expired: 24 h
+  Assigned --> Expired: 7 d silent, no money moved
+  Assigned --> MoneyMoved: started · named · payment held
+  MoneyMoved --> Delivered: in
+  MoneyMoved --> Released: out
+  Released --> Sent: Payout PaidOut
+  Released --> PayoutFailed: Payout Failed + refund
+  Assigned --> Failed: provider Failed
+  Delivered --> [*]
+  Sent --> [*]
+  PayoutFailed --> [*]
+  Failed --> [*]
+  Expired --> [*]
+```
+
+`request` answers once the session is held; the overlay runs on its own task, which starts or discards it.
+
+One serialized reconciler, woken on every change, runs the background work: load or sweep, then retain quotes · hold
+workers · follow settlements · resolve starts · catch up links. Sweep retry 30 s, catch-up retry 5 s, provider call
+timeout 60 s.
+
+## Cancel
+
+```mermaid
+flowchart TD
+  c[user cancels] --> assigned{provider assigned?}
+  assigned -- no --> none[ended: Cancelled]
+  assigned -- yes --> mm{money moved?}
+  mm -- no --> first{first ask?}
+  first -- yes --> ask[cancel call] --> stopped[Stopped → ended: Cancelled]
+  first -- no --> ended[ended: Cancelled]
+  mm -- yes --> late{credit started?}
+  late -- yes --> toolate[TooLate]
+  late -- no --> req[cancel call]
+  req --> refused[Refused · carries on]
+  req --> offer[Offer fee/refund · one per cancel]
+  offer --> confirm{confirm_funding_cancel}
+  confirm -- declined --> on[settleCancel Declined · carries on]
+  confirm -- accepted --> refund[settleCancel Accepted → Refunding · Failed Refunded]
+  refund -. payout landed first .-> paid[PaidOutAfterCancel]
+```
+
+## Storage
+
+```mermaid
+flowchart LR
+  subgraph db["Core database · core.sqlite3 · core-owned"]
+    s[(funding_session<br/>in flight · provider still owes · late arrival open)]
+    k[(funding_summary<br/>every other ended session · acknowledged flag · never trimmed)]
+  end
+  subgraph kv["Core storage · host-backed slots"]
+    l[(FundingSupport<br/>learned limits · 12 h)]
+    m[(WorkerManifest cache)]
+  end
+  subgraph host["Host storage"]
+    t[(Secure tokens)]
+  end
+  hv["Host history view"]
+  s -- "ended, same transaction" --> k
+  s -- "funding_history(): ended sessions" --> hv
+  k -- "funding_history(): compacted" --> hv
+  hv -. acknowledge_funding_session .-> k
+```
+
+One row per session and per compacted summary, keyed by intent. Each record is SCALE, led by a u16 format: session 2,
+summary 4. A session is written once a provider takes it or the user starts it, and every commit is one transaction:
+changed rows upserted, rows that left the stored set deleted, new summaries inserted, before anyone hears of the change.
+
+| Row               | Rule                                             |
+| ----------------- | ------------------------------------------------ |
+| current format    | read                                             |
+| older             | skipped and kept                                 |
+| does not decode   | skipped and kept, never written over             |
+| newer (downgrade) | load fails, nothing touched, funding unavailable |
+
+Funding needs the core database: native hosts open it from `database_directory`. A wasm core has none and keeps no
+session.
+
+## Rows
+
+Title is the amount (`$50 CASH` in flight, `+$50 CASH` added, `-$50 CASH` out), rail pill on the right, subtitle below.
+History: In progress · Completed.
+
+| Status                                                       | Subtitle                                                                                                                            |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| WaitingForPayment / WaitingForDeposit / WaitingForTransfer   | Waiting for your payment / deposit / transfer                                                                                       |
+| ConvertingToCash · AddingToBalance                           | On its way · Adding to your balance                                                                                                 |
+| Retrying                                                     | The provider is retrying. Don't pay again (amber)                                                                                   |
+| TransactionInitiated                                         | Withdrawal initiated                                                                                                                |
+| ConvertingTo / PreparingPayout                               | Converting to {asset}… / Preparing your payout                                                                                      |
+| RetryingPayout                                               | The provider is retrying the payout (amber)                                                                                         |
+| TakingLonger                                                 | Delayed, don't pay again · out: Taking longer than usual (amber)                                                                    |
+| ToppedUp / Sent / PaidOutAfterCancel                         | {moment}                                                                                                                            |
+| Refunded / PayoutFailed / Cancelled                          | Refunded / Payout failed / Cancelled · {moment}                                                                                     |
+| CancelRequested · CancelOffered · CancelRefused · Cancelling | Cancel requested, waiting for the provider · Cancel offer waiting for you (amber) · The provider can't cancel (amber) · Cancelling… |
+| Failed                                                       | Expired · {moment} / Payment failed · {moment}                                                                                      |
+
+## Session sheet
+
+```
+        ⟳
+     $50 CASH
+ ●─•─•─●─•─•─○        Started · Received · Added      (out: Received by provider · Sent)
+ Checking your payment            band
+ Confirmation 2 of 3 · 4s ago     detail, else "Checked with the provider 3s ago" (last_heard_at_ms)
+ Send this exact amount inc. fees   €50.55 ›
+ Reference                    5729 4183 6602 ⧉
+ Arrives  1–2 business days · Final Cash depends on the rate on arrival
+ [ Cancel ]   pending bank top-up → Cancel top-up? · Cancel / Keep it
+```
+
+| Band                                                       | Line                                                                                                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| AwaitingPayment                                            | Waiting for your payment · bank: "If you've sent the money from your bank, it's on its way to us…"                                     |
+| CheckingPayment · OnItsWay                                 | Checking your payment · Your money is on its way                                                                                       |
+| Adding · Added                                             | Adding $50 CASH to your balance · $50 CASH added to your balance                                                                       |
+| Converting · PreparingPayout · Sending · Sent              | Converting your Cash · The provider is preparing your payout · Sending the money to your {rail} · Sent to your {rail}                  |
+| crypto: CheckingPayment · PreparingPayout · Sending · Sent | Confirming your {asset} deposit · Exchanging your money for {asset} · Sending your {asset} · Your {asset} is on its way to your wallet |
+| Retrying · Delayed                                         | amber, "don't pay again" on top-ups                                                                                                    |
+| Cancel · Ended                                             | no line                                                                                                                                |
+
+The line under the band is the provider's latest `Progress` fact for the current step, worded by the host, so the
+provider never needs the user's language. It clears when the step moves on; without one the host shows when the provider
+was last heard. Each part after the first is joined with " · "; the line is one line, cut short with "…".
+
+| Fact                             | Line                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| none · Checked                   | Checked with the provider just now / 12s ago                 |
+| Confirmations { done, required } | Confirmation 7 of 13 · last block 3s ago (crypto)            |
+| PriceChecked                     | Price checked · 3s ago                                       |
+| Parts { done, total }            | Part 2 of 4 · last part 5s ago                               |
+| Scheduled                        | About 12s left, then Any moment now                          |
+| SentByBank                       | Sent by your bank · Tue 14:02 (inbound bank)                 |
+| ExpectedBy                       | Expected by Thu 3 Nov                                        |
+| InReview                         | The provider is reviewing the payment · 3s ago               |
+| Attempt { n, of }                | Attempt 2 of 3 · next try in 20s                             |
+| Other { text }                   | the provider's text as given, at most 80 characters · 3s ago |
+
+A bank top-up cancelled before paying takes a transfer that arrives within 7 days: it opens again and is added.
+
+## Purse
+
+```
+┌ Purse ─────────────────────┐
+│ [ leather card  $X CASH ]  │
+│ [ ↑ Get ]      [ ↓ Send ]  │   Get: Topping up sheet if any in progress, else amount
+│ Total $X CASH  ●●●●●●      │   Send: contacts · Send money out → Sending sheet / amount
+│ ▒▒▒░░░░░░   Ready $X       │   ⟲ clock → History
+└────────────────────────────┘
+```
+
+## Restart
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant C as Core
+  participant W as Provider
+  H->>H: launch, resume marker set (last funding_in_progress_changed)
+  H->>C: start core, set_funding_callbacks → open core.sqlite3
+  C->>C: load funding_session + funding_summary in one transaction, expire overdue
+  C->>H: funding_session_changed per session in flight and unacknowledged
+  C->>H: funding_in_progress_changed
+  W->>C: handshake (worker connects)
+  C->>W: assign(last update) per session it serves, then unanswered cancel calls
+  W->>W: continue from the state it kept
+```
+
+Catch-up is one call at a time per link, retried until every call is answered.
+
+## Worker crash
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant W as Provider
+  participant C as Core
+  W--xH: worker dies (crash or system kill)
+  H->>C: worker_exited(product_id)
+  alt a session or the overlay holds it
+    C->>H: request_worker_transition(Start)
+    H->>W: start the worker
+    W->>C: handshake
+    C->>W: assign(last update) per session it serves, then unanswered cancel calls
+  else nothing holds it
+    Note over C: nothing to do
+  end
+```
+
+A worker that keeps crashing is restarted each time; there is no backoff.
+
+## Test
+
+`make e2e-funding-cli`: the product and provider battery against a scripted CLI host.

@@ -17,6 +17,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
+- [Building a funding provider](docs/guides/funding-provider.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
