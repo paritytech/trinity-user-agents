@@ -77,7 +77,7 @@ fn a_copy_signed_by_another_key_is_refused() {
 /// without either cannot start a host.
 #[test]
 fn a_stack_without_people_or_bulletin_is_refused() {
-	let without = |role: &'static str| {
+	let without = |role: &str| {
 		let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
 		descriptor["chains"]
 			.as_array_mut()
@@ -85,9 +85,12 @@ fn a_stack_without_people_or_bulletin_is_refused() {
 			.retain(|chain| chain["role"] != role);
 		bundled(&descriptor, false)
 	};
-	let roles = ["People", "Bulletin"];
 
-	assert_eq!(roles.map(without), roles.map(|role| Err(StackError::MissingChain { role })));
+	assert_eq!(
+		[without("People"), without("Bulletin")],
+		[ChainIdentifier::People, ChainIdentifier::Bulletin]
+			.map(|chain| Err(StackError::MissingChain { chain })),
+	);
 }
 
 /// Products are named under the TLDs the core serves dotNS for. Until that
