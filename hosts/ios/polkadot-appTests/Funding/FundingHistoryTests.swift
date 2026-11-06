@@ -1,0 +1,330 @@
+import Foundation
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
+import Testing
+import TrUAPIHost
+import UIKit
+@testable import polkadot_app
+
+private let provider = try! ProductId("provider.dot")
+
+/// The history is the core's, read each time it is drawn.
+struct FundingHistoryTests {
+    @Test
+    func aSummaryAloneIsListedFromTheCoresHistory() throws {
+        let records = FundingActivityCenter.historyRecords(
+            summaries: [summary("old", settledAtMs: 1_000)],
+            ended: []
+        )
+
+        let record = try #require(records.first)
+        #expect(records.map(\.intent) == ["old"])
+        #expect(record.settledAmount == "50000000")
+    }
+
+    @Test
+    func aSessionFromAnEarlierRunKeepsItsDetails() throws {
+        let record = try #require(FundingRecord(summary: summary("old", settledAtMs: 1_000)))
+        let item = FundingActivityItem(record: record)
+
+        let ended = FundingEndedSession(record: record)
+
+        #expect(record.providerId == provider)
+        #expect(record.rail == .crypto)
+        #expect(record.asset == "USDC")
+        #expect(record.paidNetwork == "polkadot")
+        #expect(ended.quotedAmount == FundingAssetUnit(code: "USDC", decimals: 2).format("4600"))
+        #expect(record.transactionId == "tx")
+        #expect(record.reference == "ref")
+        #expect(item.status == .toppedUp)
+        #expect(item.rail == .crypto)
+    }
+
+    @Test
+    func theSummarysStatusDecidesHowItEnded() throws {
+        let cancelled = try #require(FundingRecord(
+            summary: withdrawal(status: .cancelled(refunded: "40000000"), payout: nil, refunded: "40000000")
+        ))
+        let payoutFailed = try #require(FundingRecord(
+            summary: withdrawal(
+                status: .payoutFailed(refunded: "50000000"),
+                payout: .failed(reason: "rejected"),
+                refunded: "50000000"
+            )
+        ))
+        let sent = try #require(FundingRecord(
+            summary: withdrawal(status: .paidOutAfterCancel, payout: .paidOut, refunded: nil)
+        ))
+
+        #expect(FundingActivityItem(record: cancelled).status == .cancelled(refunded: "40000000"))
+        #expect(FundingActivityItem(record: payoutFailed).status == .payoutFailed(refunded: "50000000"))
+        #expect(FundingEndedSession(record: payoutFailed).outcome == .payoutFailed(reason: "rejected"))
+        #expect(FundingActivityItem(record: sent).status == .sent)
+        #expect(FundingEndedSession(record: sent).payoutState == .paidOut)
+    }
+
+    @Test
+    func aSessionPushedThisRunKeepsItsDetails() throws {
+        let pushed = try #require(FundingRecord(session: session("intent", stage: delivered(2_000)), progress: nil))
+
+        let records = FundingActivityCenter.historyRecords(
+            summaries: [summary("intent", settledAtMs: 2_000)],
+            ended: [pushed]
+        )
+
+        #expect(records == [pushed])
+        #expect(records.first?.providerId == provider)
+    }
+
+    @Test
+    func anEndedSessionTheHistoryDoesNotListYetIsKeptNewestFirst() throws {
+        let pushed = try #require(FundingRecord(session: session("new", stage: delivered(3_000)), progress: nil))
+
+        let records = FundingActivityCenter.historyRecords(
+            summaries: [summary("old", settledAtMs: 1_000)],
+            ended: [pushed]
+        )
+
+        #expect(records.map(\.intent) == ["new", "old"])
+    }
+}
+
+/// A provider closing its frame answers the frame `.closed` and hands over to
+/// the session sheet.
+@MainActor
+struct FundingCloseFrameTests {
+    @Test
+    func closingTheFrameAnswersClosedAndShowsTheSessionSheet() async throws {
+        let environment = WindowEnvironment()
+        let book = FundingSessionBook(logger: MockLogger())
+        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
+        let coordinator = FundingOverlayCoordinator(
+            runtime: MockFundingRuntime(),
+            environment: environment,
+            book: book
+        )
+
+        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
+        try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
+
+        coordinator.closeFrame(providerId: provider, intent: "intent")
+
+        #expect(await answer.value == .closed)
+        try await environment.waitUntil { $0.presented.last is FundingSheetController }
+    }
+
+    @Test
+    func anotherProvidersCloseLeavesTheFrameOpen() async throws {
+        let environment = WindowEnvironment()
+        let book = FundingSessionBook(logger: MockLogger())
+        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
+        let coordinator = FundingOverlayCoordinator(
+            runtime: MockFundingRuntime(),
+            environment: environment,
+            book: book
+        )
+
+        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
+        try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
+
+        try coordinator.closeFrame(providerId: ProductId("other.dot"), intent: "intent")
+        coordinator.closeFrame(providerId: provider, intent: "elsewhere")
+        let frame = try #require(environment.presented.last as? FundingProviderFrameController)
+        #expect(frame.presentingViewController != nil)
+
+        coordinator.closeFrame(providerId: provider, intent: "intent")
+        #expect(await answer.value == .closed)
+    }
+}
+
+private let openedAtMs: UInt64 = 1_700_000_000_000
+
+private func delivered(_ settledAtMs: UInt64) -> FundingStage {
+    .delivered(credited: "50000000", settledAtMs: openedAtMs + settledAtMs)
+}
+
+private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSummary {
+    FundingSessionSummary(
+        intent: intent,
+        ownerProductId: nil,
+        direction: .in,
+        amount: "50000000",
+        stage: delivered(settledAtMs),
+        openedAtMs: openedAtMs,
+        providerId: provider,
+        choice: FundingChoice(quote: quote(send: "4600"), rail: .crypto, asset: "USDC", network: "polkadot"),
+        status: .toppedUp,
+        payout: nil,
+        refunded: nil,
+        transactionId: "tx",
+        reference: "ref"
+    )
+}
+
+private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded: U128?) -> FundingSessionSummary {
+    FundingSessionSummary(
+        intent: "out",
+        ownerProductId: nil,
+        direction: .out,
+        amount: "50000000",
+        stage: .released(debited: "50000000", settledAtMs: openedAtMs + 1_000),
+        openedAtMs: openedAtMs,
+        providerId: provider,
+        choice: FundingChoice(quote: quote(send: "50000000"), rail: .bank, asset: "EUR", network: nil),
+        status: status,
+        payout: payout,
+        refunded: refunded,
+        transactionId: nil,
+        reference: nil
+    )
+}
+
+private func quote(send: U128) -> FundingQuote {
+    FundingQuote(
+        quoteId: "quote",
+        sendAmount: send,
+        receiveAmount: "50000000",
+        providerFee: "0",
+        networkFee: "0",
+        etaSecs: nil,
+        expiresAt: nil,
+        assetDecimals: 2
+    )
+}
+
+private func session(_ intent: String, stage: FundingStage) -> FundingSession {
+    FundingSession(
+        intent: intent,
+        ownerProductId: nil,
+        direction: .in,
+        amount: "50000000",
+        stage: stage,
+        openedAtMs: openedAtMs,
+        deadlineMs: openedAtMs + 86_400_000,
+        acknowledged: false,
+        providerId: provider,
+        assignedAtMs: openedAtMs,
+        cancel: nil,
+        updates: [],
+        started: [],
+        choice: FundingChoice(quote: quote(send: "50000000"), rail: .card, asset: "EUR", network: nil),
+        refund: nil,
+        detail: nil
+    )
+}
+
+/// Presents for real, over a window of its own, so frames go on and off
+/// screen as they do in the app.
+@MainActor
+private final class WindowEnvironment: FundingOverlayEnvironment {
+    private let window: UIWindow
+    private(set) var presented: [UIViewController] = []
+    /// Whether anything is on screen to present over.
+    var presents = true
+
+    init() {
+        window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+    }
+
+    var cash: FundingCash { FundingCash(symbol: "CASH", precision: 6) }
+    var branding: FundingProviderBranding { PlaceholderBranding() }
+
+    func followSpendable(_: @escaping @MainActor (Decimal) -> Void) async {}
+
+    func present(_ controller: UIViewController) -> Bool {
+        guard presents, var top = window.rootViewController else { return false }
+        while let next = top.presentedViewController, !next.isBeingDismissed {
+            top = next
+        }
+        top.present(controller, animated: false)
+        presented.append(controller)
+        return true
+    }
+
+    func providerPage(providerId _: ProductId, route _: String, title _: String) -> UIViewController? {
+        UIViewController()
+    }
+
+    func providerHasApp(providerId _: ProductId) async -> Bool {
+        true
+    }
+
+    func fundingActivityChanged() {}
+
+    private(set) var notices: [String] = []
+
+    func showNotice(_ message: String) {
+        notices.append(message)
+    }
+
+    func waitUntil(_ condition: @escaping @MainActor (WindowEnvironment) -> Bool) async throws {
+        try await withTimeout(.hangGuard) { @MainActor [self] in
+            while !condition(self) {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+    }
+}
+
+private struct PlaceholderBranding: FundingProviderBranding {
+    func brand(for providerId: ProductId) async -> FundingProviderBrand {
+        .placeholder(for: providerId)
+    }
+}
+
+/// An ended session shown again is acknowledged once its sheet is on screen,
+/// and not when nothing could present it.
+@MainActor
+struct FundingReopenTests {
+    @Test
+    func anEndedSessionIsAcknowledgedOnceItsSheetIsShown() async throws {
+        let environment = WindowEnvironment()
+        let runtime = MockFundingRuntime()
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+
+        coordinator.reopen(intent: "intent")
+
+        #expect(environment.presented.last is FundingSheetController)
+        try await environment.waitUntil { _ in runtime.acknowledged == ["intent"] }
+    }
+
+    @Test
+    func aSheetThatCannotBePresentedLeavesTheSessionUnacknowledged() async throws {
+        let environment = WindowEnvironment()
+        environment.presents = false
+        let runtime = MockFundingRuntime()
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+
+        coordinator.reopen(intent: "intent")
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(environment.presented.isEmpty)
+        #expect(runtime.acknowledged.isEmpty)
+    }
+
+    private func endedBook() -> FundingSessionBook {
+        let book = FundingSessionBook(logger: MockLogger())
+        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
+        return book
+    }
+}
+
+/// A worker that keeps crashing is named to the user while the core retries.
+@MainActor
+struct FundingWorkerCrashingTests {
+    @Test
+    func aCrashingProviderIsNamedOverWhateverIsOnScreen() async {
+        let environment = WindowEnvironment()
+        let coordinator = FundingOverlayCoordinator(
+            runtime: MockFundingRuntime(),
+            environment: environment,
+            book: FundingSessionBook(logger: MockLogger())
+        )
+
+        await coordinator.workerCrashing(productId: try! ProductId("ramp.dot"))
+
+        #expect(environment.notices == [String(localized: .Funding.providerCrashing(provider: "Ramp"))])
+    }
+}
