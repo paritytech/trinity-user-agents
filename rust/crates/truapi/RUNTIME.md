@@ -215,24 +215,22 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only source of chain
-configuration: the People, Bulletin, Asset Hub and relay genesis hashes, the
-network `get_chain_info` reports, and the dotNS TLD. A native or browser shell
-passes the stack's pointer (`polkadotapp://stack?key=0x…&url=…`), the signed
-descriptor its build bundles, and whether the build allows reserved values;
-`Stack::bundled` verifies the copy against the pointer's key. It refuses a
-pointer without a key, a descriptor without a People or Bulletin chain, a TLD
-the core does not serve dotNS under, and Polkadot's genesis hashes or the `dot`
-TLD on a stack the build does not allow them on. A Rust host that resolved a
-stack itself, such as the CLI, builds one with `Stack::new` under the same
-rules, and a test-host browser bundle takes one built from its parts as
-`runtimeConfig.testStack`.
+Both host configs carry a `Stack`, the core's only chain configuration: the
+Relay, Asset Hub, People and Bulletin genesis hashes, the network
+`get_chain_info` reports, and the dotNS TLD.
 
-The TLD must match the People chain's `NetworkSuffix.NetworkSuffix`: reserved
-identities derive under `uid.<tld>` and `peopl.<tld>`, while the chain uses that
-suffix for proof contexts. Reading it from the bundled copy keeps local
-activation and key derivation available offline. The core does not yet check
-the descriptor against the live chains, and does not fetch newer copies.
+A native or browser shell builds it with `Stack::bundled` from the stack's
+pointer, the signed descriptor its build bundles, and whether the build allows
+Polkadot's reserved values. A Rust host that resolves its chains itself, such as
+the CLI, uses `Stack::new`, and a test-host browser bundle passes
+`runtimeConfig.testStack`. Each constructor documents what it refuses.
+
+Reserved identities derive under `uid.<tld>` and `peopl.<tld>`, and the People
+chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
+to be equal. Taking the TLD from the stack keeps local activation and key
+derivation working offline. The core does not check it against the chain, does
+not check genesis hashes against the live chains, and does not fetch newer
+copies.
 
 ### Core database
 
