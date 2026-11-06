@@ -1,5 +1,7 @@
 use super::*;
-use crate::test_support::{sign_test_descriptor, test_descriptor, test_descriptor_chain};
+use crate::test_support::{
+	sign_test_descriptor, test_descriptor, test_descriptor_chain, test_stack_link,
+};
 
 const POLKADOT_PEOPLE: [u8; 32] = [
 	0x67, 0xfa, 0x17, 0x7a, 0x09, 0x7b, 0xfa, 0x18, 0xf7, 0x7e, 0xa9, 0x5a, 0xb5, 0x6e, 0x9b, 0xcd,
@@ -48,27 +50,23 @@ fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
 	);
 }
 
-/// A host refreshes its stack unseen, so a pointer with no key to check a
-/// refresh against is refused even when the bundled copy is signed.
+/// A later copy is checked against the pointer's key, so a pointer without
+/// one is refused even when the bundled copy is signed.
 #[test]
 fn a_pointer_without_a_key_is_refused() {
 	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
-	let pointer = "polkadotapp://stack?url=https%3A%2F%2Fstack.test.invalid%2Fstack.json";
 
-	assert_eq!(Stack::bundled(pointer, &bytes, false), Err(StackError::Unsigned));
+	assert_eq!(Stack::bundled(&test_stack_link(None), &bytes, false), Err(StackError::Unsigned));
 }
 
-/// The pointer's key is the trust anchor: a copy signed by anyone else does
-/// not start, whatever it claims.
+/// The pointer's key is the trust anchor: a copy signed by any other key does
+/// not start.
 #[test]
 fn a_copy_signed_by_another_key_is_refused() {
 	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
-	let other_key = format!("0x{}", hex::encode(trinity_stack::public_key(&[0x42; 32])));
-	let pointer = Pointer::new("https://stack.test.invalid/stack.json", Some(&other_key))
-		.expect("pointer is valid")
-		.to_link(trinity_stack::DEFAULT_LINK_BASE);
+	let other_key = test_stack_link(Some(&[0x42; 32]));
 
-	let refused = Stack::bundled(&pointer, &bytes, false).expect_err("another key's copy");
+	let refused = Stack::bundled(&other_key, &bytes, false).expect_err("another key's copy");
 	assert!(
 		matches!(&refused, StackError::Descriptor(error) if error.code() == "bad-signature"),
 		"{refused:?}"
@@ -79,13 +77,17 @@ fn a_copy_signed_by_another_key_is_refused() {
 /// without either cannot start a host.
 #[test]
 fn a_stack_without_people_or_bulletin_is_refused() {
-	let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
-	descriptor["chains"] = serde_json::json!([
-		test_descriptor_chain("Relay", [0x01; 32], None),
-		test_descriptor_chain("People", [0xa1; 32], Some(1004))
-	]);
+	let without = |role: &'static str| {
+		let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
+		descriptor["chains"]
+			.as_array_mut()
+			.expect("chains is an array")
+			.retain(|chain| chain["role"] != role);
+		bundled(&descriptor, false)
+	};
+	let roles = ["People", "Bulletin"];
 
-	assert_eq!(bundled(&descriptor, false), Err(StackError::MissingChain { role: "Bulletin" }));
+	assert_eq!(roles.map(without), roles.map(|role| Err(StackError::MissingChain { role })));
 }
 
 /// Products are named under the TLDs the core serves dotNS for. Until that
@@ -93,18 +95,12 @@ fn a_stack_without_people_or_bulletin_is_refused() {
 #[test]
 fn a_tld_the_core_does_not_serve_is_refused() {
 	let chains =
-		|| StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
+		StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
+	let tlds = ["kusama", "", ".paseo", "Paseo"];
 
 	assert_eq!(
-		["kusama", "", ".paseo", "Paseo"].map(|tld| Stack::new(
-			"paseo".into(),
-			tld.into(),
-			chains(),
-			true
-		)
-		.err()),
-		["kusama", "", ".paseo", "Paseo"]
-			.map(|tld| Some(StackError::UnsupportedTld { tld: tld.to_string() })),
+		tlds.map(|tld| Stack::new("paseo".into(), tld.into(), chains.clone(), true)),
+		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
 	);
 	assert_eq!(
 		bundled(&test_descriptor("kusama", [0xa1; 32], [0xb2; 32], None), false),
@@ -112,9 +108,9 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 	);
 }
 
-/// Only a build that vouches for a stack may give it Polkadot's names: the
-/// `dot` TLD, or a Polkadot genesis hash under any role, including ones the
-/// core never reads.
+/// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,
+/// including roles the core never reads, start only in a build that allows
+/// them.
 #[test]
 fn reserved_values_need_the_builds_permission() {
 	let on_dot = test_descriptor("dot", [0xa1; 32], [0xb2; 32], None);
@@ -124,15 +120,14 @@ fn reserved_values_need_the_builds_permission() {
 		.as_array_mut()
 		.expect("chains is an array")
 		.push(test_descriptor_chain("Collectives", POLKADOT_PEOPLE, Some(1001)));
-	let polkadot_people = format!("genesis hash 0x{}", hex::encode(POLKADOT_PEOPLE));
 
 	assert_eq!(
 		[&on_dot, &polkadot_people_as_another_role].map(|descriptor| {
 			(bundled(descriptor, false).err(), bundled(descriptor, true).is_ok())
 		}),
 		[
-			(Some(StackError::Reserved { value: "tld dot".to_string() }), true),
-			(Some(StackError::Reserved { value: polkadot_people }), true),
+			(Some(StackError::ReservedTld), true),
+			(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true),
 		]
 	);
 }
@@ -148,11 +143,6 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 			Stack::new("polkadot".into(), "paseo".into(), chains.clone(), false).err(),
 			Stack::new("polkadot".into(), "paseo".into(), chains, true).is_ok(),
 		),
-		(
-			Some(StackError::Reserved {
-				value: format!("genesis hash 0x{}", hex::encode(POLKADOT_PEOPLE))
-			}),
-			true,
-		)
+		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
 }
