@@ -20,4 +20,6 @@ object ReservedProductIds {
     fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
 
     fun chat(tld: DotNsTld): ProductId = ProductId.fromName("chat", tld.value).getOrThrow()
+
+    fun all(tld: DotNsTld): Set<ProductId> = setOf(game(tld), funding(tld), lightPersonIdentity(tld), personhood(tld))
 }

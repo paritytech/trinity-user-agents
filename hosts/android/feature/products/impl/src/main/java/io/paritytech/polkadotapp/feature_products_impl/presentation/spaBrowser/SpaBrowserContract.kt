@@ -12,6 +12,12 @@ interface SpaBrowserContract {
     fun onMinimizeClick()
 
     fun onRefresh()
+
+    fun onScreenStarted()
+
+    fun onUpdateReloadClick()
+
+    fun onUpdateDismissClick()
 }
 
 data class SpaBrowserUiState(
@@ -20,6 +26,7 @@ data class SpaBrowserUiState(
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
     val isDevServer: Boolean = false,
+    val updateReadyProductName: String? = null,
 )
 
 /** What the content area shows. Anything still in flight is [Content] with [SpaBrowserUiState.loadProgress] running. */

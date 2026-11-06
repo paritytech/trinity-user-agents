@@ -75,6 +75,7 @@ class SpaBrowserViewModelTest {
     private fun viewModel() = SpaBrowserViewModel(
         productSessionController = productSessionController,
         interactor = mockk(),
+        productUpdater = mockk { every { observePendingNames() } returns MutableStateFlow(emptySet()) },
         router = router,
         dotNsTldProvider = mockk(),
         savedStateHandle = SavedStateHandle(),

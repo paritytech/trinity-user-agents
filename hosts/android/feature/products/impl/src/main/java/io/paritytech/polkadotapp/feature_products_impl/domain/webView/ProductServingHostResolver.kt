@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
@@ -16,13 +17,17 @@ class ProductServingHostResolver @Inject constructor(
     override suspend fun servingHostFor(requestHost: String): Result<String> = servingHostFor(requestHost, ExecutableKind.APP)
 
     /** A page under a Pocket card uses the product's [ExecutableKind.WIDGET]. */
-    suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): Result<String> = runCancellableCatching {
+    suspend fun servingHostFor(
+        requestHost: String,
+        executable: ExecutableKind,
+        retryPolicy: NetworkRetryPolicy = NetworkRetryPolicy.DEFAULT,
+    ): Result<String> = runCancellableCatching {
         val tld = dotNsTldProvider.getTld().getOrThrow()
         val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@runCancellableCatching requestHost
         val productId = identifier.owner().getOrThrow()
         if (identifier != productId) return@runCancellableCatching identifier.value
 
-        val resolved = resolveProductUseCase.resolve(productId).getOrThrow()
+        val resolved = resolveProductUseCase.resolve(productId, retryPolicy).getOrThrow()
         val served = when (executable) {
             ExecutableKind.APP -> resolved.executables.app?.host
             ExecutableKind.WIDGET -> resolved.executables.widget?.host

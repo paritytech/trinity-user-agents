@@ -6,18 +6,23 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
+import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdater
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -30,7 +35,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -42,48 +49,70 @@ import javax.inject.Inject
 class SpaBrowserViewModel @Inject constructor(
     private val productSessionController: ProductSessionController,
     private val interactor: SpaBrowserInteractor,
+    private val productUpdater: ProductUpdater,
     private val router: ProductsRouter,
     private val dotNsTldProvider: DotNsTldProvider,
     savedStateHandle: SavedStateHandle,
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
-    // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
-    // into this stream, so progress and page state are views of it rather than separate truths.
-    private val pageLoad: Flow<PageLoad> = productSessionController.activeTab
+    private val dismissedUpdates = MutableStateFlow<Set<ProductId>>(emptySet())
+
+    private val activeProductId: Flow<ProductId?> = productSessionController.activeTab
         .map { tab ->
             // Waits rather than guesses: a tab classified before the TLD lands would stick as
             // "not a product" for its whole lifetime.
             tab?.url?.toUri()?.let { productIdFromUrl(it, dotNsTldProvider.getTldRetrying()).getOrNull() }
         }
         .distinctUntilChanged()
-        .flatMapLatest { productId ->
-            if (productId == null) {
-                flowOf<PageLoad>(PageLoad.NotAProduct)
-            } else {
-                flow {
-                    emit(PageLoad.Resolving)
 
-                    interactor.resolveProduct(productId).fold(
-                        onSuccess = { resolved ->
-                            emitAll(productSessionController.loadProgress.map { PageLoad.Serving(resolved, it) })
-                        },
-                        onFailure = { emit(PageLoad.Failed(it.toProductResolutionError())) },
-                    )
-                }
+    // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
+    // into this stream, so progress and page state are views of it rather than separate truths.
+    private val pageLoad: Flow<PageLoad> = activeProductId.flatMapLatest { productId ->
+        if (productId == null) {
+            flowOf<PageLoad>(PageLoad.NotAProduct)
+        } else {
+            flow {
+                emit(PageLoad.Resolving)
+
+                interactor.resolveProduct(productId).fold(
+                    onSuccess = { resolved ->
+                        emitAll(productSessionController.loadProgress.map { PageLoad.Serving(resolved, it) })
+                    },
+                    onFailure = { emit(PageLoad.Failed(it.toProductResolutionError())) },
+                )
             }
         }
+    }
+
+    private val servedPage: StateFlow<ServedPage?> = pageLoad
+        .map { load ->
+            val resolved = (load as? PageLoad.Serving)?.resolved
+            val pageName = resolved?.executables?.app?.host?.value
+            if (resolved != null && pageName != null) ServedPage(resolved.product, pageName) else null
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val pagePendingUpdate: StateFlow<ServedPage?> = combine(
+        servedPage,
+        productUpdater.observePendingNames(),
+        dismissedUpdates,
+    ) { page, pending, dismissed ->
+        page?.takeIf { it.pageName in pending && it.product.id !in dismissed && !isBuiltIn(it.product.id) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     override val state: StateFlow<SpaBrowserUiState> = combine(
         productSessionController.activeTab,
         pageLoad,
-    ) { info, load ->
+        pagePendingUpdate,
+    ) { info, load, pendingUpdate ->
         SpaBrowserUiState(
             title = info?.title,
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
+            updateReadyProductName = pendingUpdate?.product?.name,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -108,7 +137,10 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onRefresh() {
-        productSessionController.reload()
+        launch {
+            servedPage.value?.let { productUpdater.applyPage(it.pageName) }
+            productSessionController.reload()
+        }
     }
 
     override fun onMinimizeClick() {
@@ -126,6 +158,34 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
+    override fun onScreenStarted() {
+        dismissedUpdates.value = emptySet()
+
+        launch {
+            val productId = activeProductId.first() ?: return@launch
+            productUpdater.check(productId).logFailure("Failed to check $productId for an update")
+        }
+    }
+
+    override fun onUpdateReloadClick() {
+        val page = pagePendingUpdate.value ?: return
+
+        launch {
+            productUpdater.applyPage(page.pageName)
+            productSessionController.reload()
+        }
+    }
+
+    override fun onUpdateDismissClick() {
+        val page = pagePendingUpdate.value ?: return
+
+        dismissedUpdates.update { it + page.product.id }
+    }
+
+    private suspend fun isBuiltIn(productId: ProductId): Boolean {
+        return productId in ReservedProductIds.all(dotNsTldProvider.getTldRetrying())
+    }
+
     private fun quitOnLastTabClosed() {
         launch {
             productSessionController.openTabs
@@ -137,6 +197,8 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 }
+
+private data class ServedPage(val product: Product, val pageName: String)
 
 private sealed interface PageLoad {
     /** The tab is on an ordinary web page: nothing to resolve, and no archive to fetch. */

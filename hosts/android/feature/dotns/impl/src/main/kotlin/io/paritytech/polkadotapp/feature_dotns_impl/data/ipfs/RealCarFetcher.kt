@@ -15,7 +15,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
-import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import javax.inject.Inject
@@ -84,7 +83,7 @@ class RealCarFetcher @Inject constructor(
 
         return httpClient.newCall(requestBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("IPFS fetch failed: HTTP ${response.code} for $url")
+                throw IpfsHttpException(response.code, url)
             }
             response.body.bytes()
         }
@@ -102,7 +101,7 @@ class RealCarFetcher @Inject constructor(
 
         return httpClient.newCall(requestBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("IPFS fetch failed: HTTP ${response.code} for $url")
+                throw IpfsHttpException(response.code, url)
             }
 
             val total = response.body.contentLength()
