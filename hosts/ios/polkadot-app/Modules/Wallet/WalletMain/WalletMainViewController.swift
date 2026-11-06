@@ -19,6 +19,8 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         view.textColor = .fgPrimary
     }
 
+    private let purseTitleView = PurseTitleView()
+
     init(
         presenter: WalletMainPresenterProtocol,
         assetDetailsScene: AssetDetailsScene,
@@ -71,6 +73,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 
         rootView.viewModel.onCollapse = { [weak self] in
             self?.collapseExpandedSection()
+        }
+
+        rootView.viewModel.onPurseCollapse = { [weak self] progress in
+            self?.purseTitleView.apply(progress: progress)
         }
 
         rootView.viewModel.onCollectibles = { [weak self] in
@@ -171,7 +177,10 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
         resetRightButton()
-        setTitleCenter(String(localized: .walletMainPurse))
+        navigationItem.style = .navigator
+        updateNavigationBarVisibility(animated: true)
+        purseTitleView.apply(progress: 0)
+        navigationItem.titleView = purseTitleView
     }
 
     private func showIdentityDetailsOverlay() {
@@ -205,6 +214,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
         navigationItem.style = .navigator
         updateNavigationBarVisibility(animated: true)
         guard #available(iOS 26, *) else {
+            navigationItem.titleView = nil
             navigationItem.title = title
             return
         }
