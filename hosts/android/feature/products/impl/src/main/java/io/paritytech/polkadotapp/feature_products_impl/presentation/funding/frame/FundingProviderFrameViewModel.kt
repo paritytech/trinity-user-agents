@@ -32,17 +32,16 @@ data class FundingProviderFrameUiState(
     val failed: Boolean,
 )
 
-/** An external https page shown in the frame, with the origin the frame's chrome names and where it finishes. */
+/** An external https page shown in the frame, and where it finishes. */
 data class FundingExternalPage(
     val url: String,
-    val origin: String,
     val returnUrl: String?,
 )
 
 /**
  * A provider's own screen, for as long as the provider needs it: a route of its App, or an external https page
- * such as an onramp's widget. The session is already running, so backing out of it only hides it and leaves the
- * provider waiting, which the CASH card can show again. Saying a bank transfer was sent answers `Closed`, and a
+ * such as an onramp's widget. The session is already running, so backing out of it closes the screen but leaves the
+ * provider waiting; the CASH card opens it again, loading the App route or page afresh. Saying a bank transfer was sent answers `Closed`, and a
  * page reaching its return URL answers `Returned`; the overlay answers `Closed` too once the payment is seen or the
  * session is over.
  */
@@ -57,8 +56,13 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
 ) : BaseViewModel() {
     /** The external page, drawn in a WebView of the screen's own; `null` for the provider's App. */
     val page: FundingExternalPage? = (context.target as? ProviderFrameTarget.Page)?.let {
-        FundingExternalPage(url = it.url, origin = originOf(it.url), returnUrl = it.returnUrl)
+        FundingExternalPage(url = it.url, returnUrl = it.returnUrl)
     }
+
+    private val pageOrigin = MutableStateFlow(page?.let { originOf(it.url) })
+
+    /** The origin of the page the external WebView is on, which the frame's chrome names; `null` for the App. */
+    val origin: StateFlow<String?> = pageOrigin
 
     private val session = if (page == null) spaHost.createSession(context.url) else null
     private val pageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
@@ -88,8 +92,15 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
 
     fun onSentFunds() = finish(ProviderFrameOutcome.Closed)
 
+    /** A main-frame load began, which clears a failed one; the chrome names wherever the page went. */
+    fun onPageStarted(url: String) {
+        pageOrigin.value = originOf(url)
+        pageProgress.value = DotNsLoadProgress.Idle
+    }
+
+    /** WebView finishes a load that failed too, and a failure stays until the next load starts. */
     fun onPageLoaded() {
-        pageProgress.value = DotNsLoadProgress.Completed
+        if (pageProgress.value !is DotNsLoadProgress.Failed) pageProgress.value = DotNsLoadProgress.Completed
     }
 
     fun onPageFailed(cause: Throwable) {

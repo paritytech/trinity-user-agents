@@ -23,14 +23,7 @@ enum WalletMainViewFactory {
             flowState: context.flowState
         )
 
-        let networkStatusObserver = NetworkStatusObserver(
-            networkStatusService: context.networkStatusService,
-            chainIds: [chainAssetId.chainId],
-            logger: Logger.shared
-        )
-
         let interactor = WalletMainInteractor(
-            networkStatusObserver: networkStatusObserver,
             pocketPrewarmer: PocketPrewarmer(
                 products: context.flowState.productResolver,
                 dotNsResolver: context.flowState.dotNsResolver
@@ -43,10 +36,7 @@ enum WalletMainViewFactory {
 
         let presenter = WalletMainPresenter(
             interactor: interactor,
-            wireframe: wireframe,
-            titleViewModelFactory: NetworkStatusTitleViewModelFactory(
-                screenTitle: String(localized: .walletMainTitle)
-            )
+            wireframe: wireframe
         )
         interactor.presenter = presenter
 

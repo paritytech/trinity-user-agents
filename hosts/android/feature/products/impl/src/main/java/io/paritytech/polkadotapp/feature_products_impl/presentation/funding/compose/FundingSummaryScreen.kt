@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -193,7 +194,7 @@ private fun ValueSkeleton() {
 private fun etaText(eta: FundingEta): String = when (eta) {
     is FundingEta.Minutes -> stringResource(RCommon.string.funding_eta_minutes, eta.count)
     is FundingEta.Hours -> stringResource(RCommon.string.funding_eta_hours, eta.count)
-    is FundingEta.Days -> stringResource(RCommon.string.funding_eta_days, eta.count)
+    is FundingEta.Days -> pluralStringResource(RCommon.plurals.funding_eta_days, eta.count, eta.count)
 }
 
 private fun FundingSummaryUiState.titleRes(): Int = when (rail) {

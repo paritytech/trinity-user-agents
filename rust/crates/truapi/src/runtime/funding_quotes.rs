@@ -9,27 +9,31 @@
 //! about what the provider serves is kept for twelve hours and folded into the
 //! candidates.
 //!
-//! The host's list marks the best quote, and the core asks every provider
-//! again each minute while the session waits for the user to choose.
+//! A session choosing a provider has one watch: the ask, the list its host
+//! was last shown, and the task that asks every provider again each minute.
+//! The watch owns the task, the task owns the quote calls, and each call holds
+//! its provider's worker, so removing the watch is the only way quotes end and
+//! lets every worker they held go.
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex},
+	sync::{Arc, Mutex, Weak},
 };
 
 use core::time::Duration;
 
 use futures::{
-	channel::oneshot,
-	future::{self, AbortHandle, AbortRegistration, Either},
-	stream::{self, Abortable, BoxStream, StreamExt},
+	future::{self, AbortHandle, AbortRegistration, Abortable},
+	stream::{self, StreamExt},
 };
-use parity_scale_codec::Encode;
 use truapi::latest::{
 	FundingDirection, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
 };
 
-use super::{funding::lock, services::RuntimeServices};
+use super::{
+	funding::{lock, within},
+	services::RuntimeServices,
+};
 use crate::{
 	host_logic::{
 		funding::FundingChoice,
@@ -43,10 +47,6 @@ use crate::{
 
 /// How long a provider has to answer an ask.
 const QUOTE_DEADLINE: Duration = Duration::from_secs(10);
-/// How long a provider's answer is reused for the same ask in the same
-/// session, so editing the amount back and forth does not ask every provider
-/// again. Another session asks afresh, so no two sessions share a quote.
-const ANSWER_REUSE_MS: u64 = 30_000;
 /// How many providers are asked at once, so a long list of published
 /// providers does not start every one of their workers together.
 const QUOTE_CONCURRENCY: usize = 8;
@@ -60,42 +60,90 @@ const DETECTED_COUNTRY_REUSE_MS: u64 = 60 * 60 * 1_000;
 /// as location or a SIM can become available soon after.
 const UNDETECTED_COUNTRY_RETRY_MS: u64 = 60 * 1_000;
 
-/// The session, the provider and the encoded ask an answer was given for.
-type AnswerKey = (String, ProductId, Vec<u8>);
-
-/// A provider's answer and when it came.
-#[derive(Clone)]
-struct RecentAnswer {
-	at_ms: u64,
-	answer: FundingQuoteAnswer,
-}
-
-/// Recent answers, the quotes each session was offered, each session's open
-/// ask and the list its host watches.
+/// Each session's quote request, and the country the host detected.
 #[derive(Default)]
 pub struct FundingQuotes {
-	/// Answers by session, provider and encoded ask, with when each came.
-	answers: Mutex<HashMap<AnswerKey, RecentAnswer>>,
-	/// Each session's latest ask, which a newer one, or the session leaving
-	/// the overlay or being taken by a provider, withdraws.
-	asks: Mutex<HashMap<String, AbortHandle>>,
-	/// Quotes offered by session and provider, with the rail and asset each
-	/// priced, so a selection can only name one the host was shown.
-	offered: Mutex<HashMap<(String, ProductId), Vec<FundingChoice>>>,
-	/// The latest list each session's host is shown, by a number that grows
-	/// with each new ask, so an older list stops asking again, and the handle
-	/// that ends it at once, with every quote it still waits on, once a
-	/// provider takes the session.
-	watching: Mutex<HashMap<String, (u64, AbortHandle)>>,
-	/// The number the next watched list takes.
-	next_watch: Mutex<u64>,
-	/// The country the host last detected, and when.
-	detected: Mutex<Option<(u64, Option<String>)>>,
+	/// Every session's quote request, behind one lock.
+	watches: Mutex<Watches>,
+	/// The country the host last detected.
+	detected: DetectedCountry,
+}
+
+#[derive(Default)]
+struct Watches {
+	/// The id the next request takes, whatever the session. It only grows,
+	/// and is taken under the same lock as the insert, so a session's entry is
+	/// always its newest request.
+	next_request: u64,
+	/// The current request of each session that is choosing a provider. A
+	/// session with no entry is not being quoted.
+	by_session: HashMap<String, Watch>,
+}
+
+/// One session's quote request. Dropping it stops its rounds.
+struct Watch {
+	/// The id every list of this request carries.
+	request_id: u64,
+	/// What every round prices. A quote the session is handed takes its rail,
+	/// asset and network from here.
+	ask: FundingQuoteAsk,
+	/// The rows the host was last shown; their quotes are the ones the
+	/// session can be handed to.
+	shown: Vec<FundingQuoteRow>,
+	/// Ends the rounds, with every quote still asked and the worker it holds.
+	rounds: AbortHandle,
+}
+
+impl Drop for Watch {
+	fn drop(&mut self) {
+		self.rounds.abort();
+	}
 }
 
 impl FundingQuotes {
-	/// The quote `quote_id` that `provider_id` offered for session `intent`,
-	/// with what it priced, unless it expired by `now_ms`.
+	/// Make `ask` session `intent`'s quote request, replacing, and so
+	/// stopping, the one before it. Returns the request's id and what its
+	/// rounds run under.
+	fn start(&self, intent: &str, ask: FundingQuoteAsk) -> (u64, AbortRegistration) {
+		let (rounds, registration) = AbortHandle::new_pair();
+		let mut watches = lock(&self.watches);
+		watches.next_request += 1;
+		let request_id = watches.next_request;
+		watches
+			.by_session
+			.insert(intent.to_string(), Watch { request_id, ask, shown: Vec::new(), rounds });
+		(request_id, registration)
+	}
+
+	/// Stop session `intent`'s quotes, with every quote still asked, which
+	/// lets their workers go.
+	pub fn end(&self, intent: &str) {
+		lock(&self.watches).by_session.remove(intent);
+	}
+
+	/// Keep `list` as what session `intent`'s host is shown, and say whether
+	/// to show it: only a list of the session's current request, while the
+	/// session can still be quoted. A session that cannot loses its request.
+	fn publish(&self, intent: &str, list: &FundingQuoteList, quotable: bool) -> bool {
+		let mut watches = lock(&self.watches);
+		let Some(watch) = watches
+			.by_session
+			.get_mut(intent)
+			.filter(|watch| watch.request_id == list.request_id)
+		else {
+			return false;
+		};
+		if quotable {
+			watch.shown = list.rows.clone();
+			return true;
+		}
+		watches.by_session.remove(intent);
+		false
+	}
+
+	/// The quote `quote_id` that `provider_id` offered in the list session
+	/// `intent`'s host was last shown, with what it priced, unless it expired
+	/// by `now_ms`.
 	pub fn offered(
 		&self,
 		intent: &str,
@@ -103,176 +151,183 @@ impl FundingQuotes {
 		quote_id: &str,
 		now_ms: u64,
 	) -> Option<FundingChoice> {
-		lock(&self.offered)
-			.get(&(intent.to_string(), provider_id.clone()))?
-			.iter()
-			.find(|choice| choice.quote.quote_id == quote_id && !expired(&choice.quote, now_ms))
-			.cloned()
+		let watches = lock(&self.watches);
+		let watch = watches.by_session.get(intent)?;
+		watch.shown.iter().find_map(|row| match &row.state {
+			FundingQuoteState::Quoted { quote }
+				if row.provider_id == *provider_id &&
+					quote.quote_id == quote_id &&
+					!expired(quote, now_ms) =>
+			{
+				Some(FundingChoice {
+					quote: quote.clone(),
+					rail: watch.ask.rail,
+					asset: watch.ask.asset.clone(),
+					network: watch.ask.network.clone(),
+				})
+			},
+			_ => None,
+		})
 	}
 
-	/// Keep `quote` as offered for session `intent`, dropping the session's
-	/// quotes from `provider_id` that expired by `now_ms`.
-	pub fn offer(
-		&self,
-		intent: &str,
-		provider_id: &ProductId,
-		quote: FundingQuote,
-		ask: &FundingQuoteAsk,
-		now_ms: u64,
-	) {
-		let mut offered = lock(&self.offered);
-		let choices = offered.entry((intent.to_string(), provider_id.clone())).or_default();
-		choices
-			.retain(|kept| kept.quote.quote_id != quote.quote_id && !expired(&kept.quote, now_ms));
-		choices.push(FundingChoice {
-			quote,
-			rail: ask.rail,
-			asset: ask.asset.clone(),
-			network: ask.network.clone(),
-		});
+	/// The rows session `intent`'s host was last shown.
+	#[cfg(test)]
+	pub(crate) fn shown(&self, intent: &str) -> Option<Vec<FundingQuoteRow>> {
+		lock(&self.watches).by_session.get(intent).map(|watch| watch.shown.clone())
 	}
 
-	/// Drop the quotes offered for, and withdraw the ask of, every session
-	/// `quotable` rejects: one that was assigned or ended can no longer be
-	/// handed a quote.
-	pub fn retain_sessions(&self, quotable: impl Fn(&str) -> bool) {
-		lock(&self.offered).retain(|(intent, _), _| quotable(intent));
-		lock(&self.watching).retain(|intent, _| quotable(intent));
-		lock(&self.asks).retain(|intent, ask| {
-			let keep = quotable(intent);
-			if !keep {
-				ask.abort();
-			}
-			keep
-		});
+	/// Show `rows` for `ask` in session `intent`, as a round would, without
+	/// asking any provider.
+	#[cfg(test)]
+	pub(crate) fn show(&self, intent: &str, ask: FundingQuoteAsk, rows: Vec<FundingQuoteRow>) {
+		let (request_id, _) = self.start(intent, ask);
+		let list = FundingQuoteList { request_id, rows, best: None, refresh_at_ms: 0 };
+		self.publish(intent, &list, true);
 	}
+}
 
-	/// Start a new ask for session `intent`: the one before it is withdrawn,
-	/// so its late answers reach neither the host nor the quotes the session
-	/// can be handed, and the quotes it offered go with it.
-	fn begin_ask(&self, intent: &str, ask: AbortHandle) {
-		if let Some(previous) = lock(&self.asks).insert(intent.to_string(), ask) {
-			previous.abort();
-		}
-		lock(&self.offered).retain(|(offered_for, _), _| offered_for != intent);
-	}
+/// The country the host last detected, and when.
+#[derive(Default)]
+struct DetectedCountry(Mutex<Option<(u64, Option<String>)>>);
 
-	/// Make a new list the one session `intent` watches, ending any older
-	/// one's asking again. Returns the list's number and what ends it.
-	fn watch(&self, intent: &str) -> (u64, AbortRegistration) {
-		let mut next = lock(&self.next_watch);
-		*next += 1;
-		let (handle, registration) = AbortHandle::new_pair();
-		lock(&self.watching).insert(intent.to_string(), (*next, handle));
-		(*next, registration)
-	}
-
-	/// Whether list `watch` is still the one session `intent` watches.
-	fn is_watched(&self, intent: &str, watch: u64) -> bool {
-		lock(&self.watching).get(intent).is_some_and(|(current, _)| *current == watch)
-	}
-
-	/// Stop asking again for session `intent`'s quotes. A quote already
-	/// asked still holds its provider's worker until it is answered.
-	pub fn stop_watching(&self, intent: &str) {
-		lock(&self.watching).remove(intent);
-	}
-
-	/// End session `intent`'s list at once, with every quote it still waits
-	/// on, as once a provider has taken the session the others' answers
-	/// cannot be used and their workers are let go.
-	pub fn end_quotes(&self, intent: &str) {
-		if let Some((_, list)) = lock(&self.watching).remove(intent) {
-			list.abort();
-		}
-		if let Some(ask) = lock(&self.asks).remove(intent) {
-			ask.abort();
-		}
-	}
-
-	/// `provider_id`'s answer to the same ask for session `intent`, when it
-	/// came recently and, if it is a quote, has not expired.
-	fn reusable(
-		&self,
-		intent: &str,
-		provider_id: &ProductId,
-		ask: &FundingQuoteAsk,
-		now_ms: u64,
-	) -> Option<FundingQuoteAnswer> {
-		let RecentAnswer { at_ms, answer } = lock(&self.answers)
-			.get(&(intent.to_string(), provider_id.clone(), ask.encode()))?
-			.clone();
-		let fresh = now_ms.saturating_sub(at_ms) < ANSWER_REUSE_MS;
-		let live = match &answer {
-			FundingQuoteAnswer::Quoted { quote } => !expired(quote, now_ms),
-			FundingQuoteAnswer::Refused { .. } => true,
+impl DetectedCountry {
+	/// The country detected at most an hour before `now_ms`, or a minute
+	/// before when none was found; `None` once it is due to be asked again.
+	fn recent(&self, now_ms: u64) -> Option<Option<String>> {
+		let (at_ms, country) = lock(&self.0).clone()?;
+		let reuse_ms = match country {
+			Some(_) => DETECTED_COUNTRY_REUSE_MS,
+			None => UNDETECTED_COUNTRY_RETRY_MS,
 		};
-		(fresh && live).then_some(answer)
+		(now_ms.saturating_sub(at_ms) < reuse_ms).then_some(country)
 	}
 
-	fn remember(
-		&self,
-		intent: &str,
-		provider_id: &ProductId,
-		ask: &FundingQuoteAsk,
-		now_ms: u64,
-		answer: FundingQuoteAnswer,
-	) {
-		let mut answers = lock(&self.answers);
-		answers.retain(|_, recent| now_ms.saturating_sub(recent.at_ms) < ANSWER_REUSE_MS);
-		answers.insert(
-			(intent.to_string(), provider_id.clone(), ask.encode()),
-			RecentAnswer { at_ms: now_ms, answer },
-		);
+	fn store(&self, now_ms: u64, country: Option<String>) {
+		*lock(&self.0) = Some((now_ms, country));
 	}
 }
 
 impl RuntimeServices {
-	/// Ask every funding provider to price `ask` for session `intent`, the
-	/// ask's direction being the session's; an ask naming no country takes
-	/// the one the host detected. Each provider's row is first `Pending`,
-	/// then `Quoted` or `Unavailable`; a quote that does not price the ask
+	/// Quotes for funding session `intent`, sent to the host through
+	/// [`crate::platform::FundingPlatform::funding_quotes_changed`]. Every
+	/// funding provider is asked to price `ask` in the session's direction; an
+	/// ask naming no country takes the one the host detected. Each list is
+	/// complete and replaces the one before: a provider's row is `Pending`
+	/// until it first answers, then `Quoted` or `Unavailable`, and keeps its
+	/// answer until it answers again. A quote that does not price the ask
 	/// counts as the provider being unable to serve it. At most
 	/// [`QUOTE_CONCURRENCY`] providers are asked at once, each with its own
-	/// deadline. The stream ends once every provider has answered or run out
-	/// of time, and never errors. It also ends, withdrawing the asks still
-	/// open, when a newer ask for the session starts or the session is taken
-	/// by a provider or leaves the overlay; dropping it does the same and
-	/// lets the providers' workers go. Empty for a session the core does not
-	/// know or that ended.
-	pub fn get_funding_quote(
-		self: &Arc<Self>,
-		intent: &str,
-		ask: FundingQuoteAsk,
-	) -> BoxStream<'static, FundingQuoteRow> {
-		self.get_funding_quote_within(intent, ask, QUOTE_DEADLINE)
+	/// deadline, and every provider is asked again at the list's
+	/// `refresh_at_ms`, or at once when the providers change. Quotes stop once
+	/// the session is handed to a provider, ends or leaves the overlay, or a
+	/// newer request replaces this one, and no list of this request reaches
+	/// the host after that. Returns the request id every list carries.
+	pub fn request_funding_quotes(self: &Arc<Self>, intent: &str, ask: FundingQuoteAsk) -> u64 {
+		self.request_funding_quotes_within(intent, ask, QUOTE_DEADLINE, QUOTE_REFRESH)
 	}
 
-	/// [`Self::get_funding_quote`] with `deadline` for each provider.
-	pub fn get_funding_quote_within(
+	/// [`Self::request_funding_quotes`] with `deadline` for each provider and
+	/// a new round every `refresh`.
+	pub(crate) fn request_funding_quotes_within(
 		self: &Arc<Self>,
 		intent: &str,
 		ask: FundingQuoteAsk,
 		deadline: Duration,
-	) -> BoxStream<'static, FundingQuoteRow> {
-		let Some(session) = self.funding().get(intent).filter(|session| !session.is_terminal())
-		else {
-			return stream::empty().boxed();
+		refresh: Duration,
+	) -> u64 {
+		let direction =
+			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
+		let ask = FundingQuoteAsk { direction, ..ask };
+		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
+		let rounds =
+			self.clone()
+				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
+		(self.spawner)(Box::pin(async move {
+			let _ = Abortable::new(rounds, registration).await;
+		}));
+		request_id
+	}
+
+	/// Request `request_id`'s rounds for session `intent`: every provider's
+	/// row, then each answer as it comes, and the same again every `refresh`,
+	/// until a list is refused.
+	async fn quote_rounds(
+		self: Arc<Self>,
+		intent: String,
+		request_id: u64,
+		ask: FundingQuoteAsk,
+		deadline: Duration,
+		refresh: Duration,
+	) {
+		let country = match ask.country {
+			Some(country) => Some(country),
+			None => self.detected_funding_country().await,
 		};
-		let services = self.clone();
-		let asked = intent.to_string();
-		let rows = stream::once(async move {
-			let country = match ask.country {
-				Some(country) => Some(country),
-				None => services.detected_funding_country().await,
-			};
-			let ask = FundingQuoteAsk { direction: session.direction, country, ..ask };
-			services.quote_every_provider(&asked, ask, deadline)
-		})
-		.flatten();
-		let (rows, withdraw) = stream::abortable(rows);
-		self.funding_quotes().begin_ask(intent, withdraw);
-		rows.boxed()
+		let ask = FundingQuoteAsk { country, ..ask };
+		let mut rows: Vec<FundingQuoteRow> = Vec::new();
+		loop {
+			// The providers changing starts the next round at once, so one
+			// dotNS answered for meanwhile is asked too.
+			let providers_changed = self.funding_providers().on_change();
+			self.refresh_funding_providers();
+			let targets = self.funding_providers().quote_targets();
+			// A row keeps its last answer until the provider answers again.
+			rows = targets
+				.iter()
+				.map(|provider_id| {
+					rows.iter().find(|row| row.provider_id == *provider_id).cloned().unwrap_or_else(
+						|| FundingQuoteRow {
+							provider_id: provider_id.clone(),
+							state: FundingQuoteState::Pending,
+						},
+					)
+				})
+				.collect();
+			let refresh_at_ms = current_unix_millis().saturating_add(refresh.as_millis() as u64);
+			let mut list = FundingQuoteList { request_id, rows, best: None, refresh_at_ms };
+			if !self.publish_quotes(&intent, &mut list) {
+				return;
+			}
+			let mut answers = stream::iter(targets)
+				.map(|provider_id| self.quote_one(provider_id, &ask, deadline))
+				.buffer_unordered(QUOTE_CONCURRENCY);
+			while let Some(answer) = answers.next().await {
+				if let Some(row) =
+					list.rows.iter_mut().find(|row| row.provider_id == answer.provider_id)
+				{
+					*row = answer;
+				}
+				if !self.publish_quotes(&intent, &mut list) {
+					return;
+				}
+			}
+			rows = list.rows;
+			let wait = refresh_at_ms.saturating_sub(current_unix_millis());
+			let wait = futures_timer::Delay::new(Duration::from_millis(wait));
+			let _ = future::select(wait, providers_changed).await;
+		}
+	}
+
+	/// Mark `list`'s best quote and show it to session `intent`'s host, unless
+	/// it no longer answers the session's request or the session can no
+	/// longer be quoted. Returns whether it was shown.
+	fn publish_quotes(&self, intent: &str, list: &mut FundingQuoteList) -> bool {
+		// A session the core no longer knows loses its request.
+		let Some(session) = self.funding().get(intent) else {
+			return self.funding_quotes().publish(intent, list, false);
+		};
+		list.best = best_quote(session.direction, &list.rows, |provider_id| {
+			self.funding_providers().is_quote_target(provider_id)
+		});
+		let quotable = !session.is_terminal() && session.provider_id.is_none();
+		if !self.funding_quotes().publish(intent, list, quotable) {
+			return false;
+		}
+		if let Some(platform) = self.funding().platform() {
+			platform.funding_quotes_changed(intent.to_string(), list.clone());
+		}
+		self.send_funding_options(intent);
+		true
 	}
 
 	/// The country the host detected for the user as an ISO 3166-1 alpha-2
@@ -281,268 +336,120 @@ impl RuntimeServices {
 	/// minute.
 	pub async fn detected_funding_country(&self) -> Option<String> {
 		let now_ms = current_unix_millis();
-		let cached = lock(&self.funding_quotes().detected).clone();
-		if let Some((at_ms, country)) = cached {
-			let reuse_ms = match country {
-				Some(_) => DETECTED_COUNTRY_REUSE_MS,
-				None => UNDETECTED_COUNTRY_RETRY_MS,
-			};
-			if now_ms.saturating_sub(at_ms) < reuse_ms {
-				return country;
-			}
+		let detected = &self.funding_quotes().detected;
+		if let Some(country) = detected.recent(now_ms) {
+			return country;
 		}
 		let platform = self.funding().platform()?;
 		let country = platform.detected_country().await.and_then(alpha2);
-		*lock(&self.funding_quotes().detected) = Some((now_ms, country.clone()));
+		detected.store(now_ms, country.clone());
 		country
 	}
 
-	/// Every funding provider's `Pending` row for `ask`, then each one's
-	/// answer as it comes, with at most [`QUOTE_CONCURRENCY`] asked at once.
-	fn quote_every_provider(
-		self: &Arc<Self>,
-		intent: &str,
-		ask: FundingQuoteAsk,
-		deadline: Duration,
-	) -> BoxStream<'static, FundingQuoteRow> {
-		self.refresh_funding_providers();
-		let targets = self.funding_providers().quote_targets();
-		let pending: Vec<_> = targets
-			.iter()
-			.map(|provider_id| FundingQuoteRow {
-				provider_id: provider_id.clone(),
-				state: FundingQuoteState::Pending,
-			})
-			.collect();
-		let services = self.clone();
-		let intent = intent.to_string();
-		let answers = stream::iter(targets)
-			.map(move |provider_id| {
-				let services = services.clone();
-				let intent = intent.clone();
-				let ask = ask.clone();
-				async move { services.quote_one(&intent, &provider_id, ask, deadline).await }
-			})
-			.buffer_unordered(QUOTE_CONCURRENCY);
-		stream::iter(pending).chain(answers).boxed()
-	}
-
-	/// [`Self::get_funding_quote`] as the host's list, under the returned
-	/// request id: the rows so far with the best quote marked, again after
-	/// each answer, and a new round of asks every minute. Each list is
-	/// complete and replaces the one before. Lists stop, mid round too, once
-	/// the session is handed to a provider or ends, or a newer request or
-	/// [`FundingQuotes::stop_watching`] replaces this one. Nothing is sent
-	/// as an error: a provider that fails or runs out of time shows as
-	/// `Unavailable` in its row.
-	pub fn watch_funding_quotes(
-		self: &Arc<Self>,
-		intent: &str,
-		ask: FundingQuoteAsk,
-	) -> (u64, BoxStream<'static, FundingQuoteList>) {
-		self.watch_funding_quotes_within(intent, ask, QUOTE_DEADLINE, QUOTE_REFRESH)
-	}
-
-	/// [`Self::watch_funding_quotes`] with `deadline` for each provider and
-	/// a new round every `refresh`.
-	pub fn watch_funding_quotes_within(
-		self: &Arc<Self>,
-		intent: &str,
-		ask: FundingQuoteAsk,
-		deadline: Duration,
-		refresh: Duration,
-	) -> (u64, BoxStream<'static, FundingQuoteList>) {
-		let (watch, ended) = self.funding_quotes().watch(intent);
-		let current = {
-			let services = self.clone();
-			let intent = intent.to_string();
-			move || services.quotes_still_wanted(&intent, watch)
-		};
-		let services = self.clone();
-		let intent = intent.to_string();
-		let refresh_ms = refresh.as_millis() as u64;
-		let still_current = current.clone();
-		let lists =
-			stream::unfold(None, move |next_round: Option<(u64, oneshot::Receiver<()>)>| {
-				let current = current.clone();
-				let services = services.clone();
-				let intent = intent.clone();
-				let ask = ask.clone();
-				async move {
-					if let Some((round_at, changed)) = next_round {
-						let wait = round_at.saturating_sub(current_unix_millis());
-						// The providers changing starts the next round at once, so
-						// one dotNS answered for meanwhile is asked too.
-						let wait = futures_timer::Delay::new(Duration::from_millis(wait));
-						let _ = future::select(wait, changed).await;
-					}
-					if !current() {
-						return None;
-					}
-					let changed = services.funding_providers().on_change();
-					let refresh_at_ms = current_unix_millis().saturating_add(refresh_ms);
-					let direction = services
-						.funding()
-						.get(&intent)
-						.map_or(ask.direction, |session| session.direction);
-					let pending = services
-						.funding_providers()
-						.quote_targets()
-						.into_iter()
-						.map(|provider_id| FundingQuoteRow {
-							provider_id,
-							state: FundingQuoteState::Pending,
-						})
-						.collect();
-					let rows = services.get_funding_quote_within(&intent, ask, deadline);
-					let start = FundingQuoteList {
-						request_id: watch,
-						rows: pending,
-						best: None,
-						refresh_at_ms,
-					};
-					let providers = services.clone();
-					let lists = rows
-						.scan(start, move |list, row| {
-							match list
-								.rows
-								.iter_mut()
-								.find(|kept| kept.provider_id == row.provider_id)
-							{
-								Some(kept) => *kept = row,
-								None => list.rows.push(row),
-							}
-							list.best = best_quote(direction, &list.rows, |provider_id| {
-								providers.funding_providers().is_quote_target(provider_id)
-							});
-							future::ready(Some(list.clone()))
-						})
-						.boxed();
-					Some((lists, Some((refresh_at_ms, changed))))
-				}
-			})
-			.flatten()
-			.take_while(move |_| future::ready(still_current()));
-		(watch, Abortable::new(lists, ended).boxed())
-	}
-
-	/// Whether list `watch` of session `intent` is still wanted: the latest
-	/// one asked for, for a session still open and not yet handed to a
-	/// provider.
-	fn quotes_still_wanted(&self, intent: &str, watch: u64) -> bool {
-		self.funding_quotes().is_watched(intent, watch) &&
-			self.funding()
-				.get(intent)
-				.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none())
-	}
-
-	/// Ask one provider, holding its worker while it answers.
+	/// Ask `provider_id` to price `ask`, holding its worker while it answers.
 	async fn quote_one(
 		self: &Arc<Self>,
-		intent: &str,
-		provider_id: &ProductId,
-		ask: FundingQuoteAsk,
+		provider_id: ProductId,
+		ask: &FundingQuoteAsk,
 		deadline: Duration,
 	) -> FundingQuoteRow {
-		let quotes = &self.funding_quotes();
-		// `None` with `timed_out` unset is an answer that does not price the ask.
-		let (answer, timed_out) =
-			match quotes.reusable(intent, provider_id, &ask, current_unix_millis()) {
-				Some(answer) => (Some(answer), false),
-				None => {
-					let hold = WorkerHold::acquire(self, provider_id);
-					let funding = self.funding().clone();
-					let asked = {
-						let ask = ask.clone();
-						let provider_id = provider_id.clone();
-						// A worker the host is stopping keeps its link until its
-						// connection closes, and the one started in its place
-						// connects soon after: a quote that fails on a link is
-						// asked again on the next, within the same deadline.
-						async move {
-							let mut failed = None;
-							loop {
-								let link = funding
-									.connected_link_besides(&provider_id, failed.as_ref())
-									.await;
-								if let Some(answer) = link.quote(ask.clone()).await {
-									return Some(answer);
-								}
-								failed = Some(link);
-							}
-						}
-					};
-					let timeout = futures_timer::Delay::new(deadline);
-					let (answer, timed_out) = match future::select(Box::pin(asked), timeout).await {
-						Either::Left((answer, _)) => (answer, false),
-						Either::Right(_) => (None, true),
-					};
-					drop(hold);
-					let now_ms = current_unix_millis();
-					let answer = answer.filter(|answer| prices(answer, &ask, now_ms));
-					if let Some(answer) = &answer {
-						quotes.remember(intent, provider_id, &ask, now_ms, answer.clone());
-						if let Some(supported) = shows_support(answer, ask.country.is_some()) {
-							let (min, max) = answer.limits_shown();
-							let limit = |amount| LearnedLimit { amount, learned_at_ms: now_ms };
-							self.learn_funding_support(LearnedSupport {
-								provider_id: provider_id.clone(),
-								direction: ask.direction,
-								rail: ask.rail,
-								asset: ask.asset.clone(),
-								network: ask.network.clone(),
-								country: ask.country.clone(),
-								asked: ask.amount,
-								supported,
-								min: min.map(limit),
-								max: max.map(limit),
-								learned_at_ms: now_ms,
-							});
-						}
-					}
-					(answer, timed_out)
-				},
-			};
+		let hold = WorkerHold::acquire(self, &provider_id);
+		// A worker the host is stopping keeps its link until its connection
+		// closes, and the one started in its place connects soon after: a
+		// quote that fails on a link is asked again on the next, within the
+		// same deadline.
+		let asked = async {
+			let mut failed = None;
+			loop {
+				let link =
+					self.funding().connected_link_besides(&provider_id, failed.as_ref()).await;
+				if let Some(answer) = link.quote(ask.clone()).await {
+					return answer;
+				}
+				failed = Some(link);
+			}
+		};
+		let answer = within(deadline, asked).await;
+		drop(hold);
+		let now_ms = current_unix_millis();
 		let state = match answer {
-			None if timed_out => {
-				FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout }
-			},
-			None => FundingQuoteState::Unavailable {
+			None => FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout },
+			Some(answer) if !prices(&answer, ask, now_ms) => FundingQuoteState::Unavailable {
 				reason: FundingQuoteUnavailable::Refused {
 					reason: FundingQuoteRefusal::Unavailable,
 				},
 			},
-			Some(FundingQuoteAnswer::Refused { reason }) => FundingQuoteState::Unavailable {
-				reason: FundingQuoteUnavailable::Refused { reason },
-			},
-			Some(FundingQuoteAnswer::Quoted { quote }) => {
-				quotes.offer(intent, provider_id, quote.clone(), &ask, current_unix_millis());
-				FundingQuoteState::Quoted { quote }
+			Some(answer) => {
+				self.learn_from(&provider_id, ask, &answer, now_ms);
+				match answer {
+					FundingQuoteAnswer::Refused { reason } => FundingQuoteState::Unavailable {
+						reason: FundingQuoteUnavailable::Refused { reason },
+					},
+					FundingQuoteAnswer::Quoted { quote } => FundingQuoteState::Quoted { quote },
+				}
 			},
 		};
-		FundingQuoteRow { provider_id: provider_id.clone(), state }
+		FundingQuoteRow { provider_id, state }
+	}
+
+	/// Keep what `provider_id`'s `answer` to `ask` shows about what it serves.
+	fn learn_from(
+		self: &Arc<Self>,
+		provider_id: &ProductId,
+		ask: &FundingQuoteAsk,
+		answer: &FundingQuoteAnswer,
+		now_ms: u64,
+	) {
+		let Some(supported) = shows_support(answer, ask.country.is_some()) else {
+			return;
+		};
+		let (min, max) = answer.limits_shown();
+		let limit = |amount| LearnedLimit { amount, learned_at_ms: now_ms };
+		self.learn_funding_support(LearnedSupport {
+			provider_id: provider_id.clone(),
+			direction: ask.direction,
+			rail: ask.rail,
+			asset: ask.asset.clone(),
+			network: ask.network.clone(),
+			country: ask.country.clone(),
+			asked: ask.amount,
+			supported,
+			min: min.map(limit),
+			max: max.map(limit),
+			learned_at_ms: now_ms,
+		});
 	}
 }
 
-/// A reference on a provider's worker while the core needs it, such as for a
-/// quote or while a session's overlay is up, released when dropped, so a
-/// quote stream dropped while it waits leaves none behind.
-pub struct WorkerHold<'a> {
-	services: &'a RuntimeServices,
+/// A reference on a provider's worker while the core needs it: for a quote,
+/// while a session's overlay is up, or while the provider serves a session.
+/// Released when dropped, so a call dropped while it waits leaves none
+/// behind. Taking and releasing one calls into the host, so neither happens
+/// under a lock.
+pub struct WorkerHold {
+	services: Weak<RuntimeServices>,
 	provider: ProductId,
 }
 
-impl<'a> WorkerHold<'a> {
+impl WorkerHold {
 	/// Hold `provider`'s worker, so the host runs it to answer.
-	pub fn acquire(services: &'a RuntimeServices, provider: &ProductId) -> Self {
+	pub fn acquire(services: &Arc<RuntimeServices>, provider: &ProductId) -> Self {
 		services.worker_ledger.acquire(provider);
-		Self { services, provider: provider.clone() }
+		Self { services: Arc::downgrade(services), provider: provider.clone() }
+	}
+
+	/// The provider whose worker this holds.
+	pub fn provider(&self) -> &ProductId {
+		&self.provider
 	}
 }
 
-impl Drop for WorkerHold<'_> {
+impl Drop for WorkerHold {
 	fn drop(&mut self) {
-		self.services.worker_ledger.release(&self.provider);
+		// Services that are gone took their ledger with them.
+		if let Some(services) = self.services.upgrade() {
+			services.worker_ledger.release(&self.provider);
+		}
 	}
 }
 
@@ -647,121 +554,4 @@ fn prices(answer: &FundingQuoteAnswer, ask: &FundingQuoteAsk, now_ms: u64) -> bo
 }
 
 #[cfg(test)]
-mod tests {
-	use truapi::latest::{FundingDirection, FundingRail};
-
-	use super::*;
-
-	const NOW: u64 = 1_700_000_000_000;
-
-	fn quote(quote_id: &str, expires_at: Option<u64>) -> FundingQuote {
-		FundingQuote {
-			quote_id: quote_id.to_string(),
-			send_amount: 1_020,
-			receive_amount: 1_000,
-			provider_fee: 20,
-			network_fee: 0,
-			eta_secs: None,
-			expires_at,
-			asset_decimals: 2,
-		}
-	}
-
-	// Refusing the country of an ask that named none says nothing about
-	// where the provider serves, so it must not be learned as a refusal
-	// everywhere, which would hide the provider from every user.
-	#[test]
-	fn only_an_ask_naming_a_country_learns_a_country_refusal() {
-		let refused =
-			FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::CountryUnsupported };
-
-		assert_eq!(
-			(shows_support(&refused, true), shows_support(&refused, false)),
-			(Some(false), None)
-		);
-	}
-
-	fn row(provider_id: &str, send_amount: u128, receive_amount: u128) -> FundingQuoteRow {
-		FundingQuoteRow {
-			provider_id: ProductId::for_test(provider_id),
-			state: FundingQuoteState::Quoted {
-				quote: FundingQuote { send_amount, receive_amount, ..quote("q", None) },
-			},
-		}
-	}
-
-	// The user pays the least for what they add, and receives the most for
-	// what they withdraw; among equals the host's own order decides. A
-	// provider a session can no longer be handed to is never the best.
-	#[test]
-	fn the_best_quote_is_cheapest_in_and_most_generous_out() {
-		let rows = [
-			row("first.dot", 1_020, 990),
-			row("second.dot", 1_010, 990),
-			row("third.dot", 1_010, 980),
-			FundingQuoteRow {
-				provider_id: ProductId::for_test("silent.dot"),
-				state: FundingQuoteState::Pending,
-			},
-		];
-
-		let any = |_: &ProductId| true;
-
-		assert_eq!(
-			(
-				best_quote(FundingDirection::In, &rows, any),
-				best_quote(FundingDirection::Out, &rows, any),
-				best_quote(FundingDirection::In, &rows[3..], any),
-				best_quote(FundingDirection::In, &rows, |provider_id| provider_id.as_str() !=
-					"second.dot"),
-			),
-			(
-				Some(ProductId::for_test("second.dot")),
-				Some(ProductId::for_test("first.dot")),
-				None,
-				Some(ProductId::for_test("third.dot")),
-			)
-		);
-	}
-
-	// A host asks again each time the user edits the amount, so a session's
-	// expired quotes are dropped rather than piling up while its overlay is
-	// open.
-	#[test]
-	fn offering_a_quote_drops_the_expired_ones() {
-		let quotes = FundingQuotes::default();
-		let ask = FundingQuoteAsk {
-			direction: FundingDirection::In,
-			rail: FundingRail::Card,
-			asset: "EUR".to_string(),
-			network: None,
-			amount: 1_000,
-			country: None,
-		};
-		quotes.offer(
-			"fs_1",
-			&ProductId::for_test("ramp.dot"),
-			quote("expired", Some(NOW)),
-			&ask,
-			NOW - 1,
-		);
-		quotes.offer("fs_1", &ProductId::for_test("ramp.dot"), quote("live", None), &ask, NOW);
-
-		let kept: Vec<String> = lock(&quotes.offered)
-			.values()
-			.flatten()
-			.map(|choice| choice.quote.quote_id.clone())
-			.collect();
-		assert_eq!(kept, vec!["live".to_string()]);
-	}
-
-	// A host answers whatever its platform reports; only a two-letter code
-	// reaches a quote ask.
-	#[test]
-	fn only_an_alpha2_code_counts_as_a_detected_country() {
-		assert_eq!(
-			["de", " PT ", "deu", "D1", ""].map(|raw| alpha2(raw.to_string())),
-			[Some("DE".to_string()), Some("PT".to_string()), None, None, None]
-		);
-	}
-}
+mod tests;

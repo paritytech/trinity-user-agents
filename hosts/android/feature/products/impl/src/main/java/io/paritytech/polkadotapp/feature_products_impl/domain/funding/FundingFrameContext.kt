@@ -32,6 +32,10 @@ class FundingFrameContext(
             }
         }
 
+    /** Once answered nothing waits on the screen, so one still up closes itself when back on top. */
+    val isAnswered: Boolean
+        get() = outcome.isCompleted
+
     fun answer(answer: ProviderFrameOutcome) {
         outcome.complete(FrameAnswer(answer, byProvider = false))
     }

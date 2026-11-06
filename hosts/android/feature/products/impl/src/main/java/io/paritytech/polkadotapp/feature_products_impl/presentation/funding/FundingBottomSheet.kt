@@ -19,7 +19,8 @@ import javax.inject.Inject
  * The overlay a funding session is started from. Back walks the sheet's own screens; Close leaves it.
  *
  * Brought back after process death, the sheet has lost the call that opened it, so it closes at once. The session
- * itself lives on in the core, and the CASH card opens it again.
+ * itself lives on in the core, and the CASH card opens it again. A sheet asked to close while another screen sat on it
+ * closes once it is back on top.
  */
 @AndroidEntryPoint
 class FundingBottomSheet : BaseComposeBottomSheet<FundingViewModel>() {
@@ -42,7 +43,12 @@ class FundingBottomSheet : BaseComposeBottomSheet<FundingViewModel>() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         contexts.get(arguments?.getString(INTENT).orEmpty())?.let { overlay = it }
-        if (orphaned) dismissAllowingStateLoss()
+        if (orphaned) dismissAllowingStateLoss() else overlay.markShown()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!orphaned && overlay.isClosed) dismissAllowingStateLoss()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): ComposeView =

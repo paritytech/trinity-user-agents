@@ -1223,7 +1223,10 @@
     <string name="funding_error_no_provider">No provider can take this payment right now</string>
     <string name="funding_error_not_enough">Not enough %1$s</string>
     <string name="funding_error_start_failed">Couldn\'t start with this provider. Try again.</string>
-    <string name="funding_eta_days">in %1$d days</string>
+    <plurals name="funding_eta_days">
+        <item quantity="one">in %1$d day</item>
+        <item quantity="other">in %1$d days</item>
+    </plurals>
     <string name="funding_eta_hours">in %1$d h</string>
     <string name="funding_eta_minutes">in %1$d min</string>
     <string name="funding_fees_amount">Amount</string>

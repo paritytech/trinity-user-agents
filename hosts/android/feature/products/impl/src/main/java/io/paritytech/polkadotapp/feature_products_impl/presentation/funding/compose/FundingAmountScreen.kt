@@ -15,7 +15,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
+import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -55,7 +55,7 @@ fun FundingAmountScreen(
             title = stringResource(if (state.isWithdraw) RCommon.string.funding_amount_withdraw_title else RCommon.string.funding_amount_add_title),
             onBack = null,
         ) {
-            FundingCircleButton(icon = NovaIcons.Clock, onClick = onClose)
+            FundingCircleButton(icon = NovaIcons.Close, onClick = onClose)
         }
 
         FundingRailTabs(tabs = state.rails, onSelect = onRailSelected)

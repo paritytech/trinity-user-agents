@@ -33,6 +33,11 @@ import kotlinx.coroutines.launch
 class FundingExternalPageState {
     internal var webView: WebView? = null
 
+    /** Loads the current page again, as after a failed load. */
+    fun reload() {
+        webView?.reload()
+    }
+
     /** Goes back a page and answers `true`, or answers `false` on the first page. */
     fun goBack(): Boolean {
         val view = webView ?: return false
@@ -55,6 +60,7 @@ fun rememberFundingExternalPageState(): FundingExternalPageState = remember { Fu
 fun FundingExternalPageView(
     page: FundingExternalPage,
     state: FundingExternalPageState,
+    onStarted: (String) -> Unit,
     onLoaded: () -> Unit,
     onFailed: (Throwable) -> Unit,
     onReturned: (String) -> Unit,
@@ -64,6 +70,7 @@ fun FundingExternalPageView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pickFiles by rememberUpdatedState(onPickFiles)
+    val started by rememberUpdatedState(onStarted)
     val loaded by rememberUpdatedState(onLoaded)
     val failed by rememberUpdatedState(onFailed)
     val returned by rememberUpdatedState(onReturned)
@@ -105,6 +112,8 @@ fun FundingExternalPageView(
                         if (page.returnUrl != null && reachesReturnUrl(url, page.returnUrl)) {
                             view.stopLoading()
                             returned(url)
+                        } else {
+                            started(url)
                         }
                     }
 

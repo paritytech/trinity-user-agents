@@ -15,10 +15,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -53,7 +55,7 @@ class FundingCancelViewModelTest {
     private val context = FundingOverlayContext(request, FundingOverlayMode.Resumed)
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
-    private val sessionChanges = MutableSharedFlow<Unit>()
+    private val sessions = MutableStateFlow<FundingSessionEntry?>(null)
     private var cancel: FundingCancel? = null
     private var moneyMoved = false
     private val models = mutableListOf<FundingViewModel>()
@@ -66,12 +68,9 @@ class FundingCancelViewModelTest {
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
-        coEvery { stopQuotes("intent") } returns Unit
-        every { sessionChanges("intent") } returns sessionChanges
+        every { session("intent") } returns sessions
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
-        every { progress("intent") } answers { progress() }
-        every { session("intent") } answers { session() }
     }
 
     @Before
@@ -99,7 +98,7 @@ class FundingCancelViewModelTest {
         model.onCancelTopUp()
         model.onConfirmCancel()
         cancel = FundingCancel.Requested
-        sessionChanges.emit(Unit)
+        publish()
         runCurrent()
 
         assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
@@ -182,7 +181,7 @@ class FundingCancelViewModelTest {
         val model = resumed()
 
         cancel = FundingCancel.Offered(fee = "2500000", refund = "1000250000", expiresAt = null)
-        sessionChanges.emit(Unit)
+        publish()
         runCurrent()
 
         assertEquals(FundingScreen.CANCEL_OFFER, screen(model))
@@ -191,6 +190,7 @@ class FundingCancelViewModelTest {
 
         val messages = messages(model)
         cancel = FundingCancel.Accepted(fee = "2500000", refund = "1000250000")
+        publish()
         model.onAcceptCancelOffer()
         runCurrent()
 
@@ -210,6 +210,7 @@ class FundingCancelViewModelTest {
 
         val messages = messages(model)
         cancel = FundingCancel.Declined
+        publish()
         model.onDeclineCancelOffer()
         runCurrent()
 
@@ -250,7 +251,7 @@ class FundingCancelViewModelTest {
         assertFalse(deposit(model).canCancel)
 
         cancel = FundingCancel.Refused(reason = "the payout already left")
-        sessionChanges.emit(Unit)
+        publish()
         runCurrent()
 
         assertEquals(FundingCancelUiState.Refused("the payout already left"), deposit(model).cancel)
@@ -283,7 +284,13 @@ class FundingCancelViewModelTest {
         moneyMoved = moneyMoved,
     )
 
+    /** The core pushes the session as it now stands. */
+    private fun publish() {
+        sessions.value = FundingSessionEntry(session(), progress())
+    }
+
     private fun TestScope.resumed(): FundingViewModel {
+        publish()
         val model = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
         models += model
         runCurrent()

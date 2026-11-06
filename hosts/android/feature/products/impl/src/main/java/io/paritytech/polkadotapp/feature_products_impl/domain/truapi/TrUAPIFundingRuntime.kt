@@ -50,12 +50,6 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> =
         runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, ask) }
 
-    override suspend fun stopQuotes(intent: String) {
-        runtimeProvider.runtime()
-            .mapCatching { it.stopFundingQuotes(intent) }
-            .logFailure("TrUAPI funding quotes could not stop")
-    }
-
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
 
