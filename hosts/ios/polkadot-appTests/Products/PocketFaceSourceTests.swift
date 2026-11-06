@@ -1,6 +1,7 @@
 import Foundation
 import os
 import AsyncExtensions
+import IssueMonitoring
 import Products
 import Testing
 import TrUAPIHost
@@ -44,6 +45,40 @@ struct PocketFaceSourceTests {
 
         #expect(await drawing.value == ["live"])
     }
+
+    /// The kept face and the first live one are each timed from the card asking for its face.
+    @Test
+    func reportsTheKeptFaceAndTheFirstLiveFace() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let clock = SteppingClock(start: 100, step: 24)
+        let source = RealPocketFaceSource(
+            store: { KeptFaceStore() },
+            streams: RunningHandler(StubFaceStreams(faces: ["one", "two"].map { RendererNode.string(text: $0) })),
+            telemetry: HostLoadTelemetry(recorder: recorder, monotonicMilliseconds: { clock.read() })
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.map(\.name) == ["host.pocket.face_loaded", "host.pocket.face_loaded"])
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["cache_hit", "ok"])
+        #expect(recorder.events.map { $0.tags["product.id"] } == ["game.paseo", "game.paseo"])
+        #expect(recorder.events.map { $0.extras["duration_ms"] } == [.integer(24), .integer(48)])
+        #expect(recorder.events.allSatisfy { $0.extras["host.session_id"] == nil })
+    }
+
+    @Test
+    func aStreamThatFailsBeforeItsFirstFaceReportsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let source = RealPocketFaceSource(
+            store: { NoFaceStore() },
+            streams: RunningHandler(FailingFaceStreams()),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+
+        for await _ in source.faces(for: loyalty) {}
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
+    }
 }
 
 // MARK: - Fixtures
@@ -69,6 +104,30 @@ private struct StubFaceStreams: PocketFaceStreaming {
     }
 
     func send(action _: String, payload _: Data, for _: PocketCardKey) {}
+}
+
+private struct FailingFaceStreams: PocketFaceStreaming {
+    struct Unreachable: Error {}
+
+    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+        AsyncThrowingStream { $0.finish(throwing: Unreachable()) }
+    }
+
+    func send(action _: String, payload _: Data, for _: PocketCardKey) {}
+}
+
+private actor KeptFaceStore: PocketCardStore {
+    func cards() async throws -> [PocketCardEntry] { [] }
+
+    nonisolated func observeCards() -> AnyAsyncSequence<[PocketCardEntry]> {
+        AsyncStream<[PocketCardEntry]> { $0.finish() }.eraseToAnyAsyncSequence()
+    }
+
+    func removeCard(_: PocketCardKey) async throws {}
+
+    func add(_: PocketCardEntry, face _: RendererNode) async {}
+
+    func face(for _: PocketCardKey) async -> RendererNode? { .string(text: "kept") }
 }
 
 private actor NoFaceStore: PocketCardStore {

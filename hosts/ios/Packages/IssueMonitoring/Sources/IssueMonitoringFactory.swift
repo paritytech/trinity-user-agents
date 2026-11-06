@@ -56,6 +56,15 @@ public enum IssueMonitoringFactory {
         #endif
     }
 
+    /// Times product load steps; builds without reporting support receive one that keeps no state.
+    public static func createHostLoadTelemetry() -> HostLoadTelemetry {
+        #if SENTRY_ENABLED
+            HostLoadTelemetry(recorder: SentryHostEventRecorder())
+        #else
+            .disabled
+        #endif
+    }
+
     /// Writes a line of device readings to the given log once a minute in the foreground, and sends them
     /// as gauges. Builds without reporting support receive a monitor that takes no readings.
     ///

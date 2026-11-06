@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import IssueMonitoring
 import SDKLogger
 @testable import polkadot_app
 
@@ -37,6 +38,71 @@ struct TrUAPIV2SpecConnectionPoolTests {
             .info("[truapi.chain] chain connection 2 dialling wss://node.example"),
             .info("[truapi.chain] chain connection 2 open on wss://node.example")
         ])
+    }
+
+    /// Timed from the dial to the first inbound frame, once per connection.
+    @Test func firstFrameReportsTheConnectionOnce() throws {
+        let socket = MockChainSocket()
+        let recorder = RecordingHostEventRecorder()
+        let clock = SteppingClock(start: 6_480, step: 436)
+        let pool = makePool(
+            registry: makeRegistry(serving: [socket]),
+            telemetry: HostLoadTelemetry(recorder: recorder, monotonicMilliseconds: { clock.read() })
+        )
+        _ = try #require(pool.connect(genesisHash: genesis))
+
+        socket.simulateReceive("first")
+        socket.simulateReceive("second")
+        socket.simulateClose()
+
+        #expect(recorder.events.count == 1)
+        let event = try #require(recorder.events.first)
+        #expect(event.name == "host.rpc.connected")
+        #expect(event.tags["outcome"] == "ok")
+        #expect(event.tags["chain"] == genesis.toHex())
+        #expect(event.extras["duration_ms"] == .integer(436))
+        #expect(event.extras["event.monotonic_ms"] == .integer(6_916))
+        #expect(event.extras["host.session_id"] == nil)
+    }
+
+    @Test func aSocketDyingBeforeItsFirstFrameReportsAnError() throws {
+        let socket = MockChainSocket()
+        let recorder = RecordingHostEventRecorder()
+        let pool = makePool(
+            registry: makeRegistry(serving: [socket]),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+        _ = try #require(pool.connect(genesisHash: genesis))
+
+        socket.simulateClose(.transport(nil))
+
+        #expect(recorder.events.map(\.name) == ["host.rpc.connected"])
+        #expect(recorder.events.first?.tags["outcome"] == "error")
+    }
+
+    /// A connection the core closes, alone or with all the others, was given up, not failed.
+    @Test func aConnectionTheCoreClosesIsNotReported() throws {
+        let sockets = [MockChainSocket(), MockChainSocket()]
+        let recorder = RecordingHostEventRecorder()
+        let pool = makePool(
+            registry: makeRegistry(serving: sockets),
+            telemetry: HostLoadTelemetry(recorder: recorder)
+        )
+        let firstId = try #require(pool.connect(genesisHash: genesis))
+        _ = try #require(pool.connect(genesisHash: genesis))
+
+        pool.close(connectionId: firstId)
+        pool.closeAll()
+        sockets.forEach { $0.simulateClose() }
+
+        #expect(recorder.events.isEmpty)
+    }
+
+    @Test func connectionsAreNamedByTheChainsRole() {
+        #expect(TrUAPISupportedChains.telemetryLabel(for: AppConfig.Chains.peopleChain) == "people")
+        #expect(TrUAPISupportedChains.telemetryLabel(for: AppConfig.Chains.bulletInChain) == "bulletin")
+        #expect(TrUAPISupportedChains.telemetryLabel(for: AppConfig.Chains.assethubChain) == "asset_hub")
+        #expect(TrUAPISupportedChains.telemetryLabel(for: "not-a-chain") == nil)
     }
 
     @Test func eachConnectGetsItsOwnSocketAndId() throws {
@@ -324,6 +390,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
         registry: MockChainRegistry,
         handler: RecordingChainEventHandler? = nil,
         lifecycle: Lifecycle = Lifecycle(),
+        telemetry: HostLoadTelemetry = .disabled,
         logger: SDKLoggerProtocol = StubLogger()
     ) -> TrUAPIV2SpecConnectionPool {
         let pool = TrUAPIV2SpecConnectionPool(
@@ -331,6 +398,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
             applicationHandler: lifecycle.applicationHandler,
             dateProvider: lifecycle.dateProvider,
             resumePolicy: .init(expiryThreshold: 30, probeTimeout: 5),
+            telemetry: telemetry,
             logger: logger
         )
         pool.eventHandler = handler

@@ -5,6 +5,9 @@ import SDKLogger
 import WebKit
 
 final class SPAJSEngine: NSObject, @unchecked Sendable {
+    private static let webKitErrorDomain = "WebKitErrorDomain"
+    private static let frameLoadInterruptedByPolicyChange = 102
+
     private(set) var state: JSEngineState = .initializing
 
     let webView: WKWebView
@@ -20,6 +23,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
 
     var onNavigationIntercepted: ((URL) -> Void)?
     var onDeeplinkRequested: ((URL) -> Void)?
+    var onPageLoadFinished: ((_ loaded: Bool) -> Void)?
 
     init(
         webView: WKWebView,
@@ -222,9 +226,31 @@ extension SPAJSEngine: WKNavigationDelegate {
         }
     }
 
+    func webView(_: WKWebView, didFinish _: WKNavigation!) {
+        onPageLoadFinished?(true)
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        finishFailedLoad(error)
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: Error) {
+        finishFailedLoad(error)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         logger.error("WebView process terminated, attempting recovery reload")
         webView.reload()
+    }
+
+    /// A load a newer one replaced, or one a navigation policy stopped, did not fail.
+    private func finishFailedLoad(_ error: Error) {
+        let nsError = error as NSError
+        let superseded = (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+            || (nsError.domain == Self.webKitErrorDomain && nsError.code == Self.frameLoadInterruptedByPolicyChange)
+        guard !superseded else { return }
+
+        onPageLoadFinished?(false)
     }
 }
 

@@ -21,14 +21,16 @@ actor SPARustRuntime {
     private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
-    private let hostEventRecorder: HostEventRecording
+    private let telemetry: HostLoadTelemetry
     private let hostSessionId = UUID()
+    private let openedAt: Int?
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
     private var servedContent: DotNsResolvedContent?
+    private var pageLoadReported = false
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -36,14 +38,17 @@ actor SPARustRuntime {
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording
+        telemetry: HostLoadTelemetry
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
         self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
-        self.hostEventRecorder = hostEventRecorder
+        self.telemetry = telemetry
+        openedAt = telemetry.now()
+        // Opened before the product resolves, so its dotNS reads carry this session.
+        telemetry.openSession(productID: configuration.productDomain.rawValue, sessionID: hostSessionId)
     }
 
     deinit {
@@ -95,12 +100,14 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
-        hostEventRecorder.record(.webViewCreated(
-            hostSessionID: hostSessionId,
-            origin: .current,
-            truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
-        ))
+        telemetry.record { origin, now in
+            .webViewCreated(
+                hostSessionID: hostSessionId,
+                origin: origin,
+                truapiHostVersion: truapiHostVersion(),
+                monotonicMilliseconds: now
+            )
+        }
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -124,6 +131,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+
+        telemetry.closeSession(productID: configuration.productDomain.rawValue, sessionID: hostSessionId)
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -155,6 +164,23 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
     func servedBuild() -> DotNsResolvedContent? {
         servedContent
+    }
+
+    /// Only the first page counts: a reload or a later navigation is not the product opening.
+    func didFinishPageLoad(loaded: Bool) {
+        guard let openedAt, engine != nil, !disposed, !pageLoadReported else { return }
+        pageLoadReported = true
+
+        telemetry.record { origin, now in
+            .webViewPageLoaded(
+                hostSessionID: hostSessionId,
+                productID: configuration.productId.rawValue,
+                outcome: loaded ? .ok : .error,
+                durationMilliseconds: now - openedAt,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 }
 

@@ -4,6 +4,7 @@ import AsyncExtensions
 import BulletinChain
 import ChainRegistry
 import DesignSystem
+import IssueMonitoring
 import Products
 import TrUAPIHost
 
@@ -176,6 +177,7 @@ final class ProductPocketService: @unchecked Sendable {
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
                 streams: handlers,
+                telemetry: IssueMonitoringFactory.createHostLoadTelemetry(),
                 logger: logger
             ),
             products: flowState.productResolver,

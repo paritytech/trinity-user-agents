@@ -107,6 +107,10 @@ extension SPAPresenter: SPAPresenterProtocol {
     func didUpdateWebViewTitle(_ title: String) {
         view?.updateTitle(title)
     }
+
+    func didFinishPageLoad(loaded: Bool) {
+        interactor.didFinishPageLoad(loaded: loaded)
+    }
 }
 
 extension SPAPresenter: SPAInteractorOutputProtocol {

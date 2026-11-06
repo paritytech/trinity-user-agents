@@ -29,6 +29,7 @@ protocol SPAPresenterProtocol: AnyObject {
     func didInterceptNavigation(to url: URL)
     func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
+    func didFinishPageLoad(loaded: Bool)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
     func didTapShare()
@@ -42,6 +43,7 @@ protocol SPAInteractorInputProtocol: AnyObject {
     func checkForNewBuild()
     func hasChatEntry() -> Bool
     func openChat()
+    func didFinishPageLoad(loaded: Bool)
 }
 
 @MainActor
