@@ -33,18 +33,24 @@ impl From<HostRejection> for v01::GenericError {
 ///
 /// Foreign callbacks that throw an undeclared exception land here; without
 /// these conversions UniFFI panics, which `panic = "abort"` turns into a
-/// process abort. The host's own message is named as host text in the log, so
-/// a conversion added later carries the same bound without being asked to.
+/// process abort. The host's own message is bounded before it is kept, so
+/// every later line that renders this error, and the product it is returned
+/// to, get a string that is already one line and already short. A conversion
+/// added later carries that without being asked to.
+///
+/// The variant is named rather than written out, so take care adding a target
+/// whose unknown variant is not the only one carrying a `reason`.
 macro_rules! from_undeclared_host_error {
 	($($target:ty => $variant:ident),+ $(,)?) => {
 		$(
-			impl From<uniffi::UnexpectedUniFFICallbackError> for $target {
-				fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-					tracing::warn!(
-						reason = %crate::logging::HostText::new(&err.reason),
+			impl From<::uniffi::UnexpectedUniFFICallbackError> for $target {
+				fn from(err: ::uniffi::UnexpectedUniFFICallbackError) -> Self {
+					::tracing::warn!(
+						error = stringify!($target),
+						reason = %$crate::logging::HostText::new(&err.reason),
 						"host callback threw an undeclared error; reporting it as a rejection"
 					);
-					Self::$variant { reason: err.reason }
+					Self::$variant { reason: $crate::logging::bound_host_text(&err.reason) }
 				}
 			}
 		)+
@@ -56,8 +62,8 @@ from_undeclared_host_error! {
 	v01::HostLocalStorageReadError => Unknown,
 	crate::latest::HostPaymentError => Unknown,
 	crate::latest::HostPaymentTopUpError => Unknown,
-	v01::HostPaymentBalanceSubscribeError => Unknown,
-	v01::HostNavigateToError => Unknown,
+	crate::latest::HostPaymentBalanceSubscribeError => Unknown,
+	crate::latest::HostNavigateToError => Unknown,
 }
 
 impl From<v01::GenericError> for HostRejection {

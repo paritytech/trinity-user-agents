@@ -181,27 +181,52 @@ impl<'a> HostText<'a> {
 impl fmt::Display for HostText<'_> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.write_char('"')?;
-		let mut written = 0;
-		let mut stopped_early = false;
-		for character in self.0.chars() {
-			let escaped = character.escape_debug();
-			// Counting the escape rather than the character keeps the bound on
-			// what is written, and never cuts an escape in half.
-			if written + escaped.len() > HOST_TEXT_MAX_CHARS {
-				stopped_early = true;
-				break;
-			}
-			written += escaped.len();
-			for part in escaped {
-				f.write_char(part)?;
-			}
-		}
+		let stopped_early = write_bounded_escaped(f, self.0)?;
 		f.write_char('"')?;
 		if stopped_early {
 			f.write_char('\u{2026}')?;
 		}
 		Ok(())
 	}
+}
+
+/// Writes `text` escaped into `out`, stopping at [`HOST_TEXT_MAX_CHARS`].
+///
+/// Returns whether it stopped early. The bound counts the escape rather than
+/// the character behind it, so what is written is what is bounded and an
+/// escape is never cut in half.
+fn write_bounded_escaped(out: &mut impl fmt::Write, text: &str) -> Result<bool, fmt::Error> {
+	let mut written = 0;
+	for character in text.chars() {
+		let escaped = character.escape_debug();
+		if written + escaped.len() > HOST_TEXT_MAX_CHARS {
+			return Ok(true);
+		}
+		written += escaped.len();
+		for part in escaped {
+			out.write_char(part)?;
+		}
+	}
+	Ok(false)
+}
+
+/// `text`, as a host handed it, bounded and escaped so it is safe to keep.
+///
+/// [`HostText`] makes a host's string safe in the one line that names it.
+/// A string the core stores and hands on travels to places that line cannot
+/// reach: the warnings raised about it later, and the product the error is
+/// returned to. Bounding it where it enters means the value carries its own
+/// bound, so none of those places has to remember.
+///
+/// The result is one line, bounded to the same number of characters as the
+/// log field, plus a mark when something was dropped. It is not quoted,
+/// because it is read by a person rather than by a log parser.
+pub fn bound_host_text(text: &str) -> String {
+	let mut bounded = String::new();
+	if write_bounded_escaped(&mut bounded, text).expect("writing to a String cannot fail") {
+		bounded.push('\u{2026}');
+	}
+	bounded
 }
 
 impl fmt::Debug for HostText<'_> {
@@ -710,6 +735,29 @@ mod tests {
 		let written = HostText::new(&thrown).to_string();
 
 		assert_eq!(written, format!("\"{thrown}\""));
+	}
+
+	/// What is kept is bounded the same way as what is logged, so a warning
+	/// raised about this error later is safe without knowing where the
+	/// string came from.
+	#[test]
+	fn kept_host_text_is_bounded_like_the_line_that_names_it() {
+		let thrown = format!("SQLiteFullException\n\tat Foo.bar\u{2028}{}", "e".repeat(400));
+
+		let kept = bound_host_text(&thrown);
+
+		assert!(!kept.chars().any(char::is_control), "{kept}");
+		assert!(!kept.contains('\u{2028}'), "{kept}");
+		assert_eq!(kept.chars().count(), HOST_TEXT_MAX_CHARS + 1);
+		assert!(kept.ends_with('\u{2026}'), "{kept}");
+	}
+
+	/// What is kept is read by a person and returned to a product, so it is
+	/// not quoted the way the log field is.
+	#[test]
+	fn kept_host_text_is_not_quoted() {
+		assert_eq!(bound_host_text("keychain unavailable"), "keychain unavailable");
+		assert_eq!(HostText::new("keychain unavailable").to_string(), r#""keychain unavailable""#);
 	}
 
 	/// The host sink is process-wide, so a test that installs one has to own it

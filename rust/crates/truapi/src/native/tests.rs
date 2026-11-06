@@ -66,6 +66,24 @@ fn an_unexpected_foreign_error_converts_instead_of_panicking() {
 	assert_eq!(navigate, v01::HostNavigateToError::Unknown { reason: reason.to_string() });
 }
 
+#[test]
+fn an_unexpected_foreign_error_keeps_a_bounded_reason() {
+	// The reason travels: later warnings render it and the product is handed
+	// it, so the bound belongs on the value rather than on the one line that
+	// reports the conversion.
+	let thrown = format!("SQLiteFullException\n\tat Foo.bar{}", "e".repeat(400));
+	let rejection = <HostRejection as uniffi::ConvertError<crate::UniFfiTag>>::
+        try_convert_unexpected_callback_error(
+            uniffi::UnexpectedUniFFICallbackError::new(&thrown),
+        )
+        .expect("an unexpected foreign error must convert");
+
+	let HostRejection::Rejected { reason: converted } = rejection;
+	assert!(!converted.chars().any(char::is_control), "{converted}");
+	assert!(converted.chars().count() < thrown.chars().count(), "{converted}");
+	assert!(converted.starts_with("SQLiteFullException"), "{converted}");
+}
+
 pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 	v01::HostChatActionSubscribeItem {
 		room_id: "room".to_string(),
