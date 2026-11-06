@@ -16,6 +16,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
+  useChatProducts,
   useInvitationDemo,
   withoutContactChat,
 } from "./support/fixtures.js";
@@ -189,6 +190,8 @@ describe("workers in the menu", () => {
 
         // A test user has no wallet session: none of the wallet's workers
         // run, only the demo's own chat worker, which the host adds.
+        await useChatProducts(page, { contact: true, kettle: false });
+        await ready(page);
         await useInvitationDemo(page, "alice");
         await ready(page);
         await setMenu(page, true, "product");

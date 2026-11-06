@@ -454,7 +454,7 @@ export class ProductWorkers {
         scope,
         gateway,
         kind: worker.kind,
-        start: `/${WORKER_SHELL}?entry=${encodeURIComponent(worker.manifest.entrypoint)}`,
+        start: `/${WORKER_SHELL}?entry=${encodeURIComponent(worker.manifest.entrypoint)}${worker.startParams === undefined ? "" : `&${new URLSearchParams(worker.startParams)}`}`,
         entry: worker.manifest.entrypoint,
       });
       const handle = await openProduct(

@@ -3,7 +3,10 @@ import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
 import { DEFAULT_REPLY_SUITE } from "../../src/invitations/invitation-service.js";
 import type { ReplySuite } from "../../src/invitations/binding.js";
-import type { HostDelivery } from "../../src/invitations/ports.js";
+import type {
+  ConversationAllowance,
+  HostDelivery,
+} from "../../src/invitations/ports.js";
 import type { NotificationStore } from "../../src/notifications/notifications.js";
 import { ask } from "../../src/app/prompt.js";
 import {
@@ -30,13 +33,19 @@ import {
 } from "../../src/invitations/published-keys.js";
 import { startContactChatHost } from "../../src/invitations/contact-chat-host.js";
 import {
+  CONTACT_CHAT,
   confirmSend,
-  contactChat,
   contactChatOwner,
+  type ChatProductSpec,
+  type RunningChat,
   type ContactChatOwner,
   type WalletDelivery,
 } from "../../src/invitations/wallet-chat.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
+import { simulatedAllowance, simulatedStatements } from "./kettle-demo.js";
+import { kettleChat } from "../chat/kettle.js";
+import type { IrohRelays } from "../../src/chat/kettle-chat/route.js";
+import type { ChatProductKey } from "../chat/products.js";
 import {
   PART_VERSION,
   TEST_USERS,
@@ -56,9 +65,11 @@ import {
  * DEV ONLY. The invitation demo and the More tab's Developer section. Only a
  * dev server on this machine loads this module.
  *
- * The Developer section also chooses, for this tab, how the signed-in
- * wallet's Contact Chat requests travel (the network by default, as in a
- * build) and the reply-key suite of its new requests.
+ * The Chat tab (`../chat/products.ts`) chooses, for this tab, which chat
+ * products run, the invitation demo's too. The Developer
+ * section chooses how the signed-in wallet's host requests travel (the
+ * network by default, as in a build) and the reply-key suite of new ones,
+ * for every product that uses the request service.
  *
  * The invitation demo is chosen in More: a tab acts as a
  * made-up user (Alice, Bob or Carol) whose contacts, identity credentials
@@ -71,8 +82,9 @@ import {
  * session's services start: no saved contacts, Pocket or wallet workers, so
  * fixture contacts never reach a wallet's contacts or a transaction it signs.
  *
- * The demo's product is Contact Chat (`src/chat/contact-chat/`), a
- * chat worker with its own request service. It runs for the test user as an
+ * The demo runs the chat products the Chat tab turned on: Contact Chat
+ * (`src/chat/contact-chat/`) by default, each a chat worker with its own
+ * request service. It runs for the test user as an
  * ordinary product worker. The host's Chat shows its conversations and names
  * each person from the contact handle the product holds, through the host's
  * handle index; the product never gets a name. A chat ends at the
@@ -86,6 +98,10 @@ export interface DevToolsDeps {
   notifications: NotificationStore;
   /** Where the Developer section is drawn in the menu. */
   section: HTMLElement;
+  /** The chat products this tab runs, as the Chat tab (`../chat/products.ts`) chose, the one New chat starts in first. */
+  chatProducts: readonly ChatProductKey[];
+  /** Kettle Chat's iroh relays, as the Chat tab chose, or null: off. */
+  kettleIroh: IrohRelays | null;
   /** The app bar marker that names the test user. */
   marker: HTMLElement;
   /** End this tab's wallet session and product, before acting as a test user. */
@@ -125,15 +141,15 @@ export interface DevSession {
   testChat: ContactChatOwner | null;
   /** How this tab's wallet requests travel, as the Developer section chose. */
   walletDelivery: {
-    mode(): WalletDelivery | "off";
+    mode(): WalletDelivery;
     /** The simulated delivery between tabs of this browser, for the local choices. */
     local(self: string): HostDelivery;
   };
   /** The reply-key suite of this tab's new requests. */
   replySuite(): ReplySuite;
   /**
-   * `network`, with every submission refused while the wallet's Contact Chat
-   * only validates claims: no extrinsic and no statement leaves this tab.
+   * `network`, with every submission refused while the wallet's host
+   * requests only validate claims: no extrinsic and no statement leaves this tab.
    * What it refused, and every method it let through, are kept on
    * `window.__truapiNoSubmit` for a test to read.
    */
@@ -173,16 +189,15 @@ declare global {
 }
 
 /**
- * Where a tab keeps how the wallet's Contact Chat requests travel, when a
- * developer chose other than the network: `validate`, `local` or
- * `local-validate` (`src/invitations/wallet-chat.ts`), or `off` for no
- * Contact Chat, as tests of other products choose.
+ * Where a tab keeps how the wallet's chat requests travel, when a developer
+ * chose other than the network: `validate`, `local` or `local-validate`
+ * (`src/invitations/wallet-chat.ts`).
  */
 const WALLET_DELIVERY_KEY = "truapi-web-signing-host:dev:wallet-delivery";
 
 /**
- * sessionStorage key: the reply-key suite of new Contact Chat requests in
- * this tab. Absent: the request service's default, X-Wing.
+ * sessionStorage key: the reply-key suite of new host requests in this
+ * tab, whichever product sends them. Absent: the request service's default, X-Wing.
  */
 const REPLY_SUITE_KEY = "truapi-web-signing-host:dev:reply-suite";
 
@@ -192,18 +207,15 @@ const devReplySuite = (): ReplySuite =>
     ? "x25519"
     : DEFAULT_REPLY_SUITE;
 
-function walletDelivery(): WalletDelivery | "off" {
+function walletDelivery(): WalletDelivery {
   const value = sessionStorage.getItem(WALLET_DELIVERY_KEY);
-  return value === "local-validate" ||
-    value === "validate" ||
-    value === "local" ||
-    value === "off"
+  return value === "local-validate" || value === "validate" || value === "local"
     ? value
     : "network";
 }
 
 /** Whether `mode` keeps the tab from submitting anything. */
-const submitsNothing = (mode: WalletDelivery | "off") =>
+const submitsNothing = (mode: WalletDelivery) =>
   mode === "validate" || mode === "local-validate";
 
 /** The simulated delivery between tabs of this browser, for the user whose chat key is `self`. */
@@ -229,10 +241,12 @@ const timeout = (task: () => void, delayMs: number) => {
 };
 
 export function startDevTools(deps: DevToolsDeps): DevSession {
+  const { chatProducts } = deps;
   const testUser = tabTestUser(sessionStorage);
-  const networkMode = (): WalletDelivery | "off" =>
+  const networkMode = (): WalletDelivery =>
     testUser === null ? walletDelivery() : "local";
-  const session = testUser === null ? null : startTestUser(deps, testUser);
+  const session =
+    testUser === null ? null : startTestUser(deps, testUser, chatProducts);
   const useDemo = (id: string | null) => {
     if (id !== null) deps.leaveWalletSession();
     setTabTestUser(sessionStorage, id);
@@ -264,6 +278,8 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
     },
     replySuite: devReplySuite,
     guardNetwork: (network) => {
+      if (testUser !== null && chatProducts.includes("kettle-chat"))
+        return simulatedStatements(network, deps.log);
       if (!submitsNothing(networkMode())) return network;
       deps.log(
         "This tab submits nothing: every extrinsic and statement submission is refused before it reaches the network.",
@@ -298,7 +314,19 @@ interface TestUserSession {
   reset(): void;
 }
 
-function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
+/** A chat product of the invitation demo: its lists, and its conversation accounts' allowance when it posts. */
+interface DemoChat {
+  spec: ChatProductSpec;
+  outbox: keyof typeof PART_VERSION;
+  received: keyof typeof PART_VERSION;
+  accounts?: ConversationAllowance;
+}
+
+function startTestUser(
+  deps: DevToolsDeps,
+  self: TestUser,
+  chatProducts: readonly ChatProductKey[],
+): TestUserSession {
   const suffix = deps.network.networkSuffix;
   // The wallet keys of the test user's phrase. Nothing is signed or opened
   // with them until `start` checked them against the core's session and the
@@ -332,30 +360,60 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     return ownIdentityProblem(directory, walletKeys);
   };
   let verified: Promise<IdentityProblem | null> = new Promise(() => {});
-  const chat = startContactChatHost({
-    product: contactChat(suffix),
-    keys: {
-      sent: testUserKey(deps.network.id, self.id, "contact-chat-outbox"),
-      received: testUserKey(deps.network.id, self.id, "contact-chat-received"),
-    },
-    auth,
-    replySuite: devReplySuite,
-    delivery: localDelivery(deps, auth.identityFor().agreementPublic, timeout),
-    contacts,
-    handles: deps.handles,
-    notifications: deps.notifications,
-    // Checked in `start`, once the core runs the test user's session.
-    verify: () => verified,
-    confirmSend,
-    showChat: deps.showChat,
-    log: deps.log,
-    ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+  let core: WorkerPairingHostRuntime | null = null;
+  const chatOf = (demo: DemoChat, index: number): RunningChat => ({
+    workerPath: demo.spec.workerPath,
+    ...(demo.spec.workerParams === undefined
+      ? {}
+      : { workerParams: demo.spec.workerParams }),
+    startsChats: index === 0,
+    host: startContactChatHost({
+      product: demo.spec.product(suffix),
+      keys: {
+        sent: testUserKey(deps.network.id, self.id, demo.outbox),
+        received: testUserKey(deps.network.id, self.id, demo.received),
+      },
+      auth,
+      replySuite: devReplySuite,
+      delivery: localDelivery(
+        deps,
+        auth.identityFor().agreementPublic,
+        timeout,
+      ),
+      ...(demo.accounts === undefined ? {} : { accounts: demo.accounts }),
+      contacts,
+      handles: deps.handles,
+      notifications: deps.notifications,
+      // Checked in `start`, once the core runs the test user's session.
+      verify: () => verified,
+      confirmSend,
+      showChat: deps.showChat,
+      log: deps.log,
+      ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+    }),
   });
-
+  const demoOf = (key: ChatProductKey): DemoChat =>
+    key === "contact-chat"
+      ? {
+          spec: CONTACT_CHAT,
+          outbox: "contact-chat-outbox",
+          received: "contact-chat-received",
+        }
+      : {
+          spec: kettleChat(undefined, deps.kettleIroh),
+          outbox: "kettle-chat-outbox",
+          received: "kettle-chat-received",
+          // Only Kettle Chat posts here, to the simulated Statement Store.
+          accounts: simulatedAllowance(() => core, deps.log),
+        };
+  const chats = chatProducts.map(demoOf).map(chatOf);
   const owner = contactChatOwner({
     base: deps.base,
-    chat: () => chat,
-    onSentChange: (listener) => chat.onSentChange(listener),
+    chats: () => chats,
+    onSentChange: (listener) => {
+      const stops = chats.map((chat) => chat.host.onSentChange(listener));
+      return () => stops.forEach((stop) => stop());
+    },
   });
   return {
     owner: {
@@ -367,6 +425,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
         ),
     },
     async start(runtime) {
+      core = runtime;
       deps.useStorage(testUserScope(self));
       await runtime.activateLocalSession(testUserEntropy(self));
       deps.log(`Signed in to test account ${self.name}.`);
@@ -374,10 +433,10 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       const problem = await verified;
       if (problem !== null) deps.log(`Invitations stay off: ${problem.reason}`);
       else await contacts.refresh();
-      await chat.start();
+      for (const chat of chats) await chat.host.start();
     },
     reset: () => {
-      chat.stop();
+      for (const chat of chats) chat.host.stop();
       for (const part of Object.keys(
         PART_VERSION,
       ) as (keyof typeof PART_VERSION)[])
@@ -452,56 +511,10 @@ function drawSection(
   store.onChange(renderSamples);
   renderSamples();
 
-  const deliverySelect = el("select");
-  deliverySelect.id = "wallet-delivery";
-  deliverySelect.append(
-    new Option("Network: claim and post (default)", "network"),
-    new Option("Network, validate claims only", "validate"),
-    new Option("This browser only", "local"),
-    new Option("This browser, validate chat claims only", "local-validate"),
-    new Option("Off: no Contact Chat in this tab", "off"),
-  );
-  deliverySelect.value = walletDelivery();
-  deliverySelect.disabled = testUser !== null;
-  deliverySelect.title =
-    "How the wallet's Contact Chat requests travel in this tab. The network delivery, the default and the only one a build has, posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing; in this browser, requests stay between tabs, and with chat claims validated each chat account's claim is validated. Off runs no Contact Chat for the wallet. Switching reloads the tab.";
-  deliverySelect.addEventListener("change", () => {
-    const next = deliverySelect.value as WalletDelivery | "off";
-    if (next === "network") sessionStorage.removeItem(WALLET_DELIVERY_KEY);
-    else sessionStorage.setItem(WALLET_DELIVERY_KEY, next);
-    window.location.reload();
-  });
-  const deliveryLabel = el("label", "", "Contact Chat delivery");
-  deliveryLabel.htmlFor = deliverySelect.id;
-
-  const suiteSelect = el("select");
-  suiteSelect.id = "reply-key-suite";
-  suiteSelect.append(
-    new Option("X-Wing: hybrid post-quantum reply (default)", "xwing"),
-    new Option("X25519: classical reply", "x25519"),
-  );
-  suiteSelect.value = devReplySuite();
-  suiteSelect.title =
-    "The kind of reply key your host makes for each new Contact Chat request. The key's length tells the recipient's host how to seal its reply, and your host opens it the same way. Changing this changes only requests sent after it. The request itself and the identity proof stay classical either way.";
-  suiteSelect.addEventListener("change", () => {
-    const next = suiteSelect.value as ReplySuite;
-    if (next === DEFAULT_REPLY_SUITE)
-      sessionStorage.removeItem(REPLY_SUITE_KEY);
-    else sessionStorage.setItem(REPLY_SUITE_KEY, next);
-    deps.log(
-      `New Contact Chat requests in this tab use ${next === "xwing" ? "an X-Wing" : "an X25519"} reply key; requests already sent keep theirs.`,
-    );
-  });
-  const suiteLabel = el("label", "", "Reply key for new requests");
-  suiteLabel.htmlFor = suiteSelect.id;
-
   const rows: HTMLElement[] = [
     demoLabel,
     demoSelect,
-    deliveryLabel,
-    deliverySelect,
-    suiteLabel,
-    suiteSelect,
+    ...requestControls(deps, testUser),
   ];
   if (session !== null) {
     const clearRow = el("div", "row");
@@ -526,4 +539,58 @@ function drawSection(
 
   deps.section.append(...rows);
   deps.section.hidden = false;
+}
+
+/**
+ * The request service's controls: how the wallet's host requests travel, and
+ * the reply key of new ones. Every product that sets up through the request
+ * service uses them, a chat product or any other.
+ */
+function requestControls(
+  deps: DevToolsDeps,
+  testUser: TestUser | null,
+): HTMLElement[] {
+  const deliverySelect = el("select");
+  deliverySelect.id = "wallet-delivery";
+  deliverySelect.append(
+    new Option("Network: claim and post (default)", "network"),
+    new Option("Network, validate claims only", "validate"),
+    new Option("This browser only", "local"),
+    new Option("This browser, validate chat claims only", "local-validate"),
+  );
+  deliverySelect.value = walletDelivery();
+  deliverySelect.disabled = testUser !== null;
+  deliverySelect.title =
+    "How the wallet's host requests travel in this tab, for every product that uses the request service. The network delivery, the default and the only one a build has, posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing; in this browser, requests stay between tabs, and with chat claims validated each chat account's claim is validated. Switching reloads the tab.";
+  deliverySelect.addEventListener("change", () => {
+    const next = deliverySelect.value as WalletDelivery;
+    if (next === "network") sessionStorage.removeItem(WALLET_DELIVERY_KEY);
+    else sessionStorage.setItem(WALLET_DELIVERY_KEY, next);
+    window.location.reload();
+  });
+  const deliveryLabel = el("label", "", "Request delivery");
+  deliveryLabel.htmlFor = deliverySelect.id;
+
+  const suiteSelect = el("select");
+  suiteSelect.id = "reply-key-suite";
+  suiteSelect.append(
+    new Option("X-Wing: hybrid post-quantum reply (default)", "xwing"),
+    new Option("X25519: classical reply", "x25519"),
+  );
+  suiteSelect.value = devReplySuite();
+  suiteSelect.title =
+    "The kind of reply key your host makes for each new host request, whichever product sends it. The key's length tells the recipient's host how to seal its reply, and your host opens it the same way. Changing this changes only requests sent after it. The request itself and the identity proof stay classical either way.";
+  suiteSelect.addEventListener("change", () => {
+    const next = suiteSelect.value as ReplySuite;
+    if (next === DEFAULT_REPLY_SUITE)
+      sessionStorage.removeItem(REPLY_SUITE_KEY);
+    else sessionStorage.setItem(REPLY_SUITE_KEY, next);
+    deps.log(
+      `New host requests in this tab use ${next === "xwing" ? "an X-Wing" : "an X25519"} reply key; requests already sent keep theirs.`,
+    );
+  });
+  const suiteLabel = el("label", "", "Reply key for new requests");
+  suiteLabel.htmlFor = suiteSelect.id;
+
+  return [deliveryLabel, deliverySelect, suiteLabel, suiteSelect];
 }

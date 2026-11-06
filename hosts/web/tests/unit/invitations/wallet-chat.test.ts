@@ -50,7 +50,10 @@ const quietDelivery: HostDelivery = {
   close: () => {},
 };
 
-function walletChat(mode?: WalletDelivery | "off") {
+function walletChat(
+  mode?: WalletDelivery,
+  products?: WalletChatDeps["products"],
+) {
   const log: string[] = [];
   const deps: WalletChatDeps = {
     base: "/",
@@ -68,6 +71,7 @@ function walletChat(mode?: WalletDelivery | "off") {
     ...(mode === undefined
       ? {}
       : { devDelivery: { mode: () => mode, local: () => quietDelivery } }),
+    ...(products === undefined ? {} : { products }),
   };
   return { chat: new WalletChat(deps), log };
 }
@@ -93,27 +97,28 @@ function session(): WalletRequestsSession {
 
 describe("a wallet's Contact Chat", () => {
   test("uses the network unless the dev server's tools chose otherwise, and then keeps saved contacts out", () => {
-    const of = (mode?: WalletDelivery | "off") => {
-      const { chat } = walletChat(mode);
+    const of = (mode?: WalletDelivery, products?: []) => {
+      const { chat } = walletChat(mode, products);
       return [chat.mode(), chat.hidesWalletContacts()];
     };
-    expect([of(), of("validate"), of("local"), of("off")]).toEqual([
+    expect([of(), of("validate"), of("local"), of(undefined, [])]).toEqual([
       ["network", true],
       ["validate", true],
       ["local", false],
-      ["off", false],
+      // No chat product runs: no request reaches anyone.
+      ["network", false],
     ]);
   });
 
   test("runs for a signed-in wallet with nothing turned on, and not where the dev server's tools turned it off", () => {
     const running = walletChat();
     running.chat.setWallet(session());
-    const off = walletChat("off");
+    const off = walletChat(undefined, []);
     off.chat.setWallet(session());
     expect({
       running: running.chat.owner.workerNames(),
       logged: running.log.includes(
-        "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
+        "Host requests for Contact Chat: requests and replies go on the network's day inbox, and each post claims a notification slot.",
       ),
       off: off.chat.owner.workerNames(),
     }).toEqual({ running: ["contact-chat.paseo"], logged: true, off: [] });
@@ -134,5 +139,11 @@ describe("a wallet's Contact Chat", () => {
       chatCosts("local-validate")?.messages,
       chatCosts("local"),
     ]).toEqual([null, null, null]);
+    // An encrypting chat product's prompts say so, and what stays public.
+    const kettle = chatCosts("network", true)!;
+    expect([kettle.summary, kettle.messages]).toEqual([
+      "Uses daily slots · Messages are end-to-end encrypted",
+      "End-to-end encrypted. Who posts, to which topics, when and how much is public.",
+    ]);
   });
 });

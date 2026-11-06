@@ -1,0 +1,4 @@
+# kettle-core is a private repository: fetch it with the git command line,
+# which uses the developer's SSH key.
+[net]
+git-fetch-with-cli = true

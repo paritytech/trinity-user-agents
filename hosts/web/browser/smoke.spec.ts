@@ -871,7 +871,7 @@ describe("the dock", () => {
         await logged(
           page,
           "host",
-          "Contact Chat does not run for this wallet: Not available for the public development phrase.",
+          "The request service does not run for this wallet, so no chat product does: Not available for the public development phrase.",
         );
         await page
           .locator(".chat-empty-title")
@@ -908,7 +908,7 @@ describe("the dock", () => {
         await logged(
           page,
           "host",
-          "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
+          "Host requests for Contact Chat: requests and replies go on the network's day inbox, and each post claims a notification slot.",
         );
         // Its worker, the only one, runs for the session while Pocket is in front.
         await page

@@ -421,22 +421,59 @@ export async function showAddress(page: Page): Promise<void> {
 
 /**
  * Keep Contact Chat, which runs for every signed-in wallet, out of
- * `context`'s tabs: the dev tools' `off` delivery, for tests of other
- * products and of the wallet's saved contacts.
+ * `context`'s tabs: the Chat tab's switch, off when each tab first loads,
+ * for tests of other products and of the wallet's saved contacts. A test can
+ * turn it on again in the Chat tab.
  */
 export async function withoutContactChat(
   context: BrowserContext,
 ): Promise<void> {
-  await context.addInitScript(() =>
-    sessionStorage.setItem(
-      "truapi-web-signing-host:dev:wallet-delivery",
-      "off",
-    ),
-  );
+  await context.addInitScript(() => {
+    const first = "truapi-web-signing-host:test:contact-chat-off";
+    if (sessionStorage.getItem(first) !== null) return;
+    sessionStorage.setItem(first, "1");
+    sessionStorage.setItem("truapi-web-signing-host:dev:contact-chat", "off");
+  });
+}
+
+/**
+ * Turn chat products on or off in this tab's Chat tab, each switch a reload,
+ * and set where New chat starts while more than one runs.
+ */
+export async function useChatProducts(
+  page: Page,
+  on: { contact: boolean; kettle: boolean },
+  newChats?: "contact-chat" | "kettle-chat",
+): Promise<void> {
+  await openTools(page, "chat");
+  for (const [key, want] of [
+    ["contact-chat", on.contact],
+    ["kettle-chat", on.kettle],
+  ] as const) {
+    const box = page.locator(`#chat-product-${key}`);
+    if ((await box.isChecked()) === want) continue;
+    await Promise.all([page.waitForEvent("load"), box.setChecked(want)]);
+    await openTools(page, "chat");
+  }
+  if (
+    newChats !== undefined &&
+    (await page.inputValue("#new-chat-product")) !== newChats
+  ) {
+    await Promise.all([
+      page.waitForEvent("load"),
+      page.selectOption("#new-chat-product", newChats),
+    ]);
+  }
 }
 
 /** The developer tools' tabs. */
-export type DevTab = "account" | "product" | "preview" | "inspector" | "more";
+export type DevTab =
+  | "account"
+  | "product"
+  | "chat"
+  | "preview"
+  | "inspector"
+  | "more";
 
 /**
  * Open the developer tools at `tab`, from the Focus capsule. The clicks are

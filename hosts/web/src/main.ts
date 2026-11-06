@@ -281,7 +281,7 @@ const productWorkers = new ProductWorkers({
   runtime: () => runtime,
   resolve: (name, network) =>
     contactChat.resolvesWorker(name)
-      ? contactChat.resolveWorker()
+      ? contactChat.resolveWorker(name)
       : resolveWorker(name, network),
   defaults: () => contactChat.workerNames(),
   container: workerFrames,
@@ -397,9 +397,39 @@ bindWorkersMenu({
  * tab's wallet delivery and reply-key choices. Only a dev server on this
  * machine loads it, so a build has none of its code.
  */
+/** Whether the dev server's tools run here: on this machine only. */
+const devTools =
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname);
+// The Chat tab, and the dev server's tools, load at once: the page binds the
+// developer tools only after them. Each condition names its build constant
+// in place, so a build drops a module whose constant is false.
+const [chatTools, demoTools] = await Promise.all([
+  import.meta.env.DEV || __KETTLE_CHAT_BUILD__
+    ? import("../tools/chat/products.js")
+    : null,
+  import.meta.env.DEV && devTools
+    ? import("../tools/demos/dev-tools.js")
+    : null,
+]);
+/**
+ * The Chat tab and the chat products it turned on: on the dev server, and in
+ * a build made with Kettle Chat (`WEB_SIGNING_KETTLE_CHAT=1`). Elsewhere,
+ * Contact Chat alone runs and the tab stays hidden.
+ */
+const chatModality =
+  devTools || __KETTLE_CHAT_BUILD__
+    ? chatTools!.startChatModality({
+        panel: element("dev-chat"),
+        tab: document.querySelector<HTMLElement>('[data-dev-tab="chat"]')!,
+        networkSuffix: activeNetwork.networkSuffix,
+        log: linesFor("host"),
+      })
+    : null;
 const devSession =
-  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
-    ? (await import("../tools/demos/dev-tools.js")).startDevTools({
+  import.meta.env.DEV && devTools
+    ? demoTools!.startDevTools({
+        chatProducts: chatModality!.keys,
+        kettleIroh: chatModality!.kettleIroh,
         network: activeNetwork,
         base: BASE,
         notifications: notifications.store,
@@ -447,17 +477,28 @@ const walletChat = new WalletChat({
         replySuite: devSession.replySuite,
         devDelivery: devSession.walletDelivery,
       }),
+  ...(chatModality === null
+    ? {}
+    : { products: chatModality.walletProducts(() => peopleAccess) }),
 });
 /** Contact Chat in this tab: the invitation demo's test user's, or the signed-in wallet's. */
 const contactChat = devSession?.testChat ?? walletChat.owner;
 notifications.screen.setActions(contactChat.notificationActions);
+chatModality?.follow({
+  owner: contactChat,
+  workers: productWorkers,
+  inspect: (name) => {
+    chrome.show("inspector");
+    tools.inspectWorker(name);
+  },
+});
 /** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
 // Chat shows the demo's chat worker once the test user signs in.
 if (testUser !== null)
   chatScreen.setNoChat({
     title: "Chat starts with the invitation demo",
-    body: "Contact Chat runs once the test user is signed in.",
+    body: "The chat products run once the test user is signed in.",
   });
 /** The wallets built into the host from public test phrases. */
 const testAccounts = DEV_ACCOUNTS.map(devAccountWallet);

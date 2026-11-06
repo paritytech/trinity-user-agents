@@ -151,6 +151,8 @@ export const PART_VERSION = {
   received: 3,
   "contact-chat-outbox": 2,
   "contact-chat-received": 2,
+  "kettle-chat-outbox": 1,
+  "kettle-chat-received": 1,
 } as const;
 
 /** Where a test user's data is kept, per network. */

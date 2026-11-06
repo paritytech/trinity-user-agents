@@ -1,0 +1,15 @@
+/* DEV ONLY. The Chat tab's product rows reuse the Workers list; a product's On switch sits at the row's end. */
+.devtools .chat-product-switch {
+  display: inline-flex;
+  grid-column: 4;
+  grid-row: 1 / span 3;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--tx);
+  font-size: 12.5px;
+}
+
+.devtools .worker-list li[data-state="off"] .worker-name {
+  color: var(--mu);
+}

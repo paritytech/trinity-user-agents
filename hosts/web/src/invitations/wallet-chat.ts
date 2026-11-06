@@ -68,6 +68,38 @@ export const contactChat = (networkSuffix: string): Product => ({
   name: "Contact Chat",
 });
 
+/**
+ * One chat product the host runs for a session: its product id, where its
+ * worker archive is served, and what sets it apart. Each runs its own
+ * request service, lists and delivery, and its worker its own storage and
+ * accounts, which the core keys by the product id.
+ */
+export interface ChatProductSpec {
+  product(networkSuffix: string): Product;
+  /** Where the host serves its worker's description, under its base. */
+  workerPath: string;
+  /** Names its request lists in the host's storage. */
+  lists: string;
+  /** Whether it encrypts its messages end to end, for the prompts' cost lines. */
+  messagesEncrypted: boolean;
+  /** Query parameters of its worker's page: the settings the host passes it. */
+  workerParams?: Readonly<Record<string, string>>;
+  /**
+   * Resolves once a conversation account's claim holds at the People chain's
+   * finalized head, or rejects saying why not. Absent: the claim's answer is
+   * enough.
+   */
+  allowanceSettled?(claim: StatementAccountClaim): Promise<void>;
+}
+
+/** Contact Chat, the chat product every session runs. */
+export const CONTACT_CHAT: ChatProductSpec = {
+  product: (networkSuffix) => contactChat(networkSuffix),
+  workerPath: CONTACT_CHAT_PATH,
+  lists: "contact-chat",
+  messagesEncrypted: false,
+};
+
 /** A wallet session the core reports, as Contact Chat's requests need it. */
 export interface WalletRequestsSession {
   walletId: string;
@@ -99,7 +131,7 @@ export interface WorkerPortService {
   disconnect(productId: string): void;
 }
 
-/** Contact Chat as the rest of the page uses it, whoever's session it runs for. */
+/** The host's chat products (Contact Chat, and any other a developer added) as the rest of the page uses them. */
 export interface ContactChatOwner {
   /**
    * The people the host may name by handle beyond the wallet's contacts, by
@@ -107,27 +139,28 @@ export interface ContactChatOwner {
    * resolve them for a transaction.
    */
   people(): readonly HexString[];
-  /** What the Inbox can do with Contact Chat's requests. */
+  /** What the Inbox can do with the chat products' requests, each by the product that owns it. */
   notificationActions: NotificationActions;
-  /** The workers this adds to the session: Contact Chat, while it runs. */
+  /** The workers this adds to the session: each chat product, while it runs. */
   workerNames(): string[];
-  /** Whether `name` is Contact Chat's worker, which the host serves itself. */
+  /** Whether `name` is one of these workers, which the host serves itself. */
   resolvesWorker(name: string): boolean;
-  /** Contact Chat's worker, as the host describes the archive it serves. */
-  resolveWorker(): Promise<ResolvedWorker>;
-  /** Whether `productId` may give its rooms contacts: Contact Chat. */
+  /** The worker `name`, as the host describes the archive it serves. */
+  resolveWorker(name: string): Promise<ResolvedWorker>;
+  /** Whether `productId` may give its rooms contacts: one of these products. */
   isContactChat(productId: string): boolean;
-  /** What the host lends Contact Chat's chat provider, or null for another product. */
+  /** What the host lends that product's chat provider, or null for another product. */
   chatOptions(productId: string): ChatV2ProviderOptions | null;
-  /** The request service, for Contact Chat's worker frame only. */
+  /** The request service, for each of these products' worker frame only, its own. */
   requests: WorkerPortService;
 }
 
 /** Contact Chat's worker, as the host describes the archive it serves under `base`. */
 export async function resolveContactChatWorker(
   base: string,
+  path: string = CONTACT_CHAT_PATH,
 ): Promise<ResolvedWorker> {
-  const response = await fetch(`${base}${CONTACT_CHAT_PATH}`, {
+  const response = await fetch(`${base}${path}`, {
     cache: "no-store",
   });
   if (!response.ok)
@@ -144,53 +177,91 @@ export async function resolveContactChatWorker(
   };
 }
 
-/** The {@link ContactChatOwner} of one {@link ContactChatHost}, or of none. */
+/** A running chat product: its request service and where its worker is served. */
+export interface RunningChat {
+  host: ContactChatHost;
+  workerPath: string;
+  /** Query parameters of its worker's page. */
+  workerParams?: Readonly<Record<string, string>>;
+  /** Whether New chat starts chats in it. Each other one keeps its chats, but starts none. */
+  startsChats: boolean;
+}
+
+/** `options` without a start: the provider shows its chats and starts none. */
+function withoutStart(options: ChatV2ProviderOptions): ChatV2ProviderOptions {
+  const kept = { ...options };
+  delete kept.start;
+  return kept;
+}
+
+/** The {@link ContactChatOwner} of the running chat products, each answering for its own product id. */
 export function contactChatOwner(options: {
   base: string;
-  chat: () => ContactChatHost | null;
-  /** Calls back whenever the sent requests may have changed, also when the chat itself changes. */
+  chats: () => readonly RunningChat[];
+  /** Calls back whenever the sent requests may have changed, also when the chats themselves change. */
   onSentChange(listener: () => void): () => void;
 }): ContactChatOwner {
-  const { chat } = options;
-  const isChat = (productId: string) => chat()?.product.id === productId;
+  const byProduct = (productId: string) =>
+    options.chats().find((chat) => chat.host.product.id === productId);
+  const owning = (id: string) =>
+    options.chats().find((chat) => chat.host.owns(id))?.host;
   return {
-    people: () => (chat()?.people() ?? []) as HexString[],
+    people: () =>
+      [
+        ...new Set(options.chats().flatMap((chat) => chat.host.people())),
+      ] as HexString[],
     notificationActions: {
-      canAccept: (item) => chat()?.owns(item.id) ?? false,
+      canAccept: (item) => owning(item.id) !== undefined,
       accept: (item) => {
-        const current = chat();
-        return current === null
-          ? Promise.reject(new Error("No wallet is signed in."))
-          : current.accept(item);
+        const host = owning(item.id);
+        return host === undefined
+          ? Promise.reject(new Error("No chat product holds this request."))
+          : host.accept(item);
       },
-      destination: (item) => (chat()?.owns(item.id) === true ? "Chat" : null),
+      destination: (item) => (owning(item.id) !== undefined ? "Chat" : null),
       open: (item) => {
-        const current = chat();
-        if (item.state.tag === "accepted" && current?.owns(item.id) === true)
-          current.open(item);
+        if (item.state.tag === "accepted") owning(item.id)?.open(item);
       },
-      sent: () => chat()?.sent() ?? [],
-      cancel: (id) => void chat()?.cancel(id),
+      sent: () =>
+        options
+          .chats()
+          .flatMap((chat) => chat.host.sent())
+          .sort((left, right) => right.createdAt - left.createdAt),
+      cancel: (id) => {
+        for (const chat of options.chats()) if (chat.host.cancel(id)) return;
+      },
       onSentChange: options.onSentChange,
     },
-    workerNames: () => {
-      const current = chat();
-      return current === null ? [] : [current.product.id];
+    workerNames: () => options.chats().map((chat) => chat.host.product.id),
+    resolvesWorker: (name) => byProduct(name) !== undefined,
+    resolveWorker: (name) => {
+      const chat = byProduct(name);
+      return chat === undefined
+        ? Promise.reject(
+            new Error(`${name} is not a chat product of this host.`),
+          )
+        : resolveContactChatWorker(options.base, chat.workerPath).then(
+            (worker) =>
+              chat.workerParams === undefined
+                ? worker
+                : { ...worker, startParams: chat.workerParams },
+          );
     },
-    resolvesWorker: isChat,
-    resolveWorker: () => resolveContactChatWorker(options.base),
-    isContactChat: isChat,
-    chatOptions: (productId) =>
-      isChat(productId) ? (chat()?.chatOptions ?? null) : null,
+    isContactChat: (productId) => byProduct(productId) !== undefined,
+    chatOptions: (productId) => {
+      const chat = byProduct(productId);
+      if (chat === undefined) return null;
+      return chat.startsChats
+        ? chat.host.chatOptions
+        : withoutStart(chat.host.chatOptions);
+    },
     requests: {
       connect: (productId, port) => {
-        const current = chat();
-        if (current !== null && isChat(productId)) current.attachChat(port);
+        const chat = byProduct(productId);
+        if (chat !== undefined) chat.host.attachChat(port);
         else port.close();
       },
-      disconnect: (productId) => {
-        if (isChat(productId)) chat()?.detachChat();
-      },
+      disconnect: (productId) => byProduct(productId)?.host.detachChat(),
     },
   };
 }
@@ -218,12 +289,17 @@ export interface WalletChatDeps {
   /** The reply-key suite of each new request. Absent: the request service's default. */
   replySuite?(): ReplySuite;
   /**
-   * Another delivery a developer chose on the dev server, or `off` for no
-   * Contact Chat, with the simulated delivery between tabs the local choices
-   * use. Absent: the network.
+   * The chat products a developer runs for the wallet on the dev server, the
+   * one New chat starts in first; none runs for an empty list. Absent:
+   * Contact Chat alone.
+   */
+  products?: readonly ChatProductSpec[];
+  /**
+   * Another delivery a developer chose on the dev server, with the simulated
+   * delivery between tabs the local choices use. Absent: the network.
    */
   devDelivery?: {
-    mode(): WalletDelivery | "off";
+    mode(): WalletDelivery;
     local(self: string): HostDelivery;
   };
 }
@@ -232,14 +308,14 @@ export interface WalletChatDeps {
 export class WalletChat {
   /** Contact Chat as the page uses it, for the wallet signed in now. */
   readonly owner: ContactChatOwner;
-  private current: { key: string; chat: ContactChatHost } | null = null;
+  private current: { key: string; chats: RunningChat[] } | null = null;
   private readonly sentListeners = new Set<() => void>();
   private stopSent = () => {};
 
   constructor(private readonly deps: WalletChatDeps) {
     this.owner = contactChatOwner({
       base: deps.base,
-      chat: () => this.current?.chat ?? null,
+      chats: () => this.current?.chats ?? [],
       onSentChange: (listener) => {
         this.sentListeners.add(listener);
         return () => this.sentListeners.delete(listener);
@@ -247,18 +323,23 @@ export class WalletChat {
     });
   }
 
-  /** How the wallet's requests travel in this page, or `off` when Contact Chat does not run. */
-  mode(): WalletDelivery | "off" {
+  /** How the wallet's requests travel in this page. */
+  mode(): WalletDelivery {
     return this.deps.devDelivery?.mode() ?? "network";
+  }
+
+  /** The chat products the wallet runs, the one New chat starts in first. */
+  private products(): readonly ChatProductSpec[] {
+    return this.deps.products ?? [CONTACT_CHAT];
   }
 
   /**
    * Whether the wallet's saved contacts stay out of the picker, and so out
-   * of payments: whenever requests reach people the network names.
+   * of payments: whenever a chat product runs and its requests reach people
+   * the network names.
    */
   hidesWalletContacts(): boolean {
-    const mode = this.mode();
-    return mode !== "local" && mode !== "off";
+    return this.products().length > 0 && this.mode() !== "local";
   }
 
   /**
@@ -274,17 +355,20 @@ export class WalletChat {
     if (key === (this.current?.key ?? null)) return;
     this.stopSent();
     this.stopSent = () => {};
-    this.current?.chat.stop();
+    for (const chat of this.current?.chats ?? []) chat.host.stop();
     this.current = null;
     this.sentChanged();
-    if (session === null || key === null) return;
-    const mode = this.mode();
-    if (mode === "off") return;
-    const started = this.start(session, mode);
-    if (started === null) return;
-    this.current = { key, chat: started };
-    this.stopSent = started.onSentChange(() => this.sentChanged());
-    void started.start().then(() => this.sentChanged());
+    if (session === null || key === null || this.products().length === 0)
+      return;
+    const chats = this.start(session, this.mode());
+    if (chats.length === 0) return;
+    this.current = { key, chats };
+    const stops = chats.map((chat) =>
+      chat.host.onSentChange(() => this.sentChanged()),
+    );
+    this.stopSent = () => stops.forEach((stop) => stop());
+    for (const chat of chats)
+      void chat.host.start().then(() => this.sentChanged());
   }
 
   private sentChanged(): void {
@@ -302,7 +386,7 @@ export class WalletChat {
   private start(
     session: WalletRequestsSession,
     mode: WalletDelivery,
-  ): ContactChatHost | null {
+  ): RunningChat[] {
     const { deps } = this;
     const keys = sessionChatKeys({
       entropy: session.entropy,
@@ -311,8 +395,10 @@ export class WalletChat {
       chatPublicKey: session.chatPublicKey as HexString | undefined,
     });
     if (typeof keys === "string") {
-      deps.log(`Contact Chat does not run for this wallet: ${keys}`);
-      return null;
+      deps.log(
+        `The request service does not run for this wallet, so no chat product does: ${keys}`,
+      );
+      return [];
     }
     const own = bytesToHex(keys.identity).toLowerCase();
     const contacts = new DirectoryContacts({
@@ -333,70 +419,100 @@ export class WalletChat {
       },
       log: deps.log,
     });
-    const list = (part: "sent" | "received") =>
-      `truapi-web-signing-host:network:${session.network}:requests:${session.walletId}:contact-chat:${part}:v1`;
+    const list = (spec: ChatProductSpec, part: "sent" | "received") =>
+      `truapi-web-signing-host:network:${session.network}:requests:${session.walletId}:${spec.lists}:${part}:v1`;
     // The network delivery keeps its own lists: its requests name the day
     // inbox as their return route, which the local delivery cannot reach.
     const local = mode === "local" || mode === "local-validate";
-    const lists = (part: "sent" | "received") =>
-      local ? list(part) : `${list(part)}:day-inbox`;
-    deps.log(DELIVERY_LINE[mode]);
-    const costs = chatCosts(mode);
+    const lists = (spec: ChatProductSpec, part: "sent" | "received") =>
+      local ? list(spec, part) : `${list(spec, part)}:day-inbox`;
+    deps.log(
+      `Host requests for ${this.products()
+        .map((spec) => spec.product(session.networkSuffix).name)
+        .join(" and ")}: ${DELIVERY_LINE[mode]}`,
+    );
     const self = bytesToHex(keys.chatPublic);
-    return startContactChatHost({
-      product: contactChat(session.networkSuffix),
-      keys: { sent: lists("sent"), received: lists("received") },
-      auth: new WalletIdentityAuth(keys),
-      ...(deps.replySuite === undefined ? {} : { replySuite: deps.replySuite }),
-      ...(mode === "local"
-        ? {}
-        : { accounts: conversationAllowance(session, mode === "network") }),
-      delivery:
-        local && deps.devDelivery !== undefined
-          ? deps.devDelivery.local(self)
-          : new StatementStoreDelivery({
-              network: session.network,
-              entropy: session.entropy,
-              openStore: () => session.openStatementStore(),
-              claim: (target, submit) =>
-                session.claimNotificationAccount(target, submit),
-              submit: mode === "network",
-              now: () => Date.now(),
-              schedule: (task, delayMs) => {
-                const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
-                return () => clearTimeout(timer);
-              },
-              log: deps.log,
-              ...(deps.observe === undefined ? {} : { observe: deps.observe }),
-            }),
-      contacts,
-      handles: deps.handles,
-      onNamesChange: (listener) => deps.names.onChange(listener),
-      notifications: deps.notifications,
-      verify: () => ownIdentityProblem(session.directory, keys),
-      confirmSend: (prompt) => confirmSend(prompt, costs),
-      ...(costs === null
-        ? {}
-        : {
-            confirmAccept: (prompt: AcceptPrompt) =>
-              confirmAccept(prompt, costs),
-          }),
-      showChat: deps.showChat,
-      onSenders: deps.namedChanged,
-      log: deps.log,
-      ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+    return this.products().map((spec, index) => {
+      const costs = chatCosts(mode, spec.messagesEncrypted);
+      return {
+        workerPath: spec.workerPath,
+        ...(spec.workerParams === undefined
+          ? {}
+          : { workerParams: spec.workerParams }),
+        startsChats: index === 0,
+        host: startContactChatHost({
+          product: spec.product(session.networkSuffix),
+          keys: {
+            sent: lists(spec, "sent"),
+            received: lists(spec, "received"),
+          },
+          auth: new WalletIdentityAuth(keys),
+          ...(deps.replySuite === undefined
+            ? {}
+            : { replySuite: deps.replySuite }),
+          ...(mode === "local"
+            ? {}
+            : {
+                accounts: conversationAllowance(
+                  session,
+                  mode === "network",
+                  spec.allowanceSettled,
+                ),
+              }),
+          delivery:
+            local && deps.devDelivery !== undefined
+              ? deps.devDelivery.local(self)
+              : new StatementStoreDelivery({
+                  network: session.network,
+                  entropy: session.entropy,
+                  openStore: () => session.openStatementStore(),
+                  claim: (target, submit) =>
+                    session.claimNotificationAccount(target, submit),
+                  submit: mode === "network",
+                  now: () => Date.now(),
+                  schedule: (task, delayMs) => {
+                    const timer = setTimeout(
+                      task,
+                      Math.min(delayMs, 2 ** 31 - 1),
+                    );
+                    return () => clearTimeout(timer);
+                  },
+                  log: deps.log,
+                  ...(deps.observe === undefined
+                    ? {}
+                    : { observe: deps.observe }),
+                }),
+          contacts,
+          handles: deps.handles,
+          onNamesChange: (listener) => deps.names.onChange(listener),
+          notifications: deps.notifications,
+          verify: () => ownIdentityProblem(session.directory, keys),
+          confirmSend: (prompt) => confirmSend(prompt, costs),
+          ...(costs === null
+            ? {}
+            : {
+                confirmAccept: (prompt: AcceptPrompt) =>
+                  confirmAccept(prompt, costs),
+              }),
+          showChat: deps.showChat,
+          onSenders: deps.namedChanged,
+          log: deps.log,
+          ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+        }),
+      };
     });
   }
 }
 
+/** How the request service's requests and replies travel, whichever product sent them. */
 const DELIVERY_LINE: Record<WalletDelivery, string> = {
   network:
-    "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
+    "requests and replies go on the network's day inbox, and each post claims a notification slot.",
   validate:
-    "Contact Chat's requests use the network delivery with claims only validated: nothing is submitted.",
-  local: "Contact Chat's requests stay between tabs of this browser.",
+    "requests and replies use the network delivery with claims only validated, and nothing is submitted.",
+  local: "requests and replies stay between tabs of this browser.",
   "local-validate":
-    "Contact Chat's requests stay in this browser, and its chat accounts' claims are only validated: nothing is submitted.",
+    "requests and replies stay in this browser, conversation accounts' claims are only validated, and nothing is submitted.",
 };
 
 /**
@@ -409,6 +525,7 @@ const DELIVERY_LINE: Record<WalletDelivery, string> = {
 function conversationAllowance(
   session: WalletRequestsSession,
   submit: boolean,
+  settled?: (claim: StatementAccountClaim) => Promise<void>,
 ): ConversationAllowance {
   return {
     async allow(product, index) {
@@ -421,6 +538,7 @@ function conversationAllowance(
         throw new Error(
           `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
         );
+      await settled?.(claim);
       return {
         account: claim.account,
         until: (claim.period + 1) * 86_400_000,
@@ -450,7 +568,10 @@ const CHAT_ACCOUNT_COST =
 const CANCEL = "Cancel it under Sent in your Inbox.";
 
 /** What `mode` spends and exposes, or null when it spends nothing. */
-export function chatCosts(mode: WalletDelivery): ChatCosts | null {
+export function chatCosts(
+  mode: WalletDelivery,
+  encrypted = false,
+): ChatCosts | null {
   switch (mode) {
     case "local":
       return null;
@@ -472,13 +593,17 @@ export function chatCosts(mode: WalletDelivery): ChatCosts | null {
       };
     case "network":
       return {
-        summary: "Uses daily slots · Messages are public",
+        summary: encrypted
+          ? "Uses daily slots · Messages are end-to-end encrypted"
+          : "Uses daily slots · Messages are public",
         request:
           "1 notification slot now, and 1 more each day it is pending while this host is open.",
         reply:
           "1 notification slot now, and 1 more on any later day their request arrives again.",
         chat: CHAT_ACCOUNT_COST,
-        messages: "Not encrypted: anyone can read them.",
+        messages: encrypted
+          ? "End-to-end encrypted. Who posts, to which topics, when and how much is public."
+          : "Not encrypted: anyone can read them.",
       };
   }
 }

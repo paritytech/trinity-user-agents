@@ -945,7 +945,7 @@ export class InvitationService {
     const label = short(context.requestId);
     if (context.product.id !== this.deps.product.id) {
       this.deps.log(
-        `Ignored request ${label}: ${context.product.id} is not installed.`,
+        `${this.deps.product.name} ignored request ${label}: it is for ${context.product.id}.`,
       );
       return;
     }

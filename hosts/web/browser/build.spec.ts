@@ -153,6 +153,10 @@ describe("the production build", () => {
       "Invitation demo",
       "truapi-web-signing-host:dev:wallet-delivery",
       "truapi-web-signing-host:dev:reply-suite",
+      "truapi-web-signing-host:dev:contact-chat",
+      "truapi-web-signing-host:dev:kettle-chat",
+      "truapi-web-signing-host:dev:new-chats",
+      "chat-product-switch",
       "Add sample notifications",
       "alice.example",
       "__truapiNoSubmit",
@@ -219,7 +223,7 @@ describe("the production build", () => {
 
         await logged(
           page,
-          "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
+          "Host requests for Contact Chat: requests and replies go on the network's day inbox, and each post claims a notification slot.",
         );
         await workerRunning(page);
         // The Products view holds the loader's summary of Contact Chat's load.
@@ -243,7 +247,15 @@ describe("the production build", () => {
           delivery: await page.locator("#wallet-delivery").count(),
           replyKey: await page.locator("#reply-key-suite").count(),
           demo: await page.locator("#invitation-demo").count(),
-        }).toEqual({ delivery: 0, replyKey: 0, demo: 0 });
+          chatTab: await page.locator('[data-dev-tab="chat"]').isHidden(),
+          chatProducts: await page.locator("#chat-products").count(),
+        }).toEqual({
+          delivery: 0,
+          replyKey: 0,
+          demo: 0,
+          chatTab: true,
+          chatProducts: 0,
+        });
         await closeTools(page);
         expect(errors).toEqual([]);
         expect(outside).toEqual([]);

@@ -227,16 +227,18 @@ export function startContactChatHost(
     if (found?.again === true) {
       // The chain could not be read: Contact Chat waits, holding its port, and checks again.
       options.log(
-        `Contact Chat's requests wait: ${found.reason} Checking again in ${VERIFY_RETRY_MS / 1000} s.`,
+        `${options.product.name}'s requests wait: ${found.reason} Checking again in ${VERIFY_RETRY_MS / 1000} s.`,
       );
       cancelRecheck = schedule(() => void check(), VERIFY_RETRY_MS);
     } else if (found !== null) {
-      options.log(`Contact Chat's requests stay off: ${found.reason}`);
+      options.log(
+        `${options.product.name}'s requests stay off: ${found.reason}`,
+      );
       state = "off";
       pending?.close();
       pending = null;
     } else {
-      options.log("Contact Chat's requests are on.");
+      options.log(`${options.product.name}'s requests are on.`);
       state = "running";
       service.start();
       sendersChanged();
@@ -277,7 +279,7 @@ export function startContactChatHost(
             return problem === null
               ? "Contact Chat is checking your identity on chain."
               : `Contact Chat could not check your identity yet, and tries again shortly: ${problem.reason}`;
-          return `Contact Chat's requests are off${problem === null ? "." : `: ${problem.reason}`}`;
+          return `${options.product.name}'s requests are off${problem === null ? "." : `: ${problem.reason}`}`;
         },
         onChange: (listener) => {
           startListeners.add(listener);

@@ -1,7 +1,11 @@
-/** The developer tools' views, in the order their tabs show. */
+/**
+ * The developer tools' views, in the order their tabs show. Chat's tab shows
+ * only on the dev server, whose tools draw it.
+ */
 export const DEV_VIEWS = [
   "account",
   "product",
+  "chat",
   "preview",
   "inspector",
   "more",

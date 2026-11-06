@@ -12,8 +12,11 @@ signed out, red failed.
   use, Details) and Workers.
 - **Preview:** the app's size and frame.
 - **Inspector:** six views. See [Inspector](inspector.md).
-- **More:** Versions, and dev-server controls: the invitation demo, Contact Chat delivery, the reply key, sample Inbox
-  items.
+- **Chat** (dev server, or a build with `WEB_SIGNING_KETTLE_CHAT=1`): which chat products run in the tab, which one New
+  chat starts in, and Kettle Chat's log recovery over iroh (off by default; on, the public test relays or a custom
+  relay). See [Dev server controls](contact-chat.md#dev-server-controls).
+- **More:** Versions, and dev-server controls: the invitation demo, request delivery and the reply key (the request
+  service's, for every product that uses it), and sample Inbox items.
 
 ## Search field
 

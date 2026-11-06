@@ -472,6 +472,15 @@
         <button
           type="button"
           role="tab"
+          data-dev-tab="chat"
+          aria-controls="dev-chat"
+          hidden
+        >
+          Chat
+        </button>
+        <button
+          type="button"
+          role="tab"
           data-dev-tab="preview"
           aria-controls="dev-preview"
         >
@@ -711,6 +720,15 @@
           <p id="worker-status" class="status" aria-live="polite"></p>
         </section>
       </div>
+      <div
+        id="dev-chat"
+        class="dev-panel"
+        role="tabpanel"
+        aria-label="Chat"
+        data-dev-panel="chat"
+        tabindex="-1"
+        hidden
+      ></div>
       <div
         id="dev-preview"
         class="dev-panel"

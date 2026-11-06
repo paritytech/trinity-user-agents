@@ -48,6 +48,10 @@ npx vite preview --base /<repo>/   # try a build at http://localhost:5180/<repo>
 - A build served from the root ships the Browse seed. The build reads Paseo Next v2 and fails if it cannot. Set
   `WEB_SIGNING_SEED_BROWSE=0` for an offline build. See [The Browse seed](opening-a-product.md#the-browse-seed).
 - Contact Chat's worker blocks are also read at the origin's root. A build under another base has neither.
+- `WEB_SIGNING_KETTLE_CHAT=1` builds in Kettle Chat's worker and the Chat tab, for a private test deployment. It needs
+  `npm run build:kettle` first and fails without it. That build compiles iroh, whose `ring` needs a clang with the
+  wasm32 target (on macOS, Homebrew's LLVM: see Kettle Chat). See
+  [Kettle Chat](contact-chat.md#kettle-chat-dev-server-prototype).
 
 ## Secure context and phones
 

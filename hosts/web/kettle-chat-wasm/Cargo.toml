@@ -1,0 +1,45 @@
+[package]
+name = "kettle-chat-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "PROTOTYPE. Kettle's chat engine for the web host's Kettle Chat worker, with its statement store and storage behind JavaScript ports"
+# Links Kettle, which is AGPL-3.0-only.
+license = "AGPL-3.0-only"
+publish = false
+
+# Built on its own with `npm run build:kettle` (docs/contact-chat.md), never as part of the
+# repository's Rust workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The default branch of paritytech/kettle-core, pinned. Move all three together.
+kettle-chat = { git = "ssh://git@github.com/paritytech/kettle-core.git", rev = "4d0764d526e5e32dfc611323e5fa522651f864e6", features = ["iroh"] }
+kettle-crypto = { git = "ssh://git@github.com/paritytech/kettle-core.git", rev = "4d0764d526e5e32dfc611323e5fa522651f864e6" }
+kettle-proto = { git = "ssh://git@github.com/paritytech/kettle-core.git", rev = "4d0764d526e5e32dfc611323e5fa522651f864e6" }
+anyhow = "1"
+futures = "0.3"
+hex = "0.4"
+js-sys = "0.3"
+n0-future = "0.3"
+send_wrapper = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+# The endpoint of Kettle's log transfer, off unless the host passes a relay. The
+# version in kettle-core's lock at the pin; it needs a clang with the wasm32 target
+# (docs/contact-chat.md).
+iroh = "=1.4.1"
+tokio = { version = "1", features = ["sync"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# Rust's wasm32 target emits bulk memory and the other post-MVP features.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-sign-ext", "--enable-mutable-globals", "--enable-reference-types", "--enable-multivalue"]

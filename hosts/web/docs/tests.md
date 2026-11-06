@@ -12,6 +12,8 @@ npm run test:browser   # every spec under browser/, in headless Chrome
 - CI runs only `typecheck` and `npm test` (the `host-web` job in `.github/workflows/ci.yml`). The build and browser
   tests need the signing core's WASM bundle. Run them by hand when the host or the core changes.
 - These gates catch a broken host, not a hostile product.
+- [`tests/unit/chat/kettle-chat/wasm.test.ts`](../tests/unit/chat/kettle-chat/wasm.test.ts) runs Kettle's WebAssembly
+  over scripted ports. It is skipped until `npm run build:kettle` has run, so CI skips it.
 
 ## Browser tests
 
@@ -40,6 +42,21 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 - [`contacts-pick.spec.ts`](../browser/contacts-pick.spec.ts): `contacts.pick` for demo users.
 - [`invitations.spec.ts`](../browser/invitations.spec.ts): demo users, test accounts, invitations.
 - [`contact-chat.spec.ts`](../browser/contact-chat.spec.ts): Contact Chat between two demo users.
+- [`chat-products.spec.ts`](../browser/chat-products.spec.ts): the developer tools' Chat tab: which chat products run,
+  New chat's product, and both held across reloads.
+- [`kettle-build.spec.ts`](../browser/kettle-build.spec.ts): a build with `WEB_SIGNING_KETTLE_CHAT=1`: Kettle Chat's
+  archive, no dev demos, and a wallet running Kettle Chat alone from it. Skipped until `npm run build:kettle` has run.
+- [`kettle-chat.spec.ts`](../browser/kettle-chat.spec.ts): Kettle Chat between two demo users, over the simulated
+  Statement Store, alone and beside Contact Chat. Skipped until `npm run build:kettle` has run.
+- [`kettle-iroh.spec.ts`](../browser/kettle-iroh.spec.ts): Kettle Chat's log recovery over iroh, between two demo users,
+  through two `iroh-relay`s this test runs on loopback. A relay not reached falls back to the Statement Store; a side
+  with iroh off asks for no socket; iroh turned on and off mid-chat keeps the history. Bob away for more than one outbox
+  gets every message by a log fetch while Alice's new outboxes are held out of the store; the control without iroh gets
+  only the stored window until they land; a peer on another relay gets no connection. Every socket a tab asks for is
+  recorded, and any but the given relays fails the test. The public test relays are the default, kept per tab; with them
+  unreachable (blocked here) the chat runs on the Statement Store alone. `KETTLE_IROH_PUBLIC=1` adds one recovery smoke
+  over n0's public relays, run by hand only. Needs `npm run build:kettle` and `iroh-relay` 1.4.1 (`IROH_RELAY_BIN` or
+  PATH); skipped otherwise.
 - [`rpc-socket-close.spec.ts`](../browser/rpc-socket-close.spec.ts): the provider's RPC socket, closed and released or
   failing its handshake, throws nothing into the page.
 - [`inspector-dock.spec.ts`](../browser/inspector-dock.spec.ts): the tools' dock, resize and Focus.
@@ -58,6 +75,11 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   no-submit guard passed no submit or broadcast.
 - A failed run keeps each tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
   temporary directory.
+
+[`kettle-chat-live.spec.ts`](../browser/kettle-chat-live.spec.ts) runs only with `TRUAPI_LIVE=1 TRUAPI_LIVE_SUBMIT=1`,
+and after `npm run build:kettle`. It **submits**: Kettle Chat between `testalice.10` and `testbob.10` on Paseo Next v2,
+two notification slots and two general slots per run. It reads the conversation's statements back from People's RPC node
+and keeps a report, passed or failed, under `TRUAPI_LIVE_EVIDENCE`.
 
 ## Not covered
 

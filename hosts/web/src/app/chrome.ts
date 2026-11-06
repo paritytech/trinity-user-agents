@@ -111,9 +111,9 @@ export function bindChrome(elements: ChromeElements): Chrome {
       const step = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : null;
       if (step === null) return;
       event.preventDefault();
-      const index = DEV_VIEWS.indexOf(layout.view);
-      const next =
-        DEV_VIEWS[(index + step + DEV_VIEWS.length) % DEV_VIEWS.length];
+      const shown = DEV_VIEWS.filter((view) => !tabs.get(view)!.hidden);
+      const index = shown.indexOf(layout.view);
+      const next = shown[(index + step + shown.length) % shown.length]!;
       layout.show(next);
       render();
       tabs.get(next)!.focus();

@@ -128,6 +128,8 @@ export interface ResolvedWorker {
   manifest: WorkerManifest;
   /** Where the archive's blocks are fetched. Absent uses the network's gateway. */
   gateway?: string;
+  /** Query parameters of the worker's page, set by the host for a worker it builds itself. */
+  startParams?: Readonly<Record<string, string>>;
 }
 
 /** What resolving reads from the outside, so tests can stand in for it. */

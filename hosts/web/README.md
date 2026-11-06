@@ -47,6 +47,8 @@ npm run build                      # served from the root
 
 - `dist/` is a static folder. The base must match the served path.
 - A root build ships the Browse seed and reads Paseo Next v2 to make it. `WEB_SIGNING_SEED_BROWSE=0` builds offline.
+- `WEB_SIGNING_KETTLE_CHAT=1` also builds in Kettle Chat and the developer tools' Chat tab, for a private test
+  deployment, after `npm run build:kettle`. See [Kettle Chat](docs/contact-chat.md#kettle-chat-dev-server-prototype).
 - A name opens only in a secure context: `https` or `http://localhost`.
 
 Details, the username search route and phones: [docs/running.md](docs/running.md).
@@ -99,6 +101,11 @@ Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
   post-quantum key. Replies are sealed to a hybrid post-quantum X-Wing key by default.
 - **Start over** (Chat options) sends a new request when a connection no longer gets through.
 - The request service, sealing, delivery and the invitation demo: [docs/request-service.md](docs/request-service.md).
+- **Kettle Chat** (dev server, or a build with `WEB_SIGNING_KETTLE_CHAT=1`; prototype) runs Kettle's MLS chat as a
+  product of its own, alone or beside Contact Chat, for a signed-in wallet over the network or for the invitation demo
+  over a simulated Statement Store. The developer tools' **Chat** tab (wherever Kettle Chat is) chooses which chat
+  products run and which one New chat starts in. See
+  [Kettle Chat](docs/contact-chat.md#kettle-chat-dev-server-prototype).
 
 ## Developer tools
 
@@ -135,6 +142,7 @@ Specs and their scope: [docs/tests.md](docs/tests.md).
 - `tools/`: developer tools. `tools/demos/` is dev-server only.
 - `fixtures/`: synthetic data. `tests/`, `browser/`: tests.
 - `*-plugin.ts`: Vite plugins.
+- `kettle-chat-wasm/`: Kettle's engine as WebAssembly, built with `npm run build:kettle`.
 
 Rules and the full map: [AGENTS.md](AGENTS.md), [docs/layout.md](docs/layout.md).
 
