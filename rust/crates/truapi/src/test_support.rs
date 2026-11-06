@@ -357,7 +357,7 @@ pub fn test_stack(
 }
 
 /// The key [`sign_test_descriptor`] signs with.
-pub const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
+const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
 
 /// A descriptor for a stack on `tld` over a relay and these chains, ready for
 /// [`sign_test_descriptor`].
@@ -408,10 +408,16 @@ pub fn test_descriptor_chain(
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
 	let bytes = serde_json::to_vec(descriptor).expect("a JSON value serialises");
 	let signed = trinity_stack::sign(&bytes, &TEST_STACK_SECRET).expect("test descriptor is valid");
-	let key = format!("0x{}", hex::encode(trinity_stack::public_key(&TEST_STACK_SECRET)));
-	let pointer = trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", Some(&key))
-		.expect("test pointer is valid");
-	(pointer.to_link(trinity_stack::DEFAULT_LINK_BASE), signed)
+	(test_stack_link(Some(&TEST_STACK_SECRET)), signed)
+}
+
+/// The link to the test stack's URL, keyed with the public key of `secret`
+/// when one is given.
+pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
+	let key = secret.map(|secret| format!("0x{}", hex::encode(trinity_stack::public_key(secret))));
+	trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", key.as_deref())
+		.expect("test pointer is valid")
+		.to_link(trinity_stack::DEFAULT_LINK_BASE)
 }
 
 /// Runtime configuration used by platform-backed runtime tests.
