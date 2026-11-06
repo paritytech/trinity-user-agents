@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostWallClock
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
 import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
@@ -75,6 +76,10 @@ internal class RealHostEventCapture @Inject constructor(
 
 internal class RealHostMonotonicTimeProvider @Inject constructor() : HostMonotonicTimeProvider {
     override fun nowMillis(): Long = SystemClock.elapsedRealtime()
+}
+
+internal class RealHostWallClock @Inject constructor() : HostWallClock {
+    override fun nowEpochMillis(): Long = System.currentTimeMillis()
 }
 
 internal class RealHostEventOriginProvider @Inject constructor() : HostEventOriginProvider {

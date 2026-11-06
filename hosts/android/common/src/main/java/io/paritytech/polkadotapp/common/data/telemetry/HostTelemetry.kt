@@ -36,6 +36,8 @@ enum class HostEventOutcome(val tag: String) {
     TIMEOUT("timeout"),
     NO_WORKER("no_worker"),
     ABANDONED("abandoned"),
+    OPENED("opened"),
+    REUSED("reused"),
 }
 
 fun HostEventOrigin.stepEvent(
@@ -73,4 +75,9 @@ fun interface HostEventCapture {
 
 fun interface HostMonotonicTimeProvider {
     fun nowMillis(): Long
+}
+
+/** Wall-clock time, for a moment handed to a page, whose own clock shares no base with the host's. */
+fun interface HostWallClock {
+    fun nowEpochMillis(): Long
 }

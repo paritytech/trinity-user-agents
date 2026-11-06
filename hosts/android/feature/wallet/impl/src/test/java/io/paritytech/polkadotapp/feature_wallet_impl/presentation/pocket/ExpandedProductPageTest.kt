@@ -25,6 +25,7 @@ class ExpandedProductPageTest {
 
         var paused = 0
         var resumed = 0
+        var shownAgain = 0
 
         override fun pauseConnections() {
             paused++
@@ -32,6 +33,10 @@ class ExpandedProductPageTest {
 
         override fun resumeConnections() {
             resumed++
+        }
+
+        override fun onShownAgain() {
+            shownAgain++
         }
     }
 
@@ -83,6 +88,20 @@ class ExpandedProductPageTest {
         assertEquals(1, opened.size)
         assertEquals(sessions.single(), page.shown.value?.session)
         assertEquals(1, sessions.single().resumed)
+    }
+
+    // The tap that shows a held page is reported as a reuse; a page already on screen was not reused.
+    @Test
+    fun `a held page is told it is shown again only when it comes back on screen`() = runTest {
+        val page = page(screenScope())
+        page.open("https://game.dot?card=loyalty")
+        assertEquals(0, sessions.single().shownAgain)
+        page.close()
+
+        page.showIfHeld("https://game.dot?card=loyalty")
+        page.open("https://game.dot?card=loyalty")
+
+        assertEquals(1, sessions.single().shownAgain)
     }
 
     // Showing a product that already exists costs the card's move nothing.

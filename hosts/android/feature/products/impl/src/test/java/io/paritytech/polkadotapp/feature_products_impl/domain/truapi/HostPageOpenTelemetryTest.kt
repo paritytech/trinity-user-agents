@@ -21,7 +21,7 @@ class HostPageOpenTelemetryTest {
     private val timeProvider = HostMonotonicTimeProvider { now }
     private val captured = mutableListOf<HostEvent>()
     private val capture = HostEventCapture { captured += it() }
-    private val taps = HostPocketTaps(timeProvider, capture)
+    private val taps = HostPocketTaps(timeProvider, { TAPPED_AT_EPOCH }, capture)
     private val telemetry = HostPageOpenTelemetry(originProvider, timeProvider, capture, taps)
 
     @Test
@@ -55,8 +55,50 @@ class HostPageOpenTelemetryTest {
                 ),
                 durationMs = LOADED_AT - OPEN_REQUESTED_AT,
             ),
-            captured.single(),
+            captured.single { it.name == "host.webview.page_loaded" },
         )
+    }
+
+    @Test
+    fun `the tap that opens a page is reported as opened, and handed to the page`() {
+        taps.tapped("humanity.dot")
+        now = OPEN_REQUESTED_AT
+        val page = telemetry.open()
+
+        page.opened(HUMANITY, "session-42")
+
+        val tapped = captured.single()
+        assertEquals("host.pocket.card_tapped" to "opened", tapped.name to tapped.tags["outcome"])
+        assertEquals("session-42" to "humanity.dot", tapped.tags["host.session_id"] to tapped.tags["product.id"])
+        assertEquals(OPEN_REQUESTED_AT - TAPPED_AT, tapped.durationMs)
+        assertEquals(TAPPED_AT_EPOCH to "pocket_card", page.pageOrigin?.openedAtEpochMs to page.pageOrigin?.openSource)
+    }
+
+    // A held page shown again starts no load, so without this the tap would go unreported.
+    @Test
+    fun `a tap that shows a held page again is reported as reused, timed to the page being visible`() {
+        val page = telemetry.open().apply { opened(HUMANITY, "session-42") }
+        now = 5_000L
+        taps.tapped("humanity.dot")
+
+        val tap = checkNotNull(page.reuseTap())
+        now = 5_120L
+        page.reused(tap)
+
+        val reused = captured.single()
+        assertEquals("host.pocket.card_tapped" to "reused", reused.name to reused.tags["outcome"])
+        assertEquals(120L, reused.extras["reuse_ms"])
+        assertEquals("session-42", reused.tags["host.session_id"])
+    }
+
+    @Test
+    fun `a page opened without a tap hands the page no open time`() {
+        val page = telemetry.open()
+
+        page.opened(HUMANITY, "session-42")
+
+        assertEquals(null, page.pageOrigin)
+        assertEquals(emptyList<HostEvent>(), captured)
     }
 
     @Test
@@ -145,6 +187,7 @@ class HostPageOpenTelemetryTest {
 
     private companion object {
         const val TAPPED_AT = 500L
+        const val TAPPED_AT_EPOCH = 1_793_880_000_000L
         const val OPEN_REQUESTED_AT = 1_000L
         const val LOADED_AT = 1_750L
         val HUMANITY = ProductId.parse("humanity.dot").getOrThrow()
