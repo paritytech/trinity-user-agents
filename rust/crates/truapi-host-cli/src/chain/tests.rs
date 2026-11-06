@@ -182,22 +182,22 @@ fn every_served_role_routes_to_its_own_chain() {
 	for network in Network::value_variants() {
 		let config = network.config();
 		let provider = CliChainProvider::with_live_chain_routing(&config, false);
-		for entry in config.host_chain_set().chains {
-			let expected = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-				panic!("{} serves {:?} with no preset URL", config.id, entry.identifier)
+		for (identifier, genesis_hash) in config.served_roles() {
+			let expected = config.url_for_role(identifier).unwrap_or_else(|| {
+				panic!("{} serves {:?} with no preset URL", config.id, identifier)
 			});
 			assert!(
-				provider.routes(&entry.genesis_hash),
+				provider.routes(&genesis_hash),
 				"{} serves {:?} but does not route it; the fallback would hide this",
 				config.id,
-				entry.identifier
+				identifier
 			);
 			assert_eq!(
-				provider.location(entry.genesis_hash),
+				provider.location(genesis_hash),
 				expected,
 				"{} serves {:?} but routes it elsewhere",
 				config.id,
-				entry.identifier
+				identifier
 			);
 		}
 	}

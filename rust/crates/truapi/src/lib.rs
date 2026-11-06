@@ -871,6 +871,8 @@ mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
 #[cfg(feature = "runtime")]
+mod stack;
+#[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
 pub mod subscription;

@@ -6,7 +6,7 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use truapi::{
 	latest::ChainIdentifier,
 	platform::{
-		ChainExtensionVersion, DOTNS_TLDS, ExtensionVersionMap, HostChainEntry, HostChainSet,
+		ChainExtensionVersion, DOTNS_TLDS, ExtensionVersionMap, Stack, StackChains, StackError,
 	},
 };
 
@@ -35,7 +35,7 @@ pub enum Network {
 	PaseoNextV2,
 	/// Built-in stack, read from the descriptor its operator publishes. Its id is
 	/// the id the playground and dotli already use for this network
-	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so `HostChainSet::network`
+	/// (`VITE_NETWORKS=paseo-next-v2,previewnet`), so the network `get_chain_info`
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
 	Previewnet,
@@ -917,7 +917,7 @@ const POLKADOT: NetworkConfig = NetworkConfig {
 /// Resolved RPC/backend/genesis values for one network.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
-	/// The product namespace: what `HostChainSet::network` reports and where
+	/// The product namespace: the network `get_chain_info` reports and where
 	/// the CLI stores this network's state.
 	pub id: &'static str,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
@@ -937,7 +937,7 @@ pub struct NetworkConfig {
 	pub people_genesis: [u8; 32],
 	pub bulletin_genesis: [u8; 32],
 	/// Asset Hub genesis hash, both the role's identity in
-	/// [`NetworkConfig::host_chain_set`] and its routing key, and the genesis the
+	/// [`NetworkConfig::served_roles`] and its routing key, and the genesis the
 	/// CLI's Asset Hub extrinsics sign in `CheckGenesis`.
 	///
 	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
@@ -990,10 +990,10 @@ impl NetworkConfig {
 		Ok(())
 	}
 
-	/// The chain set this network serves, for `Features::supported_chains`.
+	/// The chain roles this network serves, each with its genesis hash.
 	///
 	/// One entry per role this struct names a genesis hash for. `ChainEndpoint`
-	/// carries no role, so `live_chain_endpoints` cannot supply one — an endpoint's
+	/// carries no role, so `live_chain_endpoints` cannot supply one: an endpoint's
 	/// identifier is not recoverable from it, which is why a served role needs its
 	/// own field here rather than a lookup into that list.
 	///
@@ -1001,24 +1001,32 @@ impl NetworkConfig {
 	/// unmapped genesis with People, so a role the routing filter drops would
 	/// connect to the wrong chain while the host claimed to serve it.
 	/// `chain::tests::every_served_role_routes_to_its_own_chain` holds that.
-	pub fn host_chain_set(&self) -> HostChainSet {
-		HostChainSet {
-			network: self.id.to_string(),
-			chains: vec![
-				HostChainEntry {
-					identifier: ChainIdentifier::People,
-					genesis_hash: self.people_genesis,
-				},
-				HostChainEntry {
-					identifier: ChainIdentifier::Bulletin,
-					genesis_hash: self.bulletin_genesis,
-				},
-				HostChainEntry {
-					identifier: ChainIdentifier::AssetHub,
-					genesis_hash: self.asset_hub_genesis,
-				},
-			],
-		}
+	pub fn served_roles(&self) -> [(ChainIdentifier, [u8; 32]); 3] {
+		[
+			(ChainIdentifier::People, self.people_genesis),
+			(ChainIdentifier::Bulletin, self.bulletin_genesis),
+			(ChainIdentifier::AssetHub, self.asset_hub_genesis),
+		]
+	}
+
+	/// The stack the core runs on: [`Self::served_roles`], the network `id`
+	/// `get_chain_info` reports, and the TLD. The CLI resolved and checked these
+	/// values itself, from a descriptor, the local-network file or Polkadot's
+	/// pinned values, so it hands them to the core as parts. Only Polkadot may
+	/// use Polkadot's reserved values.
+	pub fn stack(&self) -> Result<Stack, StackError> {
+		let chains = StackChains {
+			relay: None,
+			asset_hub: Some(self.asset_hub_genesis),
+			people: self.people_genesis,
+			bulletin: self.bulletin_genesis,
+		};
+		Stack::new(
+			self.id.to_string(),
+			self.network_suffix.to_string(),
+			chains,
+			self.id == POLKADOT.id,
+		)
 	}
 
 	/// The chains this network builds as V5 general transactions: People and

@@ -268,13 +268,6 @@ impl Features for CallbackPlatform {
 		let supported = self.callbacks.feature_supported(request).await?;
 		Ok(v01::HostFeatureSupportedResponse { supported })
 	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		self.callbacks
-			.on_core_log(markers::NATIVE_SUPPORTED_CHAINS.target.to_string(), String::new());
-
-		self.callbacks.supported_chains().map_err(v01::GenericError::from)
-	}
 }
 
 #[async_trait::async_trait]

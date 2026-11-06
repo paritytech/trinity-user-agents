@@ -5958,6 +5958,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "trinity-stack",
  "truapi-macros",
  "truapi-provider",
  "truapi-verifiable",

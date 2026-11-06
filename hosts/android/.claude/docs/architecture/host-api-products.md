@@ -184,8 +184,8 @@ The core is one process-wide `TrUAPIHostRuntime` with a `TrUAPIProductExecution`
 per product connection, and the Android side mirrors that split:
 
 - `TrUAPIHostRuntimeProvider` (`@Singleton`) builds the runtime lazily on first
-  use from `HostRuntimeConfig` (host identity, People/Bulletin genesis hashes,
-  the local session) and keeps it for the process. Its runtime-level
+  use from `HostRuntimeConfig` (host identity, the Trinity stack the build
+  bundles, the local session) and keeps it for the process. Its runtime-level
   `HostBridge` serves only what the signing runtime asks for — core storage,
   auth state, signing-side chain access, and the confirmations SSO raises.
   Product-scoped calls have no product there and fail closed, as on iOS. It
@@ -235,15 +235,26 @@ it cannot describe. Every variant is covered by
 - **Dispatcher-thread callbacks** (chain, theme, storage, core log) run inline and **must return promptly** — no blocking work. Chain I/O goes through the non-blocking `WebSocketChainProvider`, one per bridge so each notifies the runtime or execution it dials for; theme is served from a cached value.
 - `devicePermissionStatus` and `currentLocale` are left on the shell defaults (not applicable / system locale) — wire them when a product needs them.
 
+### Stack
+
+The core takes every chain it uses, and the chain info it reports to products,
+from the Trinity stack descriptor in `HostRuntimeConfig.stack`. `TrUAPIStack`
+holds each stack's pointer and maps the build's `TestnetEnvironment` to one:
+`TESTNET` runs previewnet, `NIGHTLY` paseo-next-v2 and `PRODUCTION` Polkadot,
+the only one allowed Polkadot's reserved genesis hashes and `dot` TLD. The
+signed descriptors ship byte for byte under
+`feature/products/impl/src/main/assets/stacks/`, and each verifies only under
+the key in its own pointer, so refresh a copy and its pointer together. A copy
+the core refuses fails the runtime boot.
+
 ### Chain agreement
 
-`supportedChains`, `featureSupported(Chain)` and `chainConnect` all answer from
-one `TrUAPIChains` snapshot — resolved at `attach` per execution, and once at
-boot for the runtime — through
-`TrUAPIChains.canDial`. Never answer any of them from the registry directly: the
-registry holds chains with no `wss` endpoints, so the host would advertise or
-promise a chain `chainConnect` then refuses. `TrUAPIChainAgreementTest` pins the
-invariant.
+`featureSupported(Chain)` and `chainConnect` both answer from one
+`TrUAPIChains` snapshot — resolved at `attach` per execution, and once at boot
+for the runtime — through `TrUAPIChains.canDial`. Never answer either from the
+registry directly: the registry holds chains with no `wss` endpoints, so the
+host would promise a chain `chainConnect` then refuses.
+`TrUAPIChainAgreementTest` pins the invariant.
 
 ### Storage
 

@@ -1757,7 +1757,7 @@ descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
+`truapi-provider` bundles. The product namespace (the network `get_chain_info` reports and the
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
 be a lowercase label.
 

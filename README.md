@@ -448,6 +448,12 @@ A stack descriptor describes one deployment of chains and services, as
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
+The core takes all of its chain configuration from one stack. A host passes the stack's pointer, the signed descriptor
+its build bundles, and whether the build may use Polkadot's reserved values: its genesis hashes and the `dot` TLD. The
+core verifies the copy against the pointer's key, refuses an unsigned stack and a reserved value the build does not
+allow, and answers `get_chain_info` and the signing role's TLD from the descriptor. See
+[RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
+
 ### Wire debugger
 
 [`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the

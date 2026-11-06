@@ -160,21 +160,21 @@ fn signing_runtime_on_asset_hub(
 			platform: truapi::latest::HostPlatform::Ios,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		asset_hub_chain_genesis_hash,
-		TEST_NETWORK_SUFFIX.to_string(),
+		crate::test_support::test_stack(
+			TEST_NETWORK_SUFFIX,
+			[0; 32],
+			[0xbb; 32],
+			Some(asset_hub_chain_genesis_hash),
+		),
 	)
 	.expect("signing host config is valid");
 	let services = RuntimeServices::new(
 		platform.clone(),
 		config.host.host_info.clone(),
-		config.people_chain_genesis_hash,
-		config.bulletin_chain_genesis_hash,
-		config.asset_hub_chain_genesis_hash,
+		config.stack.clone(),
 		test_spawner(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
+	let signing_host = SigningHostRole::new(services.clone());
 	(services, signing_host)
 }
 

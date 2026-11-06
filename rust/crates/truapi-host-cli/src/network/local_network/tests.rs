@@ -20,13 +20,13 @@ fn test_local_routes_presets() {
 		assert_eq!(resolved.network_suffix, base.network_suffix);
 		assert_eq!(resolved.identity_backend_base, Some("http://127.0.0.1:8092/api/v1"));
 		assert_eq!(resolved.live_chain_endpoints.len(), 3);
-		for role in resolved.host_chain_set().chains {
+		for (identifier, genesis_hash) in resolved.served_roles() {
 			let route = resolved
 				.live_chain_endpoints
 				.iter()
-				.find(|route| route.genesis == role.genesis_hash)
+				.find(|route| route.genesis == genesis_hash)
 				.unwrap();
-			assert_eq!(Some(route.ws), resolved.url_for_role(role.identifier));
+			assert_eq!(Some(route.ws), resolved.url_for_role(identifier));
 			assert!(route.required_for_host);
 			assert!(route.ws.starts_with("ws://127.0.0.1:"));
 		}

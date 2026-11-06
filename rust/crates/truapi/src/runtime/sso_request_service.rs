@@ -299,7 +299,7 @@ impl SsoRequestService {
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
 			session,
 		)
 		.await;
@@ -356,7 +356,7 @@ impl SsoRequestService {
 		};
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
 			session,
 		)
 		.await;
@@ -605,13 +605,13 @@ impl SsoRequestService {
 
 	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
 		let current = self.session_state.current()?;
-		if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
+		if current.has_username() || self.host_config.stack.chains().asset_hub.is_none() {
 			return Some(authority_session(&current));
 		}
 
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub.unwrap_or_default(),
 			current.clone(),
 		)
 		.await;

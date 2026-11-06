@@ -239,9 +239,7 @@ impl PairingHostRuntime {
 		let services = RuntimeServices::with_chat_platform(
 			platform,
 			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
 		);
@@ -724,9 +722,7 @@ impl SigningHostRuntime {
 		let services = RuntimeServices::with_chat_platform(
 			platform,
 			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.stack.clone(),
 			spawner,
 			chat_platform,
 		);
@@ -738,11 +734,11 @@ impl SigningHostRuntime {
 			// indistinguishable from an ungranted read. Only as visible as the
 			// host's log level, which defaults to `ERROR`.
 			warn!(
-				"no Asset Hub configured: no product manifest will resolve, so \
+				"the stack has no Asset Hub: no product manifest will resolve, so \
                  every cross-product grant not already cached is refused"
 			);
 		}
-		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
+		let signing_host = SigningHostRole::new(services.clone());
 		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(

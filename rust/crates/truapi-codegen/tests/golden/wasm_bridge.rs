@@ -40,7 +40,6 @@ pub struct JsBridge {
     pub clear_core_storage: Function,
     pub transaction_extension_versions: Function,
     pub feature_supported: Function,
-    pub supported_chains: Function,
     pub schedule_game_reminder: Function,
     pub cancel_game_reminder: Function,
     pub subscribe_locale: Function,
@@ -98,7 +97,6 @@ impl JsBridge {
                 "transactionExtensionVersions",
             )?,
             feature_supported: get_function(callbacks, "featureSupported")?,
-            supported_chains: get_function(callbacks, "supportedChains")?,
             schedule_game_reminder: get_optional_function(callbacks, "scheduleGameReminder")?
                 .unwrap_or_else(|| missing_callback("scheduleGameReminder")),
             cancel_game_reminder: get_optional_function(callbacks, "cancelGameReminder")?
@@ -377,16 +375,6 @@ impl crate::platform::Features for WasmPlatform {
         Ok(decode_bytes::<latest::HostFeatureSupportedResponse>(
             bytes,
             "featureSupported response did not decode",
-        )?)
-    }
-
-    async fn supported_chains(
-        &self,
-    ) -> Result<crate::platform::HostChainSet, latest::GenericError> {
-        let bytes = invoke_bytes_return(&self.bridge.supported_chains, Vec::new()).await?;
-        Ok(decode_bytes::<crate::platform::HostChainSet>(
-            bytes,
-            "supportedChains response did not decode",
         )?)
     }
 }

@@ -13,20 +13,20 @@ use super::*;
 fn served_chain_genesis_hashes_match_the_endpoint_routes() {
 	for network in Network::value_variants() {
 		let config = network.config();
-		for entry in config.host_chain_set().chains {
-			let expected_ws = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-				panic!("{} serves {:?} with no URL", config.id, entry.identifier)
-			});
+		for (identifier, genesis_hash) in config.served_roles() {
+			let expected_ws = config
+				.url_for_role(identifier)
+				.unwrap_or_else(|| panic!("{} serves {:?} with no URL", config.id, identifier));
 			let endpoint = config
 				.live_chain_endpoints
 				.iter()
-				.find(|endpoint| endpoint.genesis == entry.genesis_hash)
+				.find(|endpoint| endpoint.genesis == genesis_hash)
 				.unwrap_or_else(|| {
 					panic!(
 						"{} serves {:?} at genesis {} which no endpoint routes",
 						config.id,
-						entry.identifier,
-						hex::encode(entry.genesis_hash)
+						identifier,
+						hex::encode(genesis_hash)
 					)
 				});
 			assert_eq!(endpoint.ws, expected_ws);
@@ -42,7 +42,7 @@ fn test_network_served_roles() {
 	for network in Network::value_variants() {
 		let config = network.config();
 		let served: Vec<ChainIdentifier> =
-			config.host_chain_set().chains.iter().map(|entry| entry.identifier).collect();
+			config.served_roles().iter().map(|(identifier, _)| *identifier).collect();
 
 		assert_eq!(
 			served,
@@ -153,8 +153,8 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 
 	for network in Network::value_variants() {
 		let config = network.config();
-		for entry in config.host_chain_set().chains {
-			let ws = config.url_for_role(entry.identifier).expect("every served role has a URL");
+		for (identifier, genesis_hash) in config.served_roles() {
+			let ws = config.url_for_role(identifier).expect("every served role has a URL");
 			let probe = async {
 				let rpc = alloc::rpc::RpcClient::connect(ws)
 					.await
@@ -171,7 +171,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 			let (reported, chain_name) = match probe.await {
 				Ok(values) => values,
 				Err(err) => {
-					unreachable.push(format!("{:?} at {ws}: {err}", entry.identifier));
+					unreachable.push(format!("{:?} at {ws}: {err}", identifier));
 					continue;
 				},
 			};
@@ -179,7 +179,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 			checked += 1;
 			// Paseo's People chain calls itself "People" and previewnet's calls
 			// itself "Individuality Local", so either name satisfies the role.
-			let expected_in_name: &[&str] = match entry.identifier {
+			let expected_in_name: &[&str] = match identifier {
 				ChainIdentifier::People => &["People", "Individuality"],
 				ChainIdentifier::Bulletin => &["Bulletin"],
 				ChainIdentifier::AssetHub => &["Asset Hub"],
@@ -189,21 +189,21 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 				drifted.push(format!(
 					"{} serves {:?} from {ws}, which calls itself {chain_name:?} and \
 					 contains none of {expected_in_name:?}",
-					config.id, entry.identifier
+					config.id, identifier
 				));
-			} else if entry.genesis_hash == reported {
+			} else if genesis_hash == reported {
 				println!(
 					"{} {:?} {} matches {ws} ({chain_name})",
 					config.id,
-					entry.identifier,
-					hex::encode(entry.genesis_hash)
+					identifier,
+					hex::encode(genesis_hash)
 				);
 			} else {
 				drifted.push(format!(
 					"{} advertises {:?} as {} but {ws} reports {}",
 					config.id,
-					entry.identifier,
-					hex::encode(entry.genesis_hash),
+					identifier,
+					hex::encode(genesis_hash),
 					hex::encode(reported)
 				));
 			}
@@ -227,7 +227,7 @@ async fn the_advertised_genesis_matches_what_each_chain_reports() {
 	assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 	let expected_checks: usize = Network::value_variants()
 		.iter()
-		.map(|network| network.config().host_chain_set().chains.len())
+		.map(|network| network.config().served_roles().len())
 		.sum();
 	assert!(expected_checks > 0);
 	assert_eq!(checked, expected_checks);
@@ -959,4 +959,38 @@ fn test_refresh_expired_error() {
 
 	let published = expired(11);
 	assert!(refresh(&sign_copy(10, "g1"), Fetched::Document(&published)).is_err());
+}
+
+/// The core answers `get_chain_info` from the stack the CLI builds, so the
+/// stack carries the network id products see and each served role's genesis.
+#[test]
+fn the_stack_names_the_configured_network() {
+	let config = Network::default().config();
+	let stack = config.stack().expect("the default network is a valid stack");
+
+	assert_eq!(
+		(stack.network(), stack.tld(), stack.chains().clone()),
+		(
+			config.id,
+			config.network_suffix,
+			truapi::platform::StackChains {
+				relay: None,
+				asset_hub: Some(config.asset_hub_genesis),
+				people: config.people_genesis,
+				bulletin: config.bulletin_genesis,
+			}
+		),
+	);
+}
+
+/// Polkadot runs on Polkadot's reserved genesis hashes and `dot`, which the
+/// core refuses on any stack its host does not vouch for. Every built-in
+/// network has to start, Polkadot included.
+#[test]
+fn every_built_in_network_builds_a_stack() {
+	let refused: Vec<_> = Network::value_variants()
+		.iter()
+		.filter_map(|network| network.config().stack().err().map(|error| (*network, error)))
+		.collect();
+	assert_eq!(refused, Vec::new());
 }

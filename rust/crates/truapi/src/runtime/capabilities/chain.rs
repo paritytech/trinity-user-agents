@@ -32,12 +32,9 @@ use truapi::{
 	},
 };
 
-use crate::{
-	host_logic::features::{chain_info, supported_chains},
-	runtime::{
-		AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductConnection,
-		ProductRuntimeHost, runtime_failure_to_call_error, versioning::version,
-	},
+use crate::runtime::{
+	AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductConnection, ProductRuntimeHost,
+	runtime_failure_to_call_error, versioning::version,
 };
 
 impl ProductConnection {
@@ -336,10 +333,7 @@ impl Chain for ProductRuntimeHost {
 	) -> Result<RemoteChainInfoResponse, CallError<RemoteChainInfoError>> {
 		version(request)
 			.exec(|inner| async move {
-				let set = supported_chains(self.connection.services.platform.as_ref())
-					.await
-					.map_err(|err| CallError::Domain(latest::RemoteChainInfoError::Unknown(err)))?;
-				chain_info(&set, &inner).map_err(CallError::Domain)
+				self.connection.services.stack().chain_info(&inner).map_err(CallError::Domain)
 			})
 			.await
 	}

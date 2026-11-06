@@ -81,10 +81,7 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
-		network.network_suffix.to_string(),
+		network.stack()?,
 	)?;
 	let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
 	Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
@@ -489,10 +486,7 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.people_genesis,
-			network.bulletin_genesis,
-			network.asset_hub_genesis,
-			network.network_suffix.to_string(),
+			network.stack()?,
 		)?;
 		// An override written to a field this path never reads compiles,
 		// changes nothing, and looks identical in timings. Assert it.
