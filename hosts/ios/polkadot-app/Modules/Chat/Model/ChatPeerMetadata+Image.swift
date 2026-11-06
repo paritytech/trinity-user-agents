@@ -8,15 +8,26 @@ extension Chat.PeerMetadata.Icon {
             data.flatMap { UIImage(data: $0) }
         case .bot:
             .iconBot
-        case .product:
+        case .product,
+             .publicProfile:
             nil
         }
     }
 
-    /// The image a product peer loads by its domain, drawn over the letter avatar.
-    func imageViewModel(using factory: ProductIconViewModelMaking) -> (any ImageViewModelProtocol)? {
-        guard case let .product(domain) = self else { return nil }
-
-        return factory.createViewModel(for: domain)
+    /// The peer's image, loaded over its placeholder. A `refresh` rereads a public profile's avatar.
+    func imageViewModel(
+        using productFactory: ProductIconViewModelMaking,
+        publicProfileFactory: PublicProfileAvatarViewModelMaking,
+        refresh: Bool = false
+    ) -> (any ImageViewModelProtocol)? {
+        switch self {
+        case let .product(domain):
+            productFactory.createViewModel(for: domain)
+        case let .publicProfile(username):
+            publicProfileFactory.createViewModel(for: username, refresh: refresh)
+        case .image,
+             .bot:
+            nil
+        }
     }
 }

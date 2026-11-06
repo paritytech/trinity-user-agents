@@ -4,7 +4,7 @@ import SubstrateSdk
 import UIKit.UIImage
 
 extension ChatMetadata {
-    func chatContactInfo(iconViewModelFactory: ProductIconViewModelMaking) -> ChatHeaderConfiguration {
+    func chatContactInfo(icon: (any ImageViewModelProtocol)?) -> ChatHeaderConfiguration {
         let avatarViewModel: AvatarViewModel = {
             if let image = peerMetadata.icon.image {
                 return .image(image)
@@ -18,7 +18,7 @@ extension ChatMetadata {
 
         return ChatHeaderConfiguration(
             avatarViewModel: avatarViewModel,
-            icon: peerMetadata.icon.imageViewModel(using: iconViewModelFactory),
+            icon: icon,
             username: peerMetadata.name,
             additionalInfo: info
         )

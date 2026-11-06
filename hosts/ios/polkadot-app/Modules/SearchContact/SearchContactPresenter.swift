@@ -9,6 +9,7 @@ final class SearchContactPresenter {
     weak var view: SearchContactViewProtocol?
     let wireframe: SearchContactWireframeProtocol
     let interactor: SearchContactInteractorInputProtocol
+    let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
 
     private var currentSearch = CurrentSearch(
         query: "",
@@ -20,10 +21,12 @@ final class SearchContactPresenter {
 
     init(
         interactor: SearchContactInteractorInputProtocol,
-        wireframe: SearchContactWireframeProtocol
+        wireframe: SearchContactWireframeProtocol,
+        publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.publicProfileAvatarViewModelFactory = publicProfileAvatarViewModelFactory
     }
 }
 
@@ -208,7 +211,11 @@ private extension SearchContactPresenter {
         )
         return SearchContactListConfiguration(
             userName: payload.username,
-            avatarViewModel: avatarViewModel
+            avatarViewModel: avatarViewModel,
+            icon: payload.username.isEmpty ? nil : publicProfileAvatarViewModelFactory.createViewModel(
+                for: payload.username,
+                refresh: false
+            )
         )
     }
 

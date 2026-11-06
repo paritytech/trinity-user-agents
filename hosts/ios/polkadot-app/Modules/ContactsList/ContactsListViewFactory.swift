@@ -11,6 +11,8 @@ enum ContactsListViewFactory {
         let chainAssetId = AppConfig.Assets.mainAsset
 
         guard
+            let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
+                RootDependencyLocator.getDependency(),
             let chain = chainRegistry.getChain(for: chainAssetId.chainId),
             let chainAsset = chain.chainAsset(for: chainAssetId.assetId)
         else {
@@ -39,6 +41,7 @@ enum ContactsListViewFactory {
         let viewModelFactory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: decoderFactory,
             productIconViewModelFactory: flowState.flowState.iconViewModelFactory,
+            publicProfileAvatarViewModelFactory: publicProfileAvatarViewModelFactory,
             chain: chain,
             tokenFormatter: tokenFormatter
         )
