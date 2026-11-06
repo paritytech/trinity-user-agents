@@ -22,6 +22,7 @@ mod dotns_lookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -196,13 +197,13 @@ const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
 const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the active session";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum LegacySigner {
 	Product,
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq, derive_more::From)]
+#[derive(derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
 	ProductDerivation(AuthorityError),
@@ -581,6 +582,11 @@ impl ProductConnection {
 	/// Release one core-held reference on this connection's product worker.
 	pub fn release_worker_reference(&self) {
 		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
@@ -1268,6 +1274,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
@@ -1356,6 +1363,7 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
 	})
@@ -1377,10 +1385,21 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		AuthorityError::NotSupported { reason } => {
 			latest::HostCreateTransactionError::NotSupported { reason }
 		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
 			latest::HostCreateTransactionError::Unknown { reason }
 		},
 	})
+}
+
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
 }
 
 #[async_trait::async_trait]
@@ -1666,12 +1685,7 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
@@ -1699,12 +1713,7 @@ impl FundingProvider for ProductRuntimeHost {
 		version(request)
 			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
 				platform.close_provider_frame(&self.connection.product, intent);
@@ -1885,6 +1894,14 @@ impl ProductRuntimeHost {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 

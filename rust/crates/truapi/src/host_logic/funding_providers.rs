@@ -8,6 +8,8 @@
 //! provider's quote answers show about what it serves now takes precedence
 //! for a while, since a manifest can lag behind the provider.
 
+use std::collections::BTreeMap;
+
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{FundingDirection, FundingRail};
 
@@ -17,7 +19,7 @@ use crate::{
 };
 
 /// A provider the host offers, as the host supplies it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
@@ -49,7 +51,7 @@ pub const LEARNED_SUPPORT_TTL_MS: u64 = 12 * 60 * 60 * 1_000;
 
 /// What a provider's answer to a quote ask showed about what it serves now,
 /// which may differ from what its manifest declares.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct LearnedSupport {
 	/// The provider.
 	pub provider_id: ProductId,
@@ -89,9 +91,12 @@ pub struct LearnedLimit {
 impl LearnedLimit {
 	/// The limit, while it is still trusted at `now_ms`.
 	fn fresh(limit: Option<Self>, now_ms: u64) -> Option<u128> {
-		limit
-			.filter(|limit| now_ms.saturating_sub(limit.learned_at_ms) < LEARNED_SUPPORT_TTL_MS)
-			.map(|limit| limit.amount)
+		limit.filter(|limit| limit.is_fresh(now_ms)).map(|limit| limit.amount)
+	}
+
+	/// Whether this is still trusted at `now_ms`.
+	fn is_fresh(&self, now_ms: u64) -> bool {
+		now_ms.saturating_sub(self.learned_at_ms) < LEARNED_SUPPORT_TTL_MS
 	}
 }
 
@@ -114,27 +119,31 @@ impl LearnedSupport {
 		let quoted = self.is_quoted();
 		let now_ms = self.learned_at_ms;
 		if self.min.is_none() {
-			self.min = known.min.filter(|min| {
-				LearnedLimit::fresh(Some(*min), now_ms).is_some() &&
-					!(quoted && self.asked < min.amount)
-			});
+			self.min = known
+				.min
+				.filter(|min| min.is_fresh(now_ms) && !(quoted && self.asked < min.amount));
 		}
 		if self.max.is_none() {
-			self.max = known.max.filter(|max| {
-				LearnedLimit::fresh(Some(*max), now_ms).is_some() &&
-					!(quoted && self.asked > max.amount)
-			});
+			self.max = known
+				.max
+				.filter(|max| max.is_fresh(now_ms) && !(quoted && self.asked > max.amount));
 		}
 	}
 
 	/// Whether `other` is about the same provider and ask.
 	pub fn same_ask(&self, other: &Self) -> bool {
-		self.provider_id == other.provider_id &&
-			self.direction == other.direction &&
-			self.rail == other.rail &&
-			self.asset == other.asset &&
-			self.network == other.network &&
-			self.country == other.country
+		self.provider_id == other.provider_id && self.scope() == other.scope()
+	}
+
+	/// The rail, asset, network and country of the ask, with its direction.
+	fn scope(&self) -> LimitScope<'_> {
+		LimitScope {
+			direction: self.direction,
+			rail: self.rail,
+			asset: &self.asset,
+			network: self.network.as_deref(),
+			country: self.country.as_deref(),
+		}
 	}
 }
 
@@ -310,6 +319,10 @@ pub struct FundingAmountLimits {
 }
 
 impl FundingAmountLimits {
+	/// Any amount from [`FUNDING_MIN_AMOUNT`] up: what is known before any
+	/// provider showed a bound.
+	pub const ANY: Self = Self { min: Some(FUNDING_MIN_AMOUNT), max: None };
+
 	/// The range that admits an amount either this or `other` admits: the
 	/// smaller bound on each side, or none when either has none.
 	pub fn widest(self, other: Self) -> Self {
@@ -343,19 +356,12 @@ pub fn amount_limits(
 	scope: LimitScope<'_>,
 	now_ms: u64,
 ) -> FundingAmountLimits {
-	if provider_ids.is_empty() {
-		return FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None };
-	}
 	let mut mins = Vec::new();
 	let mut maxes = Vec::new();
 	for provider_id in provider_ids {
 		let record = learned.iter().find(|support| {
 			&support.provider_id == provider_id &&
-				support.direction == scope.direction &&
-				support.rail == scope.rail &&
-				support.asset == scope.asset &&
-				support.network.as_deref() == scope.network &&
-				support.country.as_deref() == scope.country &&
+				support.scope() == scope &&
 				support.is_fresh(now_ms)
 		});
 		// A provider that refused the scope outright cannot fund it, so it
@@ -459,29 +465,20 @@ pub fn country_support(
 	asset: &str,
 	now_ms: u64,
 ) -> Vec<FundingCountry> {
-	let mut countries: Vec<FundingCountry> = Vec::new();
+	let mut countries: BTreeMap<String, FundingCountrySupport> = BTreeMap::new();
 	let mut note = |country: &str, supported: bool, min: Option<u128>| {
-		let index = match countries.iter().position(|known| known.country == country) {
-			Some(index) => index,
-			None => {
-				countries.push(FundingCountry {
-					country: country.to_string(),
-					support: FundingCountrySupport::Unsupported,
-				});
-				countries.len() - 1
-			},
-		};
+		let support = countries
+			.entry(country.to_string())
+			.or_insert(FundingCountrySupport::Unsupported);
 		// A refusal only records the country; one provider serving it is
 		// enough to make it supported, at the lowest minimum any declares.
-		if !supported {
-			return;
+		if supported {
+			let known = match *support {
+				FundingCountrySupport::Supported { min: known } => known,
+				FundingCountrySupport::Unsupported => None,
+			};
+			*support = FundingCountrySupport::Supported { min: known.into_iter().chain(min).min() };
 		}
-		let support = &mut countries[index].support;
-		let min = match support {
-			FundingCountrySupport::Supported { min: known } => lowest(*known, min),
-			FundingCountrySupport::Unsupported => min,
-		};
-		*support = FundingCountrySupport::Supported { min };
 	};
 	for (provider_id, manifest) in providers {
 		let routes = manifest
@@ -509,295 +506,11 @@ pub fn country_support(
 			}
 		}
 	}
-	countries.sort_by(|a, b| a.country.cmp(&b.country));
 	countries
-}
-
-fn lowest(a: Option<u128>, b: Option<u128>) -> Option<u128> {
-	match (a, b) {
-		(Some(a), Some(b)) => Some(a.min(b)),
-		(a, b) => a.or(b),
-	}
+		.into_iter()
+		.map(|(country, support)| FundingCountry { country, support })
+		.collect()
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	const NOW: u64 = 1_700_000_000_000;
-
-	fn learned(supported: bool, at_ms: u64) -> LearnedSupport {
-		LearnedSupport {
-			provider_id: ProductId::for_test("ramp.dot"),
-			direction: FundingDirection::In,
-			rail: FundingRail::Bank,
-			asset: "EUR".to_string(),
-			network: None,
-			country: Some("DE".to_string()),
-			asked: 1_000,
-			supported,
-			min: None,
-			max: None,
-			learned_at_ms: at_ms,
-		}
-	}
-
-	fn limit(amount: u128) -> Option<LearnedLimit> {
-		Some(LearnedLimit { amount, learned_at_ms: NOW })
-	}
-
-	fn manifest(funding: &str) -> WorkerManifest {
-		WorkerManifest::parse(&format!(
-			r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{funding}}}}}"#
-		))
-		.expect("parses")
-	}
-
-	/// Declares card in only, so bank in comes from what answers showed.
-	fn card_in() -> WorkerManifest {
-		manifest(r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]}]}"#)
-	}
-
-	// Routes only narrow which providers are asked, so a provider that
-	// declares none is a candidate either way and its quotes decide, while
-	// declared routes still leave out a direction they do not serve.
-	#[test]
-	fn a_provider_without_routes_is_a_candidate_for_either_direction() {
-		let undeclared = manifest("{}");
-		let card_in = card_in();
-		let candidate = |manifest: &WorkerManifest, direction| {
-			FundingCandidate::for_direction(
-				&ProductId::for_test("ramp.dot"),
-				Some(manifest),
-				&[],
-				direction,
-				NOW,
-			)
-			.map(|candidate| candidate.routes)
-		};
-
-		assert_eq!(
-			(
-				candidate(&undeclared, FundingDirection::In),
-				candidate(&undeclared, FundingDirection::Out),
-				candidate(&card_in, FundingDirection::Out),
-			),
-			(Some(Vec::new()), Some(Vec::new()), None)
-		);
-	}
-
-	// What an answer showed widens the manifest only while it is trusted;
-	// after that the manifest applies again. A rail learned this way lists no
-	// countries, as one answer does not say where else it is served.
-	#[test]
-	fn learned_support_applies_for_twelve_hours() {
-		let card_in = card_in();
-		let candidate = |at_ms| {
-			FundingCandidate::for_direction(
-				&ProductId::for_test("ramp.dot"),
-				Some(&card_in),
-				&[learned(true, at_ms)],
-				FundingDirection::In,
-				NOW,
-			)
-			.map(|candidate| {
-				candidate.routes.into_iter().map(|route| route.rail).collect::<Vec<_>>()
-			})
-		};
-		let bank = FundingCandidate::for_direction(
-			&ProductId::for_test("ramp.dot"),
-			Some(&card_in),
-			&[learned(true, NOW)],
-			FundingDirection::In,
-			NOW,
-		)
-		.and_then(|candidate| {
-			candidate.routes.into_iter().find(|route| route.rail == FundingRail::Bank)
-		});
-
-		assert_eq!(
-			(
-				candidate(NOW - LEARNED_SUPPORT_TTL_MS + 1),
-				candidate(NOW - LEARNED_SUPPORT_TTL_MS),
-				bank
-			),
-			(
-				Some(vec![FundingRail::Card, FundingRail::Bank]),
-				Some(vec![FundingRail::Card]),
-				Some(FundingRoute {
-					rail: FundingRail::Bank,
-					directions: vec![FundingDirection::In],
-					assets: vec!["EUR".to_string()],
-					networks: None,
-					countries: None,
-				}),
-			)
-		);
-	}
-
-	// A refusal of only the amount shows what the provider takes, so the host
-	// can show the limit before quoting, and a crypto answer shows the network
-	// it serves, for the network picker.
-	#[test]
-	fn answers_show_the_limits_and_the_crypto_networks() {
-		let usdt = LearnedSupport {
-			rail: FundingRail::Crypto,
-			asset: "USDT".to_string(),
-			network: Some("polkadot".to_string()),
-			country: None,
-			min: limit(10_000_000),
-			..learned(true, NOW)
-		};
-
-		let undeclared = manifest("{}");
-		let candidate = FundingCandidate::for_direction(
-			&ProductId::for_test("ramp.dot"),
-			Some(&undeclared),
-			&[usdt],
-			FundingDirection::In,
-			NOW,
-		)
-		.expect("candidate");
-
-		assert_eq!(
-			(candidate.routes, candidate.limits),
-			(
-				vec![FundingRoute {
-					rail: FundingRail::Crypto,
-					directions: vec![FundingDirection::In],
-					assets: vec!["USDT".to_string()],
-					networks: Some(vec!["polkadot".to_string()]),
-					countries: None,
-				}],
-				vec![FundingLimit {
-					rail: FundingRail::Crypto,
-					asset: "USDT".to_string(),
-					network: Some("polkadot".to_string()),
-					country: None,
-					min: Some(10_000_000),
-					max: None,
-				}],
-			)
-		);
-	}
-
-	// The country picker shows what the core knows: a country a manifest or
-	// an answer serves, with the lowest minimum shown there, and one that
-	// every answer naming it refused. A country nothing names is left out.
-	#[test]
-	fn countries_show_what_manifests_and_answers_say() {
-		let declared = manifest(
-			r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"],"countries":["PT","DE"]}]}"#,
-		);
-		let in_country = |country: &str, supported, min: Option<u128>| LearnedSupport {
-			rail: FundingRail::Card,
-			country: Some(country.to_string()),
-			supported,
-			min: min.and_then(limit),
-			..learned(true, NOW)
-		};
-		let providers = [
-			(ProductId::for_test("ramp.dot"), Some(declared)),
-			(ProductId::for_test("other.dot"), Some(manifest("{}"))),
-		];
-		let learned = [
-			in_country("DE", true, Some(2_000)),
-			LearnedSupport {
-				provider_id: ProductId::for_test("other.dot"),
-				..in_country("DE", true, Some(1_500))
-			},
-			in_country("UY", false, None),
-			LearnedSupport { rail: FundingRail::Bank, ..in_country("FR", true, None) },
-		];
-
-		assert_eq!(
-			country_support(
-				&providers,
-				&learned,
-				FundingDirection::In,
-				FundingRail::Card,
-				"EUR",
-				NOW
-			),
-			vec![
-				FundingCountry {
-					country: "DE".to_string(),
-					support: FundingCountrySupport::Supported { min: Some(1_500) },
-				},
-				FundingCountry {
-					country: "PT".to_string(),
-					support: FundingCountrySupport::Supported { min: None },
-				},
-				FundingCountry {
-					country: "UY".to_string(),
-					support: FundingCountrySupport::Unsupported
-				},
-			]
-		);
-	}
-
-	// A provider that withdrew its manifest, or no longer serves Funding,
-	// stops being offered at once, whatever its earlier answers showed.
-	#[test]
-	fn learned_support_needs_a_manifest_serving_funding() {
-		let without_funding = WorkerManifest::parse(
-			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#,
-		)
-		.expect("parses");
-		let candidate = |manifest: Option<&WorkerManifest>| {
-			FundingCandidate::for_direction(
-				&ProductId::for_test("ramp.dot"),
-				manifest,
-				&[learned(true, NOW)],
-				FundingDirection::In,
-				NOW,
-			)
-		};
-
-		assert_eq!((candidate(None), candidate(Some(&without_funding))), (None, None));
-	}
-
-	// The range is the union of what providers take: the smallest minimum
-	// and the largest maximum, and no bound at all while some provider has
-	// not shown one, since it may take any amount.
-	#[test]
-	fn amount_limits_span_every_provider() {
-		let scope = LimitScope {
-			direction: FundingDirection::In,
-			rail: FundingRail::Bank,
-			asset: "EUR",
-			network: None,
-			country: Some("DE"),
-		};
-		let refused = |provider_id: &str, min: Option<u128>, max: Option<u128>| LearnedSupport {
-			provider_id: ProductId::for_test(provider_id),
-			min: min.and_then(limit),
-			max: max.and_then(limit),
-			..learned(true, NOW)
-		};
-		let ids = |ids: &[&str]| ids.iter().map(|id| ProductId::for_test(id)).collect::<Vec<_>>();
-		let learned = [
-			refused("a.dot", Some(20_000_000), Some(500_000_000)),
-			refused("b.dot", Some(15_000_000), None),
-			refused("d.dot", Some(2_000_000), None),
-			LearnedSupport { country: Some("PT".to_string()), ..refused("c.dot", Some(10), None) },
-		];
-
-		assert_eq!(
-			(
-				amount_limits(&ids(&["a.dot", "b.dot"]), &learned, scope, NOW),
-				amount_limits(&ids(&["a.dot"]), &learned, scope, NOW),
-				amount_limits(&ids(&["a.dot", "c.dot"]), &learned, scope, NOW),
-				amount_limits(&[], &learned, scope, NOW),
-				amount_limits(&ids(&["d.dot"]), &learned, scope, NOW),
-			),
-			(
-				FundingAmountLimits { min: Some(15_000_000), max: None },
-				FundingAmountLimits { min: Some(20_000_000), max: Some(500_000_000) },
-				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
-				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
-				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
-			)
-		);
-	}
-}
+mod tests;
