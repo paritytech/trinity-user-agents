@@ -25,6 +25,11 @@
 
 import type { ProductId } from "@parity/truapi";
 import { DerivationIndex } from "@parity/truapi";
+import {
+  loginRequestId,
+  loginResponse,
+  type LoginRequestBehavior,
+} from "./login-requests.js";
 
 import { createIframeHost } from "../web/create-iframe-host.js";
 import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
@@ -152,6 +157,15 @@ export interface AccountControl {
   setAccounts(names: (DevAccountName | DevAccount)[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
   signOut(): Promise<void>;
+  /**
+   * Answer a product's login request while the host is signed out, as a user
+   * would on a real host. `"success"` signs in `account`, or the first account
+   * when none is named, and answers `Success`. `"reject"` answers `Rejected`.
+   * Unset, the request reaches the core, which answers `Rejected` while signed
+   * out. A request made while signed in always reaches the core, which
+   * answers `AlreadyConnected`. `reset` unsets it.
+   */
+  setLoginBehavior(behavior: LoginRequestBehavior, account?: string): void;
   /**
    * The SS58 address of a product account, at the prefix the core mandates.
    *
@@ -365,6 +379,48 @@ export async function startTestHost(
     await activate(first);
   }
 
+  let loginRequests:
+    | { behavior: LoginRequestBehavior; account?: string }
+    | undefined;
+  // One sign-in at a time: a second product asking while the first is being
+  // signed in waits for it, rather than activating again and invalidating the
+  // first product's session.
+  let signingIn: Promise<void> | undefined;
+  /**
+   * Answer `frame` here when it is a login request this host was told how to
+   * answer, and report whether it did. Anything else goes on to the core.
+   */
+  const answerLoginRequest = (
+    frame: Uint8Array,
+    reply: (frame: Uint8Array) => void,
+  ): boolean => {
+    if (!loginRequests || active) return false;
+    const requestId = loginRequestId(frame);
+    if (requestId === undefined) return false;
+    if (loginRequests.behavior === "reject") {
+      reply(loginResponse(requestId, "Rejected"));
+      return true;
+    }
+    const name = loginRequests.account;
+    const account = name
+      ? roster.find((entry) => entry.name === name)
+      : roster[0];
+    if (!account) return false;
+    const owner = signingIn === undefined;
+    signingIn ??= activate(account).finally(() => {
+      signingIn = undefined;
+    });
+    signingIn.then(
+      () =>
+        reply(loginResponse(requestId, owner ? "Success" : "AlreadyConnected")),
+      (error: unknown) => {
+        console.error("test host could not sign in for a login request", error);
+        reply(loginResponse(requestId, "Rejected"));
+      },
+    );
+    return true;
+  };
+
   // The core and the product each hold one end of a MessageChannel. Frames are
   // raw SCALE bytes in both directions; nothing interprets them here.
   //
@@ -414,7 +470,13 @@ export async function startTestHost(
           });
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) provider.postMessage(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              answerLoginRequest(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            provider.postMessage(frame);
           };
           const publish = provider.publishChatAction
             ? (action: unknown) => provider.publishChatAction!(action)
@@ -436,7 +498,13 @@ export async function startTestHost(
           );
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) void core.receiveFrame(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              answerLoginRequest(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            void core.receiveFrame(frame);
           };
           // The direct core takes bytes, so the value is encoded here rather
           // than inside the provider.
@@ -471,6 +539,7 @@ export async function startTestHost(
     reset() {
       resetMock();
       writeBootStorage();
+      loginRequests = undefined;
     },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
@@ -533,6 +602,26 @@ export async function startTestHost(
       if (!active) return;
       await runtime.disconnectSession();
       active = undefined;
+    },
+    setLoginBehavior(behavior: LoginRequestBehavior, account?: string) {
+      if (behavior !== "success" && behavior !== "reject") {
+        throw new Error(
+          `testHost.setLoginBehavior takes "success" or "reject", got ` +
+            `${JSON.stringify(behavior)}. Whether the host starts signed in ` +
+            'is the `loginBehavior: "auto" | "manual"` fixture option.',
+        );
+      }
+      if (
+        account !== undefined &&
+        !roster.some((entry) => entry.name === account)
+      ) {
+        throw new Error(
+          `no account "${account}" on this host; have ${roster
+            .map((entry) => entry.name)
+            .join(", ")}`,
+        );
+      }
+      loginRequests = { behavior, account };
     },
   });
 
