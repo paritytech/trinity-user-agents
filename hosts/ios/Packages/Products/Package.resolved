@@ -1,5 +1,5 @@
 {
-  "originHash" : "65772a1b35f6248ba493aef6c7980843cd2134b4177af547b44d10e0b8a68027",
+  "originHash" : "41d011ec00ff5895979b7b3e3a69c422335c99959726a0d54a75f02e110ffbf2",
   "pins" : [
     {
       "identity" : "asyncextensions",
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/extrinsic-service-ios",
       "state" : {
-        "revision" : "0bd6530383977188b4c64effd6e754f96d0cee55",
-        "version" : "1.15.0"
+        "revision" : "75bd0da73f1782121cf07770f59eba3ace0b7056",
+        "version" : "1.20.0"
       }
     },
     {
@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/logger-ios",
       "state" : {
-        "revision" : "4d8a513664a272c201ba0a424a28d133827c924b",
-        "version" : "0.0.2"
+        "revision" : "067337bd88bcb3fe61b208bc3050fa2e22670340",
+        "version" : "0.1.0"
       }
     },
     {
@@ -123,8 +123,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/Operation-iOS",
       "state" : {
-        "revision" : "1434daa4c32b8d90771888663ecdd1b0fe709690",
-        "version" : "2.6.0"
+        "revision" : "41c976890b2eea5a54235ac4bf09acc19e0a8fb9",
+        "version" : "3.1.0"
       }
     },
     {
@@ -168,8 +168,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/substrate-sdk-ios",
       "state" : {
-        "revision" : "fd0bd87c53cded6aa098b410ed80fc48f5756404",
-        "version" : "5.12.0"
+        "revision" : "bbc0e4825767a75c6563e37496b0b120c866dbf6",
+        "version" : "5.17.0"
+      }
+    },
+    {
+      "identity" : "swift-async-algorithms",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-async-algorithms",
+      "state" : {
+        "revision" : "9d349bcc328ac3c31ce40e746b5882742a0d1272",
+        "version" : "1.1.3"
       }
     },
     {
@@ -285,8 +294,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/web3swift.git",
       "state" : {
-        "revision" : "d70a03dfa19e69ac7400a675df8a6ecc25ea43eb",
-        "version" : "3.3.1"
+        "revision" : "3453dcda98b701bcca4b1a8b12df2de8de820afa",
+        "version" : "3.3.2"
       }
     },
     {
