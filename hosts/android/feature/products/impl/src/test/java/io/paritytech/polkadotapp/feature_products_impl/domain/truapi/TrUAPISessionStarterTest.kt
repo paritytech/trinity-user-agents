@@ -13,10 +13,16 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
-import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostPocketTaps
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.webView.PageReveal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -25,7 +31,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.ProductId
@@ -47,8 +54,18 @@ class TrUAPISessionStarterTest {
     private val installerSessionId = slot<String>()
     private val reportedSessionId = slot<String>()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
-    private val pageLoadedTelemetry = mockk<HostPageLoadedTelemetry>()
-    private val hostSessions = HostSessionRegistry()
+    private val events = mutableListOf<HostEvent>()
+    private val capture = HostEventCapture { events += it() }
+    private val clock = HostMonotonicTimeProvider { OPEN_REQUESTED_AT }
+    private val pageOpenTelemetry = HostPageOpenTelemetry(
+        originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+        timeProvider = clock,
+        capture = capture,
+        taps = HostPocketTaps(clock, capture),
+    )
+    private val hostLoads = mutableListOf<HostLoadContext>()
+    private val revealedListeners = mutableListOf<(PageReveal) -> Unit>()
+    private val attachedSessionIds = mutableListOf<String?>()
     private val pageFinishedListeners = mutableListOf<() -> Unit>()
     private val mainFrameFailedListeners = mutableListOf<() -> Unit>()
     private val pageStartedListeners = mutableListOf<(String) -> Unit>()
@@ -61,8 +78,7 @@ class TrUAPISessionStarterTest {
         bootstrapInstaller = bootstrapInstaller,
         visibleProducts = visibleProducts,
         hostWebViewCreatedTelemetry = telemetry,
-        hostPageLoadedTelemetry = pageLoadedTelemetry,
-        hostSessions = hostSessions,
+        hostPageOpenTelemetry = pageOpenTelemetry,
     )
 
     @Before
@@ -109,9 +125,7 @@ class TrUAPISessionStarterTest {
         pageFinishedListeners.forEach { it() }
         pageFinishedListeners.forEach { it() }
 
-        verify(exactly = 1) {
-            pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = true)
-        }
+        assertEquals(listOf("ok" to installerSessionId.captured), pageLoads())
     }
 
     @Test
@@ -128,9 +142,7 @@ class TrUAPISessionStarterTest {
         mainFrameFailedListeners.forEach { it() }
         pageFinishedListeners.forEach { it() }
 
-        verify(exactly = 1) {
-            pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = false)
-        }
+        assertEquals(listOf("error" to installerSessionId.captured), pageLoads())
     }
 
     // A navigation that replaces a failed one starts a new document, and that document is what loads.
@@ -151,32 +163,82 @@ class TrUAPISessionStarterTest {
             pageStartedListeners.forEach { it(PRODUCT_URL) }
             pageFinishedListeners.forEach { it() }
 
-            verify(exactly = 1) {
-                pageLoadedTelemetry.report(installerSessionId.captured, PRODUCT_ID, OPEN_REQUESTED_AT, loaded = true)
-            }
+            assertEquals(listOf("ok" to installerSessionId.captured), pageLoads())
         }
 
-    // Shared dotNS loading finds the session through the product's name or an executable's subname, and a
-    // product that closed must not lend its id to whatever loads for it next.
+    // The archive lookups behind the page's requests and its chain connects report under this id, so
+    // they join the page's own spans.
     @Test
-    fun `the session is registered for the product while it runs and dropped when it closes`() = runBlocking<Unit> {
+    fun `the page's archive lookups and chain connects carry the session id exposed to the product`() =
+        runBlocking<Unit> {
+            startPage(this)
+
+            assertEquals(listOf(installerSessionId.captured), hostLoads.map { it.sessionId })
+            assertEquals(listOf<String?>(installerSessionId.captured), attachedSessionIds)
+        }
+
+    // Two pages of one product each keep their own session: closing one must not take the other's.
+    @Test
+    fun `a second page of the same product keeps its own session after the first closes`() = runBlocking<Unit> {
+        val firstScope = CoroutineScope(coroutineContext + Job())
+        startPage(firstScope)
+        val firstSession = installerSessionId.captured
+        startPage(this)
+        val secondSession = installerSessionId.captured
+
+        firstScope.coroutineContext.job.cancelAndJoin()
+        pageFinishedListeners.last()()
+
+        assertNotEquals(firstSession, secondSession)
+        assertEquals(listOf("abandoned" to firstSession, "ok" to secondSession), pageLoads())
+    }
+
+    @Test
+    fun `a page closed before it finished loading is reported as abandoned`() = runBlocking<Unit> {
         val productScope = CoroutineScope(coroutineContext + Job())
+        startPage(productScope)
+
+        productScope.coroutineContext.job.cancelAndJoin()
+        pageFinishedListeners.forEach { it() }
+
+        assertEquals(listOf("abandoned" to installerSessionId.captured), pageLoads())
+    }
+
+    // Without an event the open would be missing from the data instead of counted as failed.
+    @Test
+    fun `an open whose runtime does not boot is reported as an error`() = runBlocking<Unit> {
+        coEvery { runtimeProvider.runtime() } returns Result.failure(IllegalStateException("no suffix"))
+
+        startPage(this)
+
+        val (outcome, sessionId) = pageLoads().single()
+        assertEquals("error", outcome)
+        assertNotNull(sessionId)
+    }
+
+    @Test
+    fun `the page's reveal is reported under its session`() = runBlocking<Unit> {
+        startPage(this)
+
+        revealedListeners.forEach { it(PageReveal.THEME) }
+
+        val revealed = events.single { it.name == "host.webview.revealed" }
+        assertEquals("theme" to installerSessionId.captured, revealed.tags["via"] to revealed.tags["host.session_id"])
+    }
+
+    private suspend fun startPage(scope: CoroutineScope) {
         starter.start(
             provider = provider,
             productUrl = PRODUCT_URL,
-            scope = productScope,
+            scope = scope,
             hostApiNavigation = navigation,
             explicitProductId = PRODUCT_ID,
         )
         yield()
-
-        assertEquals(installerSessionId.captured, hostSessions.sessionIdForProductOrSubname("product.paseo"))
-        assertEquals(installerSessionId.captured, hostSessions.sessionIdForProductOrSubname("app.product.paseo"))
-
-        productScope.coroutineContext.job.cancelAndJoin()
-
-        assertNull(hostSessions.sessionIdForProductOrSubname("product.paseo"))
     }
+
+    private fun pageLoads() = events.filter { it.name == "host.webview.page_loaded" }
+        .map { it.tags["outcome"] to it.tags["host.session_id"] }
 
     private fun stubProductUrl() {
         val uri = mockk<Uri> {
@@ -195,14 +257,16 @@ class TrUAPISessionStarterTest {
         every { bootstrapInstaller.installerFor(any(), capture(installerSessionId)) } returns { { } }
         coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
         coEvery { provider.loadInitialContent() } just Runs
+        every { provider.useTrUAPIPermissions(any(), any()) } just Runs
         every { telemetry.report(capture(reportedSessionId)) } just Runs
-        every { pageLoadedTelemetry.openRequestedAtMillis() } returns OPEN_REQUESTED_AT
-        every { pageLoadedTelemetry.report(any(), any(), any(), any()) } just Runs
+        every { provider.useHostLoad(capture(hostLoads)) } just Runs
+        every { provider.addOnRevealedListener(capture(revealedListeners)) } just Runs
         every { provider.addOnPageFinishedListener(capture(pageFinishedListeners)) } just Runs
         every { provider.addOnMainFrameFailedListener(capture(mainFrameFailedListeners)) } just Runs
         every { provider.addOnPageStartedListener(capture(pageStartedListeners)) } just Runs
-        coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
-            arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
+        coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            attachedSessionIds += arg<String?>(7)
+            arg<suspend (String) -> Unit>(8)("endpoint-bootstrap")
             Result.success(execution)
         }
     }

@@ -81,6 +81,12 @@ class TrUAPIChains(
      * `featureSupported(Chain)`, so the host cannot promise a chain it refuses.
      */
     fun canDial(genesisHash: ByteArray): Boolean = !endpoints[genesisHash.hexKey()].isNullOrEmpty()
+
+    /** The chain's name for telemetry, or its genesis hash when it is not one the host advertises. */
+    fun label(genesisHash: ByteArray): String = advertised.chains
+        .firstOrNull { it.genesisHash.contentEquals(genesisHash) }
+        ?.identifier?.name?.lowercase()
+        ?: genesisHash.hexKey()
 }
 
 internal val EMPTY_CHAINS = TrUAPIChains(

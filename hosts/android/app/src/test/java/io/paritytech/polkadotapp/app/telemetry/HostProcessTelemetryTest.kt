@@ -95,19 +95,23 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
+            durationCapture = { _, _, _ -> error("no distribution while host telemetry is off") },
         )
 
         capture.capture { error("event metadata must stay lazy") }
 
         verifyNothingSentToSentry()
+        assertFalse(capture.enabled)
     }
 
     @Test
     fun `maps host event fields into one Sentry event when host telemetry is enabled`() {
         var sentryEvent: SentryEvent? = null
+        val distributions = mutableListOf<Any>()
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
+            durationCapture = { name, durationMs, attributes -> distributions += Triple(name, durationMs, attributes) },
         )
 
         capture.capture {
@@ -123,6 +127,26 @@ class HostProcessTelemetryTest {
         assertEquals("host.telemetry", sentryEvent?.logger)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
+        assertEquals(emptyList<Any>(), distributions)
+    }
+
+    // Sentry cannot chart a number an event carries, so a step's duration goes out a second time as
+    // a distribution, under the event's name and filterable by the same tags.
+    @Test
+    fun `sends a step's duration as a distribution under the event's name and tags`() {
+        val distributions = mutableListOf<Any>()
+        val capture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { },
+            durationCapture = { name, durationMs, attributes -> distributions += Triple(name, durationMs, attributes) },
+        )
+        val tags = mapOf("outcome" to "ok", "host.session_id" to "session-1")
+
+        capture.capture {
+            HostEvent(name = "host.worker.boot", tags = tags, extras = emptyMap(), durationMs = 850L)
+        }
+
+        assertEquals(listOf(Triple("host.worker.boot", 850L, tags)), distributions)
     }
 
     @Test

@@ -25,13 +25,12 @@ class RealPocketFaceSource @Inject constructor(
 ) : PocketFaceSource {
     // Shared into a ViewModel scope that has no handler for a throw, so a failure ends the stream quietly.
     override fun observeFace(key: PocketCardKey): Flow<JsWidget> = flow {
-        val requestedAtMillis = telemetry.requestedAtMillis()
+        val load = telemetry.start(key.productId)
         cachedFace(key)?.let {
             emit(it.toJsWidget())
-            telemetry.reportCachedFace(key.productId, requestedAtMillis)
+            load.cachedFace()
         }
-        val liveFaces = streams.renderFaces(key).map { face -> face.toJsWidget() }
-        emitAll(telemetry.reportFirstLiveFace(key.productId, requestedAtMillis, liveFaces))
+        emitAll(load.track(streams.renderFaces(key, load).map { face -> face.toJsWidget() }))
     }
         .catch { Timber.e(it, "pocket: the face stream for %s ended", key.cardId.value) }
 

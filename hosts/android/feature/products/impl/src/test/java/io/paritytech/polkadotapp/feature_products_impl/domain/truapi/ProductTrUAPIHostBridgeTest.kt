@@ -9,6 +9,8 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
@@ -28,11 +30,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
@@ -43,6 +48,7 @@ class ProductTrUAPIHostBridgeTest {
     private fun TestScope.bridge(
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
         hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
+        rpcConnectedTelemetry: HostRpcConnectedTelemetry = mockk(relaxed = true),
     ) = ProductTrUAPIHostBridge(
         hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
@@ -53,6 +59,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
+        rpcConnectedTelemetry = rpcConnectedTelemetry,
         scope = scope,
     )
 
@@ -97,6 +104,59 @@ class ProductTrUAPIHostBridgeTest {
 
         verify { execution.stopWsBridge() }
         verify { execution.close() }
+    }
+
+    // The product's own chain connects are the ones its page and worker wait on; the runtime's signing
+    // connects are not, so these have to say which product, executable and session dialled them.
+    @Test
+    fun `a chain connect the product dials is reported under its product, kind and session`() = runTest {
+        val events = CopyOnWriteArrayList<HostEvent>()
+        val reported = CountDownLatch(1)
+        val telemetry = HostRpcConnectedTelemetry(
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            timeProvider = { 0L },
+            capture = {
+                events += it()
+                reported.countDown()
+            },
+        )
+        var opened: HostBridge? = null
+        val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
+            every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
+        }
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any()) } answers {
+                opened = firstArg()
+                execution
+            }
+        }
+        val genesis = byteArrayOf(1, 2, 3)
+        // Nothing listens on port 1, so the dial fails at once and closes before any frame.
+        val chains = TrUAPIChains(
+            advertised = EMPTY_CHAINS.advertised,
+            endpoints = mapOf(genesis.hexKey() to listOf("ws://127.0.0.1:1")),
+        )
+        bridge(
+            hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() },
+            rpcConnectedTelemetry = telemetry,
+        ).attach(
+            runtime = runtime,
+            productId = game,
+            chains = chains,
+            navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
+            kind = ExecutableKind.WORKER,
+            hostSessionId = "worker-session",
+            onReadyToInject = {},
+        )
+
+        checkNotNull(opened).chainConnect(genesis)
+
+        assertTrue(reported.await(10, TimeUnit.SECONDS))
+        val tags = events.single().tags
+        assertEquals(
+            listOf("error", "game.dot", "worker", "worker-session"),
+            listOf(tags["outcome"], tags["product.id"], tags["executable.kind"], tags["host.session_id"]),
+        )
     }
 
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {

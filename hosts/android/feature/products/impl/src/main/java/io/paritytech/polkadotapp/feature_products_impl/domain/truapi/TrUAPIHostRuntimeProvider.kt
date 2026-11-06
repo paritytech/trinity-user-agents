@@ -87,6 +87,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     private val rpcConnectedTelemetry: HostRpcConnectedTelemetry,
+    private val runtimeBootTelemetry: HostRuntimeBootTelemetry,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -116,7 +117,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
      */
     suspend fun runtime(): Result<TrUAPIHostRuntime> {
         val pending = bootMutex.withLock {
-            boot ?: scope.async { build().onSuccess(::wire) }.also { boot = it }
+            boot ?: run {
+                val startedAtMillis = runtimeBootTelemetry.nowMillis()
+                scope.async {
+                    build().onSuccess(::wire)
+                        .also { runtimeBootTelemetry.report(startedAtMillis, booted = it.isSuccess) }
+                }
+            }.also { boot = it }
         }
         return pending.await().onFailure {
             bootMutex.withLock { if (boot === pending) boot = null }
@@ -297,7 +304,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun chainConnect(genesisHash: ByteArray): UInt? =
             chainProvider.connect(genesisHash)?.also { connectionId ->
-                rpcConnectedTelemetry.dialled(connectionId) { chainLabel(genesisHash) }
+                // The runtime's own connections, for signing: no product execution dialled them.
+                rpcConnectedTelemetry.dialled(connectionId, executable = null) { cachedChains.get().label(genesisHash) }
             }
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -307,12 +315,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             chainProvider.close(connectionId)
             rpcConnectedTelemetry.abandoned(connectionId)
         }
-
-        private fun chainLabel(genesisHash: ByteArray): String =
-            cachedChains.get().advertised.chains
-                .firstOrNull { it.genesisHash.contentEquals(genesisHash) }
-                ?.identifier?.name?.lowercase()
-                ?: genesisHash.hexKey()
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing

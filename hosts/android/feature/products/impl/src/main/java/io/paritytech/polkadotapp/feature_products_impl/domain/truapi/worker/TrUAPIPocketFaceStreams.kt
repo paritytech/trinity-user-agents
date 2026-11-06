@@ -1,9 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceLoad
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
@@ -11,10 +14,14 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostR
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.withContext
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
@@ -32,20 +39,30 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun renderFaces(key: PocketCardKey): Flow<RendererNode> = flow {
+    override fun renderFaces(key: PocketCardKey, load: PocketFaceLoad): Flow<RendererNode> = flow {
         // A card whose product publishes no Pocket worker has nothing to stream, and the reference
         // below is what starts one: the pinned card is on the default tab, so taking it would boot a
         // worker for the personhood product every time the tab is opened.
-        if (!publishedCards.isStreamable(key)) return@flow
+        val streamable = withContext(HostLoadContext(HostLoadTrigger.OPEN, sessionId = null)) {
+            publishedCards.isStreamable(key)
+        }
+        if (!streamable) {
+            load.noWorker()
+            return@flow
+        }
 
         val runtime = runtimeProvider.runtime()
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
             .getOrElse { return@flow }
 
+        load.worker(warm = workers.currentExecution(key.productId) != null) { workers.sessionId(key.productId) }
         runtime.acquireWorker(key.productId)
         try {
             emitAll(
-                workers.execution(key.productId)
+                workers.executionState(key.productId)
+                    .onEach { if (it is WorkerExecutionState.Failed) load.noWorker() }
+                    .map { (it as? WorkerExecutionState.Running)?.execution }
+                    .distinctUntilChanged()
                     .filterNotNull()
                     .flatMapLatest { execution -> execution.faces(key) }
                     .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),

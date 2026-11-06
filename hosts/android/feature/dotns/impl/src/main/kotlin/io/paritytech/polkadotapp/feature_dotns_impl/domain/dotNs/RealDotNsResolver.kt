@@ -5,6 +5,7 @@ import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.data.memory.MapCache
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -20,10 +21,13 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentSto
 import io.paritytech.polkadotapp.tools_car_parser.CarParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 private typealias DomainName = String
 
@@ -40,16 +44,25 @@ internal class RealDotNsResolver @Inject constructor(
 
     private val progressRegistry = DotNsLoadProgressRegistry()
 
+    // Computed in the caller's coroutine, so the lookup that asked is the one that reports the fetch.
     private val localDomainsCache: MapCache<DomainName, Result<Uri>> = MapCache(this) { domainName ->
+        val lookup = currentCoroutineContext()[ContentLookup]?.apply { computed = true }
         Timber.d("resolving content hash for $domainName")
         val lookupStartedAtMillis = fetchTelemetry.nowMillis()
 
         resolveContentHash(domainName)
             .logFailure("failed to resolve content hash for $domainName")
             .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
+            // A name that never reaches the download would otherwise send nothing at all.
+            .onFailure {
+                lookup?.load?.let { load ->
+                    val contentHashMillis = fetchTelemetry.nowMillis() - lookupStartedAtMillis
+                    fetchTelemetry.report(domainName, load, HostEventOutcome.ERROR, contentHashMillis, lookupStartedAtMillis, null)
+                }
+            }
             .flatMap { contentHash ->
                 val contentHashMillis = fetchTelemetry.nowMillis() - lookupStartedAtMillis
-                resolveContentHash(domainName, contentHash, contentHashMillis)
+                resolveContentHash(domainName, contentHash, contentHashMillis, lookup?.load)
             }
             .logFailure("failed to resolve $domainName")
             // A domain with nothing registered behind it never reaches the download that reports its
@@ -61,10 +74,18 @@ internal class RealDotNsResolver @Inject constructor(
     //  product updates should be under full user control: once a content hash is fetched for a domain,
     //  it should be pinned and never auto-updated. A separate UX flow will prompt the user to
     //  acknowledge and update to a newer version when available.
-    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
-        localDomainsCache.getOrCompute(dotNsName)
-            // Usually a read that did not land; remembered, it would outlast the outage until restart.
-            .onFailure { localDomainsCache.remove(dotNsName) }
+    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> {
+        val startedAtMillis = fetchTelemetry.nowMillis()
+        val lookup = ContentLookup(load = currentCoroutineContext()[HostLoadContext])
+        return withContext(dispatchers.computation + lookup) {
+            localDomainsCache.getOrCompute(dotNsName)
+                .onSuccess {
+                    val load = lookup.load
+                    if (!lookup.computed && load != null) fetchTelemetry.reportMemoryHit(dotNsName, load, startedAtMillis)
+                }
+                // Usually a read that did not land; remembered, it would outlast the outage until restart.
+                .onFailure { localDomainsCache.remove(dotNsName) }
+        }
     }
 
     private suspend fun resolveContentHash(domainName: DomainName): Result<ContentHash?> {
@@ -79,11 +100,13 @@ internal class RealDotNsResolver @Inject constructor(
         dotNsName: String,
         contentHashHex: ContentHash,
         contentHashMillis: Long,
+        load: HostLoadContext?,
     ): Result<Uri> {
         val contentHash = contentHashHex.fromHex()
         val fetchStartedAtMillis = fetchTelemetry.nowMillis()
-        fun reportFetch(outcome: HostEventOutcome, bytes: Long?) =
-            fetchTelemetry.report(dotNsName, outcome, contentHashMillis, fetchStartedAtMillis, bytes)
+        fun reportFetch(outcome: HostEventOutcome, bytes: Long?) = load?.let {
+            fetchTelemetry.report(dotNsName, it, outcome, contentHashMillis, fetchStartedAtMillis, bytes)
+        }
         Timber.d("resolving content for content hash $contentHashHex ($dotNsName)")
 
         // Check if we already have this content
@@ -137,4 +160,15 @@ internal class RealDotNsResolver @Inject constructor(
 
         contentStorage.deleteAll()
     }
+}
+
+/**
+ * One lookup, and the load it reports for, taken when it was asked. [computed] is set by the cache's
+ * compute, so a lookup that leaves it false was answered from memory.
+ */
+private class ContentLookup(val load: HostLoadContext?) : AbstractCoroutineContextElement(ContentLookup) {
+    @Volatile
+    var computed = false
+
+    companion object Key : CoroutineContext.Key<ContentLookup>
 }

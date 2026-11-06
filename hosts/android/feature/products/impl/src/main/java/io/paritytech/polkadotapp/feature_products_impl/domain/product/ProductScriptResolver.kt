@@ -7,3 +7,7 @@ import uniffi.truapi.ProductId
 interface ProductScriptResolver {
     suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker>
 }
+
+/** The product's manifest names no worker, so there is nothing to boot. */
+class ProductHasNoWorker(productId: ProductId) :
+    IllegalStateException("Product ${productId.value} exposes no worker executable")

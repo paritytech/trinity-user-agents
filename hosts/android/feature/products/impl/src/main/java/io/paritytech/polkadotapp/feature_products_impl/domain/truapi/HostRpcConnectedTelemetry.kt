@@ -6,9 +6,22 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.stepEvent
 import io.paritytech.polkadotapp.common.utils.logFailure
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
+/** The product execution a chain connection was dialled for. */
+class HostRpcExecutable(
+    val productId: ProductId,
+    val kind: ExecutableKind,
+    val sessionId: String?,
+)
+
+/**
+ * Times each chain connection one chain provider dials, from the dial to its first frame. Connection
+ * ids are only unique within one provider, so each provider takes its own instance: this is unscoped.
+ */
 class HostRpcConnectedTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
@@ -16,8 +29,8 @@ class HostRpcConnectedTelemetry @Inject internal constructor(
 ) {
     private val dialling = ConcurrentHashMap<UInt, Dial>()
 
-    fun dialled(connectionId: UInt, chain: () -> String) {
-        dialling[connectionId] = Dial(chain, timeProvider.nowMillis())
+    fun dialled(connectionId: UInt, executable: HostRpcExecutable?, chain: () -> String) {
+        dialling[connectionId] = Dial(chain, executable, timeProvider.nowMillis())
     }
 
     fun responded(connectionId: UInt) {
@@ -41,14 +54,19 @@ class HostRpcConnectedTelemetry @Inject internal constructor(
                     outcome = outcome,
                     monotonicMs = now,
                     durationMs = now - dial.startedAtMillis,
-                    sessionId = null,
-                    tags = mapOf("chain" to dial.chain()),
+                    sessionId = dial.executable?.sessionId,
+                    tags = mapOf("chain" to dial.chain()) + dial.executable?.tags().orEmpty(),
                 )
             }
         }.logFailure("Failed to capture native host RPC connected event")
     }
 
-    private class Dial(val chain: () -> String, val startedAtMillis: Long)
+    private fun HostRpcExecutable.tags() = mapOf(
+        "product.id" to productId.value,
+        "executable.kind" to if (kind == ExecutableKind.WORKER) "worker" else "page",
+    )
+
+    private class Dial(val chain: () -> String, val executable: HostRpcExecutable?, val startedAtMillis: Long)
 
     companion object {
         const val EVENT_NAME = "host.rpc.connected"

@@ -9,6 +9,8 @@ import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
@@ -34,6 +36,7 @@ class TrUAPIHostRuntimeProviderTest {
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
     private val paseo = requireNotNull(DotNsTld.parse("paseo"))
+    private val bootEvents = mutableListOf<HostEvent>()
 
     @Before
     fun captureRuntimeConfig() {
@@ -70,6 +73,17 @@ class TrUAPIHostRuntimeProviderTest {
         )
     }
 
+    // The runtime is built once and shared, so the first product to ask carries the whole boot.
+    @Test
+    fun `the runtime's first build is reported once`() = runTest {
+        val provider = provider()
+
+        provider.runtime().getOrThrow()
+        provider.runtime().getOrThrow()
+
+        assertEquals(listOf("host.runtime.boot" to "ok"), bootEvents.map { it.name to it.tags["outcome"] })
+    }
+
     private fun TestScope.provider(
         saved: DotNsTld? = null,
         read: Result<DotNsTld> = Result.success(paseo),
@@ -97,6 +111,11 @@ class TrUAPIHostRuntimeProviderTest {
         pinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
         workerSupervisor = { mockk(relaxed = true) },
         rpcConnectedTelemetry = mockk(relaxed = true),
+        runtimeBootTelemetry = HostRuntimeBootTelemetry(
+            originProvider = { HostEventOrigin("nightly", "gp", "1.2.3", "android", "15", 123L) },
+            timeProvider = { 0L },
+            capture = { bootEvents += it() },
+        ),
         dispatchers = testDispatchers(),
     )
 

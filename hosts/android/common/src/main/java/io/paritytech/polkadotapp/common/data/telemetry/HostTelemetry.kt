@@ -11,10 +11,15 @@ data class HostEventOrigin(
     val appBuild: Long,
 )
 
+/**
+ * One host event. Sentry search cannot filter or chart extras, so anything to query by is a tag; a step
+ * with a [durationMs] is also sent as a distribution under [name], carrying the tags as attributes.
+ */
 data class HostEvent(
     val name: String,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
+    val durationMs: Long? = null,
 )
 
 const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
@@ -49,6 +54,9 @@ enum class HostEventOutcome(val tag: String) {
     OK("ok"),
     ERROR("error"),
     CACHE_HIT("cache_hit"),
+    TIMEOUT("timeout"),
+    NO_WORKER("no_worker"),
+    ABANDONED("abandoned"),
 }
 
 fun HostEventOrigin.stepEvent(
@@ -61,17 +69,26 @@ fun HostEventOrigin.stepEvent(
     extras: Map<String, Any> = emptyMap(),
 ) = HostEvent(
     name = name,
-    tags = baseTags() + ("outcome" to outcome.tag) + tags,
+    tags = baseTags() + ("outcome" to outcome.tag) + sessionId.sessionTag() + tags,
     extras = baseExtras() +
         mapOf("event.monotonic_ms" to monotonicMs, "duration_ms" to durationMs) +
-        sessionId?.let { mapOf("host.session_id" to it) }.orEmpty() +
+        sessionId.sessionTag() +
         extras,
+    durationMs = durationMs,
 )
+
+// The join key with the product's own events, which carry it as a tag. Kept as an extra too, where
+// the events sent before it was a tag have it.
+private fun String?.sessionTag(): Map<String, String> = this?.let { mapOf("host.session_id" to it) }.orEmpty()
+
 fun interface HostEventOriginProvider {
     fun current(): HostEventOrigin
 }
 
 fun interface HostEventCapture {
+    /** False while host telemetry is off, so work done only to report an event can be skipped. */
+    val enabled: Boolean get() = true
+
     fun capture(event: () -> HostEvent)
 }
 

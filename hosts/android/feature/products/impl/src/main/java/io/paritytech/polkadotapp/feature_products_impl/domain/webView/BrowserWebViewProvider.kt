@@ -17,6 +17,7 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
@@ -33,6 +34,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -85,6 +88,13 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // Per-session decorator over the resolver: tracks the domain currently being served and
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
+
+    // Set once the page's host session is known, before the page loads; the archive lookups behind
+    // its requests report under it.
+    @Volatile
+    private var hostLoad: HostLoadContext? = null
+
+    private val onRevealedListeners = CopyOnWriteArrayList<(PageReveal) -> Unit>()
 
     // No dotNS load reports progress for a page served from a loopback url, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
@@ -143,10 +153,20 @@ class BrowserWebViewProvider @AssistedInject constructor(
                     navigationPolicy,
                     frameEmbeddingResponseHeaders(allowIframes),
                     firstPartyOrigin,
+                    loadContext = { hostLoad ?: EmptyCoroutineContext },
                 )
             webViewClient = InternalWebViewClient(innerClient)
             webChromeClient = chromeClient
         }
+    }
+
+    fun useHostLoad(load: HostLoadContext) {
+        hostLoad = load
+    }
+
+    /** Called once a page held hidden for its theme is shown, saying what showed it. */
+    fun addOnRevealedListener(listener: (PageReveal) -> Unit) {
+        onRevealedListeners += listener
     }
 
     fun useTrUAPIPermissions(productId: ProductId, execution: TrUAPIProductExecution) {
@@ -165,11 +185,11 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private fun revealAfterRendering(view: WebView) {
         if (getWebViewOrNull() !== view || isPageRevealed.value) return
         view.postVisualStateCallback(0L, object : WebView.VisualStateCallback() {
-            override fun onComplete(requestId: Long) = reveal(view)
+            override fun onComplete(requestId: Long) = reveal(view, PageReveal.THEME)
         })
     }
 
-    private fun reveal(view: WebView) {
+    private fun reveal(view: WebView, via: PageReveal) {
         if (getWebViewOrNull() !== view || isPageRevealed.value) return
         view.alpha = 1f
         isPageRevealed.value = true
@@ -177,6 +197,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
         view.isFocusable = true
         view.isFocusableInTouchMode = true
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        onRevealedListeners.forEach { it(via) }
     }
 
     private inner class InternalWebViewClient(
@@ -205,7 +226,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
             if (fixedProductId != null) servedPageProgress.value = DotNsLoadProgress.Completed
             notifyOnPageFinished()
             if (waitForInitialTheme) {
-                view.postDelayed({ reveal(view) }, THEME_READY_FALLBACK.inWholeMilliseconds)
+                view.postDelayed({ reveal(view, PageReveal.FALLBACK) }, THEME_READY_FALLBACK.inWholeMilliseconds)
             }
         }
 
@@ -231,4 +252,10 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private companion object {
         val THEME_READY_FALLBACK = 2.seconds
     }
+}
+
+/** What showed a page held hidden for its theme: the theme arriving, or the timer that gives up on it. */
+enum class PageReveal(val tag: String) {
+    THEME("theme"),
+    FALLBACK("fallback"),
 }

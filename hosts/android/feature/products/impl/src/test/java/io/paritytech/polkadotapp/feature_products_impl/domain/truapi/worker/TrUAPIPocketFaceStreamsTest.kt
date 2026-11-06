@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
@@ -12,11 +13,13 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceLoad
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -57,8 +60,22 @@ class TrUAPIPocketFaceStreamsTest {
         coEvery { runtime() } returns Result.failure(IllegalStateException("runtime unavailable"))
     }
 
-    private fun streams(resolver: ResolveProductUseCase) =
-        TrUAPIPocketFaceStreams(runtimeProvider, mockk(relaxed = true), PublishedPocketCards(resolver))
+    private class RecordingLoad : PocketFaceLoad {
+        val seen = mutableListOf<String>()
+
+        override fun worker(warm: Boolean, sessionId: () -> String?) {
+            seen += "worker warm=$warm session=${sessionId()}"
+        }
+
+        override fun noWorker() {
+            seen += "no worker"
+        }
+    }
+
+    private val load = RecordingLoad()
+
+    private fun streams(resolver: ResolveProductUseCase, workers: TrUAPIWorkerSupervisor = mockk(relaxed = true)) =
+        TrUAPIPocketFaceStreams(runtimeProvider, workers, PublishedPocketCards(resolver))
 
     // A read that did not land, typically a device briefly offline, says nothing about the card.
     // Giving up on it leaves the card static for as long as it stays on screen.
@@ -66,7 +83,7 @@ class TrUAPIPocketFaceStreamsTest {
     fun `a card whose product could not be read is looked up again`() = runTest {
         val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing)))
 
-        streams(resolver).renderFaces(key).toList()
+        streams(resolver).renderFaces(key, load).toList()
 
         assertEquals(2, resolver.calls)
         coVerify(exactly = 1) { runtimeProvider.runtime() }
@@ -78,9 +95,26 @@ class TrUAPIPocketFaceStreamsTest {
     fun `a card whose manifest is malformed is not streamed and not looked up again`() = runTest {
         val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.MalformedManifest)))
 
-        streams(resolver).renderFaces(key).toList()
+        streams(resolver).renderFaces(key, load).toList()
 
         assertEquals(1, resolver.calls)
         coVerify(exactly = 0) { runtimeProvider.runtime() }
+        assertEquals(listOf("no worker"), load.seen)
+    }
+
+    // A worker that failed to boot draws nothing until a new start, so the face says so rather
+    // than run into the timeout.
+    @Test
+    fun `a worker that failed to start is reported as no worker, after the face was asked of it cold`() = runTest {
+        coEvery { runtimeProvider.runtime() } returns Result.success(mockk(relaxed = true))
+        val workers = mockk<TrUAPIWorkerSupervisor> {
+            every { currentExecution(gameProduct) } returns null
+            every { sessionId(gameProduct) } returns null
+            every { executionState(gameProduct) } returns flowOf(WorkerExecutionState.Failed(IllegalStateException("boot")))
+        }
+
+        streams(ScriptedResolver(listOf(Result.success(publishing))), workers).renderFaces(key, load).toList()
+
+        assertEquals(listOf("worker warm=false session=null", "no worker"), load.seen)
     }
 }

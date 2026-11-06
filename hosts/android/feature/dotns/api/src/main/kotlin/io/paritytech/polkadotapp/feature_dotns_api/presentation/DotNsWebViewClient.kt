@@ -19,6 +19,8 @@ import uniffi.truapi.parseProductLink
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLConnection
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 open class DotNsWebViewClient(
     private val dotNsResolver: DotNsResolver,
@@ -27,6 +29,8 @@ open class DotNsWebViewClient(
     // Stamped onto the main-frame document response so the caller can enforce document-level policy
     // (e.g. a Content-Security-Policy that forbids iframes) engine-side rather than by heuristics.
     private val mainDocumentResponseHeaders: Map<String, String> = emptyMap(),
+    // Runs each archive lookup under the load the WebView serves, for the host telemetry it reports.
+    private val loadContext: () -> CoroutineContext = { EmptyCoroutineContext },
 ) : WebViewClient() {
     override fun shouldInterceptRequest(
         view: WebView,
@@ -71,7 +75,7 @@ open class DotNsWebViewClient(
     fun resolveHostFile(uri: Uri?): File? {
         val host = uri?.host ?: return null
 
-        return runBlocking {
+        return runBlocking(loadContext()) {
             runCancellableCatching {
                 val tld = dotNsTldProvider.getTld().getOrThrow()
                 val canonicalHost = parseProductLink(host, tld.value)?.identifier?.value ?: host

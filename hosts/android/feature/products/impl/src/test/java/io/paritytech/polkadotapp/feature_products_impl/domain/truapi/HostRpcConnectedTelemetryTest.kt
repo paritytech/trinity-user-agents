@@ -11,6 +11,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 class HostRpcConnectedTelemetryTest {
     private val originProvider = mockk<HostEventOriginProvider> { every { current() } returns ORIGIN }
@@ -22,7 +24,7 @@ class HostRpcConnectedTelemetryTest {
 
     @Test
     fun `the first frame on a connection reports the chain and how long it took to answer`() {
-        telemetry.dialled(CONNECTION) { "people" }
+        telemetry.dialled(CONNECTION, executable = null) { "people" }
 
         telemetry.responded(CONNECTION)
 
@@ -42,14 +44,38 @@ class HostRpcConnectedTelemetryTest {
                     "event.monotonic_ms" to FIRST_FRAME_AT,
                     "duration_ms" to FIRST_FRAME_AT - DIALLED_AT,
                 ),
+                durationMs = FIRST_FRAME_AT - DIALLED_AT,
             ),
             captured.single(),
         )
     }
 
+    // The page and the worker of one product dial the same chains; only these tell their connects apart.
+    @Test
+    fun `a connection dialled for a product execution names the product, its kind and its session`() {
+        telemetry.dialled(CONNECTION, HostRpcExecutable(HUMANITY, ExecutableKind.WORKER, "worker-session")) { "people" }
+
+        telemetry.responded(CONNECTION)
+
+        val tags = captured.single().tags
+        assertEquals(
+            listOf("humanity.dot", "worker", "worker-session"),
+            listOf(tags["product.id"], tags["executable.kind"], tags["host.session_id"]),
+        )
+    }
+
+    @Test
+    fun `an app or widget execution is a page`() {
+        telemetry.dialled(CONNECTION, HostRpcExecutable(HUMANITY, ExecutableKind.WIDGET, "page-session")) { "people" }
+
+        telemetry.responded(CONNECTION)
+
+        assertEquals("page", captured.single().tags["executable.kind"])
+    }
+
     @Test
     fun `later frames on the same connection report nothing more`() {
-        telemetry.dialled(CONNECTION) { "people" }
+        telemetry.dialled(CONNECTION, executable = null) { "people" }
 
         repeat(3) { telemetry.responded(CONNECTION) }
 
@@ -58,7 +84,7 @@ class HostRpcConnectedTelemetryTest {
 
     @Test
     fun `a connection that closes before any frame is reported as an error`() {
-        telemetry.dialled(CONNECTION) { "bulletin" }
+        telemetry.dialled(CONNECTION, executable = null) { "bulletin" }
 
         telemetry.closedBeforeResponse(CONNECTION)
         telemetry.responded(CONNECTION)
@@ -68,7 +94,7 @@ class HostRpcConnectedTelemetryTest {
 
     @Test
     fun `a connection the core closes itself reports nothing`() {
-        telemetry.dialled(CONNECTION) { "people" }
+        telemetry.dialled(CONNECTION, executable = null) { "people" }
 
         telemetry.abandoned(CONNECTION)
         telemetry.closedBeforeResponse(CONNECTION)
@@ -80,7 +106,7 @@ class HostRpcConnectedTelemetryTest {
     fun `the event and chain label are not built when capture drops it`() {
         var chainLabelRead = false
         val dropping = HostRpcConnectedTelemetry(originProvider, timeProvider, HostEventCapture { })
-        dropping.dialled(CONNECTION) {
+        dropping.dialled(CONNECTION, executable = null) {
             chainLabelRead = true
             "people"
         }
@@ -94,6 +120,7 @@ class HostRpcConnectedTelemetryTest {
 
     private companion object {
         val CONNECTION = 7u
+        val HUMANITY = ProductId.parse("humanity.dot").getOrThrow()
         const val DIALLED_AT = 2_000L
         const val FIRST_FRAME_AT = 2_350L
         val ORIGIN = HostEventOrigin(

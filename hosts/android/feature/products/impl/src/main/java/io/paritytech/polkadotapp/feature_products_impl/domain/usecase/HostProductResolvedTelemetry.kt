@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.common.data.telemetry.HostSessionRegistry
 import io.paritytech.polkadotapp.common.data.telemetry.stepEvent
 import io.paritytech.polkadotapp.common.utils.logFailure
 import uniffi.truapi.ProductId
@@ -14,24 +16,53 @@ class HostProductResolvedTelemetry @Inject internal constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
     private val capture: HostEventCapture,
-    private val sessions: HostSessionRegistry,
+    private val cacheHits: HostCacheHits,
 ) {
-    fun startedAtMillis(): Long = timeProvider.nowMillis()
+    fun nowMillis(): Long = timeProvider.nowMillis()
 
-    fun report(productId: ProductId, startedAtMillis: Long, resolved: Boolean) {
+    /** A read from the chain, timed from when the resolve lock was taken; [queueMillis] is the wait for it. */
+    fun report(productId: ProductId, load: HostLoadContext, startedAtMillis: Long, queueMillis: Long, resolved: Boolean) {
         runCatching {
             capture.capture {
-                val now = timeProvider.nowMillis()
-                originProvider.current().stepEvent(
-                    name = EVENT_NAME,
-                    outcome = if (resolved) HostEventOutcome.OK else HostEventOutcome.ERROR,
-                    monotonicMs = now,
-                    durationMs = now - startedAtMillis,
-                    sessionId = sessions.sessionIdForProductOrSubname(productId.value),
-                    tags = mapOf("product.id" to productId.value),
+                event(
+                    productId,
+                    load,
+                    if (resolved) HostEventOutcome.OK else HostEventOutcome.ERROR,
+                    startedAtMillis,
+                    queueMillis,
                 )
             }
         }.logFailure("Failed to capture native host product resolved event")
+    }
+
+    /**
+     * A product this process already resolved, timed from the ask, reported once per trigger and
+     * session. [queueMillis] is set when the answer arrived while this caller waited on the lock.
+     */
+    fun reportMemoryHit(productId: ProductId, load: HostLoadContext, askedAtMillis: Long, queueMillis: Long?) {
+        runCatching {
+            if (!capture.enabled || !cacheHits.isFirst(EVENT_NAME, productId.value, load)) return
+            capture.capture { event(productId, load, HostEventOutcome.CACHE_HIT, askedAtMillis, queueMillis) }
+        }.logFailure("Failed to capture native host product resolved event")
+    }
+
+    private fun event(
+        productId: ProductId,
+        load: HostLoadContext,
+        outcome: HostEventOutcome,
+        startedAtMillis: Long,
+        queueMillis: Long?,
+    ): HostEvent {
+        val now = timeProvider.nowMillis()
+        return originProvider.current().stepEvent(
+            name = EVENT_NAME,
+            outcome = outcome,
+            monotonicMs = now,
+            durationMs = now - startedAtMillis,
+            sessionId = load.sessionId,
+            tags = mapOf("product.id" to productId.value) + load.tags(),
+            extras = queueMillis?.let { mapOf("queue_ms" to it) }.orEmpty(),
+        )
     }
 
     companion object {

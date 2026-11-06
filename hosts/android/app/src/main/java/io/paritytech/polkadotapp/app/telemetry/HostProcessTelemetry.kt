@@ -17,6 +17,8 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.sentry.Sentry
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
+import io.sentry.metrics.MetricsUnit
+import io.sentry.metrics.SentryMetricsParameters
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
@@ -39,13 +41,34 @@ internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture
     }
 }
 
+/** A step's duration as a Sentry distribution, which Sentry charts where it cannot chart an event's extras. */
+internal fun interface SentryDurationCapture {
+    fun distribution(name: String, durationMs: Long, attributes: Map<String, String>)
+}
+
+internal class RealSentryDurationCapture @Inject constructor() : SentryDurationCapture {
+    override fun distribution(name: String, durationMs: Long, attributes: Map<String, String>) {
+        Sentry.metrics().distribution(
+            name,
+            durationMs.toDouble(),
+            MetricsUnit.Duration.MILLISECOND,
+            SentryMetricsParameters.create(attributes),
+        )
+    }
+}
+
 internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
+    private val durationCapture: SentryDurationCapture,
 ) : HostEventCapture {
+    override val enabled: Boolean get() = enabledProvider.isEnabled()
+
     override fun capture(event: () -> HostEvent) {
         if (enabledProvider.isEnabled()) {
-            sentryCapture.capture(event().toSentryEvent())
+            val hostEvent = event()
+            sentryCapture.capture(hostEvent.toSentryEvent())
+            hostEvent.durationMs?.let { durationCapture.distribution(hostEvent.name, it, hostEvent.tags) }
         }
     }
 }
