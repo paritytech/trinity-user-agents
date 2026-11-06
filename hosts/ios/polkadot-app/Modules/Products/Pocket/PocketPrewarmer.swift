@@ -21,12 +21,13 @@ final class PocketPrewarmer {
     init(
         products: any ProductResolving,
         dotNsResolver: any DotNsResolverProtocol,
+        telemetry: HostLoadTelemetry = .disabled,
         logger: LoggerProtocol = Logger.shared
     ) {
         warmer = ProductArchiveWarmer(
             products: products,
             dotNsResolver: dotNsResolver,
-            telemetry: IssueMonitoringFactory.createHostLoadTelemetry()
+            telemetry: telemetry
         )
         self.logger = logger
     }

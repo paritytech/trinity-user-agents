@@ -17,7 +17,6 @@ struct PocketCardTapReporterTests {
         )
         let session = UUID()
         let tap = HostOpenTap(
-            hostSessionID: UUID(),
             source: .pocketCard,
             openedAtEpochMilliseconds: 0,
             monotonicMilliseconds: 900

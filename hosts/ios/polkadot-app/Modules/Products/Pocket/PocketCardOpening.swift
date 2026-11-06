@@ -29,25 +29,22 @@ struct PocketCardOpening {
             // A second screen would take the open card's page and leave it blank.
             guard !pocket.cardHosts.isOnDisplay(card.key) else {
                 let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                // Not a tap that shows anything: the card is already on screen, at most loading a new page.
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
                 }
-                PocketCardTapReporter().reportReused(
-                    tap,
-                    productId: card.key.productId,
-                    hostSessionId: pocket.cardHosts.heldSession(of: card.key)
-                )
                 return
             }
 
             var built = false
+            let openTap = tap.map(SPAOpenTap.init)
             guard let product = pocket.cardHosts.product(
                 for: card.key,
                 pageQuery: pageQuery,
-                hostSessionId: tap?.hostSessionID,
+                openTap: openTap,
                 make: { _ in
                     built = true
-                    return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
+                    return makeView(for: card, page: page, pageQuery: pageQuery, openTap: openTap)
                 }
             ) else { return }
 
@@ -59,10 +56,10 @@ struct PocketCardOpening {
                 product.surface.claim(screen)
 
                 if reused {
-                    PocketCardTapReporter().reportReused(
+                    PocketCardTapReporter(telemetry: telemetry).reportReused(
                         tap,
                         productId: card.key.productId,
-                        hostSessionId: product.hostSessionId
+                        hostSessionId: product.openTap?.pageSession
                     )
                 }
             }
@@ -71,7 +68,7 @@ struct PocketCardOpening {
                 let shown = await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
                     cards: PublishedPocketCards.makeDefault(products: flowState.productResolver),
-                    telemetry: IssueMonitoringFactory.createHostLoadTelemetry()
+                    telemetry: telemetry
                 )
                 screen?.applyOpeningFace(shown: shown)
             }
@@ -97,14 +94,14 @@ struct PocketCardOpening {
 
 private extension PocketCardOpening {
     var telemetry: HostLoadTelemetry {
-        IssueMonitoringFactory.createHostLoadTelemetry()
+        flowState.telemetry
     }
 
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
         pageQuery: String,
-        tap: HostOpenTap?
+        openTap: SPAOpenTap?
     ) -> SPAViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
@@ -113,7 +110,7 @@ private extension PocketCardOpening {
             showMoreButton: false,
             page: page,
             contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
-            openTap: tap
+            openTap: openTap
         )
 
         // A page loaded by its address goes to the Rust runtime on its own.

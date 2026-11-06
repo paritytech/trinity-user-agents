@@ -11,7 +11,7 @@ struct PocketCardTapReporter {
     private let nextFrame: FrameWaiter
 
     init(
-        telemetry: HostLoadTelemetry = IssueMonitoringFactory.createHostLoadTelemetry(),
+        telemetry: HostLoadTelemetry,
         nextFrame: @escaping FrameWaiter = NextDrawnFrame.wait
     ) {
         self.telemetry = telemetry
@@ -23,7 +23,7 @@ struct PocketCardTapReporter {
 
         nextFrame { [telemetry] in
             telemetry.record { origin, now in
-                .pocketCardTapped(
+                HostLoadEvent.pocketCardTapped(
                     productID: productId.rawValue,
                     outcome: .reused,
                     source: tap.source,

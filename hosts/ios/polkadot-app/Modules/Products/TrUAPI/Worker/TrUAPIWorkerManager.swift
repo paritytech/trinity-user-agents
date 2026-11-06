@@ -269,6 +269,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             )
             guard held[productId]?.belongsTo(boot) == true else {
                 trace?.finish(.abandoned)
+                forgetSession(of: trace, for: productId)
                 await runtime.dispose()
                 return
             }
@@ -280,6 +281,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else {
                 trace?.finish(.abandoned)
+                forgetSession(of: trace, for: productId)
                 return
             }
 
@@ -289,6 +291,8 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             logger.debug("Started worker for \(productId)...")
         } catch {
             trace?.finish(Self.bootOutcome(of: error))
+            // A failed boot draws nothing, so no face may carry its session.
+            forgetSession(of: trace, for: productId)
 
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -300,6 +304,15 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // while the core keeps counting the reference the holder took and
             // so never sends another stop to clear it.
             await stop(productId)
+        }
+    }
+
+    /// Only this boot's own session: a restart may already have taken the product.
+    private func forgetSession(of trace: WorkerBootTrace?, for productId: ProductId) {
+        guard let trace else { return }
+
+        hostSessions.withLock { sessions in
+            if sessions[productId] == trace.hostSessionId { sessions[productId] = nil }
         }
     }
 

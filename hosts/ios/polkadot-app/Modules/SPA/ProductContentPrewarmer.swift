@@ -72,7 +72,7 @@ private extension ProductContentPrewarmer {
 
         let domain = host.toDotDomain()
 
-        let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
+        let telemetry = flowState.telemetry
 
         do {
             _ = try await telemetry.withContext(session: nil, trigger: .prewarm) {

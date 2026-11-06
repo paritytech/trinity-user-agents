@@ -1,5 +1,4 @@
 import Foundation
-import os
 import IssueMonitoring
 import Products
 import TrUAPIHost
@@ -25,6 +24,8 @@ actor SPARustRuntime {
     private let telemetry: HostLoadTelemetry
     private let hostSessionId: UUID
     private let openedAt: Int?
+    /// The tap that opened the page, when this is the page's first runtime and the tap is still fresh.
+    private let tap: HostOpenTap?
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
@@ -49,18 +50,17 @@ actor SPARustRuntime {
         self.logger = logger
         self.telemetry = telemetry
         self.hostSessionId = hostSessionId
-        openedAt = telemetry.now()
+        let openedAt = telemetry.now()
+        self.openedAt = openedAt
+        tap = openedAt.flatMap { configuration.openTap?.consume(bySession: hostSessionId, at: $0) }
         Self.reportTapOpened(
-            configuration.openTap,
+            tap,
             productID: configuration.productId.rawValue,
             openedAt: openedAt,
             hostSessionId: hostSessionId,
             telemetry: telemetry
         )
     }
-
-    /// A retry builds another runtime for the same tap, which must not count as a second tap.
-    private static let reportedTaps = OSAllocatedUnfairLock(initialState: Set<UUID>())
 
     /// The tap that opened this page, timed to the page's load starting here.
     private static func reportTapOpened(
@@ -70,14 +70,10 @@ actor SPARustRuntime {
         hostSessionId: UUID,
         telemetry: HostLoadTelemetry
     ) {
-        guard
-            let tap,
-            let openedAt,
-            reportedTaps.withLock({ $0.insert(tap.hostSessionID).inserted })
-        else { return }
+        guard let tap, let openedAt else { return }
 
         telemetry.record { origin, now in
-            .pocketCardTapped(
+            HostLoadEvent.pocketCardTapped(
                 productID: productID,
                 outcome: .opened,
                 source: tap.source,
@@ -139,7 +135,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
                 truapiHostVersion: truapiHostVersion(),
-                openTap: configuration.openTap
+                openTap: tap
             )
         )
 
@@ -183,7 +179,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // point observes it and unwinds.
         disposed = true
 
-        if started, !pageLoadReported {
+        // Counted from the runtime's creation: an open the user leaves while the product still resolves is
+        // the case worth seeing.
+        if !pageLoadReported {
             reportPageLoad(.abandoned, at: telemetry.now())
         }
 
@@ -221,6 +219,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
     nonisolated func asPageOpen<R>(_ operation: () async throws -> R) async rethrows -> R {
         try await telemetry.withContext(session: hostSessionId, trigger: .open, operation: operation)
+    }
+
+    /// The open failed before the page could load, for example while the product was being resolved.
+    func failedToOpen() {
+        reportPageLoad(.error, at: telemetry.now())
     }
 
     nonisolated func pageLoadTimestamp() -> Int? {
@@ -283,12 +286,12 @@ private extension SPARustRuntime {
         pageLoadReported = true
 
         telemetry.record { origin, now in
-            .webViewPageLoaded(
+            HostLoadEvent.webViewPageLoaded(
                 hostSessionID: hostSessionId,
                 productID: configuration.productId.rawValue,
                 outcome: outcome,
                 durationMilliseconds: finishedAt - openedAt,
-                tapMilliseconds: configuration.openTap.map { finishedAt - $0.monotonicMilliseconds },
+                tapMilliseconds: tap.map { finishedAt - $0.monotonicMilliseconds },
                 origin: origin,
                 monotonicMilliseconds: now
             )

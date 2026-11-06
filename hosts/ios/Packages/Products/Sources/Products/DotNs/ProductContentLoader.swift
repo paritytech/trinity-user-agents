@@ -186,7 +186,7 @@ private extension ProductContentLoader {
     func reportCacheHit(of productId: ProductId, archive contentId: ProductId?, startedAt: Int?) {
         guard let startedAt, let context = telemetry.context else { return }
 
-        if telemetry.isFirstCacheHit(of: "host.product.resolved", productID: productId.rawValue) {
+        if telemetry.shouldReport("host.product.resolved", productID: productId.rawValue, outcome: .cacheHit) {
             telemetry.record { origin, now in
                 .productResolved(
                     productID: productId.rawValue,
@@ -200,7 +200,8 @@ private extension ProductContentLoader {
             }
         }
 
-        if let contentId, telemetry.isFirstCacheHit(of: "host.bulletin.fetch", productID: contentId.rawValue) {
+        if let contentId,
+           telemetry.shouldReport("host.bulletin.fetch", productID: contentId.rawValue, outcome: .cacheHit) {
             telemetry.record { origin, now in
                 .bulletinFetch(
                     domain: contentId.rawValue,

@@ -49,7 +49,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
-    private let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
+    private let telemetry: HostLoadTelemetry
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -72,8 +72,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        telemetry: HostLoadTelemetry = .disabled,
         logger: LoggerProtocol
     ) {
+        self.telemetry = telemetry
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
         self.settingsManager = settingsManager
@@ -158,7 +160,7 @@ private extension TrUAPIHostRuntimeProvider {
         guard let startedAt else { return }
 
         telemetry.record { origin, now in
-            .runtimeBoot(
+            HostLoadEvent.runtimeBoot(
                 outcome: outcome,
                 durationMilliseconds: now - startedAt,
                 origin: origin,
@@ -183,7 +185,7 @@ private extension TrUAPIHostRuntimeProvider {
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
-            telemetry: IssueMonitoringFactory.createHostLoadTelemetry(),
+            telemetry: telemetry,
             logger: logger
         )
 

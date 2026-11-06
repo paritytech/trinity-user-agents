@@ -215,10 +215,11 @@ private extension PocketHandlers {
     func markServed(_ served: Set<ProductId>, unserved refused: Set<ProductId>) {
         guard telemetry.isEnabled else { return }
 
-        running.withLock { running in
+        let current = running.withLock { running in
             running.unserved = running.unserved.subtracting(served).union(refused)
-            unserved.send(running.unserved)
+            return running.unserved
         }
+        unserved.send(current)
     }
 
     func offer(of key: PocketCardKey) async -> Offer {

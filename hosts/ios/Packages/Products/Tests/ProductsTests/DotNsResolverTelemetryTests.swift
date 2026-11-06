@@ -26,7 +26,7 @@ struct DotNsResolverTelemetryTests {
         #expect(recorder.events.count == 1)
         #expect(event.name == "host.bulletin.fetch")
         #expect(event.tags["outcome"] == "ok")
-        #expect(event.tags["trigger"] == "open")
+        #expect(event.tags["load.trigger"] == "open")
         #expect(event.tags["dotns.domain"] == nil)
         #expect(event.extras["dotns.domain"] == .string(name))
         #expect(event.extras["bulletin.bytes"] == .integer(Int(StubCarFetcher.downloadedBytes)))
@@ -43,7 +43,8 @@ struct DotNsResolverTelemetryTests {
         #expect(recorder.events.isEmpty)
     }
 
-    @Test func contentAlreadyOnDiskIsACacheHit() async throws {
+    /// The content hash is still read from the chain, so content already on disk is an `ok` read with no bytes.
+    @Test func contentAlreadyOnDiskIsAReadWithNoDownload() async throws {
         let resolver = makeResolver()
 
         try await telemetry.withContext(session: nil, trigger: .prewarm) {
@@ -51,14 +52,14 @@ struct DotNsResolverTelemetryTests {
             _ = try await resolver.stageContent(dotNsName: name)
         }
 
-        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
-        #expect(recorder.events.map { $0.tags["trigger"] } == ["prewarm", "prewarm"])
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "ok"])
+        #expect(recorder.events.map { $0.tags["load.trigger"] } == ["prewarm", "prewarm"])
         #expect(recorder.events.last?.extras["bulletin.bytes"] == nil)
         #expect(recorder.events.last?.tags["host.session_id"] == nil)
     }
 
-    /// The applied archive is read on every render, so it is reported once per session.
-    @Test func anAppliedArchiveIsACacheHitOncePerSession() async throws {
+    /// One fetch per product and session: the read that fetched it, not the applied copy served after it.
+    @Test func aSessionReportsOneFetchPerName() async throws {
         let resolver = makeResolver()
         let session = UUID()
 
@@ -68,9 +69,22 @@ struct DotNsResolverTelemetryTests {
             _ = try await resolver.resolveToLocalURL(dotNsName: name)
         }
 
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok"])
+        #expect(recorder.events.first?.tags["host.session_id"] == session.uuidString.lowercased())
+    }
+
+    /// Outside a session, an applied archive read on every render is reported once per trigger.
+    @Test func anAppliedArchiveOutsideASessionIsACacheHitOncePerTrigger() async throws {
+        let resolver = makeResolver()
+
+        try await telemetry.withContext(session: nil, trigger: .prewarm) {
+            _ = try await resolver.resolveToLocalURL(dotNsName: name)
+            _ = try await resolver.resolveToLocalURL(dotNsName: name)
+            _ = try await resolver.resolveToLocalURL(dotNsName: name)
+        }
+
         #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
         #expect(recorder.events.last?.extras["dotns.content_hash_ms"] == nil)
-        #expect(recorder.events.last?.tags["host.session_id"] == session.uuidString.lowercased())
     }
 
     @Test func aFailedDownloadIsAnError() async throws {

@@ -19,7 +19,7 @@
                     key: event.name,
                     value: Double(duration),
                     unit: .millisecond,
-                    attributes: event.tags
+                    attributes: event.tags.filter { $0.key != "host.session_id" }
                 )
             }
         }

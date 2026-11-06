@@ -48,7 +48,7 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
 
         let carFetcher = CarFetcher(gatewayBaseUrl: config.ipfsGatewayBaseUrl)
         let contentStorage = DotNsContentStorage()
-        let telemetry = IssueMonitoringFactory.createHostLoadTelemetry()
+        let telemetry = HostLoadTelemetry(recorder: IssueMonitoringFactory.createHostEventRecorder())
 
         let resolver = DotNsResolver(
             contractApi: contractApi,
@@ -86,7 +86,8 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             iconViewModelFactory: ProductIconViewModelFactory(
                 dotNsResolver: resolver,
                 iconLoader: ProductIconLoader(productResolver: productResolver)
-            )
+            ),
+            telemetry: telemetry
         )
 
         return state.withLock { state in

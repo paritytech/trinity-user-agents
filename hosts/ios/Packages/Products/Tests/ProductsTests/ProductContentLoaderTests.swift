@@ -284,8 +284,9 @@ final class ProductContentLoaderTests {
         #expect(phases.recorded.isEmpty)
     }
 
-    /// A warm open reads no chain, and says so once per session rather than staying invisible.
-    @Test func aCachedOpenIsACacheHitUnderTheCallersSession() async throws {
+    /// A cold open reads the manifest and the archive once; the open's later reads of what it just applied
+    /// add nothing under the same session.
+    @Test func aSessionReportsOneResolveAndOneFetch() async throws {
         let recorder = RecordingHostEventRecorder()
         let telemetry = HostLoadTelemetry.recording(into: recorder)
         let environment = try Environment(self, telemetry: telemetry)
@@ -297,12 +298,26 @@ final class ProductContentLoaderTests {
             _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
         }
 
-        let opens = recorder.events.filter { $0.tags["trigger"] == "open" }
-        #expect(opens.map(\.name) == [
-            "host.product.resolved", "host.bulletin.fetch", "host.product.resolved", "host.bulletin.fetch"
-        ])
-        #expect(opens.map { $0.tags["outcome"] } == ["ok", "ok", "cache_hit", "cache_hit"])
+        let opens = recorder.events.filter { $0.tags["load.trigger"] == "open" }
+        #expect(opens.map(\.name) == ["host.product.resolved", "host.bulletin.fetch"])
+        #expect(opens.map { $0.tags["outcome"] } == ["ok", "ok"])
         #expect(opens.allSatisfy { $0.tags["host.session_id"] == session.uuidString.lowercased() })
+    }
+
+    /// A warm open in a new session reads no chain, and says so rather than staying invisible.
+    @Test func aWarmOpenIsACacheHitInItsOwnSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let environment = try Environment(self, telemetry: telemetry)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+
+        try await telemetry.withContext(session: UUID(), trigger: .open) {
+            _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+        }
+
+        let opens = recorder.events.filter { $0.tags["load.trigger"] == "open" }
+        #expect(opens.map(\.name) == ["host.product.resolved", "host.bulletin.fetch"])
+        #expect(opens.map { $0.tags["outcome"] } == ["cache_hit", "cache_hit"])
     }
 
     /// A refresh is the host checking for a newer build, not the page that happened to start it.
@@ -317,7 +332,7 @@ final class ProductContentLoaderTests {
         }
 
         #expect(!recorder.events.isEmpty)
-        #expect(recorder.events.allSatisfy { $0.tags["trigger"] == "refresh" })
+        #expect(recorder.events.allSatisfy { $0.tags["load.trigger"] == "refresh" })
         #expect(recorder.events.allSatisfy { $0.tags["host.session_id"] == nil })
     }
 

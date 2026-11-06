@@ -16,7 +16,7 @@ public struct HostLoadTelemetry: Sendable {
         monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() },
         epochMilliseconds: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) }
     ) {
-        self.recorder = recorder
+        self.recorder = recorder.isRecording ? recorder : nil
         self.origin = origin
         self.cacheHits = cacheHits
         self.monotonicMilliseconds = monotonicMilliseconds
@@ -43,12 +43,11 @@ public struct HostLoadTelemetry: Sendable {
         isEnabled ? UUID() : nil
     }
 
-    /// Read first thing in the tap handler, before any hop or animation.
+    /// Read first thing in the tap handler, before any hop or animation. The page it opens mints its session.
     public func beginOpen(source: HostOpenSource) -> HostOpenTap? {
         guard isEnabled else { return nil }
 
         return HostOpenTap(
-            hostSessionID: UUID(),
             source: source,
             openedAtEpochMilliseconds: epochMilliseconds(),
             monotonicMilliseconds: monotonicMilliseconds()
@@ -79,8 +78,14 @@ public struct HostLoadTelemetry: Sendable {
         context == nil ? nil : now()
     }
 
-    public func isFirstCacheHit(of step: String, productID: String) -> Bool {
+    /// Whether a load step for `productID` should be reported. Inside a session, a step reports once for each
+    /// product: the cold read, or the first cache hit, and the open's second read of what it just applied
+    /// stays silent. A failed read always reports and claims nothing, so the read that follows still counts.
+    /// Outside a session only cache hits are thinned, once per trigger, since a lookup repeated on every render
+    /// is not a load.
+    public func shouldReport(_ step: String, productID: String, outcome: HostEventOutcome) -> Bool {
         guard let context else { return false }
+        guard outcome != .error, context.sessionID != nil || outcome == .cacheHit else { return true }
 
         return cacheHits.claim(step: step, productID: productID, context: context)
     }
