@@ -50,6 +50,8 @@ fails or breaks a rule, and reports a new `generation` (drop cached chain data),
 - `StackReader` refreshes each stack's copy by a `Refresh` policy: it serves the copy it has, decides when to fetch, and
   takes the answer, so a descriptor is never a live dependency.
 - `Descriptor::web_url` gives the URL a dotNS name opens at on the stack's `web-gateway`.
+- `Chain::genesis`, `Descriptor::service` and `Descriptor::dotns_address` return a chain's genesis hash, a service by kind
+  and a dotNS address as validation decoded them.
 
 Every error is one rule of the RFC, and `Error::code` is its stable name.
 

@@ -222,6 +222,20 @@ impl Descriptor {
 		self.chains.iter().find(|chain| chain.role == role)
 	}
 
+	/// The service of this kind, when the stack has one.
+	pub fn service(&self, kind: &str) -> Option<&Service> {
+		self.services.iter().find(|service| service.kind == kind)
+	}
+
+	/// The dotNS contract address under this `DotnsConstants` key, when the stack has one.
+	///
+	/// Panics when the address is not 20 bytes of lowercase hex, which a descriptor read through
+	/// [`Descriptor::from_json`] or deserialised rules out.
+	pub fn dotns_address(&self, key: &str) -> Option<[u8; 20]> {
+		let address = self.dotns.as_ref()?.get(key)?;
+		Some(format::hex_bytes("dotns", address).expect("invalid dotns address in a descriptor"))
+	}
+
 	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
 	/// the stack names none. The name is one label, or several ending in the stack's `tld`; fails
 	/// with [`Error::InvalidName`] otherwise, so `my-app.dot` on a `testnet` stack is refused
@@ -239,11 +253,7 @@ impl Descriptor {
 		if !bare.split('.').all(is_label) {
 			return Err(invalid());
 		}
-		let Some(gateway) = self
-			.services
-			.iter()
-			.find(|service| service.kind == "web-gateway")
-			.and_then(|service| service.urls.first())
+		let Some(gateway) = self.service("web-gateway").and_then(|service| service.urls.first())
 		else {
 			return Ok(None);
 		};
@@ -398,6 +408,17 @@ impl Descriptor {
 			Some(_) => Ok(()),
 			None => Err(Error::UnknownChainRole(role.to_owned())),
 		}
+	}
+}
+
+impl Chain {
+	/// The genesis hash.
+	///
+	/// Panics when `genesisHash` is not 32 bytes of lowercase hex, which a descriptor read through
+	/// [`Descriptor::from_json`] or deserialised rules out.
+	pub fn genesis(&self) -> [u8; 32] {
+		format::hex_bytes("genesisHash", &self.genesis_hash)
+			.expect("invalid genesisHash in a descriptor")
 	}
 }
 

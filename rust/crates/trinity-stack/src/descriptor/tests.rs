@@ -14,3 +14,24 @@ fn deserialising_directly_applies_the_same_rules() {
 		serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
 	assert_eq!(round_trip, valid);
 }
+
+/// The parsed views return what validation decoded, so a reader does not decode the strings a
+/// second time.
+#[test]
+fn test_parsed_views() {
+	let document: serde_json::Value =
+		serde_json::from_str(include_str!("../../vectors/documents/valid-dotns.json")).unwrap();
+	let descriptor = Descriptor::from_json(document).unwrap();
+
+	let people = descriptor.chain("People").unwrap();
+	let mut genesis = [0; 32];
+	hex::decode_to_slice(&people.genesis_hash[2..], &mut genesis).unwrap();
+	assert_eq!(people.genesis(), genesis);
+
+	let dub = descriptor.service("dub").unwrap();
+	assert_eq!(dub.urls, ["https://previewnet.substrate.dev/dub/"]);
+	assert_eq!(descriptor.service("web-gateway"), None);
+
+	assert_eq!(descriptor.dotns_address("registrar"), Some([0xaa; 20]));
+	assert_eq!(descriptor.dotns_address("popController"), None);
+}
