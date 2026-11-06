@@ -17,7 +17,7 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex},
+	sync::{Arc, Mutex, Weak},
 };
 
 use core::time::Duration;
@@ -422,25 +422,35 @@ impl RuntimeServices {
 	}
 }
 
-/// A reference on a provider's worker while the core needs it, such as for a
-/// quote or while a session's overlay is up, released when dropped, so a
-/// quote call dropped while it waits leaves none behind.
-pub struct WorkerHold<'a> {
-	services: &'a RuntimeServices,
+/// A reference on a provider's worker while the core needs it: for a quote,
+/// while a session's overlay is up, or while the provider serves a session.
+/// Released when dropped, so a call dropped while it waits leaves none
+/// behind. Taking and releasing one calls into the host, so neither happens
+/// under a lock.
+pub struct WorkerHold {
+	services: Weak<RuntimeServices>,
 	provider: ProductId,
 }
 
-impl<'a> WorkerHold<'a> {
+impl WorkerHold {
 	/// Hold `provider`'s worker, so the host runs it to answer.
-	pub fn acquire(services: &'a RuntimeServices, provider: &ProductId) -> Self {
+	pub fn acquire(services: &Arc<RuntimeServices>, provider: &ProductId) -> Self {
 		services.worker_ledger.acquire(provider);
-		Self { services, provider: provider.clone() }
+		Self { services: Arc::downgrade(services), provider: provider.clone() }
+	}
+
+	/// The provider whose worker this holds.
+	pub fn provider(&self) -> &ProductId {
+		&self.provider
 	}
 }
 
-impl Drop for WorkerHold<'_> {
+impl Drop for WorkerHold {
 	fn drop(&mut self) {
-		self.services.worker_ledger.release(&self.provider);
+		// Services that are gone took their ledger with them.
+		if let Some(services) = self.services.upgrade() {
+			services.worker_ledger.release(&self.provider);
+		}
 	}
 }
 

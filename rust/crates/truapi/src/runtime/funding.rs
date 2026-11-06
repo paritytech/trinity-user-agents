@@ -71,7 +71,7 @@ use truapi::latest::{
 	HostPaymentTopUpStatusSubscribeItem,
 };
 
-use super::services::RuntimeServices;
+use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
 	host_logic::funding::{
 		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
@@ -265,9 +265,9 @@ pub struct FundingRegistry {
 	link_waiters: Mutex<HashMap<ProductId, Vec<oneshot::Sender<()>>>>,
 	/// The generation the next link takes.
 	next_generation: AtomicU64,
-	/// Sessions holding a reference on their provider's worker, with that
-	/// provider. Only the reconciler changes it.
-	holding: Mutex<HashMap<String, ProductId>>,
+	/// Each session's hold on its provider's worker, kept in line with the
+	/// sessions by [`Self::hold_workers`].
+	holding: Mutex<HashMap<String, WorkerHold>>,
 	/// Sessions whose top-ups or payment are being followed to an outcome.
 	following: Mutex<HashSet<String>>,
 	/// Ids of funds whose host call is in flight, so no second call under
@@ -1062,44 +1062,54 @@ impl FundingRegistry {
 	}
 
 	/// Every assigned open session holds its provider's worker. The
-	/// reconciler keeps the holds current, and an overlay closing takes them
-	/// before it lets its own go; each session's hold is taken and let go
-	/// once, under the lock. A worker that starts and calls back changes the
+	/// reconciler keeps the holds current, and an overlay closing brings them
+	/// in line before it lets its own go. Holds are taken outside every lock
+	/// and kept only if the session still wants them once the lock is back,
+	/// so a pass that read the sessions before a newer one released a hold
+	/// cannot take it again. A worker that starts and calls back changes the
 	/// sessions, which the next pass picks up.
-	fn hold_workers(&self, services: &RuntimeServices) {
-		let assigned: HashMap<String, ProductId> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| session.serves_provider())
-			.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
-			.collect();
-		let (acquire, release) = {
+	fn hold_workers(&self, services: &Arc<RuntimeServices>) {
+		let (released, missing) = {
+			let sessions = self.lock_sessions();
 			let mut holding = self.lock_holding();
-			let mut acquire = Vec::new();
-			for (intent, provider) in &assigned {
-				if !holding.contains_key(intent) {
-					holding.insert(intent.clone(), provider.clone());
-					acquire.push(provider.clone());
-				}
-			}
-			let mut release = Vec::new();
-			holding.retain(|intent, provider| {
-				let kept = assigned.contains_key(intent);
-				if !kept {
-					release.push(provider.clone());
-				}
-				kept
-			});
-			(acquire, release)
+			let stale: Vec<String> = holding
+				.iter()
+				.filter(|(intent, hold)| held_for(&sessions, intent) != Some(hold.provider()))
+				.map(|(intent, _)| intent.clone())
+				.collect();
+			let released: Vec<WorkerHold> =
+				stale.iter().filter_map(|intent| holding.remove(intent)).collect();
+			let missing: Vec<(String, ProductId)> = sessions
+				.keys()
+				.filter(|intent| !holding.contains_key(*intent))
+				.filter_map(|intent| Some((intent.clone(), held_for(&sessions, intent)?.clone())))
+				.collect();
+			(released, missing)
+		};
+		let taken: Vec<(String, WorkerHold)> = missing
+			.into_iter()
+			.map(|(intent, provider)| (intent, WorkerHold::acquire(services, &provider)))
+			.collect();
+		let unwanted: Vec<WorkerHold> = {
+			let sessions = self.lock_sessions();
+			let mut holding = self.lock_holding();
+			taken
+				.into_iter()
+				.filter_map(|(intent, hold)| {
+					if holding.contains_key(&intent) ||
+						held_for(&sessions, &intent) != Some(hold.provider())
+					{
+						return Some(hold);
+					}
+					holding.insert(intent, hold);
+					None
+				})
+				.collect()
 		};
 		// Taken before let go, so a provider moving from an ended session to
 		// a new one keeps its worker running.
-		for provider in &acquire {
-			services.worker_ledger.acquire(provider);
-		}
-		for provider in &release {
-			services.worker_ledger.release(provider);
-		}
+		drop(unwanted);
+		drop(released);
 	}
 
 	/// Follow every session whose outcome is due, once the engine its funds
@@ -1548,7 +1558,7 @@ impl FundingRegistry {
 		self.links.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
-	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, ProductId>> {
+	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
 	}
 
@@ -2287,6 +2297,18 @@ async fn payment_moved(
 /// a report named them to count as never started.
 fn unknown_for_good(funds: &StartedFunds, now_ms: u64) -> bool {
 	now_ms.saturating_sub(funds.named_at_ms.unwrap_or_default()) >= UNKNOWN_FUNDS_GRACE_MS
+}
+
+/// The provider whose worker session `intent` holds: its assigned provider
+/// while it still has work for it.
+fn held_for<'a>(
+	sessions: &'a HashMap<String, FundingSession>,
+	intent: &str,
+) -> Option<&'a ProductId> {
+	sessions
+		.get(intent)
+		.filter(|session| session.serves_provider())
+		.and_then(|session| session.provider_id.as_ref())
 }
 
 #[cfg(test)]
