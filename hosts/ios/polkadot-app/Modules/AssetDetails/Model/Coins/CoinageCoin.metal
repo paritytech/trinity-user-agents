@@ -21,13 +21,19 @@ struct CoinParams {
   float lightTurnX;      // studio turned with the phone: an axis scaled by the angle turned
   float lightTurnY;      // about it, so a wrist roll and a lifted edge stay different turns
   float lightTurnZ;
+  float coinTurnX, coinTurnY, coinTurnZ;  // every coin leaned by hand, for the debug dial; zero in use
+  float grain;           // the field's grain: 0 mint luster (radial flow lines), 1 polished or spun
   float exposure, luster, rimLuster, lusterMinPx, studioRadius, studioScale;
   float rollGloss, rollReliefHaze, envSharpen, haze, polish, tone, grime;
   float engraveDark, frost, wallRough, aaVariance, aaThreshold, reliefBias;
-  float ambient;         // how much of the studio's own average every reflection is pulled toward
+  float spinGrain, spinMinPx, rimPolish, wallSatin;
+  float brushCover, brushDepth, brushScale, brushStretch;  // handling brushes a worn face
+  float wearDarken;      // reflectance a fully worn coin loses past its tone, so it dulls as well as mattes
+  float wearMatte;       // how far a fully worn coin's reflection is pulled to the room's average: no mirror left
+  float brushMinPx;      // device px across the coin below which the brushing is skipped: it costs, and cannot be seen
   float reliefGain;      // how much harder than the atlas the struck relief slopes
   float roomLift;        // light added to the whole studio: its grey walls painted lighter
-  float lamps[15];       // three softboxes of our own, each a direction from the coins, the
+  float lamps[20];       // up to four softboxes of our own, each a direction from the coins, the
                          // cosine of its half angle, and how bright it is
   float backdropR, backdropG, backdropB;
   int debug;
@@ -86,7 +92,8 @@ static float3 lightTurn(constant CoinParams &P) {
 vertex VertexOut coinVertex(VertexIn in [[stage_in]], constant CoinParams &P [[buffer(4)]]) {
   VertexOut o;
   float3 scale = float3(in.iPos.w, in.iPos.w, in.iPos.w * in.iRot.w);
-  float3 world = in.iPos.xyz + rotateCoin(in.position * scale, in.iRot.xyz);
+  float3 lean = float3(P.coinTurnX, P.coinTurnY, P.coinTurnZ);
+  float3 world = in.iPos.xyz + tiltDir(rotateCoin(in.position * scale, in.iRot.xyz), lean);
   o.clip = float4(world.x / P.viewport.x * 2.0 - 1.0, world.y / P.viewport.y * 2.0 + 1.0, 0.5 - world.z / 2000.0, 1.0);
   o.pos = in.position;
   o.normal = in.normal;
@@ -97,9 +104,9 @@ vertex VertexOut coinVertex(VertexIn in [[stage_in]], constant CoinParams &P [[b
   o.lookI = in.iLook;
   o.fxI = in.iFx;
   o.marksI = in.iMarks;
-  o.axisX = rotateCoin(float3(1, 0, 0), in.iRot.xyz);
-  o.axisY = rotateCoin(float3(0, 1, 0), in.iRot.xyz);
-  o.axisZ = rotateCoin(float3(0, 0, 1), in.iRot.xyz);
+  o.axisX = tiltDir(rotateCoin(float3(1, 0, 0), in.iRot.xyz), lean);
+  o.axisY = tiltDir(rotateCoin(float3(0, 1, 0), in.iRot.xyz), lean);
+  o.axisZ = tiltDir(rotateCoin(float3(0, 0, 1), in.iRot.xyz), lean);
   return o;
 }
 
@@ -138,10 +145,6 @@ constant int STREAK_MAX = 12;
 // to its own dark cast, then darker still below the room's average; the surface goes from a light
 // haze, which even a clean coin carries so no face is a bare mirror, to fully matte; the mint
 // luster dies; grime collects in the cut figure.
-constant float WEAR_TONE = 1.0;     // how far toward the dark cast a fully worn coin goes
-constant float WEAR_DARKEN = 0.45;  // and how much of its reflectance it loses past that
-constant float FRESH_HAZE = 0.12;   // roughness every coin carries; the metals start near 0.15
-constant float WEAR_HAZE = 0.75;    // roughness a fully worn coin gains on top, to fully matte
 
 static float2 markHash(float seed) {
   return fract(sin(float2(seed * 12.9898, seed * 78.233 + 1.7)) * float2(43758.5453, 22578.1459));
@@ -149,8 +152,8 @@ static float2 markHash(float seed) {
 
 // Pits: circular dishes in the field. The slope runs outward from the centre, which under a key
 // light from the upper left gives a dark upper wall and a lit lower lip, the way a strike reads.
-static void addPits(float2 local, float count, float seed, thread float2 &slope, thread float &shade) {
-  int total = min(int(count + 0.5), PIT_MAX);
+static void addPits(float2 local, float count, int cap, float seed, thread float2 &slope, thread float &shade) {
+  int total = min(int(count + 0.5), cap);
 
   for (int i = 0; i < total; ++i) {
     float2 h = markHash(seed + float(i) * 7.13);
@@ -169,8 +172,8 @@ static void addPits(float2 local, float count, float seed, thread float2 &slope,
 
 // Streaks: short grooves at random angles, as many as the coin is still traceable. They fade out
 // over the struck figure, so a heavily scuffed coin still reads its own value.
-static void addStreaks(float2 local, float amount, float seed, thread float2 &slope, thread float &rough) {
-  int total = min(int(amount * float(STREAK_MAX) + 0.5), STREAK_MAX);
+static void addStreaks(float2 local, float amount, int cap, float seed, thread float2 &slope, thread float &rough) {
+  int total = min(int(amount * float(STREAK_MAX) + 0.5), cap);
   float clear = smoothstep(MARK_INNER * 0.72, MARK_INNER, length(local));
 
   if (clear <= 0.0) { return; }
@@ -194,6 +197,71 @@ static void addStreaks(float2 local, float amount, float seed, thread float2 &sl
     slope += across * sign(dot(delta, across)) * STREAK_DEPTH * groove;
     rough += 0.3 * groove;
   }
+}
+
+// Brushing: the fine scratches handling leaves on a coin's face, after the TruMatter design
+// document, whose single stretched noise field read here as ruled, parallel lines rim to rim. This
+// is three such fields instead, each at its own angle, scale and stretch, bent by a slow warp so no
+// stroke runs straight, and broken into patches by a coverage mask, so it reads as scuffed satin.
+// It comes up faster than wear itself, so the worst coins are brushed all over and a fresh coin
+// shows none. Depth and cover are the document's dials, strength per metal its own.
+static float brushHash(float2 p) {
+  p = fract(p * float2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
+
+static float brushNoise(float2 p) {
+  float2 i = floor(p), f = fract(p);
+  float2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(brushHash(i), brushHash(i + float2(1, 0)), u.x),
+             mix(brushHash(i + float2(0, 1)), brushHash(i + float2(1, 1)), u.x), u.y);
+}
+
+static float brushField(float2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 3; ++i) { v += a * brushNoise(p); p *= 2.03; a *= 0.5; }
+  return v;
+}
+
+// One layer of strokes: the slope across a stretched field, turned by `angle`.
+static float2 brushLayer(float2 local, float angle, float scale, float stretch) {
+  float c = cos(angle), s = sin(angle);
+  float2 turned = float2(c * local.x - s * local.y, s * local.x + c * local.y);
+  float2 p = float2(turned.x * scale * stretch, turned.y * scale);
+  const float step = 0.28;
+  float b0 = brushField(p);
+  float2 across = float2(brushField(p + float2(step, 0.0)) - b0, brushField(p + float2(0.0, step)) - b0) / step;
+  return float2(c * across.x + s * across.y, -s * across.x + c * across.y);
+}
+
+// The document works in a frame where the coin's radius is about 0.067 of the stage; `local` here
+// has a radius of 0.5, so its strokes are scaled by that ratio to land at the same fineness.
+constant float BRUSH_FRAME = 0.134;
+
+static void addBrush(float2 local, float wear, float strength, float seed, constant CoinParams &P,
+                     thread float2 &slope) {
+  // Steeper than linear: a worn coin is scuffed all over, a lightly used one barely at all.
+  float amount = P.brushCover * P.brushDepth * strength * pow(wear, 1.6) * 0.6;
+
+  if (amount <= 0.001) { return; }
+
+  float2 h = markHash(seed + 4.4);
+  float base = h.x * PI_F;
+  float2 q = local * BRUSH_FRAME;
+  // A slow warp bends every stroke, so none runs straight across the face.
+  float2 warp = float2(brushField(q * 9.0 + h.y * 7.0), brushField(q * 9.0 + 3.3 - h.y * 5.0)) - 0.5;
+  q += warp * 0.012;
+  // Patches: strokes cover some of the face and spare the rest, differently per coin.
+  float cover = smoothstep(0.35, 0.75, brushField(q * 14.0 + seed * 0.37));
+
+  float scale = 340.0 * max(P.brushScale, 0.05);
+  float stretch = max(P.brushStretch, 0.01);
+  float2 across = brushLayer(q, base, scale, stretch) * 0.5
+      + brushLayer(q, base + 1.9, scale * 0.7, stretch * 2.2) * 0.35
+      + brushLayer(q, base + 0.9, scale * 1.4, stretch * 3.5) * 0.25;
+
+  slope -= across * amount * (0.35 + 0.65 * cover);
 }
 
 static float3 envBRDFApprox(float3 f0, float rough, float ndv) {
@@ -229,30 +297,32 @@ static float onePanel(float3 dir, float3 at, float edge, float gain, float softn
 static float panel(constant CoinParams &P, float3 dir, float lod) {
   float softness = 0.04 + 0.25 * lod / max(P.envMaxLod, 1.0);
   float total = 0.0;
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 4; ++i) {
+    if (P.lamps[i * 5 + 4] <= 0.0) { continue; }
     float3 at = float3(P.lamps[i * 5], P.lamps[i * 5 + 1], P.lamps[i * 5 + 2]);
     total += onePanel(dir, at, P.lamps[i * 5 + 3], P.lamps[i * 5 + 4], softness);
   }
   return total;
 }
 
-// What the studio reflects from one direction, pulled part of the way toward what it reflects on
-// average. The studio is a room of softboxes, so a polished coin swings between a lamp and the dark
-// between lamps as the phone tilts, and that swing was so large it drowned everything the surface
-// itself had to say. The roughest level of the cube is the studio's average; blending toward it
-// keeps the highlight moving while bounding how far the brightness can go either way.
-static float3 envAt(texturecube<float> env, sampler s, constant CoinParams &P, float3 p, float pp, float3 Rw, float r) {
+// What the studio reflects from one direction, looked up with parallax against a sphere of
+// `studioRadius` around the coins, and for a worn coin pulled toward what it reflects on average,
+// which is the roughest level of the cube.
+static float3 envAt(texturecube<float> env, sampler s, constant CoinParams &P, float3 p, float pp, float3 Rw, float r,
+                    float matte) {
   float3 R = tiltDir(Rw, lightTurn(P));
   float b = dot(p, R);
   float t = -b + sqrt(max(b * b - pp, 0.0));
   float3 dir = normalize(p + R * t);
   float lod = clamp(r * P.envSharpen, 0.0, 1.0) * P.envMaxLod;
   float3 direct = env.sample(s, dir, level(lod)).rgb;
-  // The blend toward the average is off by default, and its sample is a whole second lookup per
-  // tap: six of them on a coin with luster. Not taken unless it is asked for.
-  if (P.ambient <= 0.0) return direct;
+  // A worn coin no longer mirrors the room: its reflection is pulled toward the room's average, so
+  // the light's angle still shades it through the normal and the panels, but nothing is seen in it.
+  // The average is a whole second lookup per tap, six of them on a coin with luster, so a fresh
+  // coin skips it.
+  if (matte <= 0.0) return direct;
   float3 average = env.sample(s, dir, level(P.envMaxLod)).rgb;
-  return mix(direct, average, P.ambient);
+  return mix(direct, average, matte);
 }
 
 fragment float4 coinFragment(VertexOut in [[stage_in]],
@@ -286,8 +356,19 @@ fragment float4 coinFragment(VertexOut in [[stage_in]],
   float markRough = 0.0;
 
   if (front && in.surf.w > 0.5) {
-    addPits(local, in.marksI.x, in.marksI.z, markSlope, markShade);
-    addStreaks(local, in.marksI.y, in.marksI.z, markSlope, markRough);
+    // A grid coin is drawn at about fifty pixels, where the marks read as a few dots and dashes;
+    // only the picked coin is large enough to count them, so only it loops over all of them.
+    bool large = px >= 64.0;
+    addPits(local, in.marksI.x, large ? PIT_MAX : 4, in.marksI.z, markSlope, markShade);
+    addStreaks(local, in.marksI.y, large ? STREAK_MAX : 6, in.marksI.z, markSlope, markRough);
+  }
+  // Brushing covers the face, figure included, as the document's does; only the walls are spared.
+  // It is the dearest thing on the face, some fifty noise taps a pixel, and below the detail size
+  // its strokes are under a pixel wide, so a strip or a grid of five hundred never pays for it.
+  float brushOn = smoothstep(P.brushMinPx, P.brushMinPx * 1.3, px);
+  if (in.surf.z < 0.5 && brushOn > 0.0) {
+    float brushStrength = metals[int(in.lookI.y) * 2 + 1].w * brushOn;
+    addBrush(local, clamp(in.marksI.y, 0.0, 1.0), brushStrength, in.marksI.z, P, markSlope);
   }
 
   slope += markSlope;
@@ -317,22 +398,31 @@ fragment float4 coinFragment(VertexOut in [[stage_in]],
   float4 m0 = metals[metalIndex * 2];
   float4 m1 = metals[metalIndex * 2 + 1];
   float wear = clamp(in.lookI.x, 0.0, 1.0);
-  float toning = wear * P.tone * WEAR_TONE * mix(0.9, 1.0, cut);
-  float3 baseColor = m0.xyz * mix(float3(1.0), m1.xyz, toning) * (1.0 - WEAR_DARKEN * wear);
+  // Wear tones the metal toward its dark cast and past it: a tone above one keeps darkening, which
+  // is how a fully worn coin ends up well below the room's average brightness.
+  float toning = wear * P.tone * mix(0.55, 1.0, cut);
+  float3 baseColor = m0.xyz * mix(float3(1.0), m1.xyz, toning) * (1.0 - P.wearDarken * wear);
   float inRoll = 1.0 - clamp(in.fxI.y, 0.0, 1.0);
-  // The haze goes on walls and fields alike, and the high relief only rubs half as shiny: a coin
-  // nobody can follow is as matte on its edge as on its face.
-  float rough = clamp(m0.w + FRESH_HAZE - inRoll * P.rollGloss + in.surf.z * P.wallRough + cut * P.frost
-                      + wear * WEAR_HAZE * (1.0 - 0.3 * high) - wear * P.polish * high + markRough, 0.05, 1.0);
-  float hub = smoothstep(0.02, 0.1, length(lp.xy));
-  // Luster is the six-tap path, six environment lookups a pixel in place of one. The reference
-  // fades it in from seventy percent of its minimum size, which put every coin of a crowded grid
-  // half into it; it is now off below the minimum and fades in above, so a crowded grid takes the
-  // single lookup and a coin large enough to show mint luster still gets it.
-  float lusterOn = clamp(in.fxI.y, 0.0, 1.0) * smoothstep(P.lusterMinPx, P.lusterMinPx * 1.4, px);
-  float lusterSlope = (P.luster * in.surf.w * hub + P.rimLuster * rimTop)
-      * (1.0 - wear) * (1.0 - high * wear) * (1.0 - cut) * lusterOn;
-  float3 across = normalize(float3(-lp.y, lp.x, 0.0) + float3(1e-5, 0.0, 0.0));
+  // A tabletop coin's rim is polished bright; its edge wall is satin, so an edge-on strip shows a
+  // soft band rather than a hard white one. The haze goes on walls and fields alike, and the high
+  // relief only rubs half as shiny, so wear reads side-on too.
+  float polishedRim = P.grain * P.rimPolish * rimTop;
+  float rough = clamp(m0.w - inRoll * P.rollGloss + in.surf.z * P.wallRough + cut * P.frost
+                      + wear * P.haze * (1.0 - 0.3 * high) - wear * P.polish * high + markRough
+                      - polishedRim + P.grain * P.wallSatin * in.surf.z, 0.05, 1.0);
+  // Grain: mint luster (radial flow lines, grain 0) or spun brushing (concentric grooves, 1). A
+  // polished field has no brushing, so its slope is zero and it takes the single lookup. Mint
+  // luster is the six-tap path, off below its minimum size and fading in above it, so a crowded
+  // grid takes the single lookup too.
+  float hub = smoothstep(mix(0.02, 0.004, P.grain), mix(0.1, 0.022, P.grain), length(lp.xy));
+  float lusterOn = max(clamp(in.fxI.y, 0.0, 1.0) * smoothstep(P.lusterMinPx, P.lusterMinPx * 1.4, px),
+                       P.grain * smoothstep(P.spinMinPx * 0.7, P.spinMinPx, px));
+  float fieldGrain = mix(P.luster, P.spinGrain, P.grain);
+  float rimGrain = P.rimLuster * (1.0 - P.grain);
+  float wearKeeps = 1.0 - wear * mix(1.0, 0.55, P.grain);
+  float lusterSlope = (fieldGrain * in.surf.w * hub + rimGrain * rimTop)
+      * wearKeeps * (1.0 - high * wear) * (1.0 - cut) * lusterOn;
+  float3 across = normalize(mix(float3(-lp.y, lp.x, 0.0), float3(lp.x, lp.y, 0.0), P.grain) + float3(1e-5, 0.0, 0.0));
   float occlusion = clamp(1.0 - P.engraveDark * cut, 0.1, 1.0) * reedAO * markShade;
   float grime = cut * wear * P.grime;
 
@@ -350,6 +440,7 @@ fragment float4 coinFragment(VertexOut in [[stage_in]],
   float3 p = tiltDir(toWorld(in, lp * float3(1.0, 1.0, thick)) * P.studioScale, lightTurn(P));
   float pp = dot(p, p) - P.studioRadius * P.studioRadius;
 
+  float matte = wear * P.wearMatte;
   float3 prefiltered = float3(0.0);
   if (lusterSlope > 0.004) {
     float3 t = toWorld(in, across);
@@ -359,10 +450,10 @@ fragment float4 coinFragment(VertexOut in [[stage_in]],
     float tapRough = sqrt(sqrt(alpha * alpha + spacing * spacing * 0.25));
     for (int i = 0; i < 6; i++) {
       float3 nk = normalize(nW + tw * (lusterSlope * LUSTER_TAPS[i]));
-      prefiltered += envAt(env, linearMip, P, p, pp, reflect(-v, nk), tapRough) * (1.0 / 6.0);
+      prefiltered += envAt(env, linearMip, P, p, pp, reflect(-v, nk), tapRough, matte) * (1.0 / 6.0);
     }
   } else {
-    prefiltered = envAt(env, linearMip, P, p, pp, reflect(-v, nW), roughness);
+    prefiltered = envAt(env, linearMip, P, p, pp, reflect(-v, nW), roughness, matte);
   }
   // The room's lift and our own panels go on once per pixel, about the pixel's own mirror
   // direction, rather than inside the luster loop: they are broad, and six of them were waste.
