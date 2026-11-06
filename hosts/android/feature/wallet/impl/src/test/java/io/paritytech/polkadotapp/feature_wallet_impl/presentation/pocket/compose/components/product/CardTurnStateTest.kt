@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.APPLIED
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.NO_BACK
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.USER_MOVING
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -118,6 +120,19 @@ class CardTurnStateTest {
 
         assertEquals(listOf(NO_BACK, APPLIED, APPLIED, USER_MOVING), answers)
         assertEquals(listOf(-180f, -180f), listOf(turned, state.angle))
+    }
+
+    // The user's finger on the card wins over the page, whether it is folding the face or turning the card.
+    @Test
+    fun `a face request while the user turns the card is answered UserMoving and moves nothing`() = runTest(SteppingFrameClock) {
+        val fold = ExpandedCardFoldState().apply { maxFoldPx = 100f }
+        val turn = dragged(CARD_WIDTH / 10)
+
+        val answer = answer(FaceShownRequest(shown = false, reply = CompletableDeferred()), fold, turn, hasBack = true)
+        advanceUntilIdle()
+
+        assertEquals(USER_MOVING, answer)
+        assertEquals(0f, fold.foldedPx, 0f)
     }
 
     // The page is told its request applied, so the card has to end on the side it asked for last.

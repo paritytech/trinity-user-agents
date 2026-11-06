@@ -213,7 +213,8 @@ has the details):
 
 The page has buttons that call `truapi.expandedCard.setFaceShown({ shown })` and a log of each
 answer, plus its own height and a red bar pinned to its bottom edge. The call answers `UserMoving`
-while the user drags the face (and until it has settled) and `NotPresented` when the card is not open.
+while the user drags the face or turns the card (and until it has settled) and `NotPresented` when the
+card is not open.
 
 The WebView keeps the last card's page loaded, so restart the app after changing the App URL.
 

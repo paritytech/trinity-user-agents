@@ -36,7 +36,10 @@ internal class CardTurnState(initialAngle: Float = 0f) {
 
     /** The face up when the current drag began: a swipe turns the card at most one flip from it. */
     private var dragFace = initialAngle
-    private var dragging = false
+
+    /** The user holds the card from the start of a drag until its settle ends. */
+    var dragging = false
+        private set
     private var homing = false
     private val animations = MutatorMutex()
 
