@@ -180,6 +180,56 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
+    fun `a cell that drew on an earlier stream keeps its face and its stream while later streams fail without drawing`() = runTest {
+        val execution: TrUAPIProductExecution = mock()
+        val drawsThenFails = flow<RendererNode> {
+            emit(RendererNode.Nil)
+            throw IllegalStateException("boom")
+        }
+        val failsOutright = flow<RendererNode> { throw IllegalStateException("boom") }
+        whenever(execution.render(any())).thenReturn(drawsThenFails, failsOutright)
+        val worker = worker(workers = runningWorkers(execution), scope = CoroutineScope(StandardTestDispatcher(testScheduler)))
+
+        val results = mutableListOf<Result<JsWidget>>()
+        val collector = launch {
+            worker.renderMessage(roomId, messageId, messageType, messageData).collect { results += it }
+        }
+        advanceTimeBy(5.minutes)
+
+        verify(execution, times(14)).render(any())
+        assertEquals(listOf(Result.success(JsWidget.Spacer())), results)
+        collector.cancel()
+    }
+
+    @Test
+    fun `a stream that never draws reports its failure after the third stream, and a replacement execution still draws`() = runTest {
+        val execution: TrUAPIProductExecution = mock()
+        val replacement: TrUAPIProductExecution = mock()
+        whenever(execution.render(any())).thenReturn(flow { throw IllegalStateException("boom") })
+        whenever(replacement.render(any())).thenReturn(flowOf(RendererNode.Nil))
+        val states = MutableStateFlow<WorkerExecutionState?>(WorkerExecutionState.Running(execution))
+        val workers: TrUAPIWorkerSupervisor = mock()
+        whenever(workers.executionState(productId)).thenReturn(states)
+        val worker = worker(workers = workers, scope = CoroutineScope(StandardTestDispatcher(testScheduler)))
+
+        val results = mutableListOf<Result<JsWidget>>()
+        val collector = launch {
+            worker.renderMessage(roomId, messageId, messageType, messageData).collect { results += it }
+        }
+        advanceTimeBy(5.minutes)
+
+        verify(execution, times(3)).render(any())
+        assertEquals("boom", results.single().exceptionOrNull()?.message)
+        assertTrue("the cell must still be collected for a replacement execution", collector.isActive)
+
+        states.value = WorkerExecutionState.Running(replacement)
+        advanceUntilIdle()
+
+        assertEquals(Result.success(JsWidget.Spacer()), results.last())
+        collector.cancel()
+    }
+
+    @Test
     fun `a NotConnected refusal is retried on the same render`() = runTest {
         val execution: TrUAPIProductExecution = mock()
         var collected = 0
