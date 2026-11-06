@@ -78,7 +78,7 @@ struct OpenedSocket {
 /// here so the awaiting caller only holds `Send` state.
 fn open_socket(url: &Url) -> Result<OpenedSocket, ProviderError> {
 	let socket = WebSocket::new(url.as_str()).map_err(|err| ProviderError::Transport {
-		reason: format!("WebSocket creation for {url} failed: {err:?}"),
+		reason: format!("WebSocket creation for {} failed: {err:?}", crate::error::redacted(url)),
 	})?;
 	socket.set_binary_type(BinaryType::Arraybuffer);
 

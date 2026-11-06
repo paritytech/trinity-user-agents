@@ -514,7 +514,8 @@ jobs:
   # refuses to run against an empty source set, which is the way this gate
   # would otherwise pass without compiling anything, then assembles the AAR so
   # the Gradle wiring this exists to cover is exercised rather than only the
-  # Kotlin.
+  # Kotlin. The device smoke tests are compiled too, not run: they need a device
+  # and live previewnet.
   provider-android-bindings:
     name: Android provider (kotlin compile)
     needs: changes
