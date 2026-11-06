@@ -728,8 +728,8 @@ impl SigningHostRuntime {
 		let platform: Arc<dyn Platform> = platform;
 		let services = RuntimeServices::with_chat_platform(
 			platform,
-			config.host.host_info.clone(),
-			config.stack.clone(),
+			config.host.host_info,
+			config.stack,
 			spawner,
 			chat_platform,
 		);

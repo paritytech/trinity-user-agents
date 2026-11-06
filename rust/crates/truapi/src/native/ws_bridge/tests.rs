@@ -26,7 +26,7 @@ fn runtime_factory_for(platform: Arc<StubPlatform>) -> Arc<dyn WsProductRuntimeF
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("test signing host config is valid");
 	let runtime = Arc::new(SigningHostRuntime::new(platform, config, test_spawner()));
