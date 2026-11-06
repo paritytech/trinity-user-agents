@@ -10,8 +10,9 @@ status: draft
 
 This RFC lets hosts show a contact's avatar instead of a letter tile. A person publishes their profile in a `profile`
 text record under their dotNS username. The core reads that record and resolves the profile information it
-points at, such as the avatar, for the host. Native hosts cache the record. The shared Rust resolver also builds for
-WASM, where it reads the chain on each load; JavaScript bindings are deferred.
+points at, such as the avatar, for the host. The native core caches the record for one hour. Hosts separately cache
+verified image bytes by CID, so refreshing a profile does not download an unchanged avatar. The shared Rust resolver
+also builds for WASM, where it reads the chain on each lookup; JavaScript bindings are deferred.
 
 ## Motivation
 
@@ -27,8 +28,8 @@ Bulletin connection and applies one image policy across features.
 - **Avatar**: the image a profile record points at, by Bulletin CID and format.
 - **Bulletin**: where the avatar bytes live, for 14 days after upload.
 - **Core cache**: the native core's SQLite table of profile records, one row per username, kept for one hour.
-- **Host image cache**: Kingfisher on iOS, Coil on Android. Stores username-keyed avatars in memory and on disk
-  for one hour, without extending their expiry on access.
+- **Host image cache**: Kingfisher on iOS, Coil on Android. Stores verified images by CID in memory and on disk.
+  The bytes are immutable, so capacity limits and eviction determine retention, not a freshness timer.
 - **Letter tile**: the placeholder a host draws for a contact, the first letter of the username, with the avatar drawn
   over it once loaded.
 
@@ -86,26 +87,37 @@ avatar on Bulletin past its 14 day retention is the publisher's job.
 
 ### The host calls
 
-Pairing and signing hosts load avatars through the [image loader](image-loader.md):
+Pairing and signing hosts resolve profile metadata before asking their image library for an image:
 
 ```rust
-runtime.load_image(ImageReference::Username { username, force }).await
+pub struct PublicProfile {
+    pub avatar: Option<ProfileAvatar>,
+}
+
+let profile = runtime.resolve_public_profile(&username, force).await?;
 ```
 
-The result is `Result<LoadedImage, ImageError>`. The core resolves the profile,
-selects the first understood avatar, and loads its CID through the same verified
-Bulletin path as an explicit CID reference. The result carries the bytes, their
-verified format, and their CID as a content key for the host's disk byte cache.
-`force` bypasses the native profile record cache; image verification always applies.
-The shared Rust loader builds for WASM and reads the profile from the chain on
-every load, regardless of `force`.
+The result is `Result<PublicProfile, PublicProfileError>`. The core selects the first
+understood avatar from the record. A missing or malformed record, or one without an
+understood avatar, returns `PublicProfile { avatar: None }`. Invalid usernames and
+chain or database failures return an error. Resolving a profile never reads Bulletin.
+`force` bypasses only the native profile record cache. The WASM resolver reads the
+chain on every lookup, regardless of `force`.
 
-A profile without an understood avatar returns `ImageError::Unavailable`
-without a Bulletin request. Invalid usernames are `Unsupported`.
-Image policy failures are `Rejected`; chain or database failures
-are `Unavailable`. A later WASM call reads the current profile. Native calls
-refresh after the record expires or with `force`; the loader does not poll for a
-profile update.
+The host looks up the returned CID in its image cache. Only a cache miss calls the
+shared [image loader](image-loader.md):
+
+```rust
+runtime.load_image(ImageReference::Bulletin {
+    cid: avatar.cid,
+    declared_format: Some(avatar.format),
+}).await
+```
+
+This returns `Result<LoadedImage, ImageError>`. The core reads the bytes from Bulletin
+and checks the CID, format and image policy. The host stores a successful result under
+its CID. Unsupported references, rejected images and unavailable bytes remain image
+loader errors. Profile and image errors leave the host's placeholder visible.
 
 The core derives `namehash(<username>.<tld>)` and reads `text(node, "profile")`
 on the `contentResolver` contract registered by the dotNS protocol registry.
@@ -134,41 +146,53 @@ CREATE TABLE public_profiles (
 
 ### The host
 
-The host draws a letter tile while its shared image-library adapter calls
-`load_image` with a username reference. A failed load leaves the tile visible
-and is not stored as an image. Successful loads are cached under
-`public-profile:<username>` with a persisted one-hour expiry. Memory and disk
-entries share that deadline; reading an entry or restarting the app does not
-extend it.
+The host resolves the profile on each avatar load. A fresh native profile-cache entry
+avoids a dotNS read. The returned CID selects the image-library request, so an image
+cache hit cannot skip profile resolution. Hosts do not keep a second username-to-image
+freshness cache.
 
-Opening a chat refreshes the username reference with `force`, bypassing the
-host's image cache and the core's record cache, and replaces the cached image
-on success. dotNS emits no event on a text change, so outside
-an opened chat a new avatar shows once the host refreshes its reference and
-the core's record has expired.
+Coil and Kingfisher cache verified bytes by CID on disk and decoded images in memory;
+processed variants may add size or processing details to their keys. A disk hit can
+repopulate memory after a restart. There is no image freshness expiry: the bytes named
+by a CID do not change. Library capacity limits, eviction and explicit cache clearing
+still apply. Missing or corrupt cached bytes are fetched and verified again.
+
+Opening a chat resolves its profile with `force`, bypassing the core's record cache.
+The host still checks the CID image cache. An unchanged CID reuses existing bytes;
+a changed CID selects its own cached image or fetches it if absent. A profile without
+an avatar shows the letter tile even if bytes for its previous CID remain cached.
+Failures do not create profile or image cache entries. dotNS emits no text-change
+event, so a displayed avatar changes on a later lookup, not at the expiry instant.
 
 ```text
-Native UI / image library         Core profile cache + image loader       dotNS / Bulletin
-  |                                      |                                      |
-  |-- load_image(Username) -------------->|                                      |
-  |                                      |-- read profile if stale or forced -->|
-  |                                      |<-- profile record -------------------|
-  |                                      |-- cache record for one hour          |
-  |                                      |-- bitswap_v1_get(CID) --------------->|
-  |                                      |<-- bytes ----------------------------|
-  |                                      |-- verify CID and image policy        |
-  |<-- LoadedImage { bytes, format, CID } -|                                      |
-  |-- decode; cache by username (1h)      |                                      |
-  |                                      |                                      |
-  |-- load_image(Username without avatar)>|                                      |
-  |                                      |-- resolve/cache record as above      |
-  |<-- ImageError::Unavailable -----------|                                      |
-  |-- keep letter tile                   |                                      |
+Native avatar adapter            Core + SQLite                    dotNS
+  |                                  |                              |
+  |-- resolve_public_profile ------->|                              |
+  |                                  |-- if stale or forced ------->|
+  |                                  |<-- profile record -----------|
+  |                                  |-- cache record for one hour  |
+  |<-- PublicProfile { avatar } -----|                              |
+  |                                  |                              |
+
+Native avatar adapter       Coil / Kingfisher          Core image loader / Bulletin
+  |                                  |                              |
+  |-- image(CID, format) ------------>|                              |
+  |                                  |-- check memory, then disk    |
+  |<-- cached image on hit ----------|                              |
+  |                                  |                              |
+  |                                  |-- load_image(Bulletin) ------>| on miss
+  |                                  |                              |-- fetch bytes
+  |                                  |                              |-- verify CID/policy
+  |                                  |<-- LoadedImage --------------|
+  |                                  |-- cache by CID               |
+  |<-- image ------------------------|                              |
 ```
 
 ## Trade-offs
 
 - Profiles are read on refresh, not pushed. Fast-changing data does not belong in the record.
-- After Bulletin drops a blob, a cached avatar remains available until its expiry. Further loads require the publisher
-  to upload it again.
-- When the chain is out of reach, an uncached load shows the letter tile. Native hosts can use a cached profile until it expires.
+- The host makes a metadata lookup before each image request, but the core serves fresh native records locally.
+- Cached CID bytes can remain usable after Bulletin drops the blob. A cache miss then requires the publisher to
+  upload the blob again.
+- When dotNS is out of reach, a fresh cached profile can still select a cached image. An expired profile lookup
+  fails and leaves the placeholder; retaining old metadata on failure is not part of this cache policy.
