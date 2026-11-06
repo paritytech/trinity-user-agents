@@ -49,6 +49,7 @@ import { createTestHostServer } from "./server.js";
 export { fromNetworks } from "./networks.js";
 export type { LoopbackStatements, NetworkConfig } from "./networks.js";
 import { accountNames, deepLinkUrl, hostPageUrl } from "./host-page-url.js";
+import type { LoginRequestBehavior } from "./login-requests.js";
 import type { TestHostServer } from "./server.js";
 
 // Re-exported so a test file imports the fixture and the chain constants from
@@ -77,6 +78,7 @@ export type {
   SigningLogEntry,
 } from "../web/create-mock-host.js";
 export type { LoginBehavior } from "./host-page.js";
+export type { LoginRequestBehavior } from "./login-requests.js";
 
 /** Selector for the product iframe the host page creates. */
 const PRODUCT_FRAME = `#${PRODUCT_FRAME_ID}`;
@@ -438,11 +440,13 @@ export interface TestHost {
    * would on a real host. `"success"` signs in `account`, or the first account
    * when none is named, and the product gets `Success`. `"reject"` answers
    * `Rejected`. Unset, a signed-out host answers `Rejected`, and a signed-in
-   * one answers `AlreadyConnected` either way. Whether the host starts signed
-   * in is the `loginBehavior` fixture option.
+   * one answers `AlreadyConnected` either way, as does a second request made
+   * while the first is signing in. A withdrawn request gets `Cancelled`.
+   * `reset` unsets it. Whether the host starts signed in is the
+   * `loginBehavior` fixture option.
    */
   setLoginBehavior(
-    behavior: "success" | "reject",
+    behavior: LoginRequestBehavior,
     account?: string,
   ): Promise<void>;
 }

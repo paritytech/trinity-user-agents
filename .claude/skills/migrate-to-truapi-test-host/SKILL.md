@@ -70,6 +70,10 @@ login request while the host is signed out, so a suite booting with
 `loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
 the first account, or the one named as a second argument. The old custom
 function form has no equivalent, because the answer is given in the page.
+The default differs: the old host approved login requests unless told
+otherwise, and this one answers `Rejected`, as a real signing host does, until
+a suite calls `setLoginBehavior("success")`. A suite that relied on the old
+default adds that call.
 
 The statement-store controls and `injectChatAction` are served, so they are not
 in this grep. `injectStatement` takes `{topics, data}` the way the old package
@@ -89,8 +93,10 @@ working.
 
 Network constants and the log-entry types come from the same subpath, so a file
 importing `PASEO_ASSET_HUB`, `SigningLogEntry`, `PermissionLogEntry`,
-`ChatMessageLogEntry`, `LoginBehavior` or `DevAccountName` needs no second
-import path.
+`ChatMessageLogEntry` or `DevAccountName` needs no second import path.
+`LoginBehavior` here is the `"auto" | "manual"` boot option. The type
+`setLoginBehavior` takes, which the old package called `LoginBehavior`, is
+`LoginRequestBehavior`.
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
 `HexString` is on that subpath as well, for a file annotating a `genesisHash`.
@@ -425,7 +431,7 @@ for its resources on connect, so a later call would land after that.
 
 ## 4. What refuses, and why
 
-Six of `TestHostAPI`'s members throw with an explanation rather than returning
+Five of `TestHostAPI`'s members, the payment ones, throw with an explanation rather than returning
 something plausible. The rest, including the statement-store controls and
 `injectChatAction`, are served.
 

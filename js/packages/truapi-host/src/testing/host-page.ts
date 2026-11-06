@@ -26,8 +26,7 @@
 import type { ProductId } from "@parity/truapi";
 import { DerivationIndex } from "@parity/truapi";
 import {
-  loginRequestId,
-  loginResponse,
+  createLoginRequests,
   type LoginRequestBehavior,
 } from "./login-requests.js";
 
@@ -163,7 +162,9 @@ export interface AccountControl {
    * when none is named, and answers `Success`. `"reject"` answers `Rejected`.
    * Unset, the request reaches the core, which answers `Rejected` while signed
    * out. A request made while signed in always reaches the core, which
-   * answers `AlreadyConnected`. `reset` unsets it.
+   * answers `AlreadyConnected`, and so does a second request made while the
+   * first is signing in. A withdrawn request is answered `Cancelled`.
+   * `reset` unsets it.
    */
   setLoginBehavior(behavior: LoginRequestBehavior, account?: string): void;
   /**
@@ -379,47 +380,15 @@ export async function startTestHost(
     await activate(first);
   }
 
-  let loginRequests:
-    | { behavior: LoginRequestBehavior; account?: string }
-    | undefined;
-  // One sign-in at a time: a second product asking while the first is being
-  // signed in waits for it, rather than activating again and invalidating the
-  // first product's session.
-  let signingIn: Promise<void> | undefined;
-  /**
-   * Answer `frame` here when it is a login request this host was told how to
-   * answer, and report whether it did. Anything else goes on to the core.
-   */
-  const answerLoginRequest = (
-    frame: Uint8Array,
-    reply: (frame: Uint8Array) => void,
-  ): boolean => {
-    if (!loginRequests || active) return false;
-    const requestId = loginRequestId(frame);
-    if (requestId === undefined) return false;
-    if (loginRequests.behavior === "reject") {
-      reply(loginResponse(requestId, "Rejected"));
-      return true;
-    }
-    const name = loginRequests.account;
-    const account = name
-      ? roster.find((entry) => entry.name === name)
-      : roster[0];
-    if (!account) return false;
-    const owner = signingIn === undefined;
-    signingIn ??= activate(account).finally(() => {
-      signingIn = undefined;
-    });
-    signingIn.then(
-      () =>
-        reply(loginResponse(requestId, owner ? "Success" : "AlreadyConnected")),
-      (error: unknown) => {
-        console.error("test host could not sign in for a login request", error);
-        reply(loginResponse(requestId, "Rejected"));
-      },
-    );
-    return true;
-  };
+  const loginRequests = createLoginRequests({
+    signedIn: () => active !== undefined,
+    accounts: () => roster.map((account) => account.name),
+    async signIn(name) {
+      const account = roster.find((entry) => entry.name === name);
+      if (!account) throw new Error(`no account "${name}" on this host`);
+      await activate(account);
+    },
+  });
 
   // The core and the product each hold one end of a MessageChannel. Frames are
   // raw SCALE bytes in both directions; nothing interprets them here.
@@ -472,7 +441,7 @@ export async function startTestHost(
             const frame = event.data;
             if (!(frame instanceof Uint8Array)) return;
             if (
-              answerLoginRequest(frame, (answer) => port.postMessage(answer))
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
             ) {
               return;
             }
@@ -500,7 +469,7 @@ export async function startTestHost(
             const frame = event.data;
             if (!(frame instanceof Uint8Array)) return;
             if (
-              answerLoginRequest(frame, (answer) => port.postMessage(answer))
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
             ) {
               return;
             }
@@ -539,7 +508,7 @@ export async function startTestHost(
     reset() {
       resetMock();
       writeBootStorage();
-      loginRequests = undefined;
+      loginRequests.clear();
     },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
@@ -582,6 +551,7 @@ export async function startTestHost(
       await publishChatAction(action);
     },
     async switchAccount(name: string) {
+      await loginRequests.settled();
       const account = roster.find((entry) => entry.name === name);
       if (!account) {
         throw new Error(
@@ -593,35 +563,20 @@ export async function startTestHost(
       await activate(account);
     },
     async setAccounts(names: (DevAccountName | DevAccount)[]) {
+      await loginRequests.settled();
       roster = names.map(resolveAccount);
       const first = roster[0];
       if (!first) throw new Error("test host needs at least one account");
       await activate(first);
     },
     async signOut() {
+      await loginRequests.settled();
       if (!active) return;
       await runtime.disconnectSession();
       active = undefined;
     },
     setLoginBehavior(behavior: LoginRequestBehavior, account?: string) {
-      if (behavior !== "success" && behavior !== "reject") {
-        throw new Error(
-          `testHost.setLoginBehavior takes "success" or "reject", got ` +
-            `${JSON.stringify(behavior)}. Whether the host starts signed in ` +
-            'is the `loginBehavior: "auto" | "manual"` fixture option.',
-        );
-      }
-      if (
-        account !== undefined &&
-        !roster.some((entry) => entry.name === account)
-      ) {
-        throw new Error(
-          `no account "${account}" on this host; have ${roster
-            .map((entry) => entry.name)
-            .join(", ")}`,
-        );
-      }
-      loginRequests = { behavior, account };
+      loginRequests.set(behavior, account);
     },
   });
 

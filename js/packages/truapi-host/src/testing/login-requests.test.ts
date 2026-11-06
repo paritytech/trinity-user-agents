@@ -13,7 +13,12 @@ import {
   ACCOUNT_GET_USER_ID,
 } from "@parity/truapi/wire-table";
 import { describe, expect, it } from "bun:test";
-import { loginRequestId, loginResponse } from "./login-requests.js";
+import {
+  createLoginRequests,
+  loginRequestId,
+  loginResponse,
+  type LoginRequestHost,
+} from "./login-requests.js";
 
 /** A frame as the product's client sends it. */
 function frame(
@@ -113,5 +118,150 @@ describe("login requests the test host answers", () => {
         value: { tag: "V1", value: response },
       });
     }
+  });
+});
+
+/** What a reply frame answers, as the product's client reads it. */
+function answerOf(reply: Uint8Array): string {
+  const message = decodeWireMessage(reply)._unsafeUnwrap();
+  const decoded = scale
+    .Result(
+      VersionedHostRequestLoginResponse,
+      scale.CallError(VersionedHostRequestLoginError),
+    )
+    .dec(message.payload.value);
+  return decoded.success ? decoded.value.value : decoded.value.tag;
+}
+
+const cancel = (requestId: string) =>
+  frame(
+    requestId,
+    ACCOUNT_REQUEST_LOGIN,
+    MESSAGE_TYPE_CANCEL,
+    new Uint8Array(),
+  );
+
+/** A host page whose sign-in finishes when the test says so. */
+function fakeHost(accounts = ["alice", "bob"]) {
+  let signedIn = false;
+  const signIns: string[] = [];
+  let finish: (failure?: Error) => void = () => {};
+  const host: LoginRequestHost = {
+    signedIn: () => signedIn,
+    accounts: () => accounts,
+    signIn(account) {
+      signIns.push(account);
+      return new Promise<void>((resolve, reject) => {
+        finish = (failure) => {
+          if (failure) return reject(failure);
+          signedIn = true;
+          resolve();
+        };
+      });
+    },
+  };
+  return { host, signIns, finish: (failure?: Error) => finish(failure) };
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("answering login requests for the host page", () => {
+  it("leaves requests to the core until told how to answer, and while signed in", async () => {
+    const { host, finish } = fakeHost();
+    const logins = createLoginRequests(host);
+    const replies: Uint8Array[] = [];
+    expect(logins.handle(loginRequest("p:1"), (r) => replies.push(r))).toBe(
+      false,
+    );
+
+    logins.set("success");
+    logins.handle(loginRequest("p:2"), (r) => replies.push(r));
+    finish();
+    await flush();
+    expect(logins.handle(loginRequest("p:3"), (r) => replies.push(r))).toBe(
+      false,
+    );
+    expect(replies.map(answerOf)).toEqual(["Success"]);
+  });
+
+  it("answers Rejected without signing in when told to reject", () => {
+    const { host, signIns } = fakeHost();
+    const logins = createLoginRequests(host);
+    logins.set("reject");
+    const replies: Uint8Array[] = [];
+    expect(logins.handle(loginRequest("p:1"), (r) => replies.push(r))).toBe(
+      true,
+    );
+    expect(replies.map(answerOf)).toEqual(["Rejected"]);
+    expect(signIns).toEqual([]);
+  });
+
+  it("signs in once for requests made together, as the named account", async () => {
+    const { host, signIns, finish } = fakeHost();
+    const logins = createLoginRequests(host);
+    logins.set("success", "bob");
+    const replies: string[] = [];
+    logins.handle(loginRequest("p:1"), (r) => replies.push(answerOf(r)));
+    logins.handle(loginRequest("p:2"), (r) => replies.push(answerOf(r)));
+    finish();
+    await flush();
+    expect(signIns).toEqual(["bob"]);
+    expect(replies).toEqual(["Success", "AlreadyConnected"]);
+  });
+
+  it("answers a withdrawn request Cancelled, once", async () => {
+    const { host, finish } = fakeHost();
+    const logins = createLoginRequests(host);
+    logins.set("success");
+    const replies: string[] = [];
+    logins.handle(loginRequest("p:1"), (r) => replies.push(answerOf(r)));
+    expect(logins.handle(cancel("p:1"), (r) => replies.push(answerOf(r)))).toBe(
+      true,
+    );
+    finish();
+    await flush();
+    expect(replies).toEqual(["Cancelled"]);
+    // A withdrawal of a request this host is not answering is the core's.
+    expect(logins.handle(cancel("p:9"), () => {})).toBe(false);
+  });
+
+  it("lets a test wait for a sign-in a login request started", async () => {
+    const { host, finish } = fakeHost();
+    const logins = createLoginRequests(host);
+    logins.set("success");
+    logins.handle(loginRequest("p:1"), () => {});
+    let settled = false;
+    const waiting = logins.settled().then(() => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    finish();
+    await waiting;
+    expect(settled).toBe(true);
+  });
+
+  it("answers Rejected when the account is gone or the sign-in fails", async () => {
+    const accounts = ["alice", "bob"];
+    const { host, signIns, finish } = fakeHost(accounts);
+    const logins = createLoginRequests(host);
+    expect(() => logins.set("success", "carol")).toThrow(/no account "carol"/);
+
+    logins.set("success", "bob");
+    accounts.splice(1);
+    const replies: string[] = [];
+    logins.handle(loginRequest("p:1"), (r) => replies.push(answerOf(r)));
+    expect(signIns).toEqual([]);
+
+    logins.set("success");
+    logins.handle(loginRequest("p:2"), (r) => replies.push(answerOf(r)));
+    finish(new Error("activation failed"));
+    await flush();
+    expect(replies).toEqual(["Rejected", "Rejected"]);
+  });
+
+  it("refuses a behaviour it does not know", () => {
+    const logins = createLoginRequests(fakeHost().host);
+    expect(() => logins.set("auto" as unknown as "success")).toThrow(
+      /takes "success" or "reject"/,
+    );
   });
 });
