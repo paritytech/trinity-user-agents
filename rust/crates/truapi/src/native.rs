@@ -406,8 +406,9 @@ pub fn set_log_level(level: String) {
 /// Every marker the core may address to a host, keyed by its dotted target.
 ///
 /// A host reads this once and looks each marker it is handed up in the result.
-/// A target the map does not hold is [`crate::markers::MarkerClass::Local`]:
-/// it stays on the device, because nothing has said what its detail carries.
+/// A target the map does not hold stays on the device, because nothing has
+/// said what its detail carries. The core refuses such a target before a host
+/// is handed it, so this is the host's backstop rather than its first line.
 /// Pure and stateless, so a host may call it whenever it likes, though reading
 /// it once at startup is what it is for.
 #[uniffi::export]

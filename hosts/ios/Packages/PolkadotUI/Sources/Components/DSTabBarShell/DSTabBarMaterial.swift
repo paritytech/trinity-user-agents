@@ -2,16 +2,23 @@ import SwiftUI
 import DesignSystem
 
 /// The bar's glass: the variable blur, under an elliptical wash lightest at the top centre in dark themes.
-/// On iOS 27 and later, Liquid Glass in the surface's shape.
-/// On iOS 26, Liquid Glass tinted with the theme's main surface.
+/// On iOS 26 and later, Liquid Glass in the bar's outline without the notch. The container's clip cuts the notch.
+/// Under a rotated ancestor Liquid Glass evaluates its shape in an enlarged rect, so a notch in the glass shape
+/// would land in the wrong place. iOS 26 tints the glass with the theme's main surface.
 struct DSTabBarBarMaterial: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if #available(iOS 27, *) {
-            Color.clear.glassEffect(.regular, in: DSTabBarShape())
+            Color.clear.glassEffect(
+                .regular,
+                in: RoundedRectangle(cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
+            )
         } else if #available(iOS 26, *) {
-            Color.clear.glassEffect(.regular.tint(Color.bgSurfaceMain.opacity(0.5)), in: DSTabBarShape())
+            Color.clear.glassEffect(
+                .regular.tint(Color.bgSurfaceMain.opacity(0.5)),
+                in: RoundedRectangle(cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
+            )
         } else {
             DSTabBarVariableBlur(
                 intensity: isDark ? DSTabBarStyle.barBlurIntensity : DSTabBarStyle.barBlurIntensityLight

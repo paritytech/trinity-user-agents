@@ -45,6 +45,7 @@ class ProductPocketCardDetailsLoadingTest {
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
         override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Completed)
+        override val isPageRevealed = MutableStateFlow(true)
         override val title = MutableStateFlow("")
         override val faceShownRequests get() = faceRequests
         override fun pauseConnections() = Unit

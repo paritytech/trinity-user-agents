@@ -195,13 +195,13 @@ const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
 const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the active session";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum LegacySigner {
 	Product,
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq, derive_more::From)]
+#[derive(derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
 	ProductDerivation(AuthorityError),
@@ -1291,6 +1291,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
@@ -1379,6 +1380,7 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
 	})
@@ -1400,10 +1402,21 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		AuthorityError::NotSupported { reason } => {
 			latest::HostCreateTransactionError::NotSupported { reason }
 		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
 			latest::HostCreateTransactionError::Unknown { reason }
 		},
 	})
+}
+
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
 }
 
 #[async_trait::async_trait]

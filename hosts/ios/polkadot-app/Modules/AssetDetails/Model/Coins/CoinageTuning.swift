@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 // Kept apart from the loader so the knobs are one short file to open while the look is tuned.
 extension CoinageAssetStore {
@@ -10,18 +11,13 @@ extension CoinageAssetStore {
     /// swing in brightness was the only thing the eye could see; the wear and the struck figure
     /// both went under it.
     enum Tuning {
-        /// How far every reflection is pulled toward the studio's average. Zero is the reference's
-        /// full swing between a softbox and the dark beside it; one would be a matte ball. Off
-        /// now that the room itself is lifted, which does the same job without smearing the
-        /// highlights; kept as a knob while the two are compared.
-        static let ambient: Float = 0
-
         /// Light added to the whole studio, as if its grey walls were painted a lighter grey. The
-        /// exported room runs from five to sixteen percent of white against softboxes at seventy
-        /// and more, and that seven-to-one step is what a coin fell off as it tilted. Lifting the
-        /// room to around forty percent brings the step down to about two to one, and the softbox
-        /// still reads as the highlight. Linear, so it is the same room at every level of blur.
-        static let roomLift: Float = 0.28
+        /// room in `params.json` runs from three to eight percent of white against softboxes at
+        /// forty and more, and that step is what a coin fell off as it tilted. sRGB twenty percent
+        /// is about 0.033 linear and forty about 0.133, so a tenth takes the room from the one to
+        /// the other, and the softbox still reads as the highlight. Linear, so it is the same room
+        /// at every level of blur.
+        static let roomLift: Float = 0.10
 
         /// A softbox of our own, added to the studio at lookup time. A direction from the coins,
         /// a half angle and a brightness; its edge softens with the blur level, which stands in for
@@ -32,21 +28,30 @@ extension CoinageAssetStore {
             let gain: Float
         }
 
-        /// Three panels, all in front of the coins: one straight ahead over the key light, so the
-        /// resting pose is the brightest by a clear step; one high and a fainter one low, so a
-        /// coin leaned either way still finds some light. The export's own ceiling strip is as
-        /// bright as its key, which is why the front needs the help. The shader reads exactly
-        /// ``panelCount`` of these.
+        /// Four panels around the coins: one above, one to each side and one below, so a coin
+        /// tipped to any extreme still mirrors a light rather than the dark beyond the studio's
+        /// lamps. The shader reads exactly ``panelCount`` of these.
         static let panels = [
-            Panel(direction: SIMD3(0, 0.15, 1), halfAngle: 28 * .pi / 180, gain: 0.45),
-            Panel(direction: SIMD3(0, 0.87, 0.5), halfAngle: 18 * .pi / 180, gain: 0.3),
-            Panel(direction: SIMD3(0, -0.87, 0.5), halfAngle: 18 * .pi / 180, gain: 0.2)
+            Panel(direction: SIMD3(0, 0.87, 0.5), halfAngle: 22 * .pi / 180, gain: 0.5),
+            Panel(direction: SIMD3(-0.9, 0.1, 0.45), halfAngle: 22 * .pi / 180, gain: 0.45),
+            Panel(direction: SIMD3(0.9, 0.1, 0.45), halfAngle: 22 * .pi / 180, gain: 0.45),
+            Panel(direction: SIMD3(0, -0.87, 0.5), halfAngle: 22 * .pi / 180, gain: 0.4)
         ]
 
-        static let panelCount = 3
+        /// The slot the shader reserves; a studio may fill fewer, and the rest stay dark.
+        static let panelCount = 4
 
         /// How much harder the struck relief slopes than the atlas says. The atlas is baked for a
         /// face hundreds of points across; at sixty the figure flattened into the field.
         static let reliefGain: Float = 1.8
+    }
+}
+
+extension CoinageAssetStore.Tuning.Panel {
+    /// As the shader reads it: unit direction, cosine of the half angle, gain.
+    var packed: [Float] {
+        let length = max((direction * direction).sum().squareRoot(), 1e-6)
+
+        return [direction.x / length, direction.y / length, direction.z / length, cos(halfAngle), gain]
     }
 }

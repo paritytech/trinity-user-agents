@@ -72,11 +72,7 @@ private extension DSExpandableCardLayout {
     }
 
     var dragRange: CGFloat {
-        if #available(iOS 26, *) {
-            max(containerHeight / 4, 1)
-        } else {
-            max(containerHeight / 6, 1)
-        }
+        DSCardCollapse.distance(in: containerHeight)
     }
 
     var dragProgress: CGFloat {
@@ -106,5 +102,23 @@ private extension DSExpandableCardLayout {
         UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen.bounds.height }
             .first ?? 0
+    }
+}
+
+public enum DSCardCollapse {
+    public static func distance(in containerHeight: CGFloat) -> CGFloat {
+        if #available(iOS 26, *) {
+            max(containerHeight / Constants.fractionOnGlass, Constants.minimumDistance)
+        } else {
+            max(containerHeight / Constants.fraction, Constants.minimumDistance)
+        }
+    }
+}
+
+private extension DSCardCollapse {
+    enum Constants {
+        static let fraction: CGFloat = 6
+        static let fractionOnGlass: CGFloat = 4
+        static let minimumDistance: CGFloat = 1
     }
 }
