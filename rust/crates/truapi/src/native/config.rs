@@ -26,9 +26,9 @@ pub struct HostRuntimeConfig {
 	/// Optional platform/browser version shown by the wallet during SSO pairing.
 	#[uniffi(default)]
 	pub platform_version: Option<String>,
-	/// The stack the host build runs, which every chain the core uses, the
-	/// network `get_chain_info` reports, and the TLD the wallet's reserved
-	/// identities derive under all come from.
+	/// The stack the host build runs. Every chain the core uses, the network
+	/// `get_chain_info` reports and the TLD the wallet's identities derive
+	/// under come from it.
 	pub stack: BundledStack,
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
@@ -46,8 +46,8 @@ pub struct HostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 }
 
-/// The stack a host build ships: its pointer, the descriptor copy the build
-/// verified, and whether the build lets it use Polkadot's reserved values.
+/// The stack a host build ships: its pointer, its signed descriptor, and
+/// whether the build lets it use Polkadot's reserved values.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a

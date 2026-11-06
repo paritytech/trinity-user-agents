@@ -778,7 +778,7 @@ impl ProductRuntimeHost {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+			crate::test_support::paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")

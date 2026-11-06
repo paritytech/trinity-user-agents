@@ -72,7 +72,7 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::paseo_test_stack(),
 		test_spawner(),
 	);
 	let signing_host = SigningHostRole::new(services.clone());
