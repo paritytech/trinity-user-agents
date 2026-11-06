@@ -1,4 +1,5 @@
 import Foundation
+import os
 import IssueMonitoring
 import Products
 import TrUAPIHost
@@ -49,6 +50,43 @@ actor SPARustRuntime {
         self.telemetry = telemetry
         self.hostSessionId = hostSessionId
         openedAt = telemetry.now()
+        Self.reportTapOpened(
+            configuration.openTap,
+            productID: configuration.productId.rawValue,
+            openedAt: openedAt,
+            hostSessionId: hostSessionId,
+            telemetry: telemetry
+        )
+    }
+
+    /// A retry builds another runtime for the same tap, which must not count as a second tap.
+    private static let reportedTaps = OSAllocatedUnfairLock(initialState: Set<UUID>())
+
+    /// The tap that opened this page, timed to the page's load starting here.
+    private static func reportTapOpened(
+        _ tap: HostOpenTap?,
+        productID: String,
+        openedAt: Int?,
+        hostSessionId: UUID,
+        telemetry: HostLoadTelemetry
+    ) {
+        guard
+            let tap,
+            let openedAt,
+            reportedTaps.withLock({ $0.insert(tap.hostSessionID).inserted })
+        else { return }
+
+        telemetry.record { origin, now in
+            .pocketCardTapped(
+                productID: productID,
+                outcome: .opened,
+                source: tap.source,
+                durationMilliseconds: openedAt - tap.monotonicMilliseconds,
+                hostSessionID: hostSessionId,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 
     deinit {

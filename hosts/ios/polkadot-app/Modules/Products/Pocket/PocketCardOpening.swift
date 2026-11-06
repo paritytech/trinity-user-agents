@@ -32,7 +32,11 @@ struct PocketCardOpening {
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
                 }
-                reportTap(tap, on: card, opened: false, hostSessionId: pocket.cardHosts.heldSession(of: card.key))
+                PocketCardTapReporter().reportReused(
+                    tap,
+                    productId: card.key.productId,
+                    hostSessionId: pocket.cardHosts.heldSession(of: card.key)
+                )
                 return
             }
 
@@ -48,9 +52,6 @@ struct PocketCardOpening {
             ) else { return }
 
             let reused = !built
-            if !reused {
-                reportTap(tap, on: card, opened: true, hostSessionId: product.hostSessionId)
-            }
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
@@ -58,7 +59,11 @@ struct PocketCardOpening {
                 product.surface.claim(screen)
 
                 if reused {
-                    reportTap(tap, on: card, opened: false, hostSessionId: product.hostSessionId)
+                    PocketCardTapReporter().reportReused(
+                        tap,
+                        productId: card.key.productId,
+                        hostSessionId: product.hostSessionId
+                    )
                 }
             }
 
@@ -93,23 +98,6 @@ struct PocketCardOpening {
 private extension PocketCardOpening {
     var telemetry: HostLoadTelemetry {
         IssueMonitoringFactory.createHostLoadTelemetry()
-    }
-
-    /// `opened` when the tap built a new page, else the page already held was shown.
-    func reportTap(_ tap: HostOpenTap?, on card: PocketCardViewModel, opened: Bool, hostSessionId: UUID?) {
-        guard let tap else { return }
-
-        telemetry.record { origin, now in
-            .pocketCardTapped(
-                productID: card.key.productId.rawValue,
-                outcome: opened ? .opened : .reused,
-                source: tap.source,
-                reuseMilliseconds: opened ? nil : now - tap.monotonicMilliseconds,
-                hostSessionID: hostSessionId,
-                origin: origin,
-                monotonicMilliseconds: now
-            )
-        }
     }
 
     func makeView(

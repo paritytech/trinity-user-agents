@@ -432,6 +432,40 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
+    /// A tap that opened a page is timed to that page's load starting, under the page's session, once
+    /// however many runtimes a retry builds for it; a link counts as a tap.
+    @Test func aTapThatOpenedAPageIsReportedOnceWhenItsLoadStarts() async throws {
+        let directURL = try #require(URL(string: "http://localhost:3000"))
+        let recorder = RecordingHostEventRecorder()
+        let clock = SteppingClock(start: 1_000, step: 250)
+        let tap = HostOpenTap(
+            hostSessionID: UUID(),
+            source: .deeplink,
+            openedAtEpochMilliseconds: 1_793_900_000_000,
+            monotonicMilliseconds: 700
+        )
+        let configuration = try makeConfiguration(contentSource: .directURL(directURL), openTap: tap)
+
+        let runtime = makeRuntime(
+            configuration: configuration,
+            hostEventRecorder: recorder,
+            monotonicMilliseconds: { clock.read() }
+        )
+        let retry = makeRuntime(configuration: configuration, hostEventRecorder: recorder)
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let tapped = recorder.events.filter { $0.name == "host.pocket.card_tapped" }
+        let created = try #require(recorder.events.first { $0.name == "host.webview.created" })
+        #expect(tapped.count == 1)
+        #expect(tapped.first?.tags["outcome"] == "opened")
+        #expect(tapped.first?.tags["open.source"] == "deeplink")
+        #expect(tapped.first?.extras["duration_ms"] == .integer(300))
+        #expect(tapped.first?.tags["host.session_id"] == created.tags["host.session_id"])
+
+        await runtime.dispose()
+        await retry.dispose()
+    }
+
     @Test func aPageNoTapOpenedHasNoTapTime() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let recorder = RecordingHostEventRecorder()

@@ -332,7 +332,7 @@ struct HostEventTests {
             productID: "peopl.testnet",
             outcome: .reused,
             source: .pocketCard,
-            reuseMilliseconds: 180,
+            durationMilliseconds: 180,
             hostSessionID: hostSessionID,
             origin: Self.origin,
             monotonicMilliseconds: 9
@@ -341,7 +341,7 @@ struct HostEventTests {
             productID: "peopl.testnet",
             outcome: .opened,
             source: .deeplink,
-            reuseMilliseconds: nil,
+            durationMilliseconds: 35,
             hostSessionID: nil,
             origin: Self.origin,
             monotonicMilliseconds: 9
@@ -352,10 +352,11 @@ struct HostEventTests {
         #expect(reused.tags["open.source"] == "pocket_card")
         #expect(reused.tags["product.id"] == "peopl.testnet")
         #expect(reused.tags["host.session_id"] == "6564f4cc-e69c-4052-bd4a-433f66790125")
+        #expect(reused.durationMilliseconds == 180)
         #expect(reused.extras["reuse_ms"] == .integer(180))
-        #expect(reused.durationMilliseconds == nil)
         #expect(opened.tags["outcome"] == "opened")
         #expect(opened.tags["open.source"] == "deeplink")
+        #expect(opened.durationMilliseconds == 35)
         #expect(opened.extras["reuse_ms"] == nil)
     }
 
