@@ -9,6 +9,7 @@ fn the_table_and_the_lookup_agree() {
 	}
 }
 
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 #[test]
 fn the_exported_map_holds_every_entry_and_nothing_else() {
 	let exported = crate::native::core_markers();
@@ -23,6 +24,7 @@ fn the_exported_map_holds_every_entry_and_nothing_else() {
 	}
 }
 
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 #[test]
 fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	let exported = crate::native::core_markers();
@@ -37,6 +39,7 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
 
+#[cfg(feature = "runtime")]
 #[test]
 fn every_target_is_host_addressed() {
 	for marker in MARKERS {

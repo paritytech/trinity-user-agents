@@ -2,7 +2,7 @@
 //! device.
 //!
 //! A marker is a dotted target such as `truapi.chain.follow_budget_reached`.
-//! The core raises it, [`crate::logging`] hands it to the host, and the host
+//! The core raises it, the host sink hands it to the host, and the host
 //! decides what to do with it by looking it up here rather than by matching a
 //! prefix of its own. A host-addressed target this table does not list has no
 //! class, and nothing downstream knows what its detail carries. Every call
@@ -17,7 +17,7 @@
 
 /// Whether a marker may leave the device, and at what severity if it may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum MarkerClass {
 	/// Stays on the device. Its detail may name what the person is doing.
 	Local,
@@ -34,7 +34,7 @@ pub enum MarkerClass {
 /// rather than read from the event, and it is what lets a core error be
 /// alerted on separately from a core warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Severity {
 	/// Routine progress. Useful as context around a failure, not on its own.
 	Info,

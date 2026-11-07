@@ -62,7 +62,7 @@ Exact matching is what makes a marker local by default. A target the table does 
 
 The class is a property of the marker rather than of the line. The case for varying it per line is `truapi.ws_bridge.*`, where the detail differs every time, but the answer there is to type the detail so it cannot carry what we do not want, not to let the class float. A floating class puts the decision back at the call site, which is what the table takes away.
 
-This does not carry itself to Desktop and dot.li, because they have no core-log channel to carry it on. Giving them one is separate work, and when it happens it should read this table rather than start a third copy.
+The table reaches Desktop and dot.li as a generated TypeScript module, emitted from the same list, because UniFFI cannot reach a host that runs in a browser. Nothing there reads it yet. They still have no core-log channel, and giving them one is separate work that should read this table rather than start a third copy.
 
 ## Interface
 
@@ -86,6 +86,8 @@ pub fn core_markers() -> HashMap<String, MarkerClass> { /* ... */ }
 ```
 
 The map is the lookup itself rather than a list a host has to index, so the bindings carry no mirror of the registry struct: only the two enums cross, as `[String: MarkerClass]` in Swift and `Map<String, MarkerClass>` in Kotlin.
+
+The web hosts read the same table as `CORE_MARKERS`, a `ReadonlyMap<string, MarkerClass>` that `@parity/truapi-host` exports. `truapi-codegen` links against the registry and writes it out, so the UniFFI surface and the TypeScript one are two spellings of one list.
 
 What a marker may carry is prose for reviewers. It stays in the Rust registry as the doc comment on each entry, and does not cross, because nothing on a device reads it.
 
