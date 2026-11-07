@@ -497,8 +497,7 @@ fn request_login_accepts_pairing_statement_from_snapshot_query_page() {
 		..Default::default()
 	});
 	let connection =
-		futures::executor::block_on(platform.connect(host_config.people_chain_genesis_hash))
-			.unwrap();
+		futures::executor::block_on(platform.connect(host_config.stack.chains().people)).unwrap();
 	let rpc_client = RpcClient::new(HostRpcClient::new(Arc::from(connection), test_spawner()));
 	let progress = futures::executor::block_on(run_pairing_snapshot_query(
 		rpc_client,

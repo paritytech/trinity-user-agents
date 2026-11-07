@@ -46,9 +46,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -103,9 +101,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -153,9 +149,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);

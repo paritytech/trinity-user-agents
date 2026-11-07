@@ -105,7 +105,7 @@ impl RingResolver for StubRingResolver {
 #[test]
 fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
 	let (services, _authority) =
-		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), [0xcc; 32]);
+		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), Some([0xcc; 32]));
 	assert_eq!(
 		services.asset_hub_chain_genesis_hash(),
 		Some([0xcc; 32]),
@@ -145,12 +145,12 @@ fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 fn signing_runtime_with_platform(
 	platform: Arc<dyn Platform>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	signing_runtime_on_asset_hub(platform, [0; 32])
+	signing_runtime_on_asset_hub(platform, None)
 }
 
 fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
-	asset_hub_chain_genesis_hash: [u8; 32],
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 	let config = SigningHostConfig::new(
 		HostInfo {
@@ -160,21 +160,21 @@ fn signing_runtime_on_asset_hub(
 			platform: truapi::latest::HostPlatform::Ios,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		asset_hub_chain_genesis_hash,
-		TEST_NETWORK_SUFFIX.to_string(),
+		crate::test_support::test_stack(
+			TEST_NETWORK_SUFFIX,
+			[0; 32],
+			[0xbb; 32],
+			asset_hub_chain_genesis_hash,
+		),
 	)
 	.expect("signing host config is valid");
 	let services = RuntimeServices::new(
 		platform.clone(),
 		config.host.host_info.clone(),
-		config.people_chain_genesis_hash,
-		config.bulletin_chain_genesis_hash,
-		config.asset_hub_chain_genesis_hash,
+		config.stack.clone(),
 		test_spawner(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
+	let signing_host = SigningHostRole::new(services.clone());
 	(services, signing_host)
 }
 
@@ -2619,7 +2619,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 
 	let platform =
 		Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-	let (_services, authority) = signing_runtime_with_platform(platform);
+	let (_services, authority) = signing_runtime_on_asset_hub(platform, Some([0xcc; 32]));
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation");
 	let session = authority.current_session().expect("connected");

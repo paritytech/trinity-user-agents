@@ -42,7 +42,9 @@ pub use callbacks::{
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
 	NativeTopUpCallbacks,
 };
-pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
+pub use config::{
+	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
+};
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };

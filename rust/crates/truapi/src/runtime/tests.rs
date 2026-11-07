@@ -228,6 +228,7 @@ fn get_product_context_returns_the_runtime_canonical_product_id() {
 	}
 }
 
+/// `get_chain_info` answers from the host's stack, not from a host callback.
 #[test]
 fn get_chain_info_round_trips_through_runtime() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
@@ -236,10 +237,14 @@ fn get_chain_info_round_trips_through_runtime() {
 		chain: v01::ChainIdentifier::AssetHub,
 	});
 	let response = futures::executor::block_on(host.get_chain_info(&cx, request)).unwrap();
-	let RemoteChainInfoResponse::V1(inner) = response;
-	assert_eq!(inner.network, "paseo");
-	assert_eq!(inner.chain, v01::ChainIdentifier::AssetHub);
-	assert_eq!(inner.genesis_hash, [0xaa; 32]);
+	assert_eq!(
+		response,
+		RemoteChainInfoResponse::V1(v01::RemoteChainInfoResponse {
+			network: "paseo".to_string(),
+			chain: v01::ChainIdentifier::AssetHub,
+			genesis_hash: [0xcc; 32],
+		})
+	);
 }
 
 #[test]
@@ -692,12 +697,14 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
 	);
 }
 
+/// The compat stack has no relay, so a product asking for one is told the
+/// host does not serve it.
 #[test]
 fn get_chain_info_unserved_identifier_is_not_supported() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	let cx = CallContext::default();
 	let request = RemoteChainInfoRequest::V1(v01::RemoteChainInfoRequest {
-		chain: v01::ChainIdentifier::Bulletin,
+		chain: v01::ChainIdentifier::Relay,
 	});
 	let error = futures::executor::block_on(host.get_chain_info(&cx, request)).unwrap_err();
 	assert_eq!(
@@ -808,9 +815,7 @@ fn contacts_host(
 	let services = RuntimeServices::with_chat_platform(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 		None,
 	);
@@ -880,9 +885,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	let services = RuntimeServices::with_chat_platform(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 		None,
 	);
@@ -1202,9 +1205,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
 	let services = RuntimeServices::with_chat_platform(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 		None,
 	);
@@ -1503,9 +1504,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -1650,9 +1649,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform {
@@ -1759,9 +1756,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -1841,9 +1836,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -1925,9 +1918,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -2014,9 +2005,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -2116,9 +2105,7 @@ fn pocket_dot_host(
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -2460,9 +2447,7 @@ fn game_host_for(
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -2808,9 +2793,7 @@ fn funding_services_with(
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner,
 	);
 	assert!(services.install_core_db(db.clone()));
@@ -3642,9 +3625,7 @@ fn chain_follow_ids_are_scoped_per_product_core() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -3752,9 +3733,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner,
 	);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -7352,9 +7331,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -7436,9 +7413,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 		let services = RuntimeServices::new(
 			platform.clone(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
+			host_config.stack.clone(),
 			test_spawner(),
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -7505,9 +7480,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -7559,7 +7532,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 /// say why.
 #[test]
 fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
-	let host = dim2_with_a_pairing_session(stub_platform(), [0; 32]);
+	let host = dim2_with_a_pairing_session(stub_platform(), None);
 	let cx = CallContext::default();
 	let mut refusals = None;
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7599,7 +7572,7 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 	let proof_and_signature_lines = |cx: CallContext| {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-		let host = dim2_with_a_pairing_session(platform, [0xcc; 32]);
+		let host = dim2_with_a_pairing_session(platform, Some([0xcc; 32]));
 		crate::logging::testing::host_sink_lines(|| {
 			let _ = futures::executor::block_on(
 				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
@@ -7629,7 +7602,7 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 fn a_refusal_past_the_frontend_is_warned_once() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
-	let host = dim2_with_a_pairing_session(platform, [0; 32]);
+	let host = dim2_with_a_pairing_session(platform, None);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
 	request.context.product_id = ProductId::for_test("dim2.paseo");
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7649,18 +7622,21 @@ fn a_refusal_past_the_frontend_is_warned_once() {
 }
 
 /// `dim2.dot` with a live pairing session, resolving manifests against
-/// `asset_hub_chain_genesis_hash`.
+/// `asset_hub`.
 fn dim2_with_a_pairing_session(
 	platform: Arc<StubPlatform>,
-	asset_hub_chain_genesis_hash: [u8; 32],
+	asset_hub: Option<[u8; 32]>,
 ) -> ProductRuntimeHost {
 	let (host_config, product) = runtime_config("dim2.dot");
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		asset_hub_chain_genesis_hash,
+		crate::test_support::test_stack(
+			"paseo",
+			host_config.stack.chains().people,
+			host_config.stack.chains().bulletin,
+			asset_hub,
+		),
 		test_spawner(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -7851,9 +7827,7 @@ fn scanner_host_for(
 	let services = RuntimeServices::with_chat_platform(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 		None,
 	);
@@ -8078,9 +8052,7 @@ fn payment_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
 	RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		test_spawner(),
 	)
 }

@@ -72,12 +72,10 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		crate::test_support::paseo_test_stack(),
 		test_spawner(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), "paseo".to_string());
+	let signing_host = SigningHostRole::new(services.clone());
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let host = ProductRuntimeHost::from_services(

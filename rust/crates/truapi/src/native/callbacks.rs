@@ -153,11 +153,6 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostFeatureSupportedRequest,
 	) -> Result<bool, HostRejection>;
 
-	/// Enumerate the chains this host serves (RFC 0026): its environment plus
-	/// one entry per chain role. Invoked on the dispatcher thread; must return
-	/// promptly.
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
-
 	/// The chains the host builds as V5 general transactions, each with its
 	/// transaction extension pipeline. A chain not listed is built as V4.
 	async fn transaction_extension_versions(

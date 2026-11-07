@@ -66,7 +66,7 @@ impl LocalActivation for SigningHost {
 		(self.services.spawner)(Box::pin(async move {
 			let Some(identity) = lookup_session_identity(
 				&services.chain,
-				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
+				services.asset_hub_chain_genesis_hash(),
 				&session,
 			)
 			.await
