@@ -43,8 +43,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot build. Without it the core
-  refuses a stack that uses Polkadot's genesis hashes or the `dot` TLD.
+- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the

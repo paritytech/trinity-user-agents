@@ -14,6 +14,7 @@ HOST="${TRUAPI_HOST:-truapi-host}"
 # Where each host app keeps its copy of a stack, `{name}` standing for the stack's name.
 HOST_COPIES=(
     "$REPO_DIR/hosts/ios/polkadot-app/Modules/Products/TrUAPI/Stacks/trinity-stack-{name}.json"
+    "$REPO_DIR/hosts/android/feature/products/impl/src/main/assets/stacks/{name}.json"
 )
 
 command -v "$HOST" >/dev/null || {

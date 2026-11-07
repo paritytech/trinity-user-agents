@@ -6,8 +6,8 @@ import uniffi.truapi.BundledStack
 
 /**
  * The Trinity stacks the app ships, which the core takes every chain it uses from. Each [asset] is
- * the signed descriptor as served and only verifies under the key in its own [pointer], so the two
- * are refreshed together.
+ * the signed descriptor as served, which `scripts/update-stacks.sh` refreshes with the CLI's copy,
+ * and only verifies under the key in its own [pointer].
  */
 enum class TrUAPIStack(
     private val pointer: String,

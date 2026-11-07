@@ -243,9 +243,9 @@ holds each stack's pointer and maps the build's `TestnetEnvironment` to one:
 `TESTNET` runs previewnet, `NIGHTLY` paseo-next-v2 and `PRODUCTION` Polkadot,
 the only one allowed Polkadot's reserved genesis hashes and `dot` TLD. The
 signed descriptors ship byte for byte under
-`feature/products/impl/src/main/assets/stacks/`, and each verifies only under
-the key in its own pointer, so refresh a copy and its pointer together. A copy
-the core refuses fails the runtime boot.
+`feature/products/impl/src/main/assets/stacks/`, and `scripts/update-stacks.sh`
+refreshes them with the CLI's copies. Each verifies only under the key in its
+own pointer, so a copy the core refuses fails the runtime boot.
 
 ### Chain agreement
 
