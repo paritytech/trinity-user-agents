@@ -301,7 +301,11 @@ fn a_pairing_failure_is_sent_after_the_wallet_changes() {
 		statement_account_id: [0x31; 32],
 		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 	};
-	let (services, signing_host) = pairing_fixture("new");
+	let submitted = || ("statement_submit", r#"{"status":"new"}"#.to_string());
+	let (services, signing_host) = signing_fixture(Arc::new(StubPlatform {
+		rpc_method_responses: vec![submitted(), submitted()],
+		..Default::default()
+	}));
 	let responder = SsoResponderService::new(services, signing_host.clone());
 	let announced = futures::executor::block_on(
 		responder.notify_pairing_allowance_allocation(&pairing_deeplink(peer)),
