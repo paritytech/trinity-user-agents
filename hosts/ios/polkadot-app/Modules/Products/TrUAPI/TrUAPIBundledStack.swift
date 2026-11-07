@@ -6,8 +6,9 @@ import TrUAPIHost
 /// reserved identities derive under from the running stack's descriptor.
 ///
 /// Each descriptor is a signed copy under `Stacks/`, kept byte for byte as
-/// published. The core verifies it against its link's key when the runtime
-/// starts, so a copy refreshed without its link stops the runtime.
+/// published; `scripts/update-stacks.sh` refreshes it with the CLI's copy of
+/// the same stack. The core verifies it against its link's key when the
+/// runtime starts, so a copy refreshed without its link stops the runtime.
 enum TrUAPIBundledStack {
     enum Error: Swift.Error, Equatable {
         case missingDescriptor(resource: String)
