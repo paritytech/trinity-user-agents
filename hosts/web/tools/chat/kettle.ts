@@ -66,6 +66,11 @@ export interface FinalizedAllowanceOptions {
   running(): boolean;
   timeoutMs?: number;
   intervalMs?: number;
+  /**
+   * How the timeout names the account and what the user may do. Absent: a
+   * chat's conversation account, which the user posts again by sending.
+   */
+  wording?: { account: string; retry: string };
 }
 
 /** How long a claim may take to finalize before the chat gives up. */
@@ -114,25 +119,38 @@ export async function untilFinalizedAllowance(
     }
     if (options.now() - start >= timeoutMs)
       throw new Error(
-        `This chat's account ${claim.account} has its slot (${claim.collection} ${claim.seq}${claim.blockHash === undefined ? "" : `, block ${claim.blockHash}`}), but it was not final after ${Math.round(timeoutMs / 1000)} s: ${last}. Nothing was posted; send again to retry.`,
+        `${options.wording?.account ?? "This chat's account"} ${claim.account} has its slot (${claim.collection} ${claim.seq}${claim.blockHash === undefined ? "" : `, block ${claim.blockHash}`}), but it was not final after ${Math.round(timeoutMs / 1000)} s: ${last}. Nothing was posted; ${options.wording?.retry ?? "send again to retry"}.`,
       );
     await options.sleep(options.intervalMs ?? FINALITY_INTERVAL_MS);
   }
 }
 
+/** Who uses a {@link finalizedAllowance} guard: its log's name, where it keeps what it saw, and its timeout's wording. */
+export interface AllowanceGuardLabel {
+  product: string;
+  /** The `window` property that keeps what the guard saw, for a test to read. */
+  record: string;
+  wording?: { account: string; retry: string };
+}
+
+/** Kettle Chat's label, as its live test reads it. */
+export const KETTLE_ALLOWANCES: AllowanceGuardLabel = {
+  product: "Kettle Chat",
+  record: "__kettleAllowances",
+};
+
 /**
- * The guard a signed-in wallet's Kettle Chat uses: each conversation account
- * posts only once its claim holds at the finalized head. What it saw is
- * logged and kept on `window.__kettleAllowances`, for a test to read.
+ * The guard a signed-in wallet's chat product uses: an account posts only
+ * once its claim holds at the finalized head. What it saw is logged and kept
+ * on `window[label.record]`, for a test to read.
  */
 export function finalizedAllowance(
   people: () => PeopleAccess | null,
   log: (line: string) => void,
+  label: AllowanceGuardLabel = KETTLE_ALLOWANCES,
 ): (claim: StatementAccountClaim) => Promise<void> {
   const seen: (SettledAllowance & { at: string })[] = [];
-  (
-    window as unknown as { __kettleAllowances: typeof seen }
-  ).__kettleAllowances = seen;
+  (window as unknown as Record<string, typeof seen>)[label.record] = seen;
   return async (claim) => {
     const settled = await untilFinalizedAllowance(claim, {
       read: async (account) => {
@@ -145,10 +163,11 @@ export function finalizedAllowance(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
       running: () => people() !== null,
+      ...(label.wording === undefined ? {} : { wording: label.wording }),
     });
     seen.push({ ...settled, at: new Date().toISOString() });
     log(
-      `Kettle Chat: account ${claim.account.slice(0, 10)}… holds ${settled.grant.maxCount} statements / ${settled.grant.maxSize} B at finalized block ${settled.finalizedBlock} (claim ${claim.collection} slot ${claim.seq}${claim.blockHash === undefined ? "" : ` in block ${claim.blockHash}`}), ${Math.round(settled.waitedMs / 1000)} s after the claim's answer; it may post now.`,
+      `${label.product}: account ${claim.account.slice(0, 10)}… holds ${settled.grant.maxCount} statements / ${settled.grant.maxSize} B at finalized block ${settled.finalizedBlock} (claim ${claim.collection} slot ${claim.seq}${claim.blockHash === undefined ? "" : ` in block ${claim.blockHash}`}), ${Math.round(settled.waitedMs / 1000)} s after the claim's answer; it may post now.`,
     );
   };
 }

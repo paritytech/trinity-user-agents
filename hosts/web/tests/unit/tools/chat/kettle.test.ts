@@ -71,6 +71,21 @@ describe("waiting for a conversation account's allowance at the finalized head",
     expect(reads()).toBe(11);
   });
 
+  test("a product names the account and the next step in its own words", async () => {
+    const { options } = scripted([null]);
+    await expect(
+      untilFinalizedAllowance(CLAIM, {
+        ...options,
+        wording: {
+          account: "Nova Chat's account",
+          retry: "it may be tried again",
+        },
+      }),
+    ).rejects.toThrow(
+      `Nova Chat's account ${CLAIM.account} has its slot (LitePeople 4, block ${CLAIM.blockHash}), but it was not final after 30 s: finalized block 0xf11 has no allowance for it yet. Nothing was posted; it may be tried again.`,
+    );
+  });
+
   test("stops when the session ends", async () => {
     let running = true;
     const { options } = scripted([null], {
