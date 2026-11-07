@@ -109,8 +109,8 @@ export interface ProductRuntimeConfig {
   };
   /**
    * The stack the host build runs. Every chain the core uses, the network
-   * `get_chain_info` reports, and the dotNS TLD a signing host derives its
-   * reserved identities under all come from its descriptor.
+   * `getChainInfo` reports and the TLD a signing host derives its identities
+   * under come from it.
    */
   stack: BundledStack;
   /** Wallet pairing configuration. */

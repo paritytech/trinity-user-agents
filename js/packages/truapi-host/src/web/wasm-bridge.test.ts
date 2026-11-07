@@ -122,8 +122,8 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   });
 
   it("refuses a stack pointer without a key", async () => {
-    // A host refreshes its stack unseen, so the production bundle runs only a
-    // signed stack, whatever the copy it was handed.
+    // A copy the host fetches later is checked against the pointer's key, so
+    // the production bundle refuses a pointer without one.
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
     const { createWasmRawCallbacks } =
       await import("../generated/host-callbacks-adapter.js");
