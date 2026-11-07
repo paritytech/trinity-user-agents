@@ -1,7 +1,8 @@
 # Chat
 
 The Chat screen shows one list of conversations from several providers. The host runs no person-to-person chat of its
-own. [Contact Chat](contact-chat.md), the host's chat, is a product worker.
+own. [Contact Chat](contact-chat.md), the host's chat, is a product worker. [Nova Chat](nova-chat.md) (prototype) talks
+to the Nova apps' chat.
 
 ## Chat providers
 

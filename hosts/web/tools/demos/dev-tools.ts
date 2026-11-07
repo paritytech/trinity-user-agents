@@ -34,7 +34,9 @@ import {
 import { startContactChatHost } from "../../src/invitations/contact-chat-host.js";
 import {
   CONTACT_CHAT,
+  confirmAccept,
   confirmSend,
+  NOVA_COSTS,
   contactChatOwner,
   type ChatProductSpec,
   type RunningChat,
@@ -42,7 +44,18 @@ import {
   type WalletDelivery,
 } from "../../src/invitations/wallet-chat.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
-import { simulatedAllowance, simulatedStatements } from "./kettle-demo.js";
+import {
+  openSimulatedStatementStore,
+  simulatedAllowance,
+  simulatedStatements,
+} from "./kettle-demo.js";
+import { novaChat } from "../chat/nova.js";
+import * as sr25519 from "@scure/sr25519";
+import { hexToBytes } from "@parity/truapi/scale";
+import { NovaBoundary } from "../../src/chat/nova-chat/boundary.js";
+import { startNovaChatHost } from "../../src/invitations/nova-chat-host.js";
+import { deriveHardSecret } from "../../src/invitations/chat-keys.js";
+import { lookupChatIdentity } from "../../src/platform/chain-directory.js";
 import { kettleChat } from "../chat/kettle.js";
 import type { IrohRelays } from "../../src/chat/kettle-chat/route.js";
 import type { ChatProductKey } from "../chat/products.js";
@@ -278,7 +291,11 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
     },
     replySuite: devReplySuite,
     guardNetwork: (network) => {
-      if (testUser !== null && chatProducts.includes("kettle-chat"))
+      if (
+        testUser !== null &&
+        (chatProducts.includes("kettle-chat") ||
+          chatProducts.includes("nova-chat"))
+      )
         return simulatedStatements(network, deps.log);
       if (!submitsNothing(networkMode())) return network;
       deps.log(
@@ -406,7 +423,63 @@ function startTestUser(
           // Only Kettle Chat posts here, to the simulated Statement Store.
           accounts: simulatedAllowance(() => core, deps.log),
         };
-  const chats = chatProducts.map(demoOf).map(chatOf);
+  /**
+   * Nova Chat for the test user: the official apps' requests and frames,
+   * sealed and opened with the test user's keys, on the simulated Statement
+   * Store the tabs share. Simulated: each notification claim and each
+   * conversation account's allowance.
+   */
+  const novaOf = (index: number): RunningChat => {
+    const spec = novaChat();
+    const entropy = testUserEntropy(self);
+    const chatKeyOf = async (account: Uint8Array) =>
+      (await lookupChatIdentity(directory, account))?.chatKey ?? null;
+    return {
+      workerPath: spec.workerPath,
+      startsChats: index === 0,
+      host: startNovaChatHost({
+        product: spec.product(suffix),
+        storageKey: testUserKey(deps.network.id, self.id, "nova-chat"),
+        boundary: NovaBoundary.fromEntropy(entropy, suffix, chatKeyOf),
+        handles: deps.handles,
+        nameOf: (account) => contacts.nameOf(account),
+        lookupName: async (account) =>
+          (
+            await lookupChatIdentity(
+              directory,
+              hexToBytes(account as HexString),
+            ).catch(() => null)
+          )?.name ?? null,
+        blocked: () => [],
+        notifications: deps.notifications,
+        verify: () => verified,
+        openStore: openSimulatedStatementStore,
+        notificationSigner: (kind, requestId, period) => {
+          const secret = deriveHardSecret(entropy, [
+            kind,
+            requestId,
+            String(period),
+          ]);
+          return {
+            public: sr25519.getPublicKey(secret),
+            sign: (payload) => sr25519.sign(secret, payload),
+          };
+        },
+        claimNotification: async () => ({
+          line: "simulated: nothing was claimed in the invitation demo.",
+          seq: 0,
+        }),
+        accounts: simulatedAllowance(() => core, deps.log),
+        confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
+        confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
+        showChat: deps.showChat,
+        log: deps.log,
+      }),
+    };
+  };
+  const chats = chatProducts.map((key, index) =>
+    key === "nova-chat" ? novaOf(index) : chatOf(demoOf(key), index),
+  );
   const owner = contactChatOwner({
     base: deps.base,
     chats: () => chats,

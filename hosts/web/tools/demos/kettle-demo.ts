@@ -5,6 +5,10 @@ import type { ConversationAllowance } from "../../src/invitations/ports.js";
 import type { Network } from "../../src/platform/network.js";
 import { LocalStatementNode } from "../../fixtures/statements/local-statement-node.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
+import {
+  StatementStore,
+  type StatementStoreLike,
+} from "../../src/platform/statement-store.js";
 
 /**
  * DEV ONLY. What the invitation demo gives Kettle Chat
@@ -24,6 +28,27 @@ import { pageStore } from "../../fixtures/invitations/shared-store.js";
  * request service and Kettle working together, not the live Statement Store.
  */
 
+/** The simulated node {@link simulatedStatements} made last, or null. */
+let simulated: LocalStatementNode | null = null;
+
+/**
+ * The host's own client of the simulated Statement Store, for Nova Chat's
+ * requests and acceptances: the store the tabs share, with no other method.
+ */
+export function openSimulatedStatementStore(): Promise<StatementStoreLike> {
+  if (simulated === null)
+    return Promise.reject(
+      new Error("The simulated Statement Store is not running."),
+    );
+  return Promise.resolve(
+    new StatementStore(
+      simulated.connect(() =>
+        Promise.reject(new Error("Only statement methods are simulated.")),
+      ),
+    ),
+  );
+}
+
 /** `network`, with the People node's statement methods answered by this browser's simulated store. */
 export function simulatedStatements(
   network: Network,
@@ -34,6 +59,7 @@ export function simulatedStatements(
     network: network.genesis.people,
     log,
   });
+  simulated = node;
   log(
     "Kettle Chat demo: People's Statement Store is simulated in this browser; no statement leaves it.",
   );

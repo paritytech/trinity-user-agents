@@ -106,6 +106,9 @@ Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
   over a simulated Statement Store. The developer tools' **Chat** tab (wherever Kettle Chat is) chooses which chat
   products run and which one New chat starts in. See
   [Kettle Chat](docs/contact-chat.md#kettle-chat-dev-server-prototype).
+- **Nova Chat** (wherever the Chat tab is; prototype) talks to the official Nova apps' chat: their requests, acceptance
+  and multi-device route. The host keeps the keys; the worker keeps the conversations. Not yet tested with an app on a
+  phone. See [docs/nova-chat.md](docs/nova-chat.md).
 
 ## Developer tools
 

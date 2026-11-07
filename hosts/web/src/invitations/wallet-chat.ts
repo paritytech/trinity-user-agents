@@ -21,12 +21,18 @@ import {
   type ResolvedWorker,
 } from "../products/worker-manifest.js";
 import type { ReplySuite } from "./binding.js";
-import { sessionChatKeys } from "./chat-keys.js";
+import { sessionChatKeys, type ChatKeys } from "./chat-keys.js";
 import {
   startContactChatHost,
   type ContactChatHost,
 } from "./contact-chat-host.js";
 import { DirectoryContacts } from "./directory-contacts.js";
+import { NovaBoundary } from "../chat/nova-chat/boundary.js";
+import { deriveHardSecret } from "./chat-keys.js";
+import { lookupChatIdentity } from "../platform/chain-directory.js";
+import { startNovaChatHost } from "./nova-chat-host.js";
+import * as sr25519 from "@scure/sr25519";
+import { hexToBytes } from "@parity/truapi/scale";
 import type { AcceptPrompt, SendPrompt } from "./invitation-service.js";
 import type { InvitationObserver } from "./observer.js";
 import type { ConversationAllowance, HostDelivery, Product } from "./ports.js";
@@ -91,6 +97,12 @@ export interface ChatProductSpec {
    * enough.
    */
   allowanceSettled?(claim: StatementAccountClaim): Promise<void>;
+  /**
+   * How it sets up chats. Absent: the host request service
+   * (`host-requests/1`). `nova`: the official Nova apps' own chat requests,
+   * through the host's Nova key boundary (`./nova-chat-host.ts`).
+   */
+  setup?: "nova";
 }
 
 /** Contact Chat, the chat product every session runs. */
@@ -435,6 +447,12 @@ export class WalletChat {
     const self = bytesToHex(keys.chatPublic);
     return this.products().map((spec, index) => {
       const costs = chatCosts(mode, spec.messagesEncrypted);
+      if (spec.setup === "nova")
+        return {
+          workerPath: spec.workerPath,
+          startsChats: index === 0,
+          host: this.startNova(session, spec, contacts, mode, keys),
+        };
       return {
         workerPath: spec.workerPath,
         ...(spec.workerParams === undefined
@@ -503,6 +521,109 @@ export class WalletChat {
       };
     });
   }
+
+  /**
+   * Nova Chat for `session`: the official Nova apps' chat requests, sealed
+   * and opened by the wallet's keys in the host, read and posted on the
+   * network's Statement Store. It needs the network: the local deliveries
+   * carry host-requests only, so it does not run there.
+   */
+  private startNova(
+    session: WalletRequestsSession,
+    spec: ChatProductSpec,
+    contacts: DirectoryContacts,
+    mode: WalletDelivery,
+    keys: ChatKeys,
+  ): ContactChatHost {
+    const { deps } = this;
+    const product = spec.product(session.networkSuffix);
+    const submit = mode === "network";
+    const chatKeyOf = async (account: Uint8Array) =>
+      (await lookupChatIdentity(session.directory, account))?.chatKey ?? null;
+    return startNovaChatHost({
+      product,
+      storageKey: `truapi-web-signing-host:network:${session.network}:nova-chat:${session.walletId}:v1`,
+      boundary: NovaBoundary.fromEntropy(
+        session.entropy,
+        session.networkSuffix,
+        chatKeyOf,
+      ),
+      handles: deps.handles,
+      nameOf: (account) => contacts.nameOf(account),
+      lookupName: async (account) =>
+        (
+          await lookupChatIdentity(
+            session.directory,
+            hexToBytes(account as HexString),
+          ).catch(() => null)
+        )?.name ?? null,
+      onNamesChange: (listener) => deps.names.onChange(listener),
+      blocked: deps.blocked,
+      notifications: deps.notifications,
+      verify: () =>
+        mode === "local" || mode === "local-validate"
+          ? Promise.resolve({
+              reason:
+                "Nova Chat needs the network delivery: the Nova apps read only the network's Statement Store.",
+              again: false,
+            })
+          : ownIdentityProblem(session.directory, keys),
+      openStore: () => session.openStatementStore(),
+      notificationSigner: (kind, requestId, period) => {
+        const secret = deriveHardSecret(session.entropy, [
+          kind,
+          requestId,
+          String(period),
+        ]);
+        return {
+          public: sr25519.getPublicKey(secret),
+          sign: (payload) => sr25519.sign(secret, payload),
+        };
+      },
+      claimNotification: async (account, period) => {
+        const claim = await session.claimNotificationAccount(account, submit);
+        if (claim.period !== period)
+          throw new Error("the day changed while the account was claimed");
+        if (!submit)
+          throw new Error(
+            `claims are only validated in this tab: today's claim would take slot ${claim.seq}.`,
+          );
+        return {
+          line: `notification account ${claim.outcome} for day ${claim.period}, slot ${claim.seq}.`,
+          seq: claim.seq,
+          ...(claim.collection === undefined
+            ? {}
+            : { collection: claim.collection }),
+          ...(claim.blockHash === undefined
+            ? {}
+            : { blockHash: claim.blockHash }),
+        };
+      },
+      ...(spec.allowanceSettled === undefined
+        ? {}
+        : {
+            // The same finality guard as the conversation accounts': a
+            // notification account's allowance is read the same way.
+            notificationSettled: (account, claim) =>
+              spec.allowanceSettled!({
+                account: bytesToHex(account),
+                period: claim.period,
+                outcome: "registered",
+                seq: claim.seq,
+                collection: claim.collection ?? "People",
+                ...(claim.blockHash === undefined
+                  ? {}
+                  : { blockHash: claim.blockHash }),
+              }),
+          }),
+      accounts: conversationAllowance(session, submit, spec.allowanceSettled),
+      confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
+      confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
+      showChat: deps.showChat,
+      onSenders: deps.namedChanged,
+      log: deps.log,
+    });
+  }
 }
 
 /** How the request service's requests and replies travel, whichever product sent them. */
@@ -567,6 +688,16 @@ const CHAT_ACCOUNT_COST =
   "1 Statement Store slot each day you send, for this chat's own account.";
 
 const CANCEL = "Cancel it under Sent in your Inbox.";
+
+/** What Nova Chat spends and exposes, for its prompts. Each request and acceptance is posted once. */
+export const NOVA_COSTS: ChatCosts = {
+  summary: "Uses daily slots · Messages are end-to-end encrypted",
+  request: "1 notification slot, once. It is not posted again on a later day.",
+  reply: "1 notification slot, once, for the acceptance.",
+  chat: CHAT_ACCOUNT_COST,
+  messages:
+    "End-to-end encrypted, as the Nova apps do. Who posts, to which topics, when and how much is public.",
+};
 
 /** What `mode` spends and exposes, or null when it spends nothing. */
 export function chatCosts(
@@ -657,7 +788,7 @@ export function confirmSend(
 }
 
 /** The host's question before an Accept reaches the product, with what it costs. */
-function confirmAccept(
+export function confirmAccept(
   prompt: AcceptPrompt,
   costs: ChatCosts,
 ): Promise<boolean> {

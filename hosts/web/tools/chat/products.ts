@@ -2,6 +2,7 @@ import "./products.css";
 import { ask } from "../../src/app/prompt.js";
 import type { PeopleAccess } from "../statements/actions.js";
 import { finalizedAllowance, kettleChat } from "./kettle.js";
+import { novaChat } from "./nova.js";
 import {
   BAD_RELAY_URL,
   relayUrlOf,
@@ -33,7 +34,11 @@ import {
  */
 
 /** The chat products the tab can run, in the order the tab lists them. */
-export const CHAT_PRODUCTS = ["contact-chat", "kettle-chat"] as const;
+export const CHAT_PRODUCTS = [
+  "contact-chat",
+  "kettle-chat",
+  "nova-chat",
+] as const;
 export type ChatProductKey = (typeof CHAT_PRODUCTS)[number];
 
 type ChoiceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -42,6 +47,8 @@ type ChoiceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const CONTACT_CHAT_KEY = "truapi-web-signing-host:dev:contact-chat";
 /** sessionStorage key: `on` while Kettle Chat runs in this tab. Absent: it does not. */
 const KETTLE_CHAT_KEY = "truapi-web-signing-host:dev:kettle-chat";
+/** sessionStorage key: `on` while Nova Chat runs in this tab. Absent: it does not. */
+const NOVA_CHAT_KEY = "truapi-web-signing-host:dev:nova-chat";
 /**
  * sessionStorage key: the product New chat starts in while both run.
  * Absent: Contact Chat.
@@ -61,17 +68,21 @@ export function chatProductOn(
   storage: ChoiceStorage,
   key: ChatProductKey,
 ): boolean {
-  return key === "contact-chat"
-    ? storage.getItem(CONTACT_CHAT_KEY) !== "off"
-    : storage.getItem(KETTLE_CHAT_KEY) === "on";
+  if (key === "contact-chat")
+    return storage.getItem(CONTACT_CHAT_KEY) !== "off";
+  return (
+    storage.getItem(key === "kettle-chat" ? KETTLE_CHAT_KEY : NOVA_CHAT_KEY) ===
+    "on"
+  );
 }
 
 /** The chat products that run in this tab, the one New chat starts in first. */
 export function chatProductsOn(storage: ChoiceStorage): ChatProductKey[] {
   const on = CHAT_PRODUCTS.filter((key) => chatProductOn(storage, key));
+  const chosen = storage.getItem(NEW_CHATS_KEY);
   const first =
-    storage.getItem(NEW_CHATS_KEY) === "kettle-chat"
-      ? "kettle-chat"
+    chosen === "kettle-chat" || chosen === "nova-chat"
+      ? chosen
       : "contact-chat";
   return on.includes(first)
     ? [first, ...on.filter((key) => key !== first)]
@@ -86,8 +97,11 @@ export function setChatProductOn(
   if (key === "contact-chat") {
     if (on) storage.removeItem(CONTACT_CHAT_KEY);
     else storage.setItem(CONTACT_CHAT_KEY, "off");
-  } else if (on) storage.setItem(KETTLE_CHAT_KEY, "on");
-  else storage.removeItem(KETTLE_CHAT_KEY);
+  } else {
+    const stored = key === "kettle-chat" ? KETTLE_CHAT_KEY : NOVA_CHAT_KEY;
+    if (on) storage.setItem(stored, "on");
+    else storage.removeItem(stored);
+  }
 }
 
 /** New chat starts in `key` while it runs beside another. */
@@ -131,6 +145,7 @@ export function moveDeliveryOff(storage: ChoiceStorage): boolean {
   storage.removeItem(WALLET_DELIVERY_KEY);
   setChatProductOn(storage, "contact-chat", false);
   setChatProductOn(storage, "kettle-chat", false);
+  setChatProductOn(storage, "nova-chat", false);
   return true;
 }
 
@@ -472,7 +487,11 @@ export function startChatModality(deps: {
     panel: deps.panel,
     tab: deps.tab,
     networkSuffix: deps.networkSuffix,
-    specs: { "contact-chat": CONTACT_CHAT, "kettle-chat": kettleChat() },
+    specs: {
+      "contact-chat": CONTACT_CHAT,
+      "kettle-chat": kettleChat(),
+      "nova-chat": novaChat(),
+    },
   });
   return {
     keys,
@@ -481,7 +500,18 @@ export function startChatModality(deps: {
       keys.map((key) =>
         key === "contact-chat"
           ? CONTACT_CHAT
-          : kettleChat(finalizedAllowance(people, deps.log), iroh),
+          : key === "kettle-chat"
+            ? kettleChat(finalizedAllowance(people, deps.log), iroh)
+            : novaChat(
+                finalizedAllowance(people, deps.log, {
+                  product: "Nova Chat",
+                  record: "__novaAllowances",
+                  wording: {
+                    account: "Nova Chat's account",
+                    retry: "it may be tried again",
+                  },
+                }),
+              ),
       ),
     follow: (running) => tab.follow(running),
   };

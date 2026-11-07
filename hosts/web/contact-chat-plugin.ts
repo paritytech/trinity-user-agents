@@ -14,6 +14,7 @@ import {
   KETTLE_WASM,
   KETTLE_WASM_PACKAGE,
 } from "./src/chat/kettle-chat/route.js";
+import { NOVA_CHAT_PATH } from "./src/chat/nova-chat/route.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 
@@ -22,6 +23,8 @@ const ENTRY = "src/chat/contact-chat/worker.ts";
 
 /** Kettle Chat's worker entry module. */
 const KETTLE_ENTRY = "src/chat/kettle-chat/worker.ts";
+/** Nova Chat's worker entry. */
+const NOVA_ENTRY = "src/chat/nova-chat/worker.ts";
 
 /**
  * `1` builds Kettle Chat, and the developer tools' Chat tab that turns it
@@ -189,7 +192,8 @@ function serveWorker(
  *
  * With {@link KETTLE_CHAT_ENV} set to `1`, a build writes Kettle Chat's
  * worker the same way, at {@link KETTLE_CHAT_PATH}, and fails when its
- * WebAssembly is not built. The flag reaches the page as
+ * WebAssembly is not built, and Nova Chat's at {@link NOVA_CHAT_PATH}. The
+ * dev server serves both on request. The flag reaches the page as
  * `__KETTLE_CHAT_BUILD__`.
  */
 export function contactChatWorker(): Plugin {
@@ -210,12 +214,23 @@ export function contactChatWorker(): Plugin {
       server.middlewares.use(
         serveWorker(base, KETTLE_CHAT_PATH, kettleArchive, KETTLE_ENTRY),
       );
+      server.middlewares.use(
+        serveWorker(
+          base,
+          NOVA_CHAT_PATH,
+          () => bundle(false, NOVA_ENTRY).then((code) => pack(code)),
+          NOVA_ENTRY,
+        ),
+      );
     },
     async generateBundle() {
       const workers: [string, Built][] = [
         [CONTACT_CHAT_PATH, pack(await bundle(true))],
       ];
-      if (kettle) workers.push([KETTLE_CHAT_PATH, await kettleArchive(true)]);
+      if (kettle) {
+        workers.push([KETTLE_CHAT_PATH, await kettleArchive(true)]);
+        workers.push([NOVA_CHAT_PATH, pack(await bundle(true, NOVA_ENTRY))]);
+      }
       for (const [path, built] of workers) {
         this.emitFile({
           type: "asset",

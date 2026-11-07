@@ -442,13 +442,14 @@ export async function withoutContactChat(
  */
 export async function useChatProducts(
   page: Page,
-  on: { contact: boolean; kettle: boolean },
-  newChats?: "contact-chat" | "kettle-chat",
+  on: { contact: boolean; kettle: boolean; nova?: boolean },
+  newChats?: "contact-chat" | "kettle-chat" | "nova-chat",
 ): Promise<void> {
   await openTools(page, "chat");
   for (const [key, want] of [
     ["contact-chat", on.contact],
     ["kettle-chat", on.kettle],
+    ["nova-chat", on.nova ?? false],
   ] as const) {
     const box = page.locator(`#chat-product-${key}`);
     if ((await box.isChecked()) === want) continue;

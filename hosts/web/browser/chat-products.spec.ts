@@ -95,7 +95,7 @@ describe("the developer tools' Chat tab", () => {
       expect(await chatTab(page)).toEqual({
         contact: true,
         kettle: false,
-        states: [NOT_RUNNING, "Off · nothing runs"],
+        states: [NOT_RUNNING, "Off · nothing runs", "Off · nothing runs"],
         newChats: {
           options: ["Contact Chat"],
           value: "contact-chat",
@@ -119,7 +119,7 @@ describe("the developer tools' Chat tab", () => {
       expect(await chatTab(page)).toEqual({
         contact: false,
         kettle: true,
-        states: ["Off · nothing runs", NOT_RUNNING],
+        states: ["Off · nothing runs", NOT_RUNNING, "Off · nothing runs"],
         newChats: {
           options: ["Kettle Chat"],
           value: "kettle-chat",

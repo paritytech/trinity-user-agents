@@ -9,6 +9,7 @@ import {
   type DiagnosticsReport,
 } from "./diagnostics.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
+import { isNovaHello } from "../chat/nova-chat/contract.js";
 import { readLoadMessage, type ProductLoadSummary } from "./load-observer.js";
 import {
   readConsoleMessage,
@@ -249,7 +250,10 @@ export async function openProduct(
         return;
       }
     }
-    if (isInvitationsHello(data, event.ports)) {
+    if (
+      isInvitationsHello(data, event.ports) ||
+      isNovaHello(data, event.ports)
+    ) {
       if (onInvitationsPort === undefined) event.ports[0].close();
       else onInvitationsPort(event.ports[0]);
       return;
