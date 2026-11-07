@@ -20,28 +20,23 @@ export interface NetworkConfig {
   tokenDecimals?: number;
 }
 
-/** Role and network implied by a `NetworkConfig.id`. */
+/** Network, and the {@link TestStack} role, implied by a `NetworkConfig.id`. */
 function splitChainId(id: string): {
   network: string;
-  identifier: "AssetHub" | "People" | "Bulletin" | "Relay";
-  stackKey: "assetHub" | "people" | "bulletin" | "relay";
+  role: "assetHub" | "people" | "bulletin" | "relay";
 } {
   const suffixes = [
-    ["-asset-hub", "AssetHub", "assetHub"],
-    ["-people", "People", "people"],
-    ["-bulletin", "Bulletin", "bulletin"],
+    ["-asset-hub", "assetHub"],
+    ["-people", "people"],
+    ["-bulletin", "bulletin"],
   ] as const;
-  for (const [suffix, identifier, configKey] of suffixes) {
+  for (const [suffix, role] of suffixes) {
     if (id.endsWith(suffix)) {
-      return {
-        network: id.slice(0, -suffix.length),
-        identifier,
-        stackKey: configKey,
-      };
+      return { network: id.slice(0, -suffix.length), role };
     }
   }
   // No suffix: the id names the network and the chain is its relay.
-  return { network: id, identifier: "Relay", stackKey: "relay" };
+  return { network: id, role: "relay" };
 }
 
 /**
@@ -81,7 +76,7 @@ export function fromNetworks(
   for (const entry of networks) {
     const split = splitChainId(entry.id);
     testStack.network = split.network || testStack.network;
-    testStack[split.stackKey] = { genesisHash: entry.genesisHash };
+    testStack[split.role] = { genesisHash: entry.genesisHash };
   }
   // Only the People chain carries the statement store, so serving it locally on
   // the hub as well would claim a store where none exists. A suite that declares
@@ -90,7 +85,7 @@ export function fromNetworks(
   // chains and no People among them there is no request this could attach to,
   // and attaching it to a hub would answer statement reads a real hub refuses.
   const peopleChains = networks.filter(
-    (entry) => splitChainId(entry.id).identifier === "People",
+    (entry) => splitChainId(entry.id).role === "people",
   );
   const carried = peopleChains.length > 0 || networks.length === 1;
   // Loud only for the suite that named the store: it asked for something these
@@ -109,9 +104,7 @@ export function fromNetworks(
   const servesStatements = (entry: NetworkConfig): boolean =>
     loopbackStatements !== false &&
     carried &&
-    (peopleChains.length > 0
-      ? splitChainId(entry.id).identifier === "People"
-      : true);
+    (peopleChains.length > 0 ? splitChainId(entry.id).role === "people" : true);
 
   return {
     mock: {

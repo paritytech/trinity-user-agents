@@ -35,9 +35,10 @@ key. Every chain the core uses, the network `getChainInfo` reports, and the TLD
 a signing host derives its reserved identities under come from that
 descriptor. The core refuses a pointer without a key, a descriptor without a
 People or Bulletin chain, and a stack that uses Polkadot's genesis hashes or
-the `dot` TLD unless `allowsReservedValues` is set, which only a Polkadot build
-does. A stack without an Asset Hub resolves no product manifest from dotNS, so
-every cross-product grant not already cached is refused.
+the `dot` TLD unless `allowsReservedValues` is set, which only a Polkadot or
+Polkadot-fork build does. A stack without an Asset Hub resolves no product
+manifest from dotNS, so every cross-product grant not already cached is
+refused.
 
 The test host has no descriptor to bundle, so it passes `testStack` in place of
 `stack`: the network, the TLD and each chain's genesis hash. Only the
