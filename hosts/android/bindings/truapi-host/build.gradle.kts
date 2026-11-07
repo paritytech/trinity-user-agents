@@ -72,7 +72,11 @@ android {
             )
         }
         getByName("test") { java.srcDirs("src/test/kotlin") }
-        getByName("androidTest") { java.srcDirs("src/androidTest/kotlin") }
+        getByName("androidTest") {
+            java.srcDirs("src/androidTest/kotlin")
+            // The core's own signed stack copies, so a test runtime starts on a stack the core verifies.
+            assets.srcDir("$truapiDir/rust/crates/truapi-host-cli/stacks")
+        }
     }
 
     lint {

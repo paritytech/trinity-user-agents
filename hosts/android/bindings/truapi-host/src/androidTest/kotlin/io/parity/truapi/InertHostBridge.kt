@@ -1,6 +1,8 @@
 package io.parity.truapi
 
 import android.content.Context
+import androidx.test.platform.app.InstrumentationRegistry
+import uniffi.truapi.BundledStack
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostRuntimeConfig
@@ -40,9 +42,17 @@ class InertHostBridge(
 /** A runtime config whose core database lives in [databaseDirectory]. */
 fun instrumentedRuntimeConfig(databaseDirectory: String) = HostRuntimeConfig(
     hostName = "Instrumented test host",
-    peopleChainGenesisHash = ByteArray(32) { 0xa2.toByte() },
-    bulletinChainGenesisHash = ByteArray(32) { 0xbb.toByte() },
-    assetHubChainGenesisHash = ByteArray(32) { 0xcc.toByte() },
-    networkSuffix = "paseo",
+    stack = previewnetStack(),
     databaseDirectory = databaseDirectory,
 )
+
+/** Previewnet's signed descriptor and link, packaged into the test APK from the core's copies. */
+fun previewnetStack(): BundledStack {
+    val assets = InstrumentationRegistry.getInstrumentation().context.assets
+    fun asset(name: String) = assets.open(name).use { it.readBytes() }
+    return BundledStack(
+        pointer = asset("previewnet.link").decodeToString().trim(),
+        descriptor = asset("previewnet.json"),
+        allowsReservedValues = false,
+    )
+}
