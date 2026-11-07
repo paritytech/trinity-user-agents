@@ -159,6 +159,9 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
             }
         }
     }
+
+    /// The native runtime opens no host session, so there is no page load to time.
+    func didFinishPageLoad(loaded _: Bool) {}
 }
 
 private extension SPANativeRuntimeInteractor {

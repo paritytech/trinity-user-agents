@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import SDKLogger
 
 public struct ProductResolverFactory {
@@ -12,13 +13,15 @@ public struct ProductResolverFactory {
 
     func makeResolver(
         metadataRepository: ProductMetadataRepositoryProtocol,
-        hostProvider: ProductHostProviding
+        hostProvider: ProductHostProviding,
+        telemetry: HostLoadTelemetry = .disabled
     ) -> ProductResolver {
         ProductResolver(
             metadataRepository: metadataRepository,
             hostProvider: hostProvider,
             logger: logger,
-            screening: screening
+            screening: screening,
+            telemetry: telemetry
         )
     }
 }

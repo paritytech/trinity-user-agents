@@ -3,6 +3,7 @@ import os
 import ChainRegistry
 import Foundation_iOS
 import FoundationExt
+import IssueMonitoring
 import SDKLogger
 
 /// One dedicated node socket per core `chain_connect`; socket deaths are reported, never hidden by reconnects.
@@ -30,6 +31,8 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         weak var eventHandler: TrUAPIChainEventHandling?
         var sockets: [UInt32: ChainSocketProtocol] = [:]
         var connectionIds: [ObjectIdentifier: UInt32] = [:]
+        /// Connections dialled and not yet answered by their first frame.
+        var dials: [UInt32: ChainDial] = [:]
         var nextConnectionId: UInt32 = 1
         /// Grows per chain so a reconnect after a dead node lands on the next one.
         var nodeAttempts: [ChainModel.Id: Int] = [:]
@@ -47,6 +50,8 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
     private let applicationHandler: ApplicationHandlerProtocol
     private let dateProvider: DateProviding
     private let resumePolicy: ResumePolicy
+    private let telemetry: HostLoadTelemetry
+    private let executable: HostExecutableOwner?
     private let logger: SDKLoggerProtocol
     private let state = OSAllocatedUnfairLock(uncheckedState: State())
 
@@ -55,24 +60,32 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         applicationHandler: ApplicationHandlerProtocol,
         dateProvider: DateProviding,
         resumePolicy: ResumePolicy = .default,
+        telemetry: HostLoadTelemetry = .disabled,
+        executable: HostExecutableOwner? = nil,
         logger: SDKLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.applicationHandler = applicationHandler
         self.dateProvider = dateProvider
         self.resumePolicy = resumePolicy
+        self.telemetry = telemetry
+        self.executable = executable
         self.logger = logger
 
         applicationHandler.delegate = self
     }
 
     public func connect(genesisHash: Data) -> UInt32? {
-        guard let socket = makeSocket(for: genesisHash) else {
+        guard
+            let chain = chainRegistry.getChainByGenesis(for: genesisHash.toHex()),
+            let socket = makeSocket(for: chain)
+        else {
             logger.info("[truapi.chain] chain \(genesisHash.toHex()) has no host-managed connection; unsupported")
             return nil
         }
 
         socket.delegate = self
+        let dial = telemetry.now().map { ChainDial(chainId: chain.chainId, genesisHash: genesisHash, startedAt: $0) }
 
         // Registered before open so a close fired during open resolves to this id.
         let connectionId = state.withLockUnchecked { state in
@@ -80,6 +93,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
             state.nextConnectionId += 1
             state.sockets[connectionId] = socket
             state.connectionIds[ObjectIdentifier(socket)] = connectionId
+            state.dials[connectionId] = dial
             return connectionId
         }
 
@@ -98,7 +112,10 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
     }
 
     public func close(connectionId: UInt32) {
-        let socket = state.withLockUnchecked { $0.removeSocket(for: connectionId) }
+        let socket = state.withLockUnchecked { state -> ChainSocketProtocol? in
+            state.dials[connectionId] = nil
+            return state.removeSocket(for: connectionId)
+        }
         socket?.close()
     }
 
@@ -107,6 +124,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
             let sockets = Array(state.sockets.values)
             state.sockets.removeAll()
             state.connectionIds.removeAll()
+            state.dials.removeAll()
             return sockets
         }
 
@@ -127,12 +145,19 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didReceive text: String) {
-        let (connectionId, handler) = state.withLockUnchecked { state in
-            (state.connectionIds[ObjectIdentifier(socket)], state.eventHandler)
+        let receivedAt = telemetry.now()
+        let (connectionId, handler, answeredDial) = state.withLockUnchecked { state in
+            let connectionId = state.connectionIds[ObjectIdentifier(socket)]
+            let answeredDial = receivedAt == nil ? nil : connectionId.flatMap { state.dials.removeValue(forKey: $0) }
+            return (connectionId, state.eventHandler, answeredDial)
         }
 
         guard let connectionId else { return }
         handler?.chainDidReceiveResponse(connectionId: connectionId, json: text)
+
+        if let answeredDial, let receivedAt {
+            report(answeredDial, outcome: .ok, at: receivedAt)
+        }
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didCloseWith reason: ChainSocketCloseReason) {
@@ -147,8 +172,13 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
 
         guard let connectionId else { return }
 
+        let closedAt = telemetry.now()
         logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
         handler?.chainDidClose(connectionId: connectionId)
+
+        if let closedAt, let dial = state.withLockUnchecked({ $0.dials.removeValue(forKey: connectionId) }) {
+            report(dial, outcome: .error, at: closedAt)
+        }
     }
 }
 
@@ -190,11 +220,23 @@ extension TrUAPIV2SpecConnectionPool {
 }
 
 private extension TrUAPIV2SpecConnectionPool {
-    func makeSocket(for genesisHash: Data) -> ChainSocketProtocol? {
-        guard let chain = chainRegistry.getChainByGenesis(for: genesisHash.toHex()) else { return nil }
-
+    func makeSocket(for chain: ChainModel) -> ChainSocketProtocol? {
         let attempt = state.withLockUnchecked { $0.takeNodeAttempt(for: chain.chainId) }
         return chainRegistry.makeChainSocket(for: chain.chainId, attempt: attempt)
+    }
+
+    /// Reports a connection's first frame, or its close before one; later frames find no dial.
+    func report(_ dial: ChainDial, outcome: HostEventOutcome, at answeredAt: Int) {
+        telemetry.record { origin, now in
+            HostLoadEvent.rpcConnected(
+                chain: TrUAPISupportedChains.telemetryLabel(for: dial.chainId) ?? dial.genesisHash.toHex(),
+                executable: executable,
+                outcome: outcome,
+                durationMilliseconds: answeredAt - dial.startedAt,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 
     // Date reads are async, so each event runs after the previous one to keep background before foreground.
@@ -242,6 +284,12 @@ private extension TrUAPIV2SpecConnectionPool {
             sockets.forEach { $0.probe(timeout: resumePolicy.probeTimeout) }
         }
     }
+}
+
+private struct ChainDial {
+    let chainId: ChainModel.Id
+    let genesisHash: Data
+    let startedAt: Int
 }
 
 private extension TrUAPIV2SpecConnectionPool.State {

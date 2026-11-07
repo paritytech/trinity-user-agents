@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import IssueMonitoring
 import os
 import FoundationExt
 import Revive
@@ -283,6 +284,58 @@ final class ProductContentLoaderTests {
         #expect(phases.recorded.isEmpty)
     }
 
+    /// A cold open reads the manifest and the archive once; the open's later reads of what it just applied
+    /// add nothing under the same session.
+    @Test func aSessionReportsOneResolveAndOneFetch() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let environment = try Environment(self, telemetry: telemetry)
+        let session = UUID()
+
+        try await telemetry.withContext(session: session, trigger: .open) {
+            _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+            _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+            _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+        }
+
+        let opens = recorder.events.filter { $0.tags["load.trigger"] == "open" }
+        #expect(opens.map(\.name) == ["host.product.resolved", "host.bulletin.fetch"])
+        #expect(opens.map { $0.tags["outcome"] } == ["ok", "ok"])
+        #expect(opens.allSatisfy { $0.tags["host.session_id"] == session.uuidString.lowercased() })
+    }
+
+    /// A warm open in a new session reads no chain, and says so rather than staying invisible.
+    @Test func aWarmOpenIsACacheHitInItsOwnSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let environment = try Environment(self, telemetry: telemetry)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+
+        try await telemetry.withContext(session: UUID(), trigger: .open) {
+            _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+        }
+
+        let opens = recorder.events.filter { $0.tags["load.trigger"] == "open" }
+        #expect(opens.map(\.name) == ["host.product.resolved", "host.bulletin.fetch"])
+        #expect(opens.map { $0.tags["outcome"] } == ["cache_hit", "cache_hit"])
+    }
+
+    /// A refresh is the host checking for a newer build, not the page that happened to start it.
+    @Test func aRefreshReportsAsARefreshWithNoSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let environment = try Environment(self, telemetry: telemetry)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+
+        await telemetry.withContext(session: UUID(), trigger: .open) {
+            _ = await environment.loader.refresh(productId)
+        }
+
+        #expect(!recorder.events.isEmpty)
+        #expect(recorder.events.allSatisfy { $0.tags["load.trigger"] == "refresh" })
+        #expect(recorder.events.allSatisfy { $0.tags["host.session_id"] == nil })
+    }
+
     @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
         let environment = try Environment(self)
         let first = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
@@ -524,7 +577,8 @@ private extension ProductContentLoaderTests {
             expiringBackgroundRuns: Int = 0,
             reporter: RecordingIssueReporter = RecordingIssueReporter(),
             dates: [Date] = [Date(timeIntervalSince1970: 0)],
-            now: Date = Date()
+            now: Date = Date(),
+            telemetry: HostLoadTelemetry = .disabled
         ) throws {
             fetcher = StubCarFetcher(failures: fetchFailures)
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
@@ -537,7 +591,8 @@ private extension ProductContentLoaderTests {
                     carFetcher: fetcher,
                     storage: localStorage,
                     hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
-                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
+                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger()),
+                    telemetry: telemetry
                 ),
                 cache: ProductContentCache(
                     store: ProductManifestFileStore(directory: suite.manifestsDirectory),
@@ -557,6 +612,7 @@ private extension ProductContentLoaderTests {
                     refreshPolicy: .attempts(1),
                     clock: suite.clock
                 ),
+                telemetry: telemetry,
                 logger: SilentLogger()
             )
         }

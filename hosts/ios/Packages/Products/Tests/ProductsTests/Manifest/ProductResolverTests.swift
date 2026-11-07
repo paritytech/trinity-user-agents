@@ -1,5 +1,7 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import os
+import IssueMonitoring
 import Testing
 @testable import Products
 
@@ -179,15 +181,202 @@ struct ProductResolverTests {
 
         #expect(resolved.displayName == "HackM3")
     }
+
+    /// One `product.resolved` per product and session: the chain read, and nothing for the answers the
+    /// resolver serves from memory after it.
+    @Test func aSessionReportsTheChainReadOnly() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let session = UUID()
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
+
+        try await telemetry.withContext(session: session, trigger: .open) {
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok"])
+        let event = try #require(recorder.events.first)
+        #expect(event.tags["product.id"] == "hackm3.dot")
+        #expect(event.tags["load.trigger"] == "open")
+        #expect(event.durationMilliseconds == 10)
+        #expect(event.extras["event.monotonic_ms"] == .integer(20))
+        #expect(event.tags["host.session_id"] == session.uuidString.lowercased())
+    }
+
+    /// Outside a session the memo is a cache hit, reported once per trigger however often it is asked.
+    @Test func aPrewarmReportsTheChainReadAndTheFirstCacheHit() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
+
+        try await telemetry.withContext(session: nil, trigger: .prewarm) {
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["ok", "cache_hit"])
+    }
+
+    /// A refresh or prewarm that lands while a page is open is not that page's load.
+    @Test func aRefreshInsideAnOpenCarriesNoSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: telemetry)
+
+        try await telemetry.withContext(session: UUID(), trigger: .open) {
+            try await telemetry.withContext(session: nil, trigger: .refresh) {
+                _ = try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+
+        #expect(recorder.events.map { $0.tags["load.trigger"] } == ["refresh"])
+        #expect(recorder.events.first?.tags["host.session_id"] == nil)
+    }
+
+    @Test func aLookupOutsideAnyLoadReportsNothing() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let resolver = makeResolver(StubProductMetadataRepository(), telemetry: .recording(into: recorder))
+
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
+
+        #expect(recorder.events.isEmpty)
+    }
+
+    @Test func reportsAFailedChainReadAsAnError() async throws {
+        let stub = StubProductMetadataRepository()
+        stub.readError = URLError(.notConnectedToInternet)
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(stub, telemetry: telemetry)
+
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map(\.name) == ["host.product.resolved"])
+        #expect(recorder.events.first?.tags["outcome"] == "error")
+        #expect(recorder.events.first?.tags["host.session_id"] == nil)
+    }
+
+    @Test func reportsANetworkThatCannotBeReadAsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(StubProductMetadataRepository(), tld: FailingTldProvider(), telemetry: telemetry)
+
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
+        #expect(recorder.events.first?.tags["product.id"] == "hackm3.dot")
+    }
+
+    /// A tap that joins a prewarm's read waited on it too, so its session gets its own event.
+    @Test func aCallerJoiningAnotherLoadsReadReportsItsOwnWait() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let repository = GatedMetadataRepository()
+        let resolver = ProductResolver(
+            metadataRepository: repository,
+            hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
+            logger: SilentLogger(),
+            screening: .passingThrough,
+            telemetry: telemetry
+        )
+        let session = UUID()
+
+        let prewarm = Task {
+            try await telemetry.withContext(session: nil, trigger: .prewarm) {
+                try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+        await repository.firstReadStarted()
+        let open = Task {
+            try await telemetry.withContext(session: session, trigger: .open) {
+                try await resolver.resolve(ProductId("hackm3.dot"))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        repository.release()
+        _ = try await (prewarm.value, open.value)
+
+        let prewarmed = recorder.events.first { $0.tags["load.trigger"] == "prewarm" }
+        let opened = recorder.events.first { $0.tags["load.trigger"] == "open" }
+        #expect(recorder.events.count == 2)
+        #expect(prewarmed?.tags["outcome"] == "ok")
+        #expect(opened?.tags["outcome"] == "ok")
+        #expect(opened?.tags["host.session_id"] == session.uuidString.lowercased())
+    }
+
+    @Test func aCancelledReadReportsNothing() async throws {
+        let stub = StubProductMetadataRepository()
+        stub.readError = CancellationError()
+        let recorder = RecordingHostEventRecorder()
+        let telemetry = HostLoadTelemetry.recording(into: recorder)
+        let resolver = makeResolver(stub, telemetry: telemetry)
+
+        await telemetry.withContext(session: nil, trigger: .open) {
+            _ = try? await resolver.resolve(ProductId("hackm3.dot"))
+        }
+
+        #expect(recorder.events.isEmpty)
+    }
 }
 
-private func makeResolver(_ stub: StubProductMetadataRepository) -> ProductResolver {
+private func makeResolver(
+    _ stub: StubProductMetadataRepository,
+    tld: DotNsTldProviding = StubTldProvider(),
+    telemetry: HostLoadTelemetry = .disabled
+) -> ProductResolver {
     ProductResolver(
         metadataRepository: stub,
-        hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
+        hostProvider: ProductHostFactory(tldProvider: tld),
         logger: SilentLogger(),
-        screening: .passingThrough
+        screening: .passingThrough,
+        telemetry: telemetry
     )
+}
+
+/// Holds every read until released, so a second caller can join the first one's read.
+private final class GatedMetadataRepository: ProductMetadataRepositoryProtocol, @unchecked Sendable {
+    private struct Gate {
+        var released = false
+        var waiting: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let started = AsyncStream<Void>.makeStream()
+    private let gate = OSAllocatedUnfairLock(initialState: Gate())
+
+    func firstReadStarted() async {
+        for await _ in started.stream {
+            return
+        }
+    }
+
+    func release() {
+        let waiting = gate.withLock { gate in
+            gate.released = true
+            defer { gate.waiting = [] }
+            return gate.waiting
+        }
+        waiting.forEach { $0.resume() }
+    }
+
+    func fetchMetadata(name _: String, key _: String) async throws -> String? {
+        started.continuation.yield(())
+        await withCheckedContinuation { continuation in
+            let released = gate.withLock { gate in
+                if !gate.released { gate.waiting.append(continuation) }
+                return gate.released
+            }
+            if released { continuation.resume() }
+        }
+        return nil
+    }
 }
 
 private enum Fixtures {

@@ -19,6 +19,7 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
 
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
     private var terminationHandler: (@Sendable () -> Void)?
+    private var webViewCreatedHandler: (@Sendable () -> Void)?
 
     private let logger: SDKLoggerProtocol
     private let settings: WKWebViewJSEngineSettings
@@ -51,19 +52,17 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
     }
 }
 
+@MainActor
 private extension WKWebViewJSEngine {
-    @MainActor
     func performGetState() -> JSEngineState {
         state
     }
 
-    @MainActor
     func performDestroy() {
         state = .destroyed
         cleanup()
     }
 
-    @MainActor
     func performRegisterFunction(name: String, handler: @escaping JSNativeHandler) {
         let alreadyRegistered = messageHandlers[name] != nil
 
@@ -85,7 +84,6 @@ private extension WKWebViewJSEngine {
         contentController?.add(self, name: name)
     }
 
-    @MainActor
     @discardableResult private func performEvaluation(_ script: String) async throws -> Any? {
         guard state == .ready, let webView else {
             throw JSEngineError.notReady
@@ -94,7 +92,6 @@ private extension WKWebViewJSEngine {
         return try await webView.evaluateJavaScript(script)
     }
 
-    @MainActor
     private func setupWebView(scripts: [JSEngineScript]) {
         cleanup()
 
@@ -143,6 +140,7 @@ private extension WKWebViewJSEngine {
             frame: CGRect(x: -1, y: -1, width: 1, height: 1),
             configuration: config
         )
+        webViewCreatedHandler?()
         webView.navigationDelegate = self
         webView.alpha = 0
         webView.isUserInteractionEnabled = false
@@ -161,7 +159,6 @@ private extension WKWebViewJSEngine {
         webView.loadHTMLString(Self.htmlTemplate, baseURL: engineBaseUrl)
     }
 
-    @MainActor
     private func attachToHostWindow(webView: WKWebView) {
         guard let hostWindow = hostWindowProvider() else {
             logger.warning(
@@ -173,7 +170,6 @@ private extension WKWebViewJSEngine {
         hostWindow.addSubview(webView)
     }
 
-    @MainActor
     private func cleanup() {
         contentController?.removeAllScriptMessageHandlers()
         webView?.navigationDelegate = nil
@@ -183,7 +179,6 @@ private extension WKWebViewJSEngine {
         webView = nil
     }
 
-    @MainActor
     private func completeInitialization(error: Error? = nil) {
         guard let continuation = initContinuation else { return }
         initContinuation = nil
@@ -410,6 +405,14 @@ public enum JSEngineError: Error, LocalizedError {
             "Failed to load ES module script"
         case .processTerminated:
             "WebView process terminated"
+        }
+    }
+}
+
+extension WKWebViewJSEngine: JSEngineWebViewCreationReporting {
+    public func onWebViewCreated(_ handler: @escaping @Sendable () -> Void) async {
+        await MainActor.run {
+            self.webViewCreatedHandler = handler
         }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -326,6 +327,67 @@ struct TrUAPIWorkerManagerTests {
 
         #expect(manager.currentExecution(of: stalledProductId) == nil)
     }
+
+    /// Each activation gets its own host session, held from its boot until it stops, and the boot is
+    /// reported with the phases it went through.
+    @Test
+    func aWorkerThatComesUpReportsItsBootUnderItsOwnSession() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let manager = makeManager(builder: StubWorkerBuilder(), telemetry: HostLoadTelemetry(recorder: recorder))
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        try await recorder.waitForEvents(count: 1)
+
+        let boot = try #require(recorder.events.first)
+        let session = try #require(manager.hostSessionId(of: gameProductId))
+        #expect(boot.name == "host.worker.boot")
+        #expect(boot.tags["outcome"] == "ok")
+        #expect(boot.tags["product.id"] == "game.paseo")
+        #expect(boot.tags["host.session_id"] == session.uuidString.lowercased())
+        #expect(boot.extras["webview_create_ms"] != nil)
+        #expect(boot.extras["blank_ready_ms"] != nil)
+        #expect(boot.extras["execution_open_ms"] != nil)
+
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        try await noExecution(of: gameProductId, in: manager)
+        #expect(manager.hostSessionId(of: gameProductId) == nil)
+    }
+
+    @Test
+    func aProductThatPublishesNoWorkerReportsNoWorker() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let builder = StubWorkerBuilder(cannotBuild: true)
+        let manager = makeManager(builder: builder, telemetry: HostLoadTelemetry(recorder: recorder))
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await recorder.waitForEvents(count: 1)
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["no_worker"])
+    }
+
+    @Test
+    func aWorkerWhoseEngineFailsReportsAnError() async throws {
+        let recorder = RecordingHostEventRecorder()
+        let builder = StubWorkerBuilder(engineFails: true)
+        let manager = makeManager(builder: builder, telemetry: HostLoadTelemetry(recorder: recorder))
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await recorder.waitForEvents(count: 1)
+
+        #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
+        #expect(recorder.events.first?.extras["blank_ready_ms"] == nil)
+    }
+
+    @Test
+    func aDisabledTelemetryStartsNoSession() async throws {
+        let manager = makeManager(builder: StubWorkerBuilder())
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+
+        #expect(manager.hostSessionId(of: gameProductId) == nil)
+    }
 }
 
 // MARK: - Fixtures
@@ -366,12 +428,14 @@ private func makeManager(
     builder: any TrUAPIWorkerBuilding,
     references: StubWorkerReferences = StubWorkerReferences(),
     startupWindow: Duration = .seconds(30),
+    telemetry: HostLoadTelemetry = .disabled,
     logger: MockLogger = MockLogger()
 ) -> TrUAPIWorkerManager {
     TrUAPIWorkerManager(
         builder: builder,
         references: { references },
         startupWindow: startupWindow,
+        telemetry: telemetry,
         logger: logger
     )
 }

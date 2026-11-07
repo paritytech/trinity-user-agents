@@ -4,6 +4,7 @@ import AsyncExtensions
 import BulletinChain
 import ChainRegistry
 import DesignSystem
+import IssueMonitoring
 import Products
 import TrUAPIHost
 
@@ -132,6 +133,7 @@ final class ProductPocketService: @unchecked Sendable {
         gameReminders: any ProductGameReminderScheduling,
         themeManager: any ThemeManagerProtocol
     ) {
+        let telemetry = flowState.telemetry
         let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
                 environment: { [weak runtimeProvider, logger] in
@@ -145,7 +147,8 @@ final class ProductPocketService: @unchecked Sendable {
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
                         themeManager: themeManager,
-                        logger: logger
+                        logger: logger,
+                        telemetry: telemetry
                     )
                 },
                 contentLoader: flowState.contentLoader,
@@ -161,6 +164,7 @@ final class ProductPocketService: @unchecked Sendable {
             // A worker the core starts on demand, such as a funding provider,
             // has no screen, and its permission prompts present from the app's.
             presentationFallback: { [weak runtimeProvider] in runtimeProvider?.presentationView },
+            telemetry: telemetry,
             logger: logger
         )
 
@@ -169,6 +173,7 @@ final class ProductPocketService: @unchecked Sendable {
         let handlers = PocketHandlers(
             workers: manager,
             published: PublishedPocketCards.makeDefault(products: flowState.productResolver),
+            telemetry: telemetry,
             logger: logger
         )
 
@@ -176,6 +181,7 @@ final class ProductPocketService: @unchecked Sendable {
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
                 streams: handlers,
+                telemetry: telemetry,
                 logger: logger
             ),
             products: flowState.productResolver,

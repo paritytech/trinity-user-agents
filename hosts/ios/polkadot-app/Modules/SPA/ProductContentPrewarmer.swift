@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Foundation_iOS
 import Products
 import ChainRegistry
@@ -71,8 +72,12 @@ private extension ProductContentPrewarmer {
 
         let domain = host.toDotDomain()
 
+        let telemetry = flowState.telemetry
+
         do {
-            _ = try await flowState.contentLoader.open(domain, kind: .app, policy: .attempts(3))
+            _ = try await telemetry.withContext(session: nil, trigger: .prewarm) {
+                try await flowState.contentLoader.open(domain, kind: .app, policy: .attempts(3))
+            }
             logger.debug("Product prewarm: warmed \(domain)")
         } catch {
             logger.error("Product prewarm: failed to warm \(domain): \(error)")

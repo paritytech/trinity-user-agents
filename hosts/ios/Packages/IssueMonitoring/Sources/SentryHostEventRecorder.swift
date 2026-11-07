@@ -13,6 +13,15 @@
             sentryEvent.extra = event.extras.mapValues(\.sentryValue)
 
             SentrySDK.capture(event: sentryEvent)
+
+            if let duration = event.durationMilliseconds {
+                SentrySDK.metrics.distribution(
+                    key: event.name,
+                    value: Double(duration),
+                    unit: .millisecond,
+                    attributes: event.tags.filter { $0.key != "host.session_id" }
+                )
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import IssueMonitoring
 import Products
 
 /// Warms the archive a host-placed card opens, before the user presses it.
@@ -20,9 +21,14 @@ final class PocketPrewarmer {
     init(
         products: any ProductResolving,
         dotNsResolver: any DotNsResolverProtocol,
+        telemetry: HostLoadTelemetry = .disabled,
         logger: LoggerProtocol = Logger.shared
     ) {
-        warmer = ProductArchiveWarmer(products: products, dotNsResolver: dotNsResolver)
+        warmer = ProductArchiveWarmer(
+            products: products,
+            dotNsResolver: dotNsResolver,
+            telemetry: telemetry
+        )
         self.logger = logger
     }
 

@@ -4,6 +4,7 @@ import AsyncExtensions
 import BackgroundExecution
 import Foundation
 import FoundationExt
+import IssueMonitoring
 import SDKLogger
 import StructuredConcurrency
 
@@ -54,6 +55,7 @@ public actor ProductContentLoader {
     private let cache: ProductContentCaching
     private let environment: Environment
     private let timing: Timing
+    private let telemetry: HostLoadTelemetry
     private let logger: SDKLoggerProtocol
     private let updatesSubject = AsyncPassthroughSubject<ExecutableRelease>()
 
@@ -64,12 +66,14 @@ public actor ProductContentLoader {
         cache: ProductContentCaching,
         environment: Environment,
         timing: Timing = Timing(),
+        telemetry: HostLoadTelemetry = .disabled,
         logger: SDKLoggerProtocol
     ) {
         self.fetcher = fetcher
         self.cache = cache
         self.environment = environment
         self.timing = timing
+        self.telemetry = telemetry
         self.logger = logger
     }
 }
@@ -81,7 +85,10 @@ extension ProductContentLoader: ProductContentLoading {
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
+        let cacheReadStartedAt = telemetry.loadStepStart()
+
         if let cached = await cachedContent(productId, kind: kind) {
+            reportCacheHit(of: productId, archive: try? cached.contentId, startedAt: cacheReadStartedAt)
             scheduleRefresh(productId)
             return cached
         }
@@ -110,7 +117,10 @@ extension ProductContentLoader: ProductContentLoading {
     }
 
     public func openWorker(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ResolvedProduct {
+        let cacheReadStartedAt = telemetry.loadStepStart()
+
         if let cached = try? await cache.manifest(productId) {
+            reportCacheHit(of: productId, archive: nil, startedAt: cacheReadStartedAt)
             await stageWorkerIfMissing(of: cached, policy: policy)
             scheduleRefresh(productId)
             return cached.product
@@ -131,7 +141,11 @@ extension ProductContentLoader: ProductContentLoading {
             return await running.value
         }
 
-        let task = Task { await performRefresh(productId) }
+        let task = Task {
+            await telemetry.withContext(session: nil, trigger: .refresh) {
+                await performRefresh(productId)
+            }
+        }
         refreshTasks[productId] = task
         let updates = await task.value
         refreshTasks[productId] = nil
@@ -169,6 +183,41 @@ private extension ProductManifest {
 }
 
 private extension ProductContentLoader {
+    func reportCacheHit(of productId: ProductId, archive contentId: ProductId?, startedAt: Int?) {
+        guard let startedAt, let context = telemetry.context else { return }
+
+        if telemetry.shouldReport("host.product.resolved", productID: productId.rawValue, outcome: .cacheHit) {
+            telemetry.record { origin, now in
+                .productResolved(
+                    productID: productId.rawValue,
+                    outcome: .cacheHit,
+                    trigger: context.trigger,
+                    durationMilliseconds: now - startedAt,
+                    hostSessionID: context.sessionID,
+                    origin: origin,
+                    monotonicMilliseconds: now
+                )
+            }
+        }
+
+        if let contentId,
+           telemetry.shouldReport("host.bulletin.fetch", productID: contentId.rawValue, outcome: .cacheHit) {
+            telemetry.record { origin, now in
+                .bulletinFetch(
+                    domain: contentId.rawValue,
+                    outcome: .cacheHit,
+                    trigger: context.trigger,
+                    durationMilliseconds: now - startedAt,
+                    contentHashMilliseconds: nil,
+                    bytes: nil,
+                    hostSessionID: context.sessionID,
+                    origin: origin,
+                    monotonicMilliseconds: now
+                )
+            }
+        }
+    }
+
     func cachedContent(_ productId: ProductId, kind: ExecutableKind) async -> ProductContent? {
         guard
             let manifest = try? await cache.manifest(productId),

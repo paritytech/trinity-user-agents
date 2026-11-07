@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Foundation
+import IssueMonitoring
 import Products
 import Testing
 import UIKit
@@ -28,6 +29,31 @@ struct PocketCardHostsTests {
 
     /// A page is loaded with the params of the link that opened it, so a link
     /// with other params, or a tap with none, has to load the page again.
+    /// A tap that reuses the held page reports through the tap that opened it, which knows its session.
+    @Test
+    func keepsTheTapThatOpenedThePageItHolds() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+        let opening = SPAOpenTap(HostOpenTap(
+            source: .pocketCard,
+            openedAtEpochMilliseconds: 0,
+            monotonicMilliseconds: 0
+        ))
+
+        _ = hosts.product(for: loyalty, openTap: opening, make: factory.make)
+        let reused = hosts.product(
+            for: loyalty,
+            openTap: SPAOpenTap(HostOpenTap(
+                source: .pocketCard,
+                openedAtEpochMilliseconds: 1,
+                monotonicMilliseconds: 1
+            )),
+            make: factory.make
+        )
+
+        #expect(reused?.openTap === opening)
+    }
+
     @Test
     func reusesAPageOnlyForTheParamsItWasOpenedWith() {
         let hosts = PocketCardHosts()

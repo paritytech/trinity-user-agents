@@ -8,13 +8,22 @@ import SubstrateSdk
 /// to its genesis hash. Chains the registry cannot resolve are omitted so the
 /// set matches exactly what `chainConnect` accepts.
 enum TrUAPISupportedChains {
-    static func make(chainRegistry: ChainRegistryProtocol) -> HostChainSet {
-        let roles: [(identifier: ChainIdentifier, chainId: ChainModel.Id)] = [
-            (.people, AppConfig.Chains.peopleChain),
-            (.bulletin, AppConfig.Chains.bulletInChain),
-            (.assetHub, AppConfig.Chains.assethubChain)
-        ]
+    private struct Role {
+        let identifier: ChainIdentifier
+        let chainId: ChainModel.Id
+        /// How host telemetry names the chain, as the Android host does.
+        let telemetryLabel: String
+    }
 
+    private static var roles: [Role] {
+        [
+            Role(identifier: .people, chainId: AppConfig.Chains.peopleChain, telemetryLabel: "people"),
+            Role(identifier: .bulletin, chainId: AppConfig.Chains.bulletInChain, telemetryLabel: "bulletin"),
+            Role(identifier: .assetHub, chainId: AppConfig.Chains.assethubChain, telemetryLabel: "asset_hub")
+        ]
+    }
+
+    static func make(chainRegistry: ChainRegistryProtocol) -> HostChainSet {
         let chains = roles.compactMap { role -> HostChainEntry? in
             guard
                 let chain = chainRegistry.getChain(for: role.chainId),
@@ -27,6 +36,10 @@ enum TrUAPISupportedChains {
         }
 
         return HostChainSet(network: network, chains: chains)
+    }
+
+    static func telemetryLabel(for chainId: ChainModel.Id) -> String? {
+        roles.first { $0.chainId == chainId }?.telemetryLabel
     }
 
     private static var network: String {

@@ -43,6 +43,17 @@ protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     func start(with engine: JSEngineProtocol) async throws -> URL
     func useLatestBuild() async throws
     func servedBuild() async -> DotNsResolvedContent?
+    /// Runs `operation` as part of this page opening, so the loads it makes report under the page's session.
+    func asPageOpen<R>(_ operation: () async throws -> R) async rethrows -> R
+
+    /// The open failed before the page could load.
+    func failedToOpen() async
+
+    /// The clock a page load is timed on, read where WebKit reports it; nil when nothing is reported.
+    func pageLoadTimestamp() -> Int?
+
+    /// The page WebKit finished loading at `finishedAt`, or `loaded` false when its load failed.
+    func didFinishPageLoad(loaded: Bool, at finishedAt: Int) async
 }
 
 /// One scripts protocol per surface (see `ChatScriptsMaking` in the Products

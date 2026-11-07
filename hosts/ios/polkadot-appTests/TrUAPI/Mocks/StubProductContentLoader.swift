@@ -2,6 +2,7 @@ import struct TrUAPIHost.ProductId
 import enum TrUAPIHost.ExecutableKind
 import AsyncExtensions
 import Foundation
+import IssueMonitoring
 import os
 import Products
 @testable import polkadot_app
@@ -9,6 +10,8 @@ import Products
 final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable {
     private struct State {
         var openedIds: [ProductId] = []
+        var openContexts: [HostLoadContext?] = []
+        var openFailure: Error?
         var openedWorkerIds: [ProductId] = []
         var refreshedIds: [ProductId] = []
         var appliedUpdates: [ExecutableRelease] = []
@@ -25,16 +28,24 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private let updateStream = AsyncStream<ExecutableRelease>.makeStream()
 
     private let product: ResolvedProduct?
+    /// A disabled telemetry reads no context, so the reader needs a recording one; nothing is recorded through it.
+    private static let contextReader = HostLoadTelemetry(recorder: RecordingHostEventRecorder())
 
     init(product: ResolvedProduct? = nil) {
         self.product = product
     }
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
+    /// The load context each `open` ran in.
+    var openContexts: [HostLoadContext?] { state.withLock { $0.openContexts } }
     var openedWorkerIds: [ProductId] { state.withLock { $0.openedWorkerIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
     var appliedUpdates: [ExecutableRelease] { state.withLock { $0.appliedUpdates } }
     var keptHashesOnRemoval: [Set<String>] { state.withLock { $0.keptHashesOnRemoval } }
+
+    func failOpens(with error: Error) {
+        state.withLock { $0.openFailure = error }
+    }
 
     func simulate(appliedContentHash: String) {
         state.withLock { $0.contentHash = appliedContentHash }
@@ -64,10 +75,13 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         policy _: ProductLoadPolicy,
         onPhase _: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
-        let contentHash = state.withLock { state in
+        let context = Self.contextReader.context
+        let (contentHash, failure) = state.withLock { state in
             state.openedIds.append(productId)
-            return state.contentHash
+            state.openContexts.append(context)
+            return (state.contentHash, state.openFailure)
         }
+        if let failure { throw failure }
 
         let resolved = product ?? .legacy(id: productId)
         let archive = try DotNsResolvedContent(

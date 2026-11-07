@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKit
 
@@ -15,6 +16,10 @@ struct PocketCardOpening {
     let pocket: ProductPocketService
 
     func open(_ card: PocketCardViewModel, pageQuery: String = "") {
+        open(card, pageQuery: pageQuery, tap: telemetry.beginOpen(source: .pocketCard))
+    }
+
+    private func open(_ card: PocketCardViewModel, pageQuery: String, tap: HostOpenTap?) {
         guard
             let url = card.key.launchUrl(pageQuery: pageQuery),
             let page = flowState.hostProvider.page(url: url)
@@ -24,26 +29,46 @@ struct PocketCardOpening {
             // A second screen would take the open card's page and leave it blank.
             guard !pocket.cardHosts.isOnDisplay(card.key) else {
                 let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                // Not a tap that shows anything: the card is already on screen, at most loading a new page.
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
                 }
                 return
             }
 
-            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
-                makeView(for: card, page: page, pageQuery: pageQuery)
-            }) else { return }
+            var built = false
+            let openTap = tap.map(SPAOpenTap.init)
+            guard let product = pocket.cardHosts.product(
+                for: card.key,
+                pageQuery: pageQuery,
+                openTap: openTap,
+                make: { _ in
+                    built = true
+                    return makeView(for: card, page: page, pageQuery: pageQuery, openTap: openTap)
+                }
+            ) else { return }
+
+            let reused = !built
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
             PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
                 product.surface.claim(screen)
+
+                if reused {
+                    PocketCardTapReporter(telemetry: telemetry).reportReused(
+                        tap,
+                        productId: card.key.productId,
+                        hostSessionId: product.openTap?.pageSession
+                    )
+                }
             }
 
             Task { [weak screen] in
                 let shown = await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
-                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver),
+                    telemetry: telemetry
                 )
                 screen?.applyOpeningFace(shown: shown)
             }
@@ -53,6 +78,7 @@ struct PocketCardOpening {
     /// A link may name a card the Pocket does not hold, which is the one case
     /// the user is told about rather than silently taken into the product.
     func open(link: PocketDeeplink) {
+        let tap = telemetry.beginOpen(source: .deeplink)
         let key = PocketCardKey(productId: link.productHost, cardId: link.cardId)
 
         Task { @MainActor in
@@ -61,16 +87,21 @@ struct PocketCardOpening {
                 return
             }
 
-            open(card, pageQuery: link.pageQuery)
+            open(card, pageQuery: link.pageQuery, tap: tap)
         }
     }
 }
 
 private extension PocketCardOpening {
+    var telemetry: HostLoadTelemetry {
+        flowState.telemetry
+    }
+
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
-        pageQuery: String
+        pageQuery: String,
+        openTap: SPAOpenTap?
     ) -> SPAViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
@@ -78,7 +109,8 @@ private extension PocketCardOpening {
             isRootScreen: false,
             showMoreButton: false,
             page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            openTap: openTap
         )
 
         // A page loaded by its address goes to the Rust runtime on its own.

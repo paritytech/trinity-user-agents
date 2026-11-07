@@ -21,6 +21,8 @@ final class PocketCardHosts {
         let pageQuery: String
         let view: SPAViewProtocol
         let surface: PocketCardSurface
+        /// The tap that opened it, which knows the session its page runs under now.
+        let openTap: SPAOpenTap?
     }
 
     private var held: CardProduct?
@@ -30,6 +32,7 @@ final class PocketCardHosts {
     func product(
         for key: PocketCardKey,
         pageQuery: String = "",
+        openTap: SPAOpenTap? = nil,
         make: (PocketCardSurface) -> SPAViewProtocol?
     ) -> CardProduct? {
         if let held, held.key == key, held.pageQuery == pageQuery { return held }
@@ -39,7 +42,13 @@ final class PocketCardHosts {
         let surface = PocketCardSurface()
         guard let view = make(surface) else { return nil }
 
-        let product = CardProduct(key: key, pageQuery: pageQuery, view: view, surface: surface)
+        let product = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: view,
+            surface: surface,
+            openTap: openTap
+        )
         held = product
         return product
     }
@@ -50,7 +59,13 @@ final class PocketCardHosts {
         guard let held, held.key == key, held.pageQuery != pageQuery else { return }
 
         load(held.view)
-        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view, surface: held.surface)
+        self.held = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: held.view,
+            surface: held.surface,
+            openTap: held.openTap
+        )
     }
 
     func isOnDisplay(_ key: PocketCardKey) -> Bool {

@@ -145,6 +145,12 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             }
         }
     }
+
+    func didFinishPageLoad(loaded: Bool) {
+        guard let runtime, let finishedAt = runtime.pageLoadTimestamp() else { return }
+
+        Task { await runtime.didFinishPageLoad(loaded: loaded, at: finishedAt) }
+    }
 }
 
 private extension SPARustRuntimeInteractor {
@@ -200,7 +206,7 @@ private extension SPARustRuntimeInteractor {
 
             setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await self?.resolveProduct()
+                    self?.resolvedProduct = try await newRuntime.asPageOpen { try await self?.resolveProduct() }
 
                     let url = try await newRuntime.start(with: engine)
                     self?.presenter?.didRequestNavigation(to: url)
@@ -208,6 +214,7 @@ private extension SPARustRuntimeInteractor {
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
+                    await newRuntime.failedToOpen()
                     self?.logger.error("SPA(rust): Setup failed: \(error)")
                     self?.presenter?.didFail(error: error)
                 }

@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import StructuredConcurrency
 
@@ -11,10 +12,13 @@ enum PocketCardFaceOnOpen {
         for key: PocketCardKey,
         cards: any PublishedPocketCardsResolving,
         timeout: Duration = .seconds(5),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        telemetry: HostLoadTelemetry = .disabled
     ) async -> Bool {
         let published = try? await withTimeout(timeout, clock: clock) {
-            try await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown
+            try await telemetry.withContext(session: nil, trigger: .open) {
+                try await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown
+            }
         }
 
         return published ?? true

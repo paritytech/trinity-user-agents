@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import Testing
 import TrUAPIHost
@@ -113,6 +114,55 @@ struct PocketHandlersTests {
 
         #expect(workers.references.released == [gameProductId])
     }
+
+    /// For the face telemetry only: a card whose product offers it no worker is told so.
+    @Test
+    func aProductThatOffersNoSuchCardIsUnserved() async throws {
+        let published = StubPublishedCards()
+        published.failures = [PocketPublishError.noPocket]
+        let handlers = makeHandlers(
+            workers: workersRunning(gameProductId),
+            published: published,
+            telemetry: HostLoadTelemetry(recorder: RecordingHostEventRecorder())
+        )
+
+        _ = await handlers.reconcile([loyalty])
+        #expect(await unserved(by: handlers) == [gameProductId])
+
+        _ = await handlers.reconcile([loyalty])
+        #expect(await unserved(by: handlers).isEmpty)
+    }
+
+    @Test
+    func aProductWhoseWorkerFailsToStartIsUnserved() async throws {
+        let handlers = makeHandlers(
+            workers: StubWorkerManager(startupWindow: .milliseconds(10)),
+            telemetry: HostLoadTelemetry(recorder: RecordingHostEventRecorder())
+        )
+
+        _ = await handlers.reconcile([loyalty])
+
+        #expect(await unserved(by: handlers) == [gameProductId])
+    }
+
+    @Test
+    func aDisabledTelemetryTracksNoUnservedProducts() async throws {
+        let published = StubPublishedCards()
+        published.failures = [PocketPublishError.noPocket]
+        let handlers = makeHandlers(workers: workersRunning(gameProductId), published: published)
+
+        _ = await handlers.reconcile([loyalty])
+
+        #expect(await unserved(by: handlers).isEmpty)
+    }
+
+    /// Joined to the worker that draws the face, and whether it was up when the face was asked for.
+    @Test
+    func reportsTheWorkersStatus() async throws {
+        let handlers = makeHandlers(workers: workersRunning(gameProductId))
+
+        #expect(handlers.workerStatus(of: gameProductId) == PocketWorkerStatus(hostSessionId: nil, isRunning: true))
+    }
 }
 
 // MARK: - Fixtures
@@ -137,9 +187,16 @@ private func workersRunning(_ productId: ProductId) -> StubWorkerManager {
 
 private func makeHandlers(
     workers: StubWorkerManager,
-    published: StubPublishedCards = StubPublishedCards()
+    published: StubPublishedCards = StubPublishedCards(),
+    telemetry: HostLoadTelemetry = .disabled
 ) -> PocketHandlers {
-    PocketHandlers(workers: workers, published: published)
+    PocketHandlers(workers: workers, published: published, telemetry: telemetry)
+}
+
+private func unserved(by handlers: PocketHandlers) async -> Set<ProductId> {
+    var latest = handlers.unservedProducts().makeAsyncIterator()
+    let current = try? await latest.next()
+    return current.flatMap { $0 } ?? []
 }
 
 /// Looks every card up successfully unless a failure is queued for it.

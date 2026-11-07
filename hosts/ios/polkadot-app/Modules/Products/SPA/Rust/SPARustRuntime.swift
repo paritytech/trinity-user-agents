@@ -21,14 +21,18 @@ actor SPARustRuntime {
     private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
-    private let hostEventRecorder: HostEventRecording
-    private let hostSessionId = UUID()
+    private let telemetry: HostLoadTelemetry
+    private let hostSessionId: UUID
+    private let openedAt: Int?
+    /// The tap that opened the page, when this is the page's first runtime and the tap is still fresh.
+    private let tap: HostOpenTap?
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
     private var servedContent: DotNsResolvedContent?
+    private var pageLoadReported = false
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -36,14 +40,49 @@ actor SPARustRuntime {
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording
+        telemetry: HostLoadTelemetry,
+        hostSessionId: UUID = UUID()
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
         self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
-        self.hostEventRecorder = hostEventRecorder
+        self.telemetry = telemetry
+        self.hostSessionId = hostSessionId
+        let openedAt = telemetry.now()
+        self.openedAt = openedAt
+        tap = openedAt.flatMap { configuration.openTap?.consume(bySession: hostSessionId, at: $0) }
+        Self.reportTapOpened(
+            tap,
+            productID: configuration.productId.rawValue,
+            openedAt: openedAt,
+            hostSessionId: hostSessionId,
+            telemetry: telemetry
+        )
+    }
+
+    /// The tap that opened this page, timed to the page's load starting here.
+    private static func reportTapOpened(
+        _ tap: HostOpenTap?,
+        productID: String,
+        openedAt: Int?,
+        hostSessionId: UUID,
+        telemetry: HostLoadTelemetry
+    ) {
+        guard let tap, let openedAt else { return }
+
+        telemetry.record { origin, now in
+            HostLoadEvent.pocketCardTapped(
+                productID: productID,
+                outcome: .opened,
+                source: tap.source,
+                durationMilliseconds: openedAt - tap.monotonicMilliseconds,
+                hostSessionID: hostSessionId,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 
     deinit {
@@ -63,6 +102,18 @@ extension SPARustRuntime: SPARuntimeProtocol {
         guard !started, !disposed else { throw CancellationError() }
         started = true
 
+        do {
+            return try await serveFirstPage(with: engine)
+        } catch {
+            // An open that failed before its page could load is the page failing.
+            if !(error is CancellationError) {
+                reportPageLoad(.error, at: telemetry.now())
+            }
+            throw error
+        }
+    }
+
+    private func serveFirstPage(with engine: JSEngineProtocol) async throws -> URL {
         let initialURL: URL =
             switch configuration.contentSource {
             case .dotNs:
@@ -83,7 +134,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             bootstrapScript: bootstrapScript,
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
-                truapiHostVersion: truapiHostVersion()
+                truapiHostVersion: truapiHostVersion(),
+                openTap: tap
             )
         )
 
@@ -95,12 +147,14 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
-        hostEventRecorder.record(.webViewCreated(
-            hostSessionID: hostSessionId,
-            origin: .current,
-            truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
-        ))
+        telemetry.record { origin, now in
+            .webViewCreated(
+                hostSessionID: hostSessionId,
+                origin: origin,
+                truapiHostVersion: truapiHostVersion(),
+                monotonicMilliseconds: now
+            )
+        }
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -124,6 +178,12 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+
+        // Counted from the runtime's creation: an open the user leaves while the product still resolves is
+        // the case worth seeing.
+        if !pageLoadReported {
+            reportPageLoad(.abandoned, at: telemetry.now())
+        }
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -156,6 +216,26 @@ extension SPARustRuntime: SPARuntimeProtocol {
     func servedBuild() -> DotNsResolvedContent? {
         servedContent
     }
+
+    nonisolated func asPageOpen<R>(_ operation: () async throws -> R) async rethrows -> R {
+        try await telemetry.withContext(session: hostSessionId, trigger: .open, operation: operation)
+    }
+
+    /// The open failed before the page could load, for example while the product was being resolved.
+    func failedToOpen() {
+        reportPageLoad(.error, at: telemetry.now())
+    }
+
+    nonisolated func pageLoadTimestamp() -> Int? {
+        telemetry.now()
+    }
+
+    /// Only the first page counts: a reload or a later navigation is not the product opening.
+    func didFinishPageLoad(loaded: Bool, at finishedAt: Int) {
+        guard engine != nil, !disposed else { return }
+
+        reportPageLoad(loaded ? .ok : .error, at: finishedAt)
+    }
 }
 
 private extension SPARustRuntime {
@@ -164,7 +244,9 @@ private extension SPARustRuntime {
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
+        let served = try await telemetry.withContext(session: hostSessionId, trigger: .open) {
+            try await contentLoader.open(domain, kind: .app, policy: .untilCancelled)
+        }.archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 
@@ -197,6 +279,23 @@ private extension SPARustRuntime {
         await schemeHandlerProxy.setHandler(schemeHandler)
 
         return productURL
+    }
+
+    func reportPageLoad(_ outcome: HostEventOutcome, at finishedAt: Int?) {
+        guard let openedAt, let finishedAt, !pageLoadReported else { return }
+        pageLoadReported = true
+
+        telemetry.record { origin, now in
+            HostLoadEvent.webViewPageLoaded(
+                hostSessionID: hostSessionId,
+                productID: configuration.productId.rawValue,
+                outcome: outcome,
+                durationMilliseconds: finishedAt - openedAt,
+                tapMilliseconds: tap.map { finishedAt - $0.monotonicMilliseconds },
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
     }
 
     func checkNotDisposed() throws {

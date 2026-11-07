@@ -1,5 +1,6 @@
 import TrUAPIHost
 import Foundation
+import IssueMonitoring
 import SDKLogger
 
 public enum ProductResolutionError: Error {
@@ -25,52 +26,66 @@ public actor ProductResolver: ProductResolving {
     private let metadataRepository: ProductMetadataRepositoryProtocol
     private let hostProvider: ProductHostProviding
     private let parser: ProductManifestParsing
+    private let telemetry: HostLoadTelemetry
 
     // Successful resolutions only, so a transient read failure stays retryable.
     private var cache: [ProductId: ProductManifest] = [:]
-    private var inFlight: [ProductId: Task<ProductManifest, Error>] = [:]
+    private var inFlight: [ProductId: (read: Task<ProductManifest, Error>, context: HostLoadContext?)] = [:]
 
     public init(
         metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
         logger: SDKLoggerProtocol,
-        screening: PocketCardScreening
+        screening: PocketCardScreening,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.init(
             metadataRepository: metadataRepository,
             hostProvider: hostProvider,
-            parser: ProductManifestParser(logger: logger, screening: screening)
+            parser: ProductManifestParser(logger: logger, screening: screening),
+            telemetry: telemetry
         )
     }
 
     init(
         metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
-        parser: ProductManifestParsing
+        parser: ProductManifestParsing,
+        telemetry: HostLoadTelemetry = .disabled
     ) {
         self.metadataRepository = metadataRepository
         self.hostProvider = hostProvider
         self.parser = parser
+        self.telemetry = telemetry
     }
 
     public func resolveProductManifest(_ productId: ProductId) async throws -> ProductManifest {
-        let unprefixed = try productIdOwner(productId: productId)
+        let startedAt = telemetry.loadStepStart()
+        let baseName: ProductId
 
-        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
-            throw ProductResolutionError.productNotOnNetwork(unprefixed)
+        do {
+            baseName = try await resolveBaseName(of: productId)
+        } catch {
+            if !(error is CancellationError) {
+                // The same form `ok` and `cache_hit` report: the product's own name, without a prefix.
+                let reported = (try? productIdOwner(productId: productId)) ?? productId
+                reportResolved(reported, outcome: .error, startedAt: startedAt)
+            }
+            throw error
         }
 
         if let cached = cache[baseName] {
+            reportResolved(baseName, outcome: .cacheHit, startedAt: startedAt)
             return cached
         }
 
         // Concurrent callers share one read: a product opens from several surfaces at once.
         if let running = inFlight[baseName] {
-            return try await running.value
+            return try await join(running.read, of: baseName, startedBy: running.context, startedAt: startedAt)
         }
 
-        let task = Task { [self] in try await resolveFromChain(baseName) }
-        inFlight[baseName] = task
+        let task = Task { [self] in try await resolveFromChainReporting(baseName, startedAt: startedAt) }
+        inFlight[baseName] = (task, telemetry.context)
 
         defer { inFlight[baseName] = nil }
 
@@ -88,6 +103,73 @@ private struct ResolvedExecutable: Sendable {
 }
 
 private extension ProductResolver {
+    static let resolvedStep = "host.product.resolved"
+
+    func resolveBaseName(of productId: ProductId) async throws -> ProductId {
+        let unprefixed = try productIdOwner(productId: productId)
+
+        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
+            throw ProductResolutionError.productNotOnNetwork(unprefixed)
+        }
+
+        return baseName
+    }
+
+    /// The shared read reports under the context that started it, so a caller from another load (a
+    /// tap joining a prewarm's read) reports its own wait.
+    func join(
+        _ read: Task<ProductManifest, Error>,
+        of baseName: ProductId,
+        startedBy owner: HostLoadContext?,
+        startedAt: Int?
+    ) async throws -> ProductManifest {
+        let ownWait = telemetry.context == owner ? nil : startedAt
+
+        do {
+            let manifest = try await read.value
+            reportResolved(baseName, outcome: .ok, startedAt: ownWait)
+            return manifest
+        } catch {
+            if !(error is CancellationError) {
+                reportResolved(baseName, outcome: .error, startedAt: ownWait)
+            }
+            throw error
+        }
+    }
+
+    func resolveFromChainReporting(_ baseName: ProductId, startedAt: Int?) async throws -> ProductManifest {
+        do {
+            let manifest = try await resolveFromChain(baseName)
+            reportResolved(baseName, outcome: .ok, startedAt: startedAt)
+            return manifest
+        } catch {
+            if !(error is CancellationError) {
+                reportResolved(baseName, outcome: .error, startedAt: startedAt)
+            }
+            throw error
+        }
+    }
+
+    func reportResolved(_ baseName: ProductId, outcome: HostEventOutcome, startedAt: Int?) {
+        guard
+            let startedAt,
+            let context = telemetry.context,
+            telemetry.shouldReport(Self.resolvedStep, productID: baseName.rawValue, outcome: outcome)
+        else { return }
+
+        telemetry.record { origin, now in
+            .productResolved(
+                productID: baseName.rawValue,
+                outcome: outcome,
+                trigger: context.trigger,
+                durationMilliseconds: now - startedAt,
+                hostSessionID: context.sessionID,
+                origin: origin,
+                monotonicMilliseconds: now
+            )
+        }
+    }
+
     func resolveFromChain(_ baseName: ProductId) async throws -> ProductManifest {
         let rootKey = ProductManifest.RecordKey(name: baseName, key: ProductManifestRecords.rootKey)
         let rootText = try await metadataRepository.fetchMetadata(name: rootKey.name.rawValue, key: rootKey.key)
