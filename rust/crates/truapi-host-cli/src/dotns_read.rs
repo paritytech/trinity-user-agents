@@ -122,4 +122,16 @@ impl DotnsTransport for AssetHubReader {
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
 		EvmContractCaller::read(&mut self.rpc, dest, &input).await
 	}
+
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		futures::future::join_all(inputs.into_iter().map(|input| {
+			let mut rpc = self.rpc.clone();
+			async move { EvmContractCaller::read(&mut rpc, dest, &input).await }
+		}))
+		.await
+	}
 }

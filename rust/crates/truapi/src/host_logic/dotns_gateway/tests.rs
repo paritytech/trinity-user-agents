@@ -171,6 +171,14 @@ impl DotnsTransport for RevertingSecondClaimPage {
 		assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
 		Err(EvmContractError::Reverted { detail: "offset past end".to_string() })
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 #[test]
@@ -218,6 +226,14 @@ fn labels_classify_into_lite_and_full_usernames() {
 				returns::<DotnsPopController::isPopIssuedCall>(
 					!self.denied.contains(&asked.label.as_str()),
 				)
+			}
+
+			async fn views(
+				&mut self,
+				_dest: &[u8; 20],
+				_inputs: Vec<Vec<u8>>,
+			) -> Vec<Result<Vec<u8>, EvmContractError>> {
+				unreachable!("this lookup uses individual views")
 			}
 		}
 		let identity = |lite: Option<&str>, full: Option<&str>| {
@@ -377,6 +393,14 @@ impl DotnsTransport for ScriptedDiscovery {
 			panic!("unscripted view {}", hex::encode(input));
 		}
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 fn address_answer(byte: u8) -> Result<Vec<u8>, EvmContractError> {
@@ -493,6 +517,14 @@ impl DotnsTransport for ScriptedTld {
 			panic!("unscripted view {}", hex::encode(input));
 		}
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 #[test]
@@ -562,6 +594,14 @@ impl DotnsTransport for ScriptedAvailability {
 		} else {
 			panic!("unscripted view {}", hex::encode(input));
 		}
+	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
 	}
 }
 

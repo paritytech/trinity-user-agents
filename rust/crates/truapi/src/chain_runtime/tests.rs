@@ -5,6 +5,8 @@ use parity_scale_codec::Encode;
 use parking_lot::{Condvar, Mutex as ParkingMutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod call_batch;
+
 fn spawner_for_tests() -> Spawner {
 	#[cfg(not(target_arch = "wasm32"))]
 	{
