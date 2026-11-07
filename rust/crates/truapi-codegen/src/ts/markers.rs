@@ -34,9 +34,9 @@ fn markers_code() -> String {
         /**
          * Every marker the core may address to a host, keyed by its dotted target.
          *
-         * A host reads this once and looks each marker it is handed up here. A
-         * target this map does not hold stays on the device, because nothing has
-         * said what its detail carries.
+         * A host reads this once and looks up each marker it is handed. A
+         * target this map does not hold stays on the device, because nothing
+         * has said what its detail carries.
          */
         export const CORE_MARKERS: ReadonlyMap<string, MarkerClass> = new Map<string, MarkerClass>([
         {entries}]);

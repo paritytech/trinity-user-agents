@@ -24,7 +24,9 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `image_loader` module reads the
                          images hosts draw from Bulletin by CID and checks them
-  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
+  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
+                         also links the truapi crate to emit the core marker
+                         table as TypeScript, which rustdoc JSON does not carry
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
