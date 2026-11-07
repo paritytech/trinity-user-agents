@@ -49,9 +49,20 @@ struct ProductBotChatListTests {
     @Test
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
+        let publicProfileFactory = PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+            PublicProfile(avatar: nil)
+        }, loadAvatar: { _ in
+            throw ImageError.Unavailable(reason: "no profile avatar")
+        })
 
-        #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(using: iconFactory) != nil)
-        #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(using: iconFactory) == nil)
+        #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(
+            using: iconFactory,
+            publicProfileFactory: publicProfileFactory
+        ) != nil)
+        #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(
+            using: iconFactory,
+            publicProfileFactory: publicProfileFactory
+        ) == nil)
         #expect(iconFactory.requestedDomains == [productId])
     }
 }
@@ -101,6 +112,11 @@ private extension ProductBotChatListTests {
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
             productIconViewModelFactory: RecordingProductIconViewModelFactory(),
+            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(resolveProfile: { _, _ in
+                PublicProfile(avatar: nil)
+            }, loadAvatar: { _ in
+                throw ImageError.Unavailable(reason: "no profile avatar")
+            }),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())

@@ -6,7 +6,11 @@ import Foundation
 enum SearchContactModuleFactory {
     static func makeModule() -> (presenter: SearchContactPresenter, wireframe: SearchContactWireframe)? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
-        guard let ownAccountId = try? walletRepo.main().getRawPublicKey() else {
+        guard
+            let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
+                RootDependencyLocator.getDependency(),
+            let ownAccountId = try? walletRepo.main().getRawPublicKey()
+        else {
             assertionFailure()
             return nil
         }
@@ -29,7 +33,11 @@ enum SearchContactModuleFactory {
 
         let interactor = SearchContactInteractor(accountSearching: accountSearching)
         let wireframe = SearchContactWireframe()
-        let presenter = SearchContactPresenter(interactor: interactor, wireframe: wireframe)
+        let presenter = SearchContactPresenter(
+            interactor: interactor,
+            wireframe: wireframe,
+            publicProfileAvatarViewModelFactory: publicProfileAvatarViewModelFactory
+        )
 
         interactor.presenter = presenter
 
