@@ -157,14 +157,10 @@ impl Stack {
 	}
 
 	/// The stack the core runs on: the descriptor's `network` and TLD, and the
-	/// People, Bulletin and Asset Hub this network serves. The CLI serves no
-	/// Relay, so the stack names none.
+	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
 	///
-	/// The core allows Polkadot's reserved values, because the CLI checks them
-	/// itself: [`Stack::new`] refuses the `polkadot` namespace, and
-	/// [`NetworkSource::resolve_checked`] refuses a chain with one of
-	/// Polkadot's genesis hashes that does not show it is a fork. Call it only
-	/// on a stack that `resolve_checked` returned.
+	/// Allows Polkadot's reserved values, which the CLI checks itself, so call
+	/// it only on a stack from [`NetworkSource::resolve_checked`].
 	pub fn core_stack(&self) -> Result<truapi::platform::Stack, StackError> {
 		let genesis = self.genesis();
 		let chains = StackChains {
