@@ -16,8 +16,8 @@ use wallet_account_holder::StatementRenewalError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{
-	AllowanceAllocationError, NotificationClaim, StatementAccountClaim, StatementRenewalTarget,
-	WalletAccountHolder,
+	AllowanceAllocationError, BackupError, NotificationClaim, StatementAccountClaim,
+	StatementRenewalTarget, WalletAccountHolder,
 };
 
 use super::{
@@ -245,6 +245,70 @@ impl SigningHost {
 		self.wallet
 			.claim_product_statement_account(&session, product_id, index, submission)
 			.await
+	}
+
+	/// The backup statement account's public key under the active wallet
+	/// session.
+	pub fn backup_account(&self) -> Result<[u8; 32], AllowanceAllocationError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.backup_account(&session)
+	}
+
+	/// Give the backup statement account a general Statement Store slot for
+	/// the current period under the active wallet session, or only validate
+	/// the claim.
+	pub async fn claim_backup_statement_account(
+		&self,
+		submission: statement_allowance::ClaimSubmission,
+	) -> Result<StatementAccountClaim, AllowanceAllocationError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.claim_backup_statement_account(&session, submission).await
+	}
+
+	/// Sign a backup pointer statement's unsigned signing payload as the
+	/// backup statement account.
+	pub fn sign_backup_pointer(&self, payload: &[u8]) -> Result<[u8; 64], BackupError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.sign_backup_pointer(&session, payload)
+	}
+
+	/// Store an encrypted backup snapshot on Bulletin under the backup
+	/// Bulletin account, claiming long-term storage first when its
+	/// authorization cannot hold it. Answers its preimage key once the store
+	/// is in a block, and stores nothing for a session that ended meanwhile.
+	pub async fn store_backup_blob(&self, value: &[u8]) -> Result<[u8; 32], BackupError> {
+		#[cfg(not(target_arch = "wasm32"))]
+		use std::time::Instant;
+		#[cfg(target_arch = "wasm32")]
+		use web_time::Instant;
+
+		use crate::host_internal::bulletin::preimage_key;
+
+		/// How long one snapshot may take to reach a Bulletin block.
+		const STORE_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(300);
+
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		let size = u64::try_from(value.len()).expect("a slice length fits in u64");
+		let allowance = self.wallet.allocate_backup_bulletin(&session, size).await?;
+		#[cfg(feature = "test-host")]
+		if ProductAuthority::submits_preimages_locally(self) {
+			let key = preimage_key(value);
+			self.services.keep_local_preimage(key, value.to_vec());
+			return Ok(key);
+		}
+		// The allocation awaited the chain: store nothing for a session that ended.
+		self.wallet.require_current_session(&session)?;
+		self.services
+			.bulletin
+			.submit_preimage(
+				&CallContext::default(),
+				Instant::now() + STORE_TIMEOUT,
+				&allowance,
+				value,
+			)
+			.await?;
+		self.wallet.require_current_session(&session)?;
+		Ok(preimage_key(value))
 	}
 
 	async fn keeps_auto_signing_key(

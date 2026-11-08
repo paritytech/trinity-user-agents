@@ -257,4 +257,35 @@ suite("worker serving a signing host", () => {
       error: "a product account index is 32 bytes",
     });
   });
+  it("answers the host's backup account, and its signature over a backup pointer only", async () => {
+    const { runtime } = await signingHost();
+    const account = await runtime.backupAccount();
+    // A pointer statement's unsigned signing payload: an expiry a day ahead,
+    // a channel, one topic, and data the size of a sealed pointer.
+    const data = new Uint8Array([
+      ...new TextEncoder().encode("twhb/ptr/1"),
+      ...new Uint8Array(54).fill(0x5e),
+    ]);
+    const lapses = BigInt(Math.floor(Date.now() / 1000) + 86_400);
+    const pointer = new Uint8Array([
+      0x02,
+      ...new Uint8Array(new BigUint64Array([lapses << 32n]).buffer),
+      0x03,
+      ...new Uint8Array(32).fill(0x11),
+      0x04,
+      ...new Uint8Array(32).fill(0x22),
+      0x08,
+      ...new Uint8Array(new Uint16Array([(data.length << 2) | 1]).buffer),
+      ...data,
+    ]);
+
+    expect(account.length).toBe(32);
+    expect(await runtime.backupAccount()).toEqual(account);
+    expect((await runtime.signBackupPointer(pointer)).length).toBe(64);
+    await expect(
+      runtime.signBackupPointer(
+        new TextEncoder().encode("transfer everything"),
+      ),
+    ).rejects.toThrow("not a backup pointer");
+  });
 });

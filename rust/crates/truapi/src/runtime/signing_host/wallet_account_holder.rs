@@ -7,7 +7,9 @@ mod pairing;
 #[cfg(test)]
 mod tests;
 
-pub use allowance::{AllowanceAllocationError, NotificationClaim, StatementAccountClaim};
+pub use allowance::{
+	AllowanceAllocationError, BackupError, NotificationClaim, StatementAccountClaim,
+};
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::{StatementRenewalError, TrackedStatementRenewalTarget};
@@ -444,13 +446,6 @@ impl WalletKeys {
 			&self.entropy,
 			&["allowance", "statement-store", product_id.as_str()],
 		)
-	}
-
-	fn bulletin_allowance_key(
-		&self,
-		product_id: &ProductId,
-	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id.as_str()])
 	}
 
 	/// The network's RFC-0022 `uid.<suffix>` statement identity with the SSO

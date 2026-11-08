@@ -92,6 +92,25 @@ export interface StatementAccountClaim {
   blockHash?: string;
 }
 
+/**
+ * One call on the host's backup accounts (signing hosts only): the backup
+ * statement account's key, a general Statement Store slot for it, its
+ * signature over a backup pointer, or a Bulletin store of an encrypted
+ * snapshot.
+ */
+export type BackupCall =
+  | { op: "account" }
+  | { op: "claimSlot"; submit: boolean }
+  | { op: "signPointer"; payload: Uint8Array }
+  | { op: "storeBlob"; value: Uint8Array };
+
+/** What a {@link BackupCall} answered, by the same `op`. */
+export type BackupResult =
+  | { op: "account"; account: Uint8Array }
+  | { op: "claimSlot"; claim: StatementAccountClaim }
+  | { op: "signPointer"; signature: Uint8Array }
+  | { op: "storeBlob"; key: Uint8Array };
+
 export type MainToWorker =
   | {
       kind: "init";
@@ -199,6 +218,8 @@ export type MainToWorker =
       index: Uint8Array;
       submit: boolean;
     }
+  /** A call on the host's backup accounts. Signing hosts only. */
+  | { kind: "backup"; requestId: number; call: BackupCall }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
   | {
@@ -363,6 +384,13 @@ export type WorkerToMain =
       ok: false;
       error: string;
     }
+  | {
+      kind: "backupResponse";
+      requestId: number;
+      ok: true;
+      result: BackupResult;
+    }
+  | { kind: "backupResponse"; requestId: number; ok: false; error: string }
   | {
       kind: "deviceStatementKeyResponse";
       requestId: number;

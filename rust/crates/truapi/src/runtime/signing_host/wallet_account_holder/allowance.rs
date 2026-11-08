@@ -1,5 +1,8 @@
 //! Wallet resource approval and allowance issuance.
 
+mod backup;
+
+pub use backup::BackupError;
 use tracing::{debug, warn};
 use truapi::latest as api;
 
@@ -7,7 +10,7 @@ use super::WalletAccountHolder;
 use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::sso_messages::OnExistingAllowancePolicy,
-	host_logic::product_account::ProductAccountError,
+	host_logic::product_account::{ProductAccountError, derive_sr25519_hard_path},
 	platform::ProductId,
 	runtime::{
 		allowances::current_unix_secs,
@@ -80,6 +83,17 @@ pub struct StatementStoreAllocation {
 	pub secret: Vec<u8>,
 	/// Allowance period the slot was found or claimed in.
 	pub period: u32,
+}
+
+/// Which Bulletin allowance account to allocate, and for how large a store.
+struct BulletinAllowanceAccount<'a> {
+	/// Hard junctions from the wallet root to the allowance account.
+	junctions: &'a [&'a str],
+	/// What the account serves, for the log.
+	label: &'a str,
+	/// Bytes the next store needs: an existing authorization that cannot
+	/// hold them does not count as available.
+	size: u64,
 }
 
 /// A notification claim's period and how it ended.
@@ -260,17 +274,39 @@ impl WalletAccountHolder {
 		product_id: &ProductId,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<Vec<u8>, AllowanceAllocationError> {
+		self.allocate_bulletin_allowance_at(
+			session,
+			BulletinAllowanceAccount {
+				junctions: &["allowance", "bulletin", product_id.as_str()],
+				label: product_id.as_str(),
+				size: 1,
+			},
+			policy,
+		)
+		.await
+	}
+
+	/// Issue the Bulletin allowance key at `account`'s path, claiming long-term
+	/// storage for it unless `policy` keeps an authorization that can already
+	/// store `account.size` bytes.
+	async fn allocate_bulletin_allowance_at(
+		&self,
+		session: &AuthoritySession,
+		account: BulletinAllowanceAccount<'_>,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<Vec<u8>, AllowanceAllocationError> {
 		use crate::runtime::statement_allowance::{
 			self, claim_long_term_storage, collection::PersonhoodCollection,
 			fetch_bulletin_allowance, find_including_rings, wait_bulletin_authorization,
 		};
 
+		let BulletinAllowanceAccount { junctions, label, size } = account;
 		#[cfg(feature = "test-host")]
 		if self.resource_controls.grants_allowances_unchecked() {
-			return self.bulletin_secret(session, product_id);
+			return self.bulletin_secret(session, junctions);
 		}
 		let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
-			Ok(keys.bulletin_allowance_key(product_id)?.public.to_bytes())
+			Ok(derive_sr25519_hard_path(&keys.entropy, junctions)?.public.to_bytes())
 		})?;
 
 		let bulletin_rpc = statement_allowance::rpc::RpcClient::new(
@@ -283,9 +319,9 @@ impl WalletAccountHolder {
 		);
 		let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
 		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			current_allowance.is_some_and(|allowance| allowance.available())
+			current_allowance.is_some_and(|allowance| allowance.can_store(size))
 		{
-			return self.bulletin_secret(session, product_id);
+			return self.bulletin_secret(session, junctions);
 		}
 
 		let people_client =
@@ -334,7 +370,7 @@ impl WalletAccountHolder {
 			ring_index,
 		} = outcome;
 		debug!(
-			%product_id,
+			label,
 			%block_hash,
 			counter,
 			ring_index,
@@ -345,17 +381,17 @@ impl WalletAccountHolder {
 			&bulletin_rpc,
 			&target,
 			current_allowance,
-			1,
+			size,
 			BULLETIN_AUTHORIZATION_WAIT,
 		)
 		.await?;
 		debug!(
-			%product_id,
+			label,
 			remained_size = authorization.remained_size,
 			remained_transactions = authorization.remained_transactions,
 			"Bulletin authorization visible"
 		);
-		self.bulletin_secret(session, product_id)
+		self.bulletin_secret(session, junctions)
 	}
 
 	/// Register `target` as a notification statement account for the current
@@ -467,18 +503,32 @@ impl WalletAccountHolder {
 		index: [u8; 32],
 		submission: crate::runtime::statement_allowance::ClaimSubmission,
 	) -> Result<StatementAccountClaim, AllowanceAllocationError> {
+		let account = self.product_statement_account(session, product_id, index)?;
+		self.claim_statement_account_for(session, account, product_id.as_str(), submission)
+			.await
+	}
+
+	/// Give `account`, which the wallet derived itself, a general Statement
+	/// Store slot of the wallet's personhood for the current period, reusing a
+	/// slot it already holds, or only validate the claim. `label` names what the
+	/// account serves in the log.
+	async fn claim_statement_account_for(
+		&self,
+		session: &AuthoritySession,
+		account: [u8; 32],
+		label: &str,
+		submission: crate::runtime::statement_allowance::ClaimSubmission,
+	) -> Result<StatementAccountClaim, AllowanceAllocationError> {
 		use crate::runtime::statement_allowance::{
 			self, CollectionScanParams, StatementAccountOutcome, allocated_in,
 			collection::PersonhoodCollection, find_including_rings, scan_collections,
 		};
 
-		let account = self.product_statement_account(session, product_id, index)?;
 		// Held from the scan to the confirmation, so neither another claim nor an
 		// on-demand allocation selects the same slot.
 		let _registration = self.renewal.registration_lock().lock().await;
 		self.require_current_session(session)?;
-		let client =
-			self.services.statement_store.chain_client("product statement account").await?;
+		let client = self.services.statement_store.chain_client("statement account").await?;
 		let rpc = client.rpc();
 		let chain = self.services.chain_context.get(&client).await?;
 		let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
@@ -513,11 +563,11 @@ impl WalletAccountHolder {
 		if memberships.is_empty() {
 			self.require_current_session(session)?;
 			return Err(AllowanceAllocationError::MissingPersonhoodMembership {
-				resource: "product statement account",
+				resource: "statement account",
 			});
 		}
-		let outcome =
-			statement_allowance::claim_statement_account(statement_allowance::StatementAccountClaim {
+		let outcome = statement_allowance::claim_statement_account(
+			statement_allowance::StatementAccountClaim {
 				rpc,
 				metadata: &chain.metadata,
 				target_chain: client.extrinsic_target(&self.services.extrinsics),
@@ -529,9 +579,10 @@ impl WalletAccountHolder {
 				scans: &scans,
 				memberships: &memberships,
 				submission,
-			})
-			.await?;
-		debug!(%product_id, period, ?outcome, "product statement account claim");
+			},
+		)
+		.await?;
+		debug!(label, period, ?outcome, "statement account claim");
 		// A claim submitted before the session ended stays on chain; only its
 		// answer is withheld from a session that is gone.
 		self.require_current_session(session)?;
@@ -541,10 +592,10 @@ impl WalletAccountHolder {
 	fn bulletin_secret(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		junctions: &[&str],
 	) -> Result<Vec<u8>, AllowanceAllocationError> {
 		self.with_keys(session, |keys| {
-			Ok(keys.bulletin_allowance_key(product_id)?.secret.to_bytes().to_vec())
+			Ok(derive_sr25519_hard_path(&keys.entropy, junctions)?.secret.to_bytes().to_vec())
 		})
 	}
 

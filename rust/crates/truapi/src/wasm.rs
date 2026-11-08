@@ -819,6 +819,38 @@ fn packed_contact_handles(
 	Ok(mint(&accounts).map(|handles| handles.concat()))
 }
 
+/// A statement-account claim as the host reads it:
+/// `{ account, period, outcome, seq, collection, blockHash? }`, with
+/// `account` as `0x` hex and `outcome` one of `"registered"`,
+/// `"alreadyAllocated"` or `"validated"`.
+#[cfg(feature = "wasm-signing-host")]
+fn statement_account_claim_to_js(claim: crate::StatementAccountClaim) -> Result<JsValue, JsValue> {
+	use crate::statement_allowance::StatementAccountOutcome;
+
+	let value = js_sys::Object::new();
+	let set = |key: &str, field: JsValue| Reflect::set(&value, &JsValue::from_str(key), &field);
+	set("account", JsValue::from_str(&format!("0x{}", hex::encode(claim.account))))?;
+	set("period", JsValue::from(claim.period))?;
+	let (outcome, seq, collection, block_hash) = match claim.outcome {
+		StatementAccountOutcome::Registered { block_hash, seq, collection } => {
+			("registered", seq, collection, Some(block_hash))
+		},
+		StatementAccountOutcome::AlreadyAllocated { seq, collection } => {
+			("alreadyAllocated", seq, collection, None)
+		},
+		StatementAccountOutcome::Validated { seq, collection } => {
+			("validated", seq, collection, None)
+		},
+	};
+	set("outcome", JsValue::from_str(outcome))?;
+	set("seq", JsValue::from(seq))?;
+	set("collection", JsValue::from_str(collection.metadata_variant()))?;
+	if let Some(block_hash) = block_hash {
+		set("blockHash", JsValue::from_str(&block_hash))?;
+	}
+	Ok(value.into())
+}
+
 /// Parse a product id the host passed, rejecting with the reason the way the
 /// runtime's own errors do.
 fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
@@ -1483,7 +1515,7 @@ impl WasmSigningHostRuntime {
 		index: Vec<u8>,
 		submit: bool,
 	) -> Result<JsValue, JsValue> {
-		use crate::statement_allowance::{ClaimSubmission, StatementAccountOutcome};
+		use crate::statement_allowance::ClaimSubmission;
 
 		let index = <[u8; 32]>::try_from(index.as_slice())
 			.map_err(|_| JsValue::from_str("a product account index is 32 bytes"))?;
@@ -1495,28 +1527,56 @@ impl WasmSigningHostRuntime {
 			.claim_product_statement_account(&product_id, index, submission)
 			.await
 			.map_err(JsValue::from)?;
-		let value = js_sys::Object::new();
-		let set = |key: &str, field: JsValue| Reflect::set(&value, &JsValue::from_str(key), &field);
-		set("account", JsValue::from_str(&format!("0x{}", hex::encode(claim.account))))?;
-		set("period", JsValue::from(claim.period))?;
-		let (outcome, seq, collection, block_hash) = match claim.outcome {
-			StatementAccountOutcome::Registered { block_hash, seq, collection } => {
-				("registered", seq, collection, Some(block_hash))
-			},
-			StatementAccountOutcome::AlreadyAllocated { seq, collection } => {
-				("alreadyAllocated", seq, collection, None)
-			},
-			StatementAccountOutcome::Validated { seq, collection } => {
-				("validated", seq, collection, None)
-			},
-		};
-		set("outcome", JsValue::from_str(outcome))?;
-		set("seq", JsValue::from(seq))?;
-		set("collection", JsValue::from_str(collection.metadata_variant()))?;
-		if let Some(block_hash) = block_hash {
-			set("blockHash", JsValue::from_str(&block_hash))?;
-		}
-		Ok(value.into())
+		statement_account_claim_to_js(claim)
+	}
+
+	/// The host's backup statement account, 32 bytes. Host only.
+	#[wasm_bindgen(js_name = backupAccount)]
+	pub fn backup_account(&self) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.backup_account()
+			.map(|account| account.to_vec())
+			.map_err(JsValue::from)
+	}
+
+	/// Give the host's backup statement account a general Statement Store slot
+	/// for the current UTC day; with `submit` false, only ask the runtime
+	/// whether it would accept the claim. Answers the same shape as
+	/// `claimProductStatementAccount`. Host only.
+	#[wasm_bindgen(js_name = claimBackupStatementAccount)]
+	pub async fn claim_backup_statement_account(&self, submit: bool) -> Result<JsValue, JsValue> {
+		use crate::statement_allowance::ClaimSubmission;
+
+		let submission =
+			if submit { ClaimSubmission::Submit } else { ClaimSubmission::ValidateOnly };
+		let claim = self
+			.runtime
+			.claim_backup_statement_account(submission)
+			.await
+			.map_err(JsValue::from)?;
+		statement_account_claim_to_js(claim)
+	}
+
+	/// Sign a backup pointer statement's unsigned signing payload as the
+	/// backup statement account; answers the 64-byte sr25519 signature.
+	/// Refuses anything but a pointer. Host only.
+	#[wasm_bindgen(js_name = signBackupPointer)]
+	pub fn sign_backup_pointer(&self, payload: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.sign_backup_pointer(&payload)
+			.map(|signature| signature.to_vec())
+			.map_err(JsValue::from)
+	}
+
+	/// Store an encrypted backup snapshot on Bulletin under the host's backup
+	/// Bulletin account; answers its 32-byte preimage key. Host only.
+	#[wasm_bindgen(js_name = storeBackupBlob)]
+	pub async fn store_backup_blob(&self, value: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.store_backup_blob(&value)
+			.await
+			.map(|key| key.to_vec())
+			.map_err(JsValue::from)
 	}
 
 	/// Revoke one product's grants from the current local activation.

@@ -32,6 +32,8 @@ import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
+  BackupCall,
+  BackupResult,
   CallbackName,
   HostRole,
   MainToWorker,
@@ -119,6 +121,36 @@ export interface WorkerPairingHostRuntime {
     index: Uint8Array,
     submit: boolean,
   ): Promise<StatementAccountClaim>;
+  /**
+   * The host's backup statement account, 32 bytes: the account that signs
+   * the host's backup pointer, hard-derived from the wallet root under a
+   * junction no product account uses, so the same wallet finds it in any
+   * browser.
+   *
+   * Signing hosts only, like every backup call. Host only: no secret
+   * crosses here, and products have no call that reaches these. Rejects
+   * without a session.
+   */
+  backupAccount(): Promise<Uint8Array>;
+  /**
+   * Give the backup statement account a general Statement Store slot of the
+   * session's personhood for the current UTC day, reusing one it already
+   * holds; with `submit` false, only validate the claim.
+   */
+  claimBackupStatementAccount(submit: boolean): Promise<StatementAccountClaim>;
+  /**
+   * The backup statement account's sr25519 signature over `payload`, a
+   * backup pointer statement's unsigned signing payload. The core refuses
+   * any payload that is not a pointer.
+   */
+  signBackupPointer(payload: Uint8Array): Promise<Uint8Array>;
+  /**
+   * Store `value`, an encrypted backup snapshot, on Bulletin under the host's
+   * backup Bulletin account, claiming long-term storage first when its
+   * authorization cannot hold it. Resolves with the 32-byte preimage key
+   * once the store is in a block.
+   */
+  storeBackupBlob(value: Uint8Array): Promise<Uint8Array>;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -325,6 +357,13 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingBackupCalls: Map<
+    number,
+    {
+      resolve: (result: BackupResult) => void;
+      reject: (error: Error) => void;
+    }
+  >;
   pendingDeviceStatementKeys: Map<
     number,
     {
@@ -372,6 +411,7 @@ let nextDeviceStatementKeyRequestId = 0;
 let nextContactHandlesRequestId = 0;
 let nextNotificationClaimRequestId = 0;
 let nextStatementAccountClaimRequestId = 0;
+let nextBackupRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextProductIdRequestId = 0;
@@ -959,6 +999,19 @@ function handleClaimStatementAccountResponse(
   );
 }
 
+function handleBackupResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; result: BackupResult }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingBackupCalls,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.result } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceStatementKeyResponse(
   state: RuntimeState,
   msg:
@@ -1008,6 +1061,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingContactHandles, error);
   rejectAll(state.pendingNotificationClaims, error);
   rejectAll(state.pendingStatementAccountClaims, error);
+  rejectAll(state.pendingBackupCalls, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
@@ -1041,6 +1095,22 @@ function sendWorkerRequest<T>(
       reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
+}
+
+/** Send one backup call, rejecting rather than resolving once the runtime is gone: no backup answer has a safe empty value. */
+function backupCall(
+  state: RuntimeState,
+  call: BackupCall,
+): Promise<BackupResult> {
+  if (state.disposed)
+    return Promise.reject(new Error("worker host runtime is disposed"));
+  return sendWorkerRequest<BackupResult>(
+    state,
+    state.pendingBackupCalls,
+    () => ++nextBackupRequestId,
+    { op: "account", account: new Uint8Array() },
+    (requestId) => ({ kind: "backup", requestId, call }),
+  );
 }
 
 /**
@@ -1190,6 +1260,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingContactHandles: new Map(),
       pendingNotificationClaims: new Map(),
       pendingStatementAccountClaims: new Map(),
+      pendingBackupCalls: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingProductIds: new Map(),
       pendingDeviceStatementKeys: new Map(),
@@ -1268,6 +1339,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "claimProductStatementAccountResponse":
           handleClaimStatementAccountResponse(state, msg);
+          break;
+        case "backupResponse":
+          handleBackupResponse(state, msg);
           break;
         case "deviceStatementKeyResponse":
           handleDeviceStatementKeyResponse(state, msg);
@@ -1704,6 +1778,32 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
           submit,
         }),
       );
+    },
+    async backupAccount(): Promise<Uint8Array> {
+      const result = await backupCall(state, { op: "account" });
+      if (result.op !== "account")
+        throw new Error("the core answered another backup call");
+      return result.account;
+    },
+    async claimBackupStatementAccount(
+      submit: boolean,
+    ): Promise<StatementAccountClaim> {
+      const result = await backupCall(state, { op: "claimSlot", submit });
+      if (result.op !== "claimSlot")
+        throw new Error("the core answered another backup call");
+      return result.claim;
+    },
+    async signBackupPointer(payload: Uint8Array): Promise<Uint8Array> {
+      const result = await backupCall(state, { op: "signPointer", payload });
+      if (result.op !== "signPointer")
+        throw new Error("the core answered another backup call");
+      return result.signature;
+    },
+    async storeBackupBlob(value: Uint8Array): Promise<Uint8Array> {
+      const result = await backupCall(state, { op: "storeBlob", value });
+      if (result.op !== "storeBlob")
+        throw new Error("the core answered another backup call");
+      return result.key;
     },
     acquireWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });

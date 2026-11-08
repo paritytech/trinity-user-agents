@@ -7,6 +7,8 @@
 import type { ProductId } from "@parity/truapi";
 import { isLoopbackWsUrl } from "./worker-protocol.js";
 import type {
+  BackupCall,
+  BackupResult,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
@@ -740,6 +742,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.submit,
       );
       break;
+    case "backup":
+      void handleBackup(msg.requestId, msg.call);
+      break;
     case "getDeviceStatementKey":
       handleGetDeviceStatementKey(msg.requestId);
       break;
@@ -1232,6 +1237,38 @@ async function handleClaimProductStatementAccount(
         submit,
       ),
     });
+  } catch (err) {
+    fail(errorMessage(err));
+  }
+}
+
+async function handleBackup(
+  requestId: number,
+  call: BackupCall,
+): Promise<void> {
+  const fail = (error: string) =>
+    postToMain({ kind: "backupResponse", requestId, ok: false, error });
+  if (!host) return fail("backup received before runtime is ready");
+  try {
+    const signing = signingRuntime(host, "backup");
+    const result: BackupResult =
+      call.op === "account"
+        ? { op: "account", account: signing.backupAccount() }
+        : call.op === "claimSlot"
+          ? {
+              op: "claimSlot",
+              claim: await signing.claimBackupStatementAccount(call.submit),
+            }
+          : call.op === "signPointer"
+            ? {
+                op: "signPointer",
+                signature: signing.signBackupPointer(call.payload),
+              }
+            : {
+                op: "storeBlob",
+                key: await signing.storeBackupBlob(call.value),
+              };
+    postToMain({ kind: "backupResponse", requestId, ok: true, result });
   } catch (err) {
     fail(errorMessage(err));
   }

@@ -1032,6 +1032,61 @@ impl SigningHostRuntime {
 			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
 	}
 
+	/// The public key of the host's backup statement account: the account
+	/// that signs the host's backup pointer, hard-derived from the wallet
+	/// root under a junction no product account uses.
+	///
+	/// Host only, like every backup call below; products have no call that
+	/// reaches them.
+	pub fn backup_account(&self) -> Result<[u8; 32], truapi::latest::GenericError> {
+		self.signing_host
+			.backup_account()
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
+	/// Give the backup statement account a general Statement Store slot of
+	/// the session's personhood for the current UTC day, reusing one it
+	/// already holds, or with [`ClaimSubmission::ValidateOnly`] only ask the
+	/// runtime whether it would accept the claim.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.claim_backup_statement_account"))]
+	pub async fn claim_backup_statement_account(
+		&self,
+		submission: ClaimSubmission,
+	) -> Result<StatementAccountClaim, truapi::latest::GenericError> {
+		self.signing_host
+			.claim_backup_statement_account(submission)
+			.await
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
+	/// Sign `payload`, a backup pointer statement's unsigned signing payload,
+	/// as the backup statement account. Refuses any payload that is not a
+	/// pointer: a canonical unsigned statement with a channel and pointer
+	/// data.
+	pub fn sign_backup_pointer(
+		&self,
+		payload: &[u8],
+	) -> Result<[u8; 64], truapi::latest::GenericError> {
+		self.signing_host
+			.sign_backup_pointer(payload)
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
+	/// Store `value`, an encrypted backup snapshot, on Bulletin under the
+	/// host's backup Bulletin account, claiming long-term storage first when
+	/// its authorization cannot hold it. Answers the preimage key once the
+	/// store is in a block.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.store_backup_blob"))]
+	pub async fn store_backup_blob(
+		&self,
+		value: &[u8],
+	) -> Result<[u8; 32], truapi::latest::GenericError> {
+		self.signing_host
+			.store_backup_blob(value)
+			.await
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
 	/// Install the host's [`DevicePairingObserver`], told whenever a device
 	/// finishes pairing with this signing host.
 	///

@@ -1,6 +1,7 @@
 mod activation;
 mod allowance_keys;
 mod auto_signing;
+mod backup;
 mod cross_product_account;
 #[cfg(feature = "test-host")]
 mod local_preimages;

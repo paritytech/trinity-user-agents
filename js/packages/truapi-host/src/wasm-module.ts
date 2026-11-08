@@ -140,6 +140,14 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     index: Uint8Array,
     submit: boolean,
   ): Promise<StatementAccountClaim>;
+  /** The host's backup statement account, 32 bytes. Host only. */
+  backupAccount(): Uint8Array;
+  /** A general Statement Store slot for the backup statement account; with `submit` false, only validate. Host only. */
+  claimBackupStatementAccount(submit: boolean): Promise<StatementAccountClaim>;
+  /** The backup statement account's signature over a backup pointer's unsigned signing payload. Refuses anything else. Host only. */
+  signBackupPointer(payload: Uint8Array): Uint8Array;
+  /** Store an encrypted backup snapshot on Bulletin; answers its 32-byte preimage key. Host only. */
+  storeBackupBlob(value: Uint8Array): Promise<Uint8Array>;
 }
 
 /** Module surface the wasm-pack glue exports. */
