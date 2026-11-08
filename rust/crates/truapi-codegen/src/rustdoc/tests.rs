@@ -231,3 +231,26 @@ fn a_return_that_is_not_a_future_passes_through() {
 
 	assert_eq!(unwrap_future_output(&output), &output);
 }
+
+/// The core's marker table is host policy, not protocol. It sits in the same
+/// crate the client surface is read from, so without this the generated client
+/// would publish `Marker`, `MarkerClass` and `Severity` as wire types.
+#[test]
+fn the_marker_table_stays_out_of_the_client_surface() {
+	let candidate = ItemCandidate {
+		item_id: "1".to_string(),
+		path: vec!["truapi".to_string(), "markers".to_string(), "Severity".to_string()],
+		kind: "enum".to_string(),
+	};
+	assert!(should_skip_type_candidate("Severity", &candidate));
+}
+
+#[test]
+fn a_protocol_type_is_still_emitted() {
+	let candidate = ItemCandidate {
+		item_id: "2".to_string(),
+		path: vec!["truapi".to_string(), "v02".to_string(), "Severity".to_string()],
+		kind: "enum".to_string(),
+	};
+	assert!(!should_skip_type_candidate("Severity", &candidate));
+}
