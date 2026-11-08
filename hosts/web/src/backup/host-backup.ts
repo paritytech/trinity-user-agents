@@ -83,12 +83,27 @@ export const BACKUP_SWITCH_KEY = "truapi-web-signing-host:backup:switch";
 export const backupOn = (storage: Storage): boolean =>
   storage.getItem(BACKUP_SWITCH_KEY) !== "off";
 
-/** The core's backup accounts, as the host calls them. */
+/** The core's backup statement account: its key, and its signature over a pointer. */
 export interface BackupCore {
   account(): Promise<Uint8Array>;
-  claimSlot(): Promise<StatementAccountClaim>;
   signPointer(payload: Uint8Array): Promise<Uint8Array>;
+}
+
+/**
+ * What the backup does on the network: claim the backup statement
+ * account's slot and wait until it is final, store and fetch the sealed
+ * snapshot on Bulletin, and read and post pointers in the Statement Store.
+ */
+export interface BackupNetwork {
+  claimSlot(): Promise<StatementAccountClaim>;
+  /** Resolves once `claim`'s allowance holds at the finalized head. */
+  settled(claim: StatementAccountClaim): Promise<void>;
+  /** Store `sealed` on Bulletin; answers its preimage key. */
   storeSnapshot(sealed: Uint8Array): Promise<Uint8Array>;
+  /** The bytes Bulletin serves under `key`, or undefined when it serves none. */
+  fetchSnapshot(key: Uint8Array): Promise<Uint8Array | undefined>;
+  /** Open the People chain's Statement Store. */
+  openStore(): Promise<StatementStoreLike>;
 }
 
 /** A signed-in wallet, as its backup needs it. */
@@ -99,12 +114,7 @@ export interface BackupSession extends BackupBinding, BackupScope {
 export interface HostBackupDeps {
   storage: Storage;
   core: BackupCore;
-  /** Open the People chain's Statement Store. */
-  openStore(): Promise<StatementStoreLike>;
-  /** The bytes Bulletin serves under `key`, or undefined when it serves none. */
-  fetchSnapshot(key: Uint8Array): Promise<Uint8Array | undefined>;
-  /** Resolves once `claim`'s allowance holds at the finalized head. */
-  settled(claim: StatementAccountClaim): Promise<void>;
+  network: BackupNetwork;
   /**
    * Wait until this browser's lock `name` is held, then resolve with its
    * release. Rejects when `signal` aborts first, or when the browser has no
@@ -309,7 +319,7 @@ export class HostBackup {
         log("Backup: no backup of this wallet was found.");
         return "none";
       }
-      const sealed = await this.deps.fetchSnapshot(
+      const sealed = await this.deps.network.fetchSnapshot(
         hexToBytes(pointer.body.snapshot),
       );
       if (sealed === undefined)
@@ -503,8 +513,8 @@ export class HostBackup {
     )
       return;
     const ensure = this.guard(session);
-    const claim = await this.deps.core.claimSlot();
-    await this.deps.settled(claim);
+    const claim = await this.deps.network.claimSlot();
+    await this.deps.network.settled(claim);
     ensure();
     const keys = backupKeys(session.entropy, session);
     const held = await this.read(keys, session);
@@ -538,7 +548,7 @@ export class HostBackup {
     digest: HexString,
     takenAt: number,
   ): Promise<void> {
-    const { core, log } = this.deps;
+    const { network, log } = this.deps;
     const ensure = this.guard(session);
     const keys = backupKeys(session.entropy, session);
     const source = this.source();
@@ -562,7 +572,7 @@ export class HostBackup {
         `the snapshot is ${sealed.length} bytes sealed, more than one Bulletin store holds (${MAX_SEALED_BYTES})`,
       );
     ensure();
-    const key = await core.storeSnapshot(sealed);
+    const key = await network.storeSnapshot(sealed);
     ensure();
     if (!equalBytes(key, blake2b256(sealed)))
       throw new Error("Bulletin answered a key that is not the snapshot's");
@@ -580,8 +590,8 @@ export class HostBackup {
         `Backup: another browser published revision ${previous.body.revision}; this one replaces it.`,
       );
     const revision = Math.max(previous?.body.revision ?? 0, kept.revision) + 1;
-    const claim = await core.claimSlot();
-    await this.deps.settled(claim);
+    const claim = await network.claimSlot();
+    await this.deps.network.settled(claim);
     ensure();
     const body: PointerBody = {
       revision,
@@ -611,7 +621,7 @@ export class HostBackup {
   /** Read the stored snapshot back from Bulletin until it is the bytes stored. */
   private async readBack(key: Uint8Array, sealed: Uint8Array): Promise<void> {
     for (let tries = 1; ; tries += 1) {
-      const served = await this.deps.fetchSnapshot(key);
+      const served = await this.deps.network.fetchSnapshot(key);
       if (served !== undefined && equalBytes(served, sealed)) return;
       if (served !== undefined)
         throw new Error("Bulletin serves other bytes under the snapshot's key");
@@ -643,7 +653,7 @@ export class HostBackup {
     const signed = encodeSigned(statement, account, () => signature);
     if (!verifyStatement(decodeStatement(signed)))
       throw new Error("the pointer's signature is not the backup account's");
-    const store = await this.deps.openStore();
+    const store = await this.deps.network.openStore();
     try {
       ensure();
       const answer = await store.submit(signed);
@@ -673,7 +683,7 @@ export class HostBackup {
     expiry = 0n,
   ): Promise<Pointer | null> {
     const account = await this.deps.core.account();
-    const store = await this.deps.openStore();
+    const store = await this.deps.network.openStore();
     try {
       return await new Promise<Pointer | null>((resolve, reject) => {
         const heard: Uint8Array[] = [];

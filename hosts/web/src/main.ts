@@ -131,6 +131,7 @@ import { chatRefusal } from "./invitations/gate.js";
 import {
   HostBackup,
   backupOn,
+  type BackupNetwork,
   type BackupSession,
 } from "./backup/host-backup.js";
 import {
@@ -826,35 +827,9 @@ function coreRuntime(): WorkerPairingHostRuntime {
   return runtime;
 }
 
-/** The simulated backup network a browser test runs on the dev server, or null. */
-const simulatedBackup = devSession?.simulatedBackup ?? null;
-/** The wallet's backup on the network, when this browser turned it on (`BACKUP_SWITCH_KEY`). */
-const hostBackup = new HostBackup({
-  storage: localStorage,
-  core: {
-    account: () => coreRuntime().backupAccount(),
-    claimSlot:
-      simulatedBackup?.claimSlot ??
-      (() => coreRuntime().claimBackupStatementAccount(true)),
-    signPointer: (payload) => coreRuntime().signBackupPointer(payload),
-    storeSnapshot:
-      simulatedBackup?.storeSnapshot ??
-      ((sealed) => coreRuntime().storeBackupBlob(sealed)),
-  },
-  openStore: async () => {
-    const access = chainAccess;
-    if (access === null) throw new Error("The chains are not connected.");
-    return new StatementStore(
-      await access.chain.connect(hexToBytes(access.genesis.people)),
-    );
-  },
-  fetchSnapshot: (key) =>
-    fetchPreimage(
-      activeNetwork.dotns.contentGateway,
-      key,
-      new AbortController().signal,
-      fetch,
-    ),
+/** What the backup does on the network: the core claims and stores, the host reads and posts. */
+const backupNetwork: BackupNetwork = {
+  claimSlot: () => coreRuntime().claimBackupStatementAccount(true),
   settled: async (claim) => {
     await untilFinalizedAllowance(claim, {
       read: async (account) => {
@@ -873,6 +848,31 @@ const hostBackup = new HostBackup({
       },
     });
   },
+  storeSnapshot: (sealed) => coreRuntime().storeBackupBlob(sealed),
+  fetchSnapshot: (key) =>
+    fetchPreimage(
+      activeNetwork.dotns.contentGateway,
+      key,
+      new AbortController().signal,
+      fetch,
+    ),
+  openStore: async () => {
+    const access = chainAccess;
+    if (access === null) throw new Error("The chains are not connected.");
+    return new StatementStore(
+      await access.chain.connect(hexToBytes(access.genesis.people)),
+    );
+  },
+};
+/** The wallet's backup, kept unless this browser switched it off (`BACKUP_SWITCH_KEY`). */
+const hostBackup = new HostBackup({
+  storage: localStorage,
+  core: {
+    account: () => coreRuntime().backupAccount(),
+    signPointer: (payload) => coreRuntime().signBackupPointer(payload),
+  },
+  // On the dev server, a browser test may run the network itself.
+  ...(devSession?.backupTestNetwork ?? { network: backupNetwork }),
   acquire: (name, signal) =>
     new Promise((resolve, reject) => {
       if (navigator.locks === undefined)
@@ -886,14 +886,6 @@ const hostBackup = new HostBackup({
         .catch(reject);
     }),
   log: (line, failed) => log(line, failed),
-  ...(simulatedBackup === null
-    ? {}
-    : {
-        openStore: simulatedBackup.openStore,
-        fetchSnapshot: simulatedBackup.fetchSnapshot,
-        settled: simulatedBackup.settled,
-        pace: simulatedBackup.pace,
-      }),
 });
 /**
  * The wallet whose backup was looked for, so its members may start, and

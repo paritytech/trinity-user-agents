@@ -70,6 +70,15 @@ function browser(network: Network, storage = new MemoryStorage()) {
     storage,
     core: {
       account: async () => BACKUP_ACCOUNT,
+      // The core signs pointers only.
+      signPointer: async (payload) => {
+        const magic = bytesToHex(POINTER_MAGIC).slice(2);
+        if (!bytesToHex(payload).includes(magic))
+          throw new Error("not a backup pointer");
+        return sr25519.sign(BACKUP_SECRET, payload);
+      },
+    },
+    network: {
       claimSlot: async (): Promise<StatementAccountClaim> => {
         network.claims += 1;
         return {
@@ -80,24 +89,17 @@ function browser(network: Network, storage = new MemoryStorage()) {
           collection: "LitePeople",
         };
       },
-      // The core signs pointers only.
-      signPointer: async (payload) => {
-        const magic = bytesToHex(POINTER_MAGIC).slice(2);
-        if (!bytesToHex(payload).includes(magic))
-          throw new Error("not a backup pointer");
-        return sr25519.sign(BACKUP_SECRET, payload);
-      },
+      settled: async () => {},
       storeSnapshot: async (sealed) => {
         network.stores += 1;
         const key = blake2b256(sealed);
         network.bulletin.set(bytesToHex(key), sealed);
         return key;
       },
+      fetchSnapshot: async (key) =>
+        network.tampered ?? network.bulletin.get(bytesToHex(key)),
+      openStore: async () => network.store.connect(),
     },
-    openStore: async () => network.store.connect(),
-    fetchSnapshot: async (key) =>
-      network.tampered ?? network.bulletin.get(bytesToHex(key)),
-    settled: async () => {},
     acquire: async () => () => {},
     log: (line) => lines.push(line),
     now: () => clock.at,
@@ -287,19 +289,21 @@ describe("a browser that signs in with the same wallet", () => {
       storage: new MemoryStorage(),
       core: {
         account: async () => BACKUP_ACCOUNT,
-        claimSlot: async () => {
-          throw new Error("no claim expected");
-        },
         signPointer: async () => {
           throw new Error("no signature expected");
         },
+      },
+      network: {
+        claimSlot: async () => {
+          throw new Error("no claim expected");
+        },
+        settled: async () => {},
         storeSnapshot: async () => {
           throw new Error("no store expected");
         },
+        fetchSnapshot: async () => undefined,
+        openStore: async () => network.store.connect(),
       },
-      openStore: async () => network.store.connect(),
-      fetchSnapshot: async () => undefined,
-      settled: async () => {},
       acquire: async () => {
         throw new Error("this browser has no Web Locks");
       },
@@ -374,21 +378,23 @@ describe("a host whose core has no backup accounts", () => {
         account: async () => {
           throw new Error("signing.backupAccount is not a function");
         },
-        claimSlot: async () => {
-          throw new Error("no claim expected");
-        },
         signPointer: async () => {
           throw new Error("no signature expected");
         },
+      },
+      network: {
+        claimSlot: async () => {
+          throw new Error("no claim expected");
+        },
+        settled: async () => {},
         storeSnapshot: async () => {
           throw new Error("no store expected");
         },
+        fetchSnapshot: async () => undefined,
+        openStore: async () => {
+          throw new Error("no read expected");
+        },
       },
-      openStore: async () => {
-        throw new Error("no read expected");
-      },
-      fetchSnapshot: async () => undefined,
-      settled: async () => {},
       acquire: async () => {
         throw new Error("no lock expected");
       },

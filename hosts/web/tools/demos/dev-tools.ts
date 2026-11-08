@@ -57,7 +57,7 @@ import { startNovaChatHost } from "../../src/invitations/nova-chat-host.js";
 import { deriveHardSecret } from "../../src/invitations/chat-keys.js";
 import { lookupChatIdentity } from "../../src/platform/chain-directory.js";
 import { kettleChat } from "../chat/kettle.js";
-import { simulatedBackup, type SimulatedBackup } from "./backup-demo.js";
+import { backupTestNetwork, type BackupTestNetwork } from "./backup-demo.js";
 import type { IrohRelays } from "../../src/chat/kettle-chat/route.js";
 import type { ChatProductKey } from "../chat/products.js";
 import {
@@ -174,8 +174,8 @@ export interface DevSession {
   usernames: UsernameDirectory | null;
   /** Once the core runs, sign the test user in and start receiving invitations. */
   start(runtime: WorkerPairingHostRuntime): Promise<void>;
-  /** The simulated network a browser test runs for the host's backup, or null. */
-  simulatedBackup: SimulatedBackup | null;
+  /** The network a browser test runs for the host's backup, in place of the real one, or null. */
+  backupTestNetwork: BackupTestNetwork | null;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -278,7 +278,7 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
   return {
     testUser,
     useDemo,
-    simulatedBackup: simulatedBackup(deps.log),
+    backupTestNetwork: backupTestNetwork(deps.log),
     notificationsScope:
       testUser === null
         ? null

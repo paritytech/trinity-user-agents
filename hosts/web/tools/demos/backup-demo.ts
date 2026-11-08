@@ -6,10 +6,10 @@ import type { StatementStoreLike } from "../../src/platform/statement-store.js";
 /**
  * DEV ONLY. A simulated network for the host's backup, which a browser test
  * runs and every one of its browsers reaches: the test exposes
- * `window.__truapiBackupNetwork` before the page loads, and the backup then
- * claims, stores and posts there instead of on the network. The core still
- * derives the backup account and signs its pointer. Without the test's
- * function, nothing here is used.
+ * `window.__truapiBackupNetwork` before the page loads, and the dev server's
+ * tools hand the backup this network in place of the real one. The core
+ * still derives the backup account and signs its pointer. Without the
+ * test's function, nothing here is used.
  */
 
 /** The test's end: one operation and its argument, `0x` hex where bytes. */
@@ -25,15 +25,10 @@ declare global {
   }
 }
 
-/** What the simulated network stands in for. */
-export interface SimulatedBackup {
-  openStore: HostBackupDeps["openStore"];
-  fetchSnapshot: HostBackupDeps["fetchSnapshot"];
-  settled: HostBackupDeps["settled"];
-  claimSlot(): Promise<StatementAccountClaim>;
-  storeSnapshot(sealed: Uint8Array): Promise<Uint8Array>;
-  pace: NonNullable<HostBackupDeps["pace"]>;
-}
+/** The backup's network, and its pace, as a browser test runs them. */
+export type BackupTestNetwork = Required<
+  Pick<HostBackupDeps, "network" | "pace">
+>;
 
 const POLL_MS = 100;
 
@@ -81,27 +76,29 @@ function bridgeStore(bridge: BackupNetworkBridge): StatementStoreLike {
 }
 
 /** The simulated backup network the page's test exposed, or null when it exposed none. */
-export function simulatedBackup(
+export function backupTestNetwork(
   log: (line: string) => void,
-): SimulatedBackup | null {
+): BackupTestNetwork | null {
   const bridge = window.__truapiBackupNetwork;
   if (bridge === undefined) return null;
   log(
     "Backup: this tab keeps its backup on a simulated network that a test runs, not on the network.",
   );
   return {
-    openStore: async () => bridgeStore(bridge),
-    fetchSnapshot: async (key) => {
-      const held = (await bridge("fetch", bytesToHex(key))) as string | null;
-      return held === null ? undefined : hexToBytes(held);
+    network: {
+      claimSlot: async () =>
+        JSON.parse(
+          (await bridge("claim", "")) as string,
+        ) as StatementAccountClaim,
+      settled: async () => {},
+      storeSnapshot: async (sealed) =>
+        hexToBytes((await bridge("store", bytesToHex(sealed))) as string),
+      fetchSnapshot: async (key) => {
+        const held = (await bridge("fetch", bytesToHex(key))) as string | null;
+        return held === null ? undefined : hexToBytes(held);
+      },
+      openStore: async () => bridgeStore(bridge),
     },
-    settled: async () => {},
-    claimSlot: async () =>
-      JSON.parse(
-        (await bridge("claim", "")) as string,
-      ) as StatementAccountClaim,
-    storeSnapshot: async (sealed) =>
-      hexToBytes((await bridge("store", bytesToHex(sealed))) as string),
     pace: { checkMs: 500, quietMs: 1_000 },
   };
 }
