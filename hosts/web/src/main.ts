@@ -71,7 +71,9 @@ import {
   DESTINATION_LABELS,
   destinationOf,
   isProductDestination,
+  loadAddresses,
 } from "./app/shell.js";
+import { defaultAddresses } from "./app/dock-defaults.js";
 import { drawPocket } from "./pocket/screen.js";
 import { cardKey, pocketPlatform } from "./pocket/pocket.js";
 import { PocketFaces } from "./pocket/faces.js";
@@ -127,6 +129,7 @@ import {
   scopeOf,
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
+import type { ConnectedAccount, TabSession } from "./app/tab-session.js";
 import { chatRefusal } from "./invitations/gate.js";
 import { networkDelivery } from "./invitations/wallet-delivery.js";
 import {
@@ -466,6 +469,8 @@ const devSession =
             : new Promise((resolve) => connectedWaiters.push(resolve)),
         log: linesFor("host"),
         observe: statements.invitations,
+        serial,
+        syncProductsOnly: (scope) => sessionMembers.syncProductsOnly(scope),
       })
     : null;
 /** Contact Chat for the signed-in wallet: the host's own chat, on the network unless the dev tools chose otherwise. */
@@ -505,14 +510,34 @@ chatModality?.follow({
     tools.inspectWorker(name);
   },
 });
-/** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
-const testUser = devSession?.testUser ?? null;
-// Chat shows the demo's chat worker once the test user signs in.
-if (testUser !== null)
-  chatScreen.setNoChat({
-    title: "Chat starts with the invitation demo",
-    body: "The chat products run once the test user is signed in.",
-  });
+/** The signed-in wallet, as the tab acts as it. */
+const walletTab: TabSession = {
+  activeId: () => walletSession.active?.id ?? null,
+  signIn: (wallet) => void walletSession.signIn(wallet),
+  signOut: () => void walletSession.signOut(),
+  name: (account) =>
+    account.fullUsername ??
+    account.liteUsername ??
+    walletSession.active?.name ??
+    "wallet",
+  evidence: () => ({ id: walletSession.active?.id ?? "", who: "a wallet" }),
+  sync: syncWalletSession,
+  resume: async () => {
+    const wallet = findWallet(
+      sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "",
+    );
+    if (wallet === undefined) return;
+    walletSelect.value = wallet.id;
+    await walletSession.signIn(wallet);
+  },
+  autoOpens: true,
+  emptyStageNote:
+    "Pick Chat, Pocket or Browse, or open a product with the search button.",
+  noChat: null,
+};
+/** Who this tab acts as: the signed-in wallet, or the invitation demo's made-up user on the dev server. */
+const tabSession: TabSession = devSession?.tabSession ?? walletTab;
+if (tabSession.noChat !== null) chatScreen.setNoChat(tabSession.noChat);
 /** The wallets built into the host from public test phrases. */
 const testAccounts = DEV_ACCOUNTS.map(devAccountWallet);
 /** A wallet by id: an imported one, or a test account. */
@@ -521,23 +546,9 @@ function findWallet(id: string): Wallet | undefined {
 }
 const isTestAccount = (id: string): boolean =>
   testAccounts.some((wallet) => wallet.id === id);
-/** What the picker counts as signed in: the wallet, or the invitation demo. */
-const DEMO = "invitation-demo";
-function activeAccount(): string | null {
-  if (testUser !== null) return DEMO;
-  return walletSession.active?.id ?? null;
-}
-/**
- * Leave the invitation demo for `wallet`: the reload signs the tab in to it,
- * as any reload does the tab's wallet.
- */
-function leaveDemoFor(wallet: Wallet): void {
-  sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
-  devSession?.useDemo(null);
-}
-/** The people the signed-in wallet blocked, as its saved record keeps them. A test user blocks no one. */
+/** The people the signed-in wallet blocked, as its saved record keeps them. None without a wallet. */
 function blockedPeople(): HexString[] {
-  return testUser !== null ? [] : walletContacts.blocked();
+  return walletContacts.blocked();
 }
 /** The account `username` names on this network's chains, or null. */
 async function usernameOwner(username: string): Promise<HexString | null> {
@@ -793,7 +804,12 @@ const navigation: ProductNavigation = new ProductNavigation({
   loading,
   serial,
   walletId: (): string | null => walletSession.active?.id ?? null,
-  testUser: testUser !== null,
+  addresses: import.meta.env.DEV
+    ? // Only a dev server reads an address set in this browser, so tests can
+      // point Browse at a fixture product; a build uses the network's own.
+      loadAddresses(localStorage, activeNetwork.id)
+    : defaultAddresses(activeNetwork.id),
+  autoOpens: tabSession.autoOpens,
   tap: (current, productId) => tools.tap(productId, current.coreWireSchemaHash),
   showAddress: (text) => {
     addressInput.value = text;
@@ -906,12 +922,7 @@ async function prepareBackup(wallet: Wallet): Promise<void> {
   let kept: BackupSession | null = null;
   try {
     // The public development phrase keeps nothing of its own on the network.
-    if (
-      !backupOn(localStorage) ||
-      testUser !== null ||
-      chatRefusal(wallet.entropy) !== null
-    )
-      return;
+    if (!backupOn(localStorage) || chatRefusal(wallet.entropy) !== null) return;
     // On the light client, each People connection's statement subscription
     // replaces the topic filter every connection shares
     // (`platform/allowance-finality.ts`), so a backup read would take the
@@ -984,7 +995,7 @@ function renderWalletPanel(): void {
   const selected = walletSelect.value;
   const panel = walletPanel({
     saved: savedCount + testAccounts.length,
-    activeId: activeAccount(),
+    activeId: tabSession.activeId(),
     selectedId: findWallet(selected) === undefined ? "" : selected,
   });
   walletSelect.hidden = !panel.showPicker;
@@ -1006,7 +1017,7 @@ function renderWalletPanel(): void {
 }
 
 function renderWallets(): void {
-  const selected = walletSelect.value || activeAccount() || "";
+  const selected = walletSelect.value || tabSession.activeId() || "";
   const saved = wallets.list();
   const problem = wallets.problem();
   const walletOptions = saved.map(
@@ -1066,8 +1077,8 @@ function renderControls(): void {
   signInButton.disabled =
     !ready ||
     walletSelect.value === "" ||
-    walletSelect.value === activeAccount();
-  signOutButton.disabled = !ready || activeAccount() === null;
+    walletSelect.value === tabSession.activeId();
+  signOutButton.disabled = !ready || tabSession.activeId() === null;
   forgetButton.disabled = !ready || !wallets.has(walletSelect.value);
   addWalletButton.disabled = !ready;
   openButton.disabled = !ready;
@@ -1228,10 +1239,7 @@ function renderDock(): void {
         ? `${DESTINATION_LABELS[id]}: the products opened before`
         : `${DESTINATION_LABELS[id]}: the Browse app (${dockAddresses[id]}) and the products opened before`;
   }
-  stageEmptyNote.textContent =
-    testUser !== null
-      ? `Search for a product to try it as ${testUser.name}.`
-      : "Pick Chat, Pocket or Browse, or open a product with the search button.";
+  stageEmptyNote.textContent = tabSession.emptyStageNote;
   renderShelf();
 }
 
@@ -1422,22 +1430,22 @@ document.addEventListener(
   true,
 );
 
-/** Give the Chat screen and everything else of the session the signed-in wallet's session, or none. */
+/** Give the Chat screen and everything else of the session the tab's session, or none. */
 function syncChatSession(): void {
   const signedIn = lastAuthState.tag === "Connected";
   // The label goes into copied evidence: it names no wallet.
-  const who = testUser !== null ? `test user ${testUser.name}` : "a wallet";
+  const { id, who } = tabSession.evidence();
   tools.statementsSession(
-    `${activeNetwork.id}:${signedIn ? "in" : "out"}:${testUser?.id ?? walletSession.active?.id ?? ""}`,
+    `${activeNetwork.id}:${signedIn ? "in" : "out"}:${id}`,
     signedIn ? `${who}, signed in` : "signed out",
   );
-  // A test user's session has its workers and their chat, and nothing of a wallet's.
-  if (testUser !== null) {
-    sessionMembers.syncProductsOnly(
-      lastAuthState.tag === "Connected" ? (devSession?.scope ?? null) : null,
-    );
-    return;
-  }
+  tabSession.sync(
+    lastAuthState.tag === "Connected" ? lastAuthState.value : null,
+  );
+}
+
+/** Give everything of the signed-in wallet's session the account the core reports, or none. */
+function syncWalletSession(account: ConnectedAccount | null): void {
   const access = chainAccess;
   const active = walletSession.active;
   // A wallet's members wait until its backup was looked for, so a restore
@@ -1448,22 +1456,20 @@ function syncChatSession(): void {
   // The backup is kept while its wallet is signed in, whatever path the
   // core's session took to get there.
   const keeping =
-    lastAuthState.tag === "Connected" && prepared
-      ? (backupPrepared?.session ?? null)
-      : null;
+    account !== null && prepared ? (backupPrepared?.session ?? null) : null;
   if (keeping === null) hostBackup.stop();
   else if (!hostBackup.keeps(keeping)) hostBackup.start(keeping);
   // Before the session's workers start, so they see Contact Chat among them.
   walletChat.setWallet(
-    lastAuthState.tag !== "Connected" || access === null || wallet === null
+    account === null || access === null || wallet === null
       ? null
       : {
           walletId: wallet.id,
           entropy: wallet.entropy,
           network: activeNetwork.id,
           networkSuffix: access.networkSuffix,
-          identityAccountId: lastAuthState.value.identityAccountId ?? undefined,
-          chatPublicKey: lastAuthState.value.chatPublicKey ?? undefined,
+          identityAccountId: account.identityAccountId ?? undefined,
+          chatPublicKey: account.chatPublicKey ?? undefined,
           directory: chainDirectory(access.chain, access.genesis),
           openStatementStore: async () =>
             new StatementStore(
@@ -1500,9 +1506,9 @@ function syncChatSession(): void {
         },
   );
   sessionMembers.sync(
-    lastAuthState.tag !== "Connected" || access === null || wallet === null
+    account === null || access === null || wallet === null
       ? null
-      : { wallet, access, account: lastAuthState.value },
+      : { wallet, access, account },
   );
 }
 
@@ -1851,7 +1857,8 @@ function trackChainAccount(state: AuthState): void {
   void refreshProductAllowance();
   if (key === null) return;
   if (accountStatusFold.open) void refreshChainStatus();
-  else if (testUser === null) void syncSessionUsername();
+  // Only a wallet has a session username to read.
+  else if (walletSession.active !== null) void syncSessionUsername();
 }
 
 accountStatusRefresh.addEventListener("click", () => {
@@ -1886,17 +1893,8 @@ function renderSession(state: AuthState): void {
   sessionLine.title = "";
   switch (state.tag) {
     case "Connected": {
-      const { publicKey, identityAccountId, fullUsername, liteUsername } =
-        state.value;
-      // The demo user's name is made up; any username the public phrase's
-      // account holds is not the demo user's.
-      const name =
-        testUser !== null
-          ? `${testUser.name} (invitation demo)`
-          : (fullUsername ??
-            liteUsername ??
-            walletSession.active?.name ??
-            "wallet");
+      const { publicKey, identityAccountId } = state.value;
+      const name = tabSession.name(state.value);
       sessionLine.textContent = `Signed in as ${name} · ${abbreviate(publicKey)}`;
       sessionLine.title = `Root key ${publicKey}${identityAccountId ? `\nIdentity account ${identityAccountId}` : ""}`;
       break;
@@ -1917,13 +1915,11 @@ function renderSession(state: AuthState): void {
 signInButton.addEventListener("click", () => {
   const wallet = findWallet(walletSelect.value);
   if (!wallet) return;
-  if (testUser !== null) leaveDemoFor(wallet);
-  else void walletSession.signIn(wallet);
+  tabSession.signIn(wallet);
 });
 
 signOutButton.addEventListener("click", () => {
-  if (testUser !== null) devSession?.useDemo(null);
-  else void walletSession.signOut();
+  tabSession.signOut();
 });
 
 forgetButton.addEventListener("click", () => {
@@ -1954,8 +1950,7 @@ importForm.addEventListener("submit", (event) => {
     importDetails.open = false;
     renderWallets();
     walletSelect.value = wallet.id;
-    if (testUser !== null) leaveDemoFor(wallet);
-    else void walletSession.signIn(wallet);
+    tabSession.signIn(wallet);
   } catch (error) {
     activity.record({
       category: "session",
@@ -2069,7 +2064,7 @@ function recentScope(): string {
  * test user has no chat to show them in, so none is offered.
  */
 const searchPeople = new SearchPeople({
-  available: () => testUser === null && chatInbox.signedIn(),
+  available: () => walletSession.active !== null && chatInbox.signedIn(),
   startProblem: () => chatScreen.startProblem(),
   contacts: () => {
     const contacts = walletContacts.contacts();
@@ -2361,15 +2356,7 @@ async function boot(): Promise<void> {
     });
   renderWallets();
 
-  const tabWallet =
-    testUser === null
-      ? findWallet(sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "")
-      : undefined;
-  if (tabWallet) {
-    walletSelect.value = tabWallet.id;
-    await walletSession.signIn(tabWallet);
-  }
-  await serial((current) => devSession?.start(current) ?? Promise.resolve());
+  await tabSession.resume();
 
   // Prefill only. The product id decides what the core trusts the page as,
   // so a link must not be able to open a product under one without the
@@ -2381,7 +2368,7 @@ async function boot(): Promise<void> {
 
   // The product this tab opened itself before a reload comes back with the
   // wallet. A link's `product` parameter never does.
-  const last = testUser === null ? navigation.readTabProduct() : null;
+  const last = navigation.readTabProduct();
   if (last && !params.has("product")) {
     addressInput.value = displayAddress(last.address, activeNetwork);
     const derived = effectiveProductIdFor(last.parsed, "").id;

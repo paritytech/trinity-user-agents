@@ -9,7 +9,8 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
 - `main.ts`: the composition root. It builds the features, connects their callbacks and boots the core.
 - `app/`: the shell.
   - Navigation and session: `navigation.ts` (front and held products, destinations, `navigateTo`), `session.ts` (the
-    signed-in wallet and what a change reopens).
+    signed-in wallet and what a change reopens), `tab-session.ts` (who the tab acts as: the wallet, or the dev server's
+    demo user, which `tools/demos/demo-session.ts` implements).
   - Dock and search: `shell.ts`, `dock-defaults.ts`, `apps-shelf.ts`, `browse-landing.ts`, `search-card.ts`,
     `address.ts` (address grammar), `address-recents.ts`, `recents.ts`.
   - Layout: `chrome.ts`, `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`, `sheet-handle.ts` (a sheet's grab
@@ -61,7 +62,7 @@ The developer tools, in every build.
 - `demos/`: dev server only, left out of a build: `dev-tools.ts`, `local-demo-route.ts` (loopback check),
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
   network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
-  deliveries).
+  deliveries), `demo-session.ts` (the tab as a demo user).
 
 ## Other
 

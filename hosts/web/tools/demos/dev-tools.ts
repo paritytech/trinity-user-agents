@@ -1,4 +1,6 @@
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
+import type { TabSession } from "../../src/app/tab-session.js";
+import { demoTabSession } from "./demo-session.js";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
 import { DEFAULT_REPLY_SUITE } from "../../src/invitations/invitation-service.js";
@@ -141,21 +143,19 @@ export interface DevToolsDeps {
   log(line: string): void;
   /** Told the request service's and the delivery's facts, for the inspector's Statements view. */
   observe?: InvitationObserver;
+  /** Run `task` with the core, in order after every session change queued before it. */
+  serial(
+    task: (runtime: WorkerPairingHostRuntime) => Promise<void>,
+  ): Promise<void>;
+  /** Hand a session with no wallet keys, under `scope`, to what belongs to it, or end it with null. */
+  syncProductsOnly(scope: string | null): void;
 }
 
 export interface DevSession {
-  /** The invitation demo user this tab acts as, or null for the normal wallet session. */
-  testUser: TestUser | null;
-  /**
-   * Start the invitation demo as `id` in this tab, ending its wallet
-   * session, or leave it with null, back to the tab's wallet if one is set.
-   * Either reloads the tab.
-   */
-  useDemo(id: string | null): void;
+  /** The invitation demo's made-up user this tab acts as, in place of a wallet, or null for the wallet. */
+  tabSession: TabSession | null;
   /** The Notifications scope of the test user, or null. */
   notificationsScope: string | null;
-  /** The host storage scope of the test user's session, its workers' too, or null. */
-  scope: string | null;
   /** The test user's contacts, for the host's contact picker, or null. */
   contacts: ChatContact[] | null;
   /** The test user's Contact Chat, or null for the normal wallet session. */
@@ -175,8 +175,6 @@ export interface DevSession {
   refusedHere(error: { message?: string }): boolean;
   /** Where the test user's picker finds people by username: the other test users, or null. */
   usernames: UsernameDirectory | null;
-  /** Once the core runs, sign the test user in and start receiving invitations. */
-  start(runtime: WorkerPairingHostRuntime): Promise<void>;
   /** The network a browser test runs for the host's backup, in place of the real one, or null. */
   backupTestNetwork: BackupTestNetwork | null;
 }
@@ -275,14 +273,22 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
       "A made-up user signed in with a public test phrase. Invitations go only to other tabs of this browser.";
   }
   return {
-    testUser,
-    useDemo,
+    tabSession:
+      testUser === null || session === null
+        ? null
+        : demoTabSession({
+            network: deps.network,
+            user: testUser,
+            useDemo,
+            start: (runtime) => session.start(runtime),
+            serial: deps.serial,
+            syncProductsOnly: deps.syncProductsOnly,
+          }),
     backupTestNetwork: backupTestNetwork(deps.log),
     notificationsScope:
       testUser === null
         ? null
         : testUserKey(deps.network.id, testUser.id, "notifications"),
-    scope: testUser === null ? null : testUserScope(testUser),
     contacts:
       testUser === null
         ? null
@@ -326,7 +332,6 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
               }),
             ),
           ),
-    start: (runtime) => session?.start(runtime) ?? Promise.resolve(),
   };
 }
 

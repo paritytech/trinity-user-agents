@@ -13,12 +13,10 @@ import {
   DESTINATION_LABELS,
   destinationOf,
   isProductDestination,
-  loadAddresses,
   resolveNavigation,
   type Destination,
   type DockAddresses,
 } from "./shell.js";
-import { defaultAddresses } from "./dock-defaults.js";
 import { resolveSource } from "../products/dotns.js";
 import {
   documentsBeforeProduct,
@@ -89,8 +87,14 @@ export interface NavigationDeps {
   serial(task: (runtime: Runtime) => Promise<void>): Promise<void>;
   /** The signed-in wallet, which mounted content is kept under. */
   walletId(): string | null;
-  /** Whether the tab acts as a test user, which opens no product by destination. */
-  testUser: boolean;
+  /** The product each dock destination opens. */
+  addresses: DockAddresses;
+  /**
+   * Whether the tab opens products the user did not choose this time: a
+   * dock destination's own, and the one in front before a reload. False
+   * opens a product only when the user chooses it.
+   */
+  autoOpens: boolean;
   tap(runtime: Runtime, productId: ProductId): FrameTap;
   /** Show `text` in the address bar. */
   showAddress(text: string): void;
@@ -151,7 +155,6 @@ export class ProductNavigation {
    * behind it instead of ending it, so Chat keeps running while Browse is open.
    */
   private where: Destination | null;
-  private readonly addresses: DockAddresses;
   /**
    * The products running behind the one in front: a dock destination's under
    * the destination, and an app opened by a link or an address under
@@ -166,11 +169,6 @@ export class ProductNavigation {
     // A tab starts in Chat. A product the tab reopens after a reload moves it
     // with {@link restore}.
     this.where = "chat";
-    // Only a dev server reads an address set in this browser, so tests can
-    // point Browse at a fixture product; a build uses the network's own.
-    this.addresses = import.meta.env.DEV
-      ? loadAddresses(localStorage, deps.network.id)
-      : defaultAddresses(deps.network.id);
   }
 
   get product(): OpenProduct | null {
@@ -203,7 +201,7 @@ export class ProductNavigation {
   }
 
   get dockAddresses(): DockAddresses {
-    return this.addresses;
+    return this.deps.addresses;
   }
 
   /** Record domains the core asked about for the product in front. */
@@ -464,7 +462,7 @@ export class ProductNavigation {
       }
       if (this.where !== next) this.leaveFront();
       this.where = next;
-      if (!isProductDestination(next) || this.deps.testUser) {
+      if (!isProductDestination(next) || !this.deps.autoOpens) {
         // The address bar names a product, and a host screen is not one.
         this.deps.clearAddress();
         this.deps.render();
@@ -477,7 +475,7 @@ export class ProductNavigation {
         return;
       }
       this.deps.render();
-      const address = this.addresses[next];
+      const address = this.deps.addresses[next];
       if (!open || address === "") return;
       await this.openSaved(runtime, address);
     });
@@ -485,12 +483,12 @@ export class ProductNavigation {
 
   /**
    * Open Browse's own address, the Browse app, in front of Browse, when
-   * Browse shows with nothing in front. The user chose it, so a test user's
-   * tab opens it too.
+   * Browse shows with nothing in front. The user chose it, so a tab that
+   * does not open products by itself opens it too.
    */
   openCatalog(): Promise<void> {
     return this.deps.serial(async (runtime) => {
-      const address = this.addresses.browse;
+      const address = this.deps.addresses.browse;
       if (this.where !== "browse" || this.front !== null || address === "")
         return;
       await this.openSaved(runtime, address);
@@ -605,7 +603,7 @@ export class ProductNavigation {
     });
     // The host has taken the request once it is queued. What it opens is
     // reported in the menu and the log, not back to the product.
-    const known = destinationOf(where.address, this.addresses, network);
+    const known = destinationOf(where.address, this.deps.addresses, network);
     if (known !== null) void this.selectDestination(known, true);
     else
       void this.deps.serial(async (runtime) => {
@@ -981,9 +979,10 @@ export class ProductNavigation {
     );
   }
 
-  /** The product this tab opened itself before a reload, or null. */
+  /** The product this tab opened itself before a reload, or null when there is none or the tab does not reopen it. */
   readTabProduct(): TabProduct | null {
     const network = this.deps.network;
+    if (!this.deps.autoOpens) return null;
     try {
       const stored: unknown = JSON.parse(
         sessionStorage.getItem(tabProductKey(network.id)) ?? "null",
