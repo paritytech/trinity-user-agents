@@ -2116,13 +2116,32 @@ body[data-loading="on"] .stage-empty {
   }
 }
 
+/* The handle closes the sheet: a 120 × 28 target around the drawn bar. */
 .prompt-grabber {
-  display: block;
+  position: relative;
+  width: 120px;
+  height: 28px;
+  margin: 0 auto -8px;
+  cursor: pointer;
+}
+
+.prompt-grabber::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  left: 50%;
   width: 48px;
   height: 4px;
-  margin: 16px auto 8px;
+  margin-left: -24px;
   border-radius: 2px;
   background: var(--sheet-line);
+  transition: background 120ms;
+}
+
+@media (hover: hover) {
+  .prompt-grabber:hover::before {
+    background: var(--sheet-muted);
+  }
 }
 
 .prompt h2 {
@@ -3776,8 +3795,18 @@ body[data-search="open"] .product-slot::after {
   animation: shelf-in 160ms ease-out;
 }
 
-/* The handle the app's sheets carry. */
-.search-card::before {
+/* The handle the app's sheets carry. It closes the card: a 120 × 18 target around the drawn bar. */
+.search-grab {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 120px;
+  height: 18px;
+  margin-left: -60px;
+  cursor: pointer;
+}
+
+.search-grab::before {
   content: "";
   position: absolute;
   top: 6px;
@@ -3787,6 +3816,13 @@ body[data-search="open"] .product-slot::after {
   margin-left: -18px;
   border-radius: 3px;
   background: rgb(255 255 255 / 0.32);
+  transition: background 120ms;
+}
+
+@media (hover: hover) {
+  .search-grab:hover::before {
+    background: rgb(255 255 255 / 0.56);
+  }
 }
 
 .search-card[hidden] {
@@ -4115,8 +4151,21 @@ body[data-search="open"] .product-slot::after {
     transform: none;
   }
 
+  /* The handle closes the sheet: a 120 × 24 target around the drawn bar. */
   .devtools-grab {
     display: block;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    z-index: 2;
+    width: 120px;
+    height: 24px;
+    margin-left: -60px;
+    cursor: pointer;
+  }
+
+  .devtools-grab::before {
+    content: "";
     position: absolute;
     top: 8px;
     left: 50%;
@@ -4125,6 +4174,13 @@ body[data-search="open"] .product-slot::after {
     margin-left: -18px;
     border-radius: 999px;
     background: rgb(255 255 255 / 0.48);
+    transition: background 120ms;
+  }
+
+  @media (hover: hover) {
+    .devtools-grab:hover::before {
+      background: rgb(255 255 255 / 0.72);
+    }
   }
 }
 

@@ -28,6 +28,7 @@ The Pill opens one field, **Find a person or app** (`src/app/search-card.ts`). T
   before a choice.
 - Choosing a person opens Chat as New chat does (`ChatScreen.startWith`). Nothing goes to a product. A choice from
   before a session change is dropped.
+- The close button, `Escape`, a tap on the card's handle or a drag down from the handle or the heading closes the card.
 - `Escape` closes the suggestions, then the card. A failed address reopens the card with the reason.
 - Scanning a code is not available.
 
@@ -45,7 +46,8 @@ The Pill opens one field, **Find a person or app** (`src/app/search-card.ts`). T
   320 px to all but 360 px, height 160 px to all but 120 px. The browser keeps each size
   (`truapi-web-signing-host:devtools-width`, `...:devtools-height`).
 - **Narrow screens:** the tools cover the app with a scrim (a 380 px panel, or a bottom sheet on a phone). They start
-  hidden. `Escape` or the scrim closes them.
+  hidden. `Escape`, the scrim or the close button closes them. On a phone, a tap on the sheet's handle or a drag down
+  from the handle or the header also closes it; the sheet keeps its size.
 - Showing, hiding, moving or resizing the tools never re-creates the product frame. The product does not reload.
 
 ## Preview

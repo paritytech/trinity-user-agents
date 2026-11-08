@@ -1,5 +1,6 @@
 import { avatarColor } from "./avatar-color.js";
 import type { PromptField } from "./reviews.js";
+import { bindSheetHandle } from "./sheet-handle.js";
 
 /**
  * The host's own questions to the user: a permission, a confirmation, a
@@ -10,8 +11,9 @@ import type { PromptField } from "./reviews.js";
  * The sheet is a modal `<dialog>`, so the browser keeps focus inside it,
  * makes the rest of the page inert and answers Escape. It sits in the top
  * layer, placed and scaled over the app's rectangle ({@link setPromptArea}),
- * so the inspector and the menu stay visible beside it. Tapping the scrim
- * gives the same answer as Escape.
+ * so the inspector and the menu stay visible beside it. Tapping the scrim,
+ * tapping the sheet's handle or dragging it down gives the same answer as
+ * Escape.
  */
 
 /** How a choice reads. A list puts `cancel` choices below the others. */
@@ -290,7 +292,7 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   const titleId = `prompt-title-${Math.random().toString(36).slice(2)}`;
   dialog.setAttribute("aria-labelledby", titleId);
 
-  const grabber = el("span", "prompt-grabber");
+  const grabber = el("div", "prompt-grabber");
   grabber.setAttribute("aria-hidden", "true");
   const title = el("h2", "", request.title);
   title.id = titleId;
@@ -371,6 +373,11 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
     sheet.append(actions);
 
     scrim.addEventListener("click", () => finish(request.dismissed));
+    bindSheetHandle({
+      handle: grabber,
+      sheet,
+      close: () => finish(request.dismissed),
+    });
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       finish(request.dismissed);

@@ -29,8 +29,9 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   Humanity.
 - [`build.spec.ts`](../browser/build.spec.ts): the static build, the Browse seed (`WEB_SIGNING_SEED_BROWSE=0`: none),
   Contact Chat's archive.
-- [`mobile.spec.ts`](../browser/mobile.spec.ts): an emulated phone browser: gestures, zoom lock, full screen.
-- [`prompts.spec.ts`](../browser/prompts.spec.ts): the host's prompts.
+- [`mobile.spec.ts`](../browser/mobile.spec.ts): an emulated phone browser: gestures, zoom lock, full screen, and the
+  Developer sheet's and search card's handles.
+- [`prompts.spec.ts`](../browser/prompts.spec.ts): the host's prompts, and how each is dismissed.
 - [`app-area.spec.ts`](../browser/app-area.spec.ts): where a product in front sits.
 - [`docklet-search.spec.ts`](../browser/docklet-search.spec.ts): the search field.
 - [`keyboard.spec.ts`](../browser/keyboard.spec.ts): an on-screen keyboard (a simulated visual viewport).

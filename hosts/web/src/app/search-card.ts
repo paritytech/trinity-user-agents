@@ -1,8 +1,11 @@
+import { bindSheetHandle } from "./sheet-handle.js";
+
 /**
  * The card the Docklet's Pill opens: the host's search field, where a
  * product is opened by name or URL and a person is found by name or username,
  * with its suggestions. It draws nothing of its own; it only shows, hides and
- * gives focus back.
+ * gives focus back. A tap on its handle, or a drag down from the handle or
+ * its heading, closes it as the close button does.
  */
 export class SearchCard {
   constructor(
@@ -17,6 +20,12 @@ export class SearchCard {
       this.isOpen() ? this.close(true) : this.open(),
     );
     close.addEventListener("click", () => this.close(true));
+    bindSheetHandle({
+      handle: root.querySelector<HTMLElement>(".search-grab")!,
+      header: [root.querySelector<HTMLElement>(".search-head")!],
+      sheet: root,
+      close: () => this.close(true),
+    });
     root.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || event.target === input) return;
       event.preventDefault();

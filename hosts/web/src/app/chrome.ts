@@ -1,4 +1,5 @@
 import { DEV_VIEWS, Layout, type DevSide, type DevView } from "./layout.js";
+import { bindSheetHandle } from "./sheet-handle.js";
 
 /** Below this width the tools cover the app instead of sitting beside it. */
 const NARROW = "(max-width: 900px)";
@@ -124,9 +125,19 @@ export function bindChrome(elements: ChromeElements): Chrome {
       localStorage.setItem(SIDE_KEY, side);
       render();
     });
-  elements.close.addEventListener("click", () => {
+  const close = (): void => {
     layout.close();
     render();
+  };
+  elements.close.addEventListener("click", close);
+  // On a phone the tools are a sheet, and its handle closes it.
+  bindSheetHandle({
+    handle: panel.querySelector<HTMLElement>(".devtools-grab")!,
+    header: [
+      ...panel.querySelectorAll<HTMLElement>(".devtools-start, .devtools-end"),
+    ],
+    sheet: panel,
+    close,
   });
 
   scrim.addEventListener("click", () => {

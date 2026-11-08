@@ -12,7 +12,8 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
     signed-in wallet and what a change reopens).
   - Dock and search: `shell.ts`, `dock-defaults.ts`, `apps-shelf.ts`, `browse-landing.ts`, `search-card.ts`,
     `address.ts` (address grammar), `address-recents.ts`, `recents.ts`.
-  - Layout: `chrome.ts`, `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`.
+  - Layout: `chrome.ts`, `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`, `sheet-handle.ts` (a sheet's grab
+    handle: a tap or a drag down closes it).
   - Prompts and callbacks: `callbacks.ts`, `prompt.ts`, `reviews.ts`, `requester.ts` (where the requester came from).
   - Account and Product tabs: `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`,
     `product-chain.ts`, `chain-backends.ts` (Chain connections), `versions.ts`.

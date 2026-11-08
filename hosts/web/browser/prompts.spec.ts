@@ -1,7 +1,7 @@
 /**
  * Headless-browser test of the host's prompts: drawn as the app's bottom
  * sheets over the app's rectangle only, at the app's scale, with the
- * dialog's focus, Escape and scrim answers. A test user tab gives the core a
+ * dialog's focus, Escape, scrim and handle answers. A test user tab gives the core a
  * session from a public test phrase; a fixture product asks for a contact and
  * for the camera permission, which the test denies. Every socket is closed
  * and every request outside this host and the fixture is refused. It needs a
@@ -183,6 +183,18 @@ const inside = (
   inner.right <= outer.right + 1 &&
   inner.bottom <= outer.bottom + 1;
 
+/** Drag the open sheet's handle `distance` pixels down with the mouse, and let go. */
+async function dragHandle(page: Page, distance: number): Promise<void> {
+  await geometry(page);
+  const box = (await sheet(page).locator(".prompt-grabber").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + distance, { steps: 8 });
+  await page.mouse.up();
+}
+
 async function screenshot(page: Page, name: string): Promise<void> {
   const directory = process.env.PROMPT_SCREENSHOTS;
   if (directory)
@@ -191,7 +203,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("the host's prompts", () => {
   test(
-    "a contact picker is a dark sheet over the phone preview only, answered by row, Escape or the scrim",
+    "a contact picker is a dark sheet over the phone preview only, answered by row, Escape, the scrim or its handle",
     async () => {
       const { context, page, frame, outside } = await start({
         width: 1280,
@@ -259,6 +271,24 @@ describe("the host's prompts", () => {
         const app = (await geometry(page)).app;
         await page.mouse.click(app.left + 20, app.top + 20);
         expect((await tapped).outcome?.tag).toBe("Dismissed");
+
+        // So do a tap on the sheet's handle and a drag down from it. A short
+        // drag springs back and the sheet stays.
+        const grabbed = call(frame, "pick");
+        await sheet(page).waitFor();
+        await sheet(page).locator(".prompt-grabber").click();
+        expect((await grabbed).outcome?.tag).toBe("Dismissed");
+        const dragged = call(frame, "pick");
+        await sheet(page).waitFor();
+        await dragHandle(page, 16);
+        expect(await page.locator("dialog.prompt").count()).toBe(1);
+        expect(
+          await sheet(page).evaluate(
+            (node) => (node as HTMLElement).style.transform,
+          ),
+        ).toBe("");
+        await dragHandle(page, 200);
+        expect((await dragged).outcome?.tag).toBe("Dismissed");
 
         // A permission keeps its detail, and Deny is the answer the test gives.
         await page.focus("#pill");
@@ -397,7 +427,8 @@ describe("the host's prompts", () => {
           .boundingBox();
         expect(deny!.height).toBeGreaterThanOrEqual(44);
         await screenshot(phone.page, "permission-phone");
-        await phone.page.keyboard.press("Escape");
+        // Dragging the sheet away by its handle denies, as Escape does.
+        await dragHandle(phone.page, 200);
         expect((await asked).granted).toBe(false);
         expect(phone.outside).toEqual([]);
       } finally {
