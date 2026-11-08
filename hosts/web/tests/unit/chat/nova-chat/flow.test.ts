@@ -169,6 +169,7 @@ function startUser(
       };
     },
     claimNotification: async () => ({ line: "claimed in the test", seq: 0 }),
+    notificationSettled: async () => {},
     accounts: {
       allow: async (_product, index) => ({
         account: bytesToHex(sr25519.getPublicKey(accountAt(bytesToHex(index)))),

@@ -128,6 +128,7 @@ import {
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
 import { chatRefusal } from "./invitations/gate.js";
+import { networkDelivery } from "./invitations/wallet-delivery.js";
 import {
   HostBackup,
   backupOn,
@@ -482,12 +483,13 @@ const walletChat = new WalletChat({
   showChat: () => void navigation.selectDestination("chat"),
   log: linesFor("host"),
   observe: statements.invitations,
-  ...(devSession === null
-    ? {}
-    : {
-        replySuite: devSession.replySuite,
-        devDelivery: devSession.walletDelivery,
-      }),
+  delivery:
+    devSession?.walletDelivery ??
+    networkDelivery({
+      log: linesFor("host"),
+      observe: statements.invitations,
+    }),
+  ...(devSession === null ? {} : { replySuite: devSession.replySuite }),
   ...(chatModality === null
     ? {}
     : { products: chatModality.walletProducts(() => peopleAccess) }),

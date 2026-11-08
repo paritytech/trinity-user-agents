@@ -41,12 +41,19 @@ import {
   type ChatProductSpec,
   type RunningChat,
   type ContactChatOwner,
-  type WalletDelivery,
 } from "../../src/invitations/wallet-chat.js";
+import type { WalletDelivery } from "../../src/invitations/wallet-delivery.js";
+import {
+  DEV_DELIVERY_MODES,
+  devWalletDelivery,
+  submitsNothing,
+  type DevDeliveryMode,
+} from "./wallet-deliveries.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
   openSimulatedStatementStore,
   simulatedAllowance,
+  simulatedSettled,
   simulatedStatements,
 } from "./kettle-demo.js";
 import { novaChat } from "../chat/nova.js";
@@ -153,12 +160,8 @@ export interface DevSession {
   contacts: ChatContact[] | null;
   /** The test user's Contact Chat, or null for the normal wallet session. */
   testChat: ContactChatOwner | null;
-  /** How this tab's wallet requests travel, as the Developer section chose. */
-  walletDelivery: {
-    mode(): WalletDelivery;
-    /** The simulated delivery between tabs of this browser, for the local choices. */
-    local(self: string): HostDelivery;
-  };
+  /** How this tab's wallet requests travel, as the Developer section chose, or null: the network's. */
+  walletDelivery: WalletDelivery | null;
   /** The reply-key suite of this tab's new requests. */
   replySuite(): ReplySuite;
   /**
@@ -223,16 +226,11 @@ const devReplySuite = (): ReplySuite =>
     ? "x25519"
     : DEFAULT_REPLY_SUITE;
 
-function walletDelivery(): WalletDelivery {
+/** How this tab's wallet requests travel, as the Developer section chose. */
+function walletDelivery(): DevDeliveryMode | "network" {
   const value = sessionStorage.getItem(WALLET_DELIVERY_KEY);
-  return value === "local-validate" || value === "validate" || value === "local"
-    ? value
-    : "network";
+  return DEV_DELIVERY_MODES.find((mode) => mode === value) ?? "network";
 }
-
-/** Whether `mode` keeps the tab from submitting anything. */
-const submitsNothing = (mode: WalletDelivery) =>
-  mode === "validate" || mode === "local-validate";
 
 /** The simulated delivery between tabs of this browser, for the user whose chat key is `self`. */
 function localDelivery(
@@ -259,8 +257,9 @@ const timeout = (task: () => void, delayMs: number) => {
 export function startDevTools(deps: DevToolsDeps): DevSession {
   const { chatProducts } = deps;
   const testUser = tabTestUser(sessionStorage);
-  const networkMode = (): WalletDelivery =>
+  const networkMode = (): DevDeliveryMode | "network" =>
     testUser === null ? walletDelivery() : "local";
+  const chosen = walletDelivery();
   const session =
     testUser === null ? null : startTestUser(deps, testUser, chatProducts);
   const useDemo = (id: string | null) => {
@@ -289,10 +288,14 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         ? null
         : chatContactsOf(testUser, deps.network.networkSuffix),
     testChat: session?.owner ?? null,
-    walletDelivery: {
-      mode: walletDelivery,
-      local: (self) => localDelivery(deps, self, timeout),
-    },
+    walletDelivery:
+      chosen === "network"
+        ? null
+        : devWalletDelivery(chosen, {
+            log: deps.log,
+            ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+            local: (self) => localDelivery(deps, self, timeout),
+          }),
     replySuite: devReplySuite,
     guardNetwork: (network) => {
       if (
@@ -421,7 +424,7 @@ function startTestUser(
           received: "contact-chat-received",
         }
       : {
-          spec: kettleChat(undefined, deps.kettleIroh),
+          spec: kettleChat(simulatedSettled, deps.kettleIroh),
           outbox: "kettle-chat-outbox",
           received: "kettle-chat-received",
           // Only Kettle Chat posts here, to the simulated Statement Store.
@@ -434,7 +437,7 @@ function startTestUser(
    * conversation account's allowance.
    */
   const novaOf = (index: number): RunningChat => {
-    const spec = novaChat();
+    const spec = novaChat(simulatedSettled);
     const entropy = testUserEntropy(self);
     const chatKeyOf = async (account: Uint8Array) =>
       (await lookupChatIdentity(directory, account))?.chatKey ?? null;
@@ -473,6 +476,7 @@ function startTestUser(
           line: "simulated: nothing was claimed in the invitation demo.",
           seq: 0,
         }),
+        notificationSettled: simulatedSettled,
         accounts: simulatedAllowance(() => core, deps.log),
         confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
         confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
@@ -640,7 +644,7 @@ function requestControls(
   deliverySelect.title =
     "How the wallet's host requests travel in this tab, for every product that uses the request service. The network delivery, the default and the only one a build has, posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing; in this browser, requests stay between tabs, and with chat claims validated each chat account's claim is validated. Switching reloads the tab.";
   deliverySelect.addEventListener("change", () => {
-    const next = deliverySelect.value as WalletDelivery;
+    const next = deliverySelect.value as DevDeliveryMode | "network";
     if (next === "network") sessionStorage.removeItem(WALLET_DELIVERY_KEY);
     else sessionStorage.setItem(WALLET_DELIVERY_KEY, next);
     window.location.reload();

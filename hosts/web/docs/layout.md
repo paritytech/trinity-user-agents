@@ -60,7 +60,8 @@ The developer tools, in every build.
   (wording per People backend), `ui.ts`, `view.ts`.
 - `demos/`: dev server only, left out of a build: `dev-tools.ts`, `local-demo-route.ts` (loopback check),
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
-  network a browser test runs for the backup).
+  network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
+  deliveries).
 
 ## Other
 

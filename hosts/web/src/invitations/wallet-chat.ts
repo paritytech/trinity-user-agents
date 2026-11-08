@@ -35,10 +35,15 @@ import * as sr25519 from "@scure/sr25519";
 import { hexToBytes } from "@parity/truapi/scale";
 import type { AcceptPrompt, SendPrompt } from "./invitation-service.js";
 import type { InvitationObserver } from "./observer.js";
-import type { ConversationAllowance, HostDelivery, Product } from "./ports.js";
+import type { Product } from "./ports.js";
 import { ownIdentityProblem } from "./published-keys.js";
-import { StatementStoreDelivery } from "./statement-delivery.js";
 import { WalletIdentityAuth } from "./wallet-auth.js";
+import {
+  CHAT_ACCOUNT_COST,
+  conversationAllowance,
+  type ChatCosts,
+  type WalletDelivery,
+} from "./wallet-delivery.js";
 
 /**
  * Contact Chat for the signed-in wallet: the host's own chat product, run for
@@ -52,22 +57,9 @@ import { WalletIdentityAuth } from "./wallet-auth.js";
  * after the Send prompt, a reply only after Accept, and each says what it
  * claims of the person's allowance. Chat messages are not encrypted.
  *
- * The dev server's tools may choose another delivery for intentional
- * debugging (claims only validated, or requests kept between tabs of this
- * browser), or no Contact Chat at all, for tests of other products.
+ * How requests travel is the {@link WalletDelivery} the page hands it: the
+ * network's (`./wallet-delivery.ts`), or one the dev server's tools chose.
  */
-
-/**
- * How the wallet's requests travel: `network` claims and posts for real,
- * `validate` uses the network delivery with every claim only validated,
- * `local` keeps requests between tabs of this browser, and `local-validate`
- * does so and only validates each chat account's claim.
- */
-export type WalletDelivery =
-  | "network"
-  | "validate"
-  | "local"
-  | "local-validate";
 
 /** Contact Chat's product id and name on a network. */
 export const contactChat = (networkSuffix: string): Product => ({
@@ -93,10 +85,10 @@ export interface ChatProductSpec {
   workerParams?: Readonly<Record<string, string>>;
   /**
    * Resolves once a conversation account's claim holds at the People chain's
-   * finalized head, or rejects saying why not. Absent: the claim's answer is
-   * enough.
+   * finalized head, or rejects saying why not. Null: the claim's answer is
+   * enough, as for Contact Chat. Nova Chat does not run without one.
    */
-  allowanceSettled?(claim: StatementAccountClaim): Promise<void>;
+  allowanceSettled: ((claim: StatementAccountClaim) => Promise<void>) | null;
   /**
    * How it sets up chats. Absent: the host request service
    * (`host-requests/1`). `nova`: the official Nova apps' own chat requests,
@@ -111,7 +103,43 @@ export const CONTACT_CHAT: ChatProductSpec = {
   workerPath: CONTACT_CHAT_PATH,
   lists: "contact-chat",
   messagesEncrypted: false,
+  allowanceSettled: null,
 };
+
+/** Why Nova Chat stays off for a spec with no finality guard. */
+export const NOVA_NEEDS_SETTLEMENT =
+  "Nova Chat posts only once a claim holds at the finalized head, and this host gave it no way to wait for that.";
+
+/**
+ * A Nova notification account's wait, through `settled`: the same guard as
+ * the conversation accounts', since its allowance is read the same way.
+ * Null rejects, saying so, and submits nothing.
+ */
+export function novaNotificationSettled(
+  settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
+): (
+  account: Uint8Array,
+  claim: {
+    period: number;
+    seq: number;
+    collection?: string;
+    blockHash?: string;
+  },
+) => Promise<void> {
+  return (account, claim) =>
+    settled === null
+      ? Promise.reject(new Error(NOVA_NEEDS_SETTLEMENT))
+      : settled({
+          account: bytesToHex(account),
+          period: claim.period,
+          outcome: "registered",
+          seq: claim.seq,
+          collection: claim.collection ?? "People",
+          ...(claim.blockHash === undefined
+            ? {}
+            : { blockHash: claim.blockHash }),
+        });
+}
 
 /** A wallet session the core reports, as Contact Chat's requests need it. */
 export interface WalletRequestsSession {
@@ -307,14 +335,8 @@ export interface WalletChatDeps {
    * Contact Chat alone.
    */
   products?: readonly ChatProductSpec[];
-  /**
-   * Another delivery a developer chose on the dev server, with the simulated
-   * delivery between tabs the local choices use. Absent: the network.
-   */
-  devDelivery?: {
-    mode(): WalletDelivery;
-    local(self: string): HostDelivery;
-  };
+  /** How the wallet's requests travel, and what that spends. */
+  delivery: WalletDelivery;
 }
 
 /** Contact Chat for whichever wallet is signed in. */
@@ -336,11 +358,6 @@ export class WalletChat {
     });
   }
 
-  /** How the wallet's requests travel in this page. */
-  mode(): WalletDelivery {
-    return this.deps.devDelivery?.mode() ?? "network";
-  }
-
   /** The chat products the wallet runs, the one New chat starts in first. */
   private products(): readonly ChatProductSpec[] {
     return this.deps.products ?? [CONTACT_CHAT];
@@ -352,7 +369,7 @@ export class WalletChat {
    * the network names.
    */
   hidesWalletContacts(): boolean {
-    return this.products().length > 0 && this.mode() !== "local";
+    return this.products().length > 0 && this.deps.delivery.hidesWalletContacts;
   }
 
   /**
@@ -373,7 +390,7 @@ export class WalletChat {
     this.sentChanged();
     if (session === null || key === null || this.products().length === 0)
       return;
-    const chats = this.start(session, this.mode());
+    const chats = this.start(session);
     if (chats.length === 0) return;
     this.current = { key, chats };
     const stops = chats.map((chat) =>
@@ -396,11 +413,9 @@ export class WalletChat {
    * and whoever writes to them. Names come from the host's own records and
    * the chain, never from a request.
    */
-  private start(
-    session: WalletRequestsSession,
-    mode: WalletDelivery,
-  ): RunningChat[] {
+  private start(session: WalletRequestsSession): RunningChat[] {
     const { deps } = this;
+    const { delivery } = deps;
     const keys = sessionChatKeys({
       entropy: session.entropy,
       networkSuffix: session.networkSuffix,
@@ -432,26 +447,22 @@ export class WalletChat {
       },
       log: deps.log,
     });
-    const list = (spec: ChatProductSpec, part: "sent" | "received") =>
-      `truapi-web-signing-host:network:${session.network}:requests:${session.walletId}:${spec.lists}:${part}:v1`;
-    // The network delivery keeps its own lists: its requests name the day
-    // inbox as their return route, which the local delivery cannot reach.
-    const local = mode === "local" || mode === "local-validate";
     const lists = (spec: ChatProductSpec, part: "sent" | "received") =>
-      local ? list(spec, part) : `${list(spec, part)}:day-inbox`;
+      `truapi-web-signing-host:network:${session.network}:requests:${session.walletId}:${spec.lists}:${part}:v1${delivery.listSuffix}`;
     deps.log(
       `Host requests for ${this.products()
         .map((spec) => spec.product(session.networkSuffix).name)
-        .join(" and ")}: ${DELIVERY_LINE[mode]}`,
+        .join(" and ")}: ${delivery.line}`,
     );
     const self = bytesToHex(keys.chatPublic);
     return this.products().map((spec, index) => {
-      const costs = chatCosts(mode, spec.messagesEncrypted);
+      const costs = delivery.costs(spec.messagesEncrypted);
+      const accounts = delivery.allowance(session, spec.allowanceSettled);
       if (spec.setup === "nova")
         return {
           workerPath: spec.workerPath,
           startsChats: index === 0,
-          host: this.startNova(session, spec, contacts, mode, keys),
+          host: this.startNova(session, spec, contacts, keys),
         };
       return {
         workerPath: spec.workerPath,
@@ -469,38 +480,8 @@ export class WalletChat {
           ...(deps.replySuite === undefined
             ? {}
             : { replySuite: deps.replySuite }),
-          ...(mode === "local"
-            ? {}
-            : {
-                accounts: conversationAllowance(
-                  session,
-                  mode === "network",
-                  spec.allowanceSettled,
-                ),
-              }),
-          delivery:
-            local && deps.devDelivery !== undefined
-              ? deps.devDelivery.local(self)
-              : new StatementStoreDelivery({
-                  network: session.network,
-                  entropy: session.entropy,
-                  openStore: () => session.openStatementStore(),
-                  claim: (target, submit) =>
-                    session.claimNotificationAccount(target, submit),
-                  submit: mode === "network",
-                  now: () => Date.now(),
-                  schedule: (task, delayMs) => {
-                    const timer = setTimeout(
-                      task,
-                      Math.min(delayMs, 2 ** 31 - 1),
-                    );
-                    return () => clearTimeout(timer);
-                  },
-                  log: deps.log,
-                  ...(deps.observe === undefined
-                    ? {}
-                    : { observe: deps.observe }),
-                }),
+          ...(accounts === undefined ? {} : { accounts }),
+          delivery: delivery.hostDelivery(session, self),
           contacts,
           handles: deps.handles,
           onNamesChange: (listener) => deps.names.onChange(listener),
@@ -525,19 +506,22 @@ export class WalletChat {
   /**
    * Nova Chat for `session`: the official Nova apps' chat requests, sealed
    * and opened by the wallet's keys in the host, read and posted on the
-   * network's Statement Store. It needs the network: the local deliveries
-   * carry host-requests only, so it does not run there.
+   * network's Statement Store. It does not run over a delivery that says
+   * why it cannot ({@link WalletDelivery.novaProblem}), nor for a spec with
+   * no finality guard.
    */
   private startNova(
     session: WalletRequestsSession,
     spec: ChatProductSpec,
     contacts: DirectoryContacts,
-    mode: WalletDelivery,
     keys: ChatKeys,
   ): ContactChatHost {
     const { deps } = this;
+    const { submits: submit } = deps.delivery;
+    const novaProblem =
+      deps.delivery.novaProblem ??
+      (spec.allowanceSettled === null ? NOVA_NEEDS_SETTLEMENT : null);
     const product = spec.product(session.networkSuffix);
-    const submit = mode === "network";
     const chatKeyOf = async (account: Uint8Array) =>
       (await lookupChatIdentity(session.directory, account))?.chatKey ?? null;
     return startNovaChatHost({
@@ -561,12 +545,8 @@ export class WalletChat {
       blocked: deps.blocked,
       notifications: deps.notifications,
       verify: () =>
-        mode === "local" || mode === "local-validate"
-          ? Promise.resolve({
-              reason:
-                "Nova Chat needs the network delivery: the Nova apps read only the network's Statement Store.",
-              again: false,
-            })
+        novaProblem !== null
+          ? Promise.resolve({ reason: novaProblem, again: false })
           : ownIdentityProblem(session.directory, keys),
       openStore: () => session.openStatementStore(),
       notificationSigner: (kind, requestId, period) => {
@@ -599,23 +579,7 @@ export class WalletChat {
             : { blockHash: claim.blockHash }),
         };
       },
-      ...(spec.allowanceSettled === undefined
-        ? {}
-        : {
-            // The same finality guard as the conversation accounts': a
-            // notification account's allowance is read the same way.
-            notificationSettled: (account, claim) =>
-              spec.allowanceSettled!({
-                account: bytesToHex(account),
-                period: claim.period,
-                outcome: "registered",
-                seq: claim.seq,
-                collection: claim.collection ?? "People",
-                ...(claim.blockHash === undefined
-                  ? {}
-                  : { blockHash: claim.blockHash }),
-              }),
-          }),
+      notificationSettled: novaNotificationSettled(spec.allowanceSettled),
       accounts: conversationAllowance(session, submit, spec.allowanceSettled),
       confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
       confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
@@ -625,67 +589,6 @@ export class WalletChat {
     });
   }
 }
-
-/** How the request service's requests and replies travel, whichever product sent them. */
-const DELIVERY_LINE: Record<WalletDelivery, string> = {
-  network:
-    "requests and replies go on the network's day inbox, and each post claims a notification slot.",
-  validate:
-    "requests and replies use the network delivery with claims only validated, and nothing is submitted.",
-  local: "requests and replies stay between tabs of this browser.",
-  "local-validate":
-    "requests and replies stay in this browser, conversation accounts' claims are only validated, and nothing is submitted.",
-};
-
-/**
- * How a wallet's Contact Chat gets its conversation accounts an allowance:
- * a general Statement Store slot of the wallet's personhood for the UTC day,
- * which the core claims for Contact Chat's own account at the index it names.
- * A tab that only validates claims asks the runtime whether it would accept
- * the claim and submits nothing, so a message there fails and says so.
- */
-function conversationAllowance(
-  session: WalletRequestsSession,
-  submit: boolean,
-  settled?: (claim: StatementAccountClaim) => Promise<void>,
-): ConversationAllowance {
-  return {
-    async allow(product, index) {
-      const claim = await session.claimProductStatementAccount(
-        product,
-        index,
-        submit,
-      );
-      if (claim.outcome === "validated")
-        throw new Error(
-          `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
-        );
-      await settled?.(claim);
-      return {
-        account: claim.account,
-        until: (claim.period + 1) * 86_400_000,
-      };
-    },
-  };
-}
-
-/** What a wallet's Contact Chat spends of the person's allowance, and what it exposes, for the host's prompts. */
-export interface ChatCosts {
-  /** The one muted line both prompts show, which opens the breakdown. */
-  summary: string;
-  /** What sending a request spends. */
-  request: string;
-  /** What replying to a request spends. */
-  reply: string;
-  /** What the chat that follows spends. */
-  chat: string;
-  /** Who can read the chat's messages, or null when none are sent. */
-  messages: string | null;
-}
-
-/** The chat's account and its allowance, the same in every delivery that gives one. */
-const CHAT_ACCOUNT_COST =
-  "1 Statement Store slot each day you send, for this chat's own account.";
 
 const CANCEL = "Cancel it under Sent in your Inbox.";
 
@@ -698,47 +601,6 @@ export const NOVA_COSTS: ChatCosts = {
   messages:
     "End-to-end encrypted, as the Nova apps do. Who posts, to which topics, when and how much is public.",
 };
-
-/** What `mode` spends and exposes, or null when it spends nothing. */
-export function chatCosts(
-  mode: WalletDelivery,
-  encrypted = false,
-): ChatCosts | null {
-  switch (mode) {
-    case "local":
-      return null;
-    case "local-validate":
-      return {
-        summary: "Uses chat slots, only validated",
-        request: "Nothing: the request stays in this browser.",
-        reply: "Nothing: the reply stays in this browser.",
-        chat: `${CHAT_ACCOUNT_COST} Only validated: nothing is submitted or sent.`,
-        messages: null,
-      };
-    case "validate":
-      return {
-        summary: "Uses daily slots, only validated",
-        request: "1 notification slot, only validated: nothing is submitted.",
-        reply: "1 notification slot, only validated: nothing is submitted.",
-        chat: `${CHAT_ACCOUNT_COST} Only validated: nothing is submitted.`,
-        messages: null,
-      };
-    case "network":
-      return {
-        summary: encrypted
-          ? "Uses daily slots · Messages are end-to-end encrypted"
-          : "Uses daily slots · Messages are public",
-        request:
-          "1 notification slot now, and 1 more each day it is pending while this host is open.",
-        reply:
-          "1 notification slot now, and 1 more on any later day their request arrives again.",
-        chat: CHAT_ACCOUNT_COST,
-        messages: encrypted
-          ? "End-to-end encrypted. Who posts, to which topics, when and how much is public."
-          : "Not encrypted: anyone can read them.",
-      };
-  }
-}
 
 /** The chat's costs, under the request's or reply's own line, folded under the summary. */
 function costDetails(

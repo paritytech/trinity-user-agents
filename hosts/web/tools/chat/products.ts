@@ -1,8 +1,8 @@
 import "./products.css";
 import { ask } from "../../src/app/prompt.js";
 import type { PeopleAccess } from "../statements/actions.js";
-import { finalizedAllowance, kettleChat } from "./kettle.js";
-import { novaChat } from "./nova.js";
+import { KETTLE_CHAT_FACTS, finalizedAllowance, kettleChat } from "./kettle.js";
+import { NOVA_CHAT_FACTS, novaChat } from "./nova.js";
 import {
   BAD_RELAY_URL,
   relayUrlOf,
@@ -164,7 +164,10 @@ export interface ChatTabDeps {
   panel: HTMLElement;
   tab: HTMLElement;
   networkSuffix: string;
-  specs: Record<ChatProductKey, ChatProductSpec>;
+  specs: Record<
+    ChatProductKey,
+    Pick<ChatProductSpec, "product" | "messagesEncrypted">
+  >;
 }
 
 export interface ChatTab {
@@ -489,8 +492,8 @@ export function startChatModality(deps: {
     networkSuffix: deps.networkSuffix,
     specs: {
       "contact-chat": CONTACT_CHAT,
-      "kettle-chat": kettleChat(),
-      "nova-chat": novaChat(),
+      "kettle-chat": KETTLE_CHAT_FACTS,
+      "nova-chat": NOVA_CHAT_FACTS,
     },
   });
   return {

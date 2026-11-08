@@ -19,6 +19,18 @@ import {
  * holds a conversation account's first post until its claim is final.
  */
 
+/** Kettle Chat's product, and whether it encrypts its messages, as the Chat tab shows them. */
+export const KETTLE_CHAT_FACTS: Pick<
+  ChatProductSpec,
+  "product" | "messagesEncrypted"
+> = {
+  product: (networkSuffix) => ({
+    id: asProductId(`kettle-chat.${networkSuffix}`),
+    name: "Kettle Chat",
+  }),
+  messagesEncrypted: true,
+};
+
 /**
  * Kettle Chat, a chat product of its own: its own product id, worker,
  * request lists, storage and accounts. `settled` holds its first post per
@@ -26,19 +38,15 @@ import {
  * passes its worker the relays of Kettle's log transfer; null runs none.
  */
 export function kettleChat(
-  settled?: (claim: StatementAccountClaim) => Promise<void>,
+  settled: (claim: StatementAccountClaim) => Promise<void>,
   iroh: IrohRelays | null = null,
 ): ChatProductSpec {
   return {
-    product: (networkSuffix) => ({
-      id: asProductId(`kettle-chat.${networkSuffix}`),
-      name: "Kettle Chat",
-    }),
+    ...KETTLE_CHAT_FACTS,
     workerPath: KETTLE_CHAT_PATH,
     lists: "kettle-chat",
-    messagesEncrypted: true,
     ...(iroh === null ? {} : { workerParams: irohParams(iroh) }),
-    ...(settled === undefined ? {} : { allowanceSettled: settled }),
+    allowanceSettled: settled,
   };
 }
 

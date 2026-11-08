@@ -81,6 +81,12 @@ const endOfDay = (nowMs: number) =>
   (Math.floor(nowMs / 86_400_000) + 1) * 86_400_000;
 
 /**
+ * The simulated Statement Store keeps a statement as soon as the claim
+ * answered, so a notification account's allowance settles at once.
+ */
+export const simulatedSettled = (): Promise<void> => Promise.resolve();
+
+/**
  * A simulated conversation allowance: the account comes from the core, as
  * `account.getAccount` gives it to the product, and nothing is claimed.
  */

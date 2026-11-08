@@ -1,0 +1,172 @@
+import type { StatementAccountClaim } from "@parity/truapi-host/web";
+import type { InvitationObserver } from "./observer.js";
+import type { ConversationAllowance, HostDelivery } from "./ports.js";
+import { StatementStoreDelivery } from "./statement-delivery.js";
+import type { WalletRequestsSession } from "./wallet-chat.js";
+
+/**
+ * How a wallet's host requests travel, and what that spends: the request
+ * lists they are kept in, the delivery that carries them, the allowance of
+ * the chat accounts, and what the prompts say it costs. The host runs
+ * {@link networkDelivery}. The dev server's tools may hand the wallet's chat
+ * another one (`tools/demos/wallet-deliveries.ts`).
+ */
+export interface WalletDelivery {
+  /** How requests and replies travel, for the log. */
+  readonly line: string;
+  /**
+   * Added to the request lists' storage keys. Deliveries whose requests name
+   * different return routes keep different lists.
+   */
+  readonly listSuffix: string;
+  /** Whether claims are submitted. False: each is only validated, and nothing is submitted. */
+  readonly submits: boolean;
+  /**
+   * Whether the wallet's saved contacts stay out of the picker, and so out
+   * of payments, while a chat product runs over this delivery.
+   */
+  readonly hidesWalletContacts: boolean;
+  /** Why Nova Chat cannot run over this delivery, or null when it can. */
+  readonly novaProblem: string | null;
+  /** What a chat product spends and exposes, for its prompts, or null when it spends nothing. */
+  costs(encrypted: boolean): ChatCosts | null;
+  /** The delivery of the user whose chat public key is `self`. */
+  hostDelivery(session: WalletRequestsSession, self: string): HostDelivery;
+  /**
+   * The allowance of a chat product's conversation accounts, or undefined
+   * when this delivery gives none. `settled` holds an account's first post
+   * until its claim is final; null: the claim's answer is enough.
+   */
+  allowance(
+    session: WalletRequestsSession,
+    settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
+  ): ConversationAllowance | undefined;
+}
+
+/** What a wallet's chat product spends of the person's allowance, and what it exposes, for the host's prompts. */
+export interface ChatCosts {
+  /** The one muted line both prompts show, which opens the breakdown. */
+  summary: string;
+  /** What sending a request spends. */
+  request: string;
+  /** What replying to a request spends. */
+  reply: string;
+  /** What the chat that follows spends. */
+  chat: string;
+  /** Who can read the chat's messages, or null when none are sent. */
+  messages: string | null;
+}
+
+/** The chat's account and its allowance, the same in every delivery that gives one. */
+export const CHAT_ACCOUNT_COST =
+  "1 Statement Store slot each day you send, for this chat's own account.";
+
+/**
+ * The network delivery's request lists. Its requests name the day inbox as
+ * their return route, which no other delivery reaches.
+ */
+export const DAY_INBOX_LISTS = ":day-inbox";
+
+/** What a chat product spends and exposes on the network. */
+export function networkCosts(encrypted: boolean): ChatCosts {
+  return {
+    summary: encrypted
+      ? "Uses daily slots · Messages are end-to-end encrypted"
+      : "Uses daily slots · Messages are public",
+    request:
+      "1 notification slot now, and 1 more each day it is pending while this host is open.",
+    reply:
+      "1 notification slot now, and 1 more on any later day their request arrives again.",
+    chat: CHAT_ACCOUNT_COST,
+    messages: encrypted
+      ? "End-to-end encrypted. Who posts, to which topics, when and how much is public."
+      : "Not encrypted: anyone can read them.",
+  };
+}
+
+/** Where the network delivery logs, and who it tells what it does. */
+export interface NetworkDeliveryDeps {
+  log(line: string): void;
+  /** Told the delivery's facts, for the inspector's Statements view. */
+  observe?: InvitationObserver;
+}
+
+/**
+ * The delivery over `session`'s People chain Statement Store, whose posts
+ * are signed by notification accounts the core claims, or with `submit`
+ * false only validates.
+ */
+export function statementStoreDelivery(
+  session: WalletRequestsSession,
+  submit: boolean,
+  deps: NetworkDeliveryDeps,
+): HostDelivery {
+  return new StatementStoreDelivery({
+    network: session.network,
+    entropy: session.entropy,
+    openStore: () => session.openStatementStore(),
+    claim: (target, submitClaim) =>
+      session.claimNotificationAccount(target, submitClaim),
+    submit,
+    now: () => Date.now(),
+    schedule: (task, delayMs) => {
+      const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
+      return () => clearTimeout(timer);
+    },
+    log: deps.log,
+    ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+  });
+}
+
+/**
+ * How a wallet's chat product gets its conversation accounts an allowance:
+ * a general Statement Store slot of the wallet's personhood for the UTC day,
+ * which the core claims for the product's own account at the index it names.
+ * With `submit` false the runtime only says whether it would accept the
+ * claim and nothing is submitted, so a message fails and says so. `settled`
+ * holds the account until its claim is final; null: the claim's answer is
+ * enough.
+ */
+export function conversationAllowance(
+  session: WalletRequestsSession,
+  submit: boolean,
+  settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
+): ConversationAllowance {
+  return {
+    async allow(product, index) {
+      const claim = await session.claimProductStatementAccount(
+        product,
+        index,
+        submit,
+      );
+      if (claim.outcome === "validated")
+        throw new Error(
+          `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
+        );
+      if (settled !== null) await settled(claim);
+      return {
+        account: claim.account,
+        until: (claim.period + 1) * 86_400_000,
+      };
+    },
+  };
+}
+
+/**
+ * The network delivery: requests and replies go on the network's day inbox,
+ * each post claims a notification slot, and each conversation account claims
+ * a Statement Store slot.
+ */
+export function networkDelivery(deps: NetworkDeliveryDeps): WalletDelivery {
+  return {
+    line: "requests and replies go on the network's day inbox, and each post claims a notification slot.",
+    listSuffix: DAY_INBOX_LISTS,
+    submits: true,
+    hidesWalletContacts: true,
+    novaProblem: null,
+    costs: networkCosts,
+    hostDelivery: (session) => statementStoreDelivery(session, true, deps),
+    allowance: (session, settled) =>
+      conversationAllowance(session, true, settled),
+  };
+}

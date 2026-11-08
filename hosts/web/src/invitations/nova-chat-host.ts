@@ -118,10 +118,10 @@ export interface NovaChatHostOptions {
   /**
    * Resolves once `account`'s allowance holds at the People chain's
    * finalized head, or rejects saying why not. A node evicts statements whose
-   * allowance is only in a best block. Absent: the claim's answer is enough
-   * (the simulated store of the invitation demo).
+   * allowance is only in a best block. A store that keeps a statement on
+   * the claim's answer alone resolves at once.
    */
-  notificationSettled?(
+  notificationSettled(
     account: Uint8Array,
     claim: {
       period: number;
@@ -327,7 +327,7 @@ export function startNovaChatHost(
       options.log(
         `${product.name}: ${kind} ${requestId.slice(0, 8)}… ${claim.line}`,
       );
-      await options.notificationSettled?.(signer.public, { period, ...claim });
+      await options.notificationSettled(signer.public, { period, ...claim });
       if (state !== "running") throw new Error(`${product.name} stopped`);
       const result = await store.submit(
         encodeSigned(statement, signer.public, signer.sign),

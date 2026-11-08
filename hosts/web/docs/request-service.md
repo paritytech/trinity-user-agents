@@ -79,6 +79,9 @@ has an `id` and one `result`.
   sign the posts, and the chain checks the allowance.
 - **Local delivery** (`fixtures/invitations/local-delivery.ts`): demo users and "this browser" modes. Posts stay in
   `localStorage`. Nothing signs them, and nothing checks an allowance.
+- A wallet's chat gets how its requests travel as one `WalletDelivery` (`src/invitations/wallet-delivery.ts`): the
+  delivery, its request lists, the chat accounts' allowance and the prompts' costs. Every build uses the network's. The
+  dev server's other choices (validate only, this browser) are in `tools/demos/wallet-deliveries.ts`.
 
 ### Network delivery
 
@@ -151,7 +154,8 @@ several people.
 
 - `src/invitations/`: `contract.ts`, `ports.ts`, `binding.ts`, `sealing.ts`, `wallet-auth.ts`, `published-keys.ts`,
   `directory-contacts.ts`, `statement-delivery.ts`, `invitation-service.ts`, `outbox.ts`, `received.ts`,
-  `contact-chat-host.ts`, `wallet-chat.ts`, `chat-keys.ts`, `gate.ts`, `observer.ts`.
-- Dev and test only: `fixtures/invitations/`, `fixtures/notifications/`, `tools/demos/dev-tools.ts`.
+  `contact-chat-host.ts`, `wallet-chat.ts`, `wallet-delivery.ts`, `chat-keys.ts`, `gate.ts`, `observer.ts`.
+- Dev and test only: `fixtures/invitations/`, `fixtures/notifications/`, `tools/demos/dev-tools.ts`,
+  `tools/demos/wallet-deliveries.ts`.
 - End-to-end unit tests: `tests/unit/invitations/invitation-flow.test.ts` (two and three users),
   `statement-delivery.test.ts` (network delivery, in memory), `tests/unit/chat/contact-chat/contact-chat.test.ts`.

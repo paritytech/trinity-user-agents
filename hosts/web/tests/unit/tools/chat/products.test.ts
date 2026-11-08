@@ -90,7 +90,7 @@ describe("Kettle Chat's iroh setting in a tab", () => {
 
   test("the setting reaches Kettle Chat's worker as its page's parameters, and nothing when off; other chat products get none", () => {
     const params = (iroh: Parameters<typeof kettleChat>[1]) =>
-      kettleChat(undefined, iroh).workerParams;
+      kettleChat(async () => {}, iroh).workerParams;
     expect([
       params(null),
       params({ relays: "public" }),
