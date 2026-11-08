@@ -1139,7 +1139,7 @@ Before a signing host answers a link, it:
 
 1. ensures a signer;
 2. decodes the V2 handshake;
-3. derives its RFC-0022 `uid.<tld>` identity account;
+3. derives its RFC-0022 `peopl.<tld>` identity account;
 4. reads the pairing device Statement Store account from the proposal;
 5. finds the signer's rings through the pairing-attestation bootstrap `peopl.<tld>`
    keys, index 0 for `People` and index 1 for `LitePeople`, scanning back from
@@ -1259,7 +1259,7 @@ A new auto account:
 
 1. acquires `accounts.json.lock` and validates its username base before onboarding;
 2. generates a 12-word mnemonic;
-3. derives the RFC-0022 `uid.<tld>` index-0 sr25519 identity account;
+3. derives the RFC-0022 `peopl.<tld>` index-0 sr25519 identity account;
 4. chooses `auto-<n>` as its local name;
 5. checks that the requested Lite username base has an available numerical
    alias;
@@ -1286,7 +1286,7 @@ attempts. Identity-backend HTTP clients use a 30-second timeout.
 
 The backend's username routes are bearer-gated. Unless
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies one, the CLI mints an access token
-for the mnemonic's RFC-0022 `uid.<tld>` account. It takes a challenge from
+for the mnemonic's RFC-0022 `peopl.<tld>` account. It takes a challenge from
 `auth/challenges`. It answers `auth/token` with an sr25519 proof over
 `SHA256(challenge || clientId || SHA256(body))`, signed by that identity key.
 The backend requires the JWT subject to equal `candidateAccountId` on
@@ -1418,7 +1418,7 @@ may remain.
 `/session --mnemonic "<phrase>"` is an import-only flow:
 
 1. parse and normalize the BIP-39 phrase;
-2. derive the RFC-0022 `uid.<tld>` identity;
+2. derive the RFC-0022 `peopl.<tld>` identity;
 3. read its optional full or Lite dotNS username from Asset Hub;
 4. when no dotNS mirror exists, search the identity backend's assigned username
    records for the derived candidate account;
@@ -1634,7 +1634,7 @@ state, and other role-owned runtime data.
 - network id;
 - plaintext BIP-39 mnemonic;
 - final Lite username;
-- RFC-0022 `uid.<tld>` index-0 public key and address;
+- RFC-0022 `peopl.<tld>` index-0 public key and address;
 - creation timestamp;
 - attested state; and
 - exhausted Statement Store periods.
@@ -2244,7 +2244,7 @@ truapi-host identity-check \
 The command derives and queries two accounts:
 
 - root; and
-- RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
+- RFC-0022 `//product//peopl.<tld>/index_bytes(0)`, `<tld>` being the selected
   network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
   `dot` for `polkadot`).
 
@@ -2270,7 +2270,7 @@ truapi-host register-name \
 ```
 
 Registers `label` as the full-person username of the mnemonic's RFC-0022
-`uid.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
+`peopl.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
 The account must be a recognized full person: its ring-VRF key must be built
 into a People-collection ring root on People, and Asset Hub's
 `members-subscriber` must already hold that root revision (the command waits for
@@ -2387,7 +2387,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
 | `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
 | `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. The built-in network's other values come from its bundled copy, with no descriptor fetch. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
-| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
+| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `peopl.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |

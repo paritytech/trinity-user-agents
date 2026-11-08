@@ -3,9 +3,10 @@
 //! Product subtrees use hard HDKD at `//product//{product_id}`. Individual
 //! accounts use one soft junction carrying the RFC-0022 32-byte derivation
 //! index, so a paired host can derive children from the subtree public key.
-//! Reserved built-ins additionally pin the `uid.<suffix>` identity account and
-//! the `peopl.<suffix>` full/lite ring-VRF keyed-hash paths used by pairing
-//! attestation, where `<suffix>` is the network's dotNS TLD (`dot`, `paseo`,
+//! Reserved built-ins additionally pin the `peopl.<suffix>` identity account
+//! (the personhood product's account 0, which owns the person's dotNS
+//! usernames) and the `peopl.<suffix>` full/lite ring-VRF keyed-hash paths used
+//! by pairing attestation, where `<suffix>` is the network's dotNS TLD (`dot`, `paseo`,
 //! `testnet`) from [`crate::platform::SigningHostConfig::network_suffix`]. The
 //! People chain scopes its proof contexts with the same suffix, so one
 //! network has one person per seed. RFC-0024 operational key selection comes
@@ -26,23 +27,13 @@ use crate::platform::ProductId;
 
 const JUNCTION_ID_LEN: usize = 32;
 const PRODUCT_JUNCTION: &str = "product";
-/// Reserved RFC-0022 dotNS label of the public light-person identity account;
-/// the product id is `uid.<network suffix>`, see [`identity_product_id`].
-pub const IDENTITY_LABEL: &str = "uid";
-/// Reserved RFC-0022 dotNS label of the personhood product, whose ring-VRF
-/// domain holds the full and light person keys; the product id is
+/// Reserved RFC-0022 dotNS label of the personhood product. Its ring-VRF
+/// domain holds the full and light person keys, and its index-0 product
+/// account is the wallet's main identity account and the owner of the
+/// person's dotNS usernames (individuality-apps#1639); the product id is
 /// `peopl.<network suffix>`, see [`personhood_product_id`].
 pub const PERSONHOOD_LABEL: &str = "peopl";
 const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
-
-/// The reserved identity product id on the network with `network_suffix`:
-/// `uid.dot` on Polkadot, `uid.paseo` on paseo-next-v2, `uid.testnet` on
-/// previewnet. Requires a supported dotNS suffix from validated configuration.
-pub fn identity_product_id(network_suffix: &str) -> ProductId {
-	format!("{IDENTITY_LABEL}.{network_suffix}")
-		.parse()
-		.expect("reserved identity label and validated network suffix form a valid product id; qed")
-}
 
 /// The reserved personhood product id on the network with `network_suffix`:
 /// `peopl.dot` on Polkadot, `peopl.paseo` on paseo-next-v2, `peopl.testnet` on
@@ -116,8 +107,12 @@ pub fn derivation_index_bytes(index: &truapi::v01::DerivationIndex) -> [u8; 32] 
 		truapi::v01::DerivationIndex::Raw(bytes) => *bytes,
 	}
 }
-/// Derive the RFC-0022 public light-person identity account on the network
-/// with `network_suffix`: `//product//uid.<network_suffix>/index_bytes(0)`.
+/// Derive the RFC-0022 identity account on the network with `network_suffix`:
+/// `//product//peopl.<network_suffix>/index_bytes(0)`. It is the account a
+/// `peopl.<network_suffix>` product app sees as its account 0, which is what
+/// lets the personhood product own the person's usernames; it is also the
+/// wallet's main account, so a username resolves to an account the wallet
+/// shows.
 pub fn derive_identity_keypair(
 	entropy: &[u8],
 	network_suffix: &str,
@@ -125,7 +120,7 @@ pub fn derive_identity_keypair(
 	let root = derive_root_keypair_from_entropy(entropy)?;
 	let subtree = derive_hard_path_from_keypair(
 		root,
-		&[PRODUCT_JUNCTION, identity_product_id(network_suffix).as_str()],
+		&[PRODUCT_JUNCTION, personhood_product_id(network_suffix).as_str()],
 	)?;
 	Ok(subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0)
 }

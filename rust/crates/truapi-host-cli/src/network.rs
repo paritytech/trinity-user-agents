@@ -922,7 +922,7 @@ pub struct NetworkConfig {
 	pub id: &'static str,
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
-	/// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
+	/// derives ends in it (`peopl.<suffix>` account and keys), so a person the
 	/// CLI creates here is the same person a phone derives from that seed on
 	/// this network. `live_people_chain::network_suffix_matches_the_preset`
 	/// holds it against the chain.

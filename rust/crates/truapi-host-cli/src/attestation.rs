@@ -6,7 +6,7 @@
 //! `/usernames`. Polls the dotNS contracts on Asset Hub until the lite username
 //! lands.
 //!
-//! Registers the signing host's RFC-0022 `uid.<suffix>` identity account. The paired
+//! Registers the signing host's RFC-0022 `peopl.<suffix>` identity account. The paired
 //! host can then resolve its username via `get_user_id`.
 
 use std::time::Duration;
@@ -28,7 +28,7 @@ use truapi::{
 		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 		product_account::{
 			ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-			derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+			derive_root_keypair_from_entropy, personhood_product_id, product_public_key_to_address,
 		},
 	},
 	statement_allowance as alloc,
@@ -81,7 +81,7 @@ struct BackendToken {
 ///
 /// The explicit env token wins. Otherwise the CLI completes the backend's
 /// `challenges` → `token` sr25519 handshake as the mnemonic's RFC-0022
-/// `uid.<suffix>` account on the network being attested. Since
+/// `peopl.<suffix>` account 0 on the network being attested. Since
 /// device-uniqueness-backend#77, `POST /usernames` rejects a JWT whose subject
 /// differs from `candidateAccountId`.
 async fn backend_token(
@@ -429,7 +429,7 @@ struct UsernameSearchItem {
 /// The backend does not currently expose an account-indexed route. Its search
 /// route is cursor-paginated and prefix-only, so imports search each valid
 /// initial letter and retain only rows whose candidate account is the mnemonic's
-/// `uid.<suffix>` identity on this network. The bearer token exempts these calls
+/// `peopl.<suffix>` identity on this network. The bearer token exempts these calls
 /// from the unauthenticated proof-of-compute challenge.
 pub async fn lookup_backend_username(
 	network: NetworkConfig,
@@ -542,7 +542,7 @@ fn normalize_searched_username(username: &str) -> String {
 }
 
 /// Probes the dotNS contracts for the bare root and the network's RFC-0022
-/// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
+/// `peopl.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
 pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
 	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
@@ -550,7 +550,7 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity_path =
-		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
+		format!("//product//{}/index_bytes(0)", personhood_product_id(network.network_suffix));
 
 	for (label, public) in
 		[("<root>", root.public.to_bytes()), (identity_path.as_str(), identity.public.to_bytes())]

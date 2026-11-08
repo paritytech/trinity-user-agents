@@ -118,7 +118,7 @@ pub struct SigningHostConfig {
 	pub asset_hub_chain_genesis_hash: [u8; 32],
 	/// The network's dotNS TLD without the leading dot: `dot`, `paseo`,
 	/// `testnet`. Every reserved RFC-0022 identity the wallet derives ends in
-	/// it: the `uid.<suffix>` identity account and the `peopl.<suffix>` person
+	/// it: the `peopl.<suffix>` identity account and the `peopl.<suffix>` person
 	/// ring-VRF keys. Must match the People chain's
 	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
 	pub network_suffix: String,

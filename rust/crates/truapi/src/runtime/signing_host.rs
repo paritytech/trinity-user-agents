@@ -82,7 +82,7 @@ pub struct SigningHost {
 	platform: Arc<dyn Platform>,
 	/// The dotNS TLD of the network this wallet serves, from
 	/// [`crate::platform::SigningHostConfig::network_suffix`]. Every reserved
-	/// RFC-0022 derivation (`uid.<suffix>`, `peopl.<suffix>`) ends in it.
+	/// RFC-0022 derivation (`peopl.<suffix>` account and ring-VRF keys) ends in it.
 	network_suffix: String,
 	session_state: Arc<SessionState>,
 	auth_state: AuthStateMachine,

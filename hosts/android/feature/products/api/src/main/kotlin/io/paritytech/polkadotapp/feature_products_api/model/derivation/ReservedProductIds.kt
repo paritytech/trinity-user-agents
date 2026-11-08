@@ -9,13 +9,15 @@ import uniffi.truapi.ProductId
  * Reserved names live in each network's own namespace (`dim2.dot` on Polkadot, `dim2.paseo`
  * on Paseo), so every id is a function of the network TLD — matching the runtime's
  * network-specific product providers (individuality#1300).
+ *
+ * [personhood] is both the ring-VRF key domain and the owner of the wallet's main account:
+ * `//product//peopl.<tld>/index_bytes(0)` owns the person's dotNS usernames
+ * (individuality-apps#1639). There is no separate `uid` identity product.
  */
 object ReservedProductIds {
     fun game(tld: DotNsTld): ProductId = ProductId.fromName("dim2", tld.value).getOrThrow()
 
     fun funding(tld: DotNsTld): ProductId = ProductId.fromName("fund", tld.value).getOrThrow()
-
-    fun lightPersonIdentity(tld: DotNsTld): ProductId = ProductId.fromName("uid", tld.value).getOrThrow()
 
     fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
 

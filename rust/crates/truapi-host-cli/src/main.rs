@@ -300,7 +300,7 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
-	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// Attest a mnemonic's `peopl.<tld>` identity for a lite username, wait until
 	/// it is a personhood ring member, and print `{address, publicKey,
 	/// liteUsername}` as one JSON line. For e2e suites that hold their own
 	/// test mnemonics; the account store is not touched.

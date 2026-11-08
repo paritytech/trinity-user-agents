@@ -90,12 +90,12 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 }
 
 #[test]
-fn responder_advertises_and_signs_with_the_local_uid_identity() {
+fn responder_advertises_and_signs_with_the_local_peopl_identity() {
 	let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
 	let local_identity = signing_host.current_session().unwrap().identity_account_id.unwrap();
 	let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
 	assert_eq!(identity.statement_public_key, local_identity);
-	// The statement identity is the network's `uid.<suffix>` account, the
+	// The statement identity is the network's `peopl.<suffix>` account 0, the
 	// one the pairing host resolves a username for; a `.dot` account has
 	// no lite record on a test network.
 	assert_ne!(

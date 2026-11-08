@@ -24,9 +24,9 @@ const ACCOUNT_STORE_FILE: &str = "accounts.json";
 const ACCOUNT_STORE_LOCK_FILE: &str = "accounts.json.lock";
 const DEFAULT_USERNAME_PREFIX: &str = "headless";
 
-/// The account's uid key could not be derived from its entropy.
+/// The account's identity key could not be derived from its entropy.
 #[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
-#[display("uid identity derivation failed")]
+#[display("identity account derivation failed")]
 pub struct IdentityDerivationError(ProductAccountError);
 
 /// Whether an account store has been written under `base_path`.
@@ -121,10 +121,10 @@ pub struct AccountRecord {
 	pub mnemonic: String,
 	/// Lite username registered through the identity backend.
 	pub lite_username: String,
-	/// Hex-encoded RFC-0022 `uid.<suffix>` identity public key on this
+	/// Hex-encoded RFC-0022 `peopl.<suffix>` identity public key on this
 	/// account's network.
 	pub public_key_hex: String,
-	/// SS58 address for the RFC-0022 `uid.<suffix>` identity public key.
+	/// SS58 address for the RFC-0022 `peopl.<suffix>` identity public key.
 	pub address: String,
 	/// Creation timestamp.
 	pub created_at_unix: u64,
@@ -796,7 +796,7 @@ pub struct AttestedIdentity {
 	pub lite_username: String,
 }
 
-/// Attest `mnemonic`'s `uid.<tld>` identity for `username_base` and wait until
+/// Attest `mnemonic`'s `peopl.<tld>` identity for `username_base` and wait until
 /// it is a personhood ring member. Nothing is written to the account store.
 pub async fn attest_mnemonic(
 	network: NetworkConfig,
