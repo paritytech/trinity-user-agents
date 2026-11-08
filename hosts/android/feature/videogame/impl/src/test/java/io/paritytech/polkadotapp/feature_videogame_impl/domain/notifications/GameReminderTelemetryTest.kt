@@ -23,8 +23,8 @@ class GameReminderTelemetryTest {
     }
     private val originProvider = HostEventOriginProvider {
         HostEventOrigin(
-            appVariant = "debug",
-            appFlavor = "nightly",
+            appVariant = "nightly",
+            appFlavor = "gp",
             nativeAppVersion = "1.2.3",
             platform = "android",
             osVersion = "35",
@@ -80,8 +80,8 @@ class GameReminderTelemetryTest {
     fun `a reminder event carries the base tags every other host event carries`() {
         val event = reported(GameReminderEvent.Tapped(game, START))
         assertEquals("android", event.tags["host.platform"])
-        assertEquals("debug", event.tags["host.app_variant"])
-        assertEquals("nightly", event.tags["host.app_flavor"])
+        assertEquals("nightly", event.tags["host.app_variant"])
+        assertEquals("gp", event.tags["host.app_flavor"])
         assertEquals("1.2.3", event.tags["host.native_app_version"])
         assertEquals(42L, event.extras["host.app_build"])
     }
