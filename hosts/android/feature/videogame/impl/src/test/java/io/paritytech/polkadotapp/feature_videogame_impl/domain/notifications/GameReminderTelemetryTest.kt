@@ -3,9 +3,11 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
-import io.sentry.SentryEvent
-import io.sentry.SentryLevel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -19,25 +21,33 @@ class GameReminderTelemetryTest {
     private val timeProvider = mockk<TimeProvider> {
         every { now() } returns Instant.fromEpochMilliseconds(NOW)
     }
+    private val originProvider = HostEventOriginProvider {
+        HostEventOrigin(
+            appVariant = "debug",
+            appFlavor = "nightly",
+            nativeAppVersion = "1.2.3",
+            platform = "android",
+            osVersion = "35",
+            appBuild = 42,
+        )
+    }
 
     @Test
     fun `scheduled carries the product, the start and a negative fire delay as numbers`() {
         val event = reported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
-        assertEquals("host.reminder.scheduled", event.message?.formatted)
-        assertEquals(SentryLevel.INFO, event.level)
-        assertEquals("host.telemetry", event.logger)
-        assertEquals("android", event.getTag("host.platform"))
-        assertEquals("alarm", event.getTag("reminder.delivery"))
-        assertEquals("game.dot", event.getTag("reminder.product_id"))
-        assertEquals(START, event.getExtra("reminder.starts_at_unix_ms"))
-        assertEquals(NOW - START, event.getExtra("reminder.delay_after_start_ms"))
+        assertEquals("host.reminder.scheduled", event.name)
+        assertEquals("android", event.tags["host.platform"])
+        assertEquals("alarm", event.tags["reminder.delivery"])
+        assertEquals("game.dot", event.tags["reminder.product_id"])
+        assertEquals(START, event.extras["reminder.starts_at_unix_ms"])
+        assertEquals(NOW - START, event.extras["reminder.delay_after_start_ms"])
     }
 
     @Test
     fun `not scheduled carries the skip reason`() {
         val event = reported(GameReminderEvent.NotScheduled(game, START, GameReminderSkipReason.START_IN_PAST))
-        assertEquals("host.reminder.not_scheduled", event.message?.formatted)
-        assertEquals("start_in_past", event.getTag("reminder.skip_reason"))
+        assertEquals("host.reminder.not_scheduled", event.name)
+        assertEquals("start_in_past", event.tags["reminder.skip_reason"])
     }
 
     @Test
@@ -51,31 +61,42 @@ class GameReminderTelemetryTest {
                 delivery = GameReminderDelivery.NOTIFICATION,
             ),
         )
-        assertEquals("host.reminder.fired", event.message?.formatted)
-        assertEquals(1_500L, event.getExtra("reminder.delay_after_start_ms"))
-        assertEquals("background", event.getTag("host.app_state"))
-        assertEquals("true", event.getTag("reminder.still_scheduled"))
-        assertEquals("notification", event.getTag("reminder.delivery"))
+        assertEquals("host.reminder.fired", event.name)
+        assertEquals(1_500L, event.extras["reminder.delay_after_start_ms"])
+        assertEquals("background", event.tags["host.app_state"])
+        assertEquals("true", event.tags["reminder.still_scheduled"])
+        assertEquals("notification", event.tags["reminder.delivery"])
     }
 
     @Test
     fun `an event without a known start carries no start and no fire delay`() {
         val event = reported(GameReminderEvent.Tapped(game, startsAtMillis = null))
-        assertEquals("host.reminder.tapped", event.message?.formatted)
-        assertNull(event.getExtra("reminder.starts_at_unix_ms"))
-        assertNull(event.getExtra("reminder.delay_after_start_ms"))
+        assertEquals("host.reminder.tapped", event.name)
+        assertNull(event.extras["reminder.starts_at_unix_ms"])
+        assertNull(event.extras["reminder.delay_after_start_ms"])
+    }
+
+    @Test
+    fun `a reminder event carries the base tags every other host event carries`() {
+        val event = reported(GameReminderEvent.Tapped(game, START))
+        assertEquals("android", event.tags["host.platform"])
+        assertEquals("debug", event.tags["host.app_variant"])
+        assertEquals("nightly", event.tags["host.app_flavor"])
+        assertEquals("1.2.3", event.tags["host.native_app_version"])
+        assertEquals(42L, event.extras["host.app_build"])
     }
 
     @Test
     fun `the event is not built when capture drops it`() {
-        GameReminderTelemetry(timeProvider, GameReminderEventCapture { }).report(GameReminderEvent.Tapped(game, START))
+        GameReminderTelemetry(timeProvider, originProvider, HostEventCapture { })
+            .report(GameReminderEvent.Tapped(game, START))
 
         verify(exactly = 0) { timeProvider.now() }
     }
 
-    private fun reported(event: GameReminderEvent): SentryEvent {
-        var captured: SentryEvent? = null
-        GameReminderTelemetry(timeProvider, GameReminderEventCapture { captured = it() }).report(event)
+    private fun reported(event: GameReminderEvent): HostEvent {
+        var captured: HostEvent? = null
+        GameReminderTelemetry(timeProvider, originProvider, HostEventCapture { captured = it() }).report(event)
         return checkNotNull(captured) { "no event was captured" }
     }
 
