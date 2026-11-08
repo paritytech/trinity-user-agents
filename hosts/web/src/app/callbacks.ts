@@ -2,6 +2,7 @@ import type {
   AuthState,
   ChatPlatform,
   ContactsPlatform,
+  ExtensionVersionMap,
   GamePlatform,
   PermissionDecision,
   PocketPlatform,
@@ -60,6 +61,23 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
   { label: "Allow once", value: "AllowOnce" },
   { label: "Always allow", value: "AllowAlways", tone: "primary" },
 ];
+
+/**
+ * The chains the core builds V5 general transactions for: People and Asset
+ * Hub, on pipeline 1, the one that declares their authorizers, as the CLI
+ * host and the mobile apps build them. A chain left out is built as V4,
+ * which needs a signer the allowance claims the core proves with a ring do
+ * not have.
+ */
+export function extensionVersions(
+  network: Pick<Network, "genesis">,
+): ExtensionVersionMap {
+  return {
+    chains: [network.genesis.people, network.genesis.assetHub].map(
+      (genesisHash) => ({ genesisHash, extensionVersion: 1 }),
+    ),
+  };
+}
 
 /**
  * The host side of the core: storage, chain access, and the prompts through
@@ -159,9 +177,9 @@ export function createHostCallbacks(
       },
     },
 
-    // The core builds every extrinsic this host signs, as V4.
     extrinsicVersion: {
-      transactionExtensionVersions: () => Promise.resolve({ chains: [] }),
+      transactionExtensionVersions: () =>
+        Promise.resolve(extensionVersions(network)),
     },
 
     features: {
