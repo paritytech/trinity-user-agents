@@ -15,6 +15,11 @@
 //! it is the reason the class is a property of the marker rather than of the
 //! call site.
 
+/// Prefix that marks an event's target as addressed to the host rather than
+/// naming a module. Rust module paths separate with `::`, so a dotted target
+/// cannot collide with one, and the rest of the target names the condition.
+pub const HOST_MARKER_PREFIX: &str = "truapi.";
+
 /// Whether a marker may leave the device, and at what severity if it may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]

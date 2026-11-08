@@ -39,12 +39,11 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
 
-#[cfg(feature = "runtime")]
 #[test]
 fn every_target_is_host_addressed() {
 	for marker in MARKERS {
 		assert!(
-			marker.target.starts_with(crate::logging::HOST_MARKER_PREFIX),
+			marker.target.starts_with(HOST_MARKER_PREFIX),
 			"{} is not addressed to a host",
 			marker.target
 		);
