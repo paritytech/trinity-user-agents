@@ -84,6 +84,8 @@ function startA(
   store: MemoryStatementStore,
   options: {
     refuseSubmits?: number;
+    /** Fail this many claims, after recording the account each was for. */
+    failClaims?: number;
     claimMs?: number;
     /** Hold every chain read of a chat key until it resolves. */
     keysGate?: Promise<void>;
@@ -101,6 +103,7 @@ function startA(
   let inFlight = 0;
   let maxInFlight = 0;
   let refuse = options.refuseSubmits ?? 0;
+  let failClaims = options.failClaims ?? 0;
   const connect = (): StatementStoreLike => {
     const inner = store.connect();
     return {
@@ -149,6 +152,10 @@ function startA(
       await new Promise((resolve) => setTimeout(resolve, options.claimMs ?? 5));
       claims.push(bytesToHex(account));
       inFlight -= 1;
+      if (failClaims > 0) {
+        failClaims -= 1;
+        throw new Error(CONNECTION_LOST);
+      }
       return { line: "claimed", seq: 1 };
     },
     notificationSettled: () => settle.gate ?? Promise.resolve(),
@@ -180,6 +187,9 @@ function startA(
 }
 
 const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+/** How the core reports a claim whose chain connection went silent before it submitted anything. */
+const CONNECTION_LOST =
+  "state_call: RPC error: client error: json-rpc connection closed: RPC error: client error: no frame for 30s while a request waited";
 async function until(check: () => boolean): Promise<void> {
   for (let tries = 0; !check(); tries++) {
     if (tries > 200) throw new Error("timed out");
@@ -255,6 +265,34 @@ describe("posting requests and acceptances", () => {
     expect(a.claims).toHaveLength(2);
     expect(a.claims[1]).toBe(a.claims[0]!);
     expect(a.host.sent()).toMatchObject([{ paused: null }]);
+    a.host.stop();
+  });
+
+  test("a claim that lost its chain connection says the request is tried again, and each try claims for the same account", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { failClaims: 5 });
+    await a.host.start();
+    const answer = await a.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: null,
+    });
+    expect(answer).toEqual({
+      ok: false,
+      reason: `Not posted yet, trying again in 30 s: ${CONNECTION_LOST}`,
+    });
+    for (let tries = 2; tries <= 5; tries++) {
+      expect(a.scheduled).toHaveLength(1);
+      a.scheduled.shift()!();
+      await until(() => a.claims.length === tries);
+      await tick();
+    }
+    expect(a.scheduled).toHaveLength(0);
+    expect(a.host.sent()).toMatchObject([
+      { paused: `Not posted: ${CONNECTION_LOST}` },
+    ]);
+    expect(new Set(a.claims).size).toBe(1);
+    expect(a.submits).toHaveLength(0);
     a.host.stop();
   });
 

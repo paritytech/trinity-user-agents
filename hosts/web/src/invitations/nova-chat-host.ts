@@ -549,9 +549,12 @@ export function startNovaChatHost(
       options.log(`${product.name}: your request is posted.`);
     } catch (error) {
       if (state !== "running") return;
-      item.problem = `Not posted: ${errorText(error)}`;
+      const again = attempts > 1 && outgoing.includes(item);
+      item.problem = again
+        ? `Not posted yet, trying again in ${RETRY_MS / 1000} s: ${errorText(error)}`
+        : `Not posted: ${errorText(error)}`;
       options.log(`${product.name}: ${item.problem}`);
-      if (attempts > 1 && outgoing.includes(item))
+      if (again)
         retries.set(
           item.peer,
           schedule(() => void postRequest(item, attempts - 1), RETRY_MS),
