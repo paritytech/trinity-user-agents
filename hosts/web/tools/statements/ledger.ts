@@ -1500,7 +1500,7 @@ export class StatementLedger {
       alreadyAllocated: "already held a slot this period",
       validated:
         "would be accepted: validation only, nothing was submitted or allocated",
-      failed: "got no slot",
+      failed: "failed",
     };
     this.event(
       "claim",

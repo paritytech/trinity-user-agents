@@ -235,7 +235,7 @@ function claimLine(claim: AccountRecord["claims"][number]): string {
     case "validated":
       return `${slot} · validated only · nothing allocated`;
     case "failed":
-      return `no slot: ${claim.reason ?? "no reason"}`;
+      return `claim failed: ${claim.reason ?? "no reason"}`;
   }
 }
 

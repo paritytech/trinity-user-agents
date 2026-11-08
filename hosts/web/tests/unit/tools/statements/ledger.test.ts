@@ -575,6 +575,24 @@ describe("the statement ledger", () => {
     );
   });
 
+  test("a claim that failed for any reason says it failed and why, not that no slot was free", async () => {
+    const { book } = ledger();
+    const reason =
+      "state_call: RPC error: client error: json-rpc connection closed: no frame for 30s while a request waited";
+    await expect(
+      book.claim(
+        { kind: "notification", account: "0x" + "cd".repeat(32), submit: true },
+        async () => {
+          throw new Error(reason);
+        },
+      ),
+    ).rejects.toThrow(reason);
+    const event = book.eventList().find((each) => each.kind === "claim");
+    expect(event?.failed).toBe(true);
+    expect(event?.text).toMatch(/^Claim: notification account \S+ failed: /);
+    expect(event?.text.endsWith(reason)).toBe(true);
+  });
+
   test("links a request to its conversation account and its notification accounts", () => {
     const { book } = ledger();
     const handle = "0x" + "11".repeat(16);
