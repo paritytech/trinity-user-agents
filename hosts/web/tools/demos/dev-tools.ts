@@ -1,6 +1,7 @@
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TabSession } from "../../src/app/tab-session.js";
 import { demoTabSession } from "./demo-session.js";
+import { withWorkerProbe } from "./worker-probes.js";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
 import { DEFAULT_REPLY_SUITE } from "../../src/invitations/invitation-service.js";
@@ -177,6 +178,8 @@ export interface DevSession {
   usernames: UsernameDirectory | null;
   /** The network a browser test runs for the host's backup, in place of the real one, or null. */
   backupTestNetwork: BackupTestNetwork | null;
+  /** `spec`, its worker started with its test probe when this tab asks for one for `key`. */
+  probe(key: ChatProductKey, spec: ChatProductSpec): ChatProductSpec;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -285,6 +288,7 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
             syncProductsOnly: deps.syncProductsOnly,
           }),
     backupTestNetwork: backupTestNetwork(deps.log),
+    probe: withWorkerProbe,
     notificationsScope:
       testUser === null
         ? null
@@ -345,6 +349,7 @@ interface TestUserSession {
 
 /** A chat product of the invitation demo: its lists, and its conversation accounts' allowance when it posts. */
 interface DemoChat {
+  key: ChatProductKey;
   spec: ChatProductSpec;
   outbox: keyof typeof PART_VERSION;
   received: keyof typeof PART_VERSION;
@@ -390,45 +395,50 @@ function startTestUser(
   };
   let verified: Promise<IdentityProblem | null> = new Promise(() => {});
   let core: WorkerPairingHostRuntime | null = null;
-  const chatOf = (demo: DemoChat, index: number): RunningChat => ({
-    workerPath: demo.spec.workerPath,
-    ...(demo.spec.workerParams === undefined
-      ? {}
-      : { workerParams: demo.spec.workerParams }),
-    startsChats: index === 0,
-    host: startContactChatHost({
-      product: demo.spec.product(suffix),
-      keys: {
-        sent: testUserKey(deps.network.id, self.id, demo.outbox),
-        received: testUserKey(deps.network.id, self.id, demo.received),
-      },
-      auth,
-      replySuite: devReplySuite,
-      delivery: localDelivery(
-        deps,
-        auth.identityFor().agreementPublic,
-        timeout,
-      ),
-      ...(demo.accounts === undefined ? {} : { accounts: demo.accounts }),
-      contacts,
-      handles: deps.handles,
-      notifications: deps.notifications,
-      // Checked in `start`, once the core runs the test user's session.
-      verify: () => verified,
-      confirmSend,
-      showChat: deps.showChat,
-      log: deps.log,
-      ...(deps.observe === undefined ? {} : { observe: deps.observe }),
-    }),
-  });
+  const chatOf = (demo: DemoChat, index: number): RunningChat => {
+    const spec = withWorkerProbe(demo.key, demo.spec);
+    return {
+      workerPath: spec.workerPath,
+      ...(spec.workerParams === undefined
+        ? {}
+        : { workerParams: spec.workerParams }),
+      startsChats: index === 0,
+      host: startContactChatHost({
+        product: spec.product(suffix),
+        keys: {
+          sent: testUserKey(deps.network.id, self.id, demo.outbox),
+          received: testUserKey(deps.network.id, self.id, demo.received),
+        },
+        auth,
+        replySuite: devReplySuite,
+        delivery: localDelivery(
+          deps,
+          auth.identityFor().agreementPublic,
+          timeout,
+        ),
+        ...(demo.accounts === undefined ? {} : { accounts: demo.accounts }),
+        contacts,
+        handles: deps.handles,
+        notifications: deps.notifications,
+        // Checked in `start`, once the core runs the test user's session.
+        verify: () => verified,
+        confirmSend,
+        showChat: deps.showChat,
+        log: deps.log,
+        ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+      }),
+    };
+  };
   const demoOf = (key: ChatProductKey): DemoChat =>
     key === "contact-chat"
       ? {
+          key,
           spec: CONTACT_CHAT,
           outbox: "contact-chat-outbox",
           received: "contact-chat-received",
         }
       : {
+          key,
           spec: kettleChat(simulatedSettled, deps.kettleIroh),
           outbox: "kettle-chat-outbox",
           received: "kettle-chat-received",
@@ -442,12 +452,15 @@ function startTestUser(
    * conversation account's allowance.
    */
   const novaOf = (index: number): RunningChat => {
-    const spec = novaChat(simulatedSettled);
+    const spec = withWorkerProbe("nova-chat", novaChat(simulatedSettled));
     const entropy = testUserEntropy(self);
     const chatKeyOf = async (account: Uint8Array) =>
       (await lookupChatIdentity(directory, account))?.chatKey ?? null;
     return {
       workerPath: spec.workerPath,
+      ...(spec.workerParams === undefined
+        ? {}
+        : { workerParams: spec.workerParams }),
       startsChats: index === 0,
       host: startNovaChatHost({
         product: spec.product(suffix),

@@ -17,6 +17,7 @@ import {
   openTools,
   type DevTab,
   useInvitationDemo,
+  probeChatWorkers,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -47,6 +48,7 @@ async function session(
 ): Promise<Session> {
   const context = await browser.newContext({ viewport });
   context.setDefaultTimeout(STEP_MS);
+  await probeChatWorkers(context);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   const outside: string[] = [];
   await context.route(/.*/, (route) => {

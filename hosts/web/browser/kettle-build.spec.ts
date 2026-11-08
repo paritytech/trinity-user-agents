@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Browser, Frame, Page } from "playwright-core";
+import type { Browser } from "playwright-core";
 import { build, preview, type PreviewServer } from "vite";
 import type { ContactChatWorkerAnswer } from "../src/chat/contact-chat/route.js";
 import {
@@ -119,27 +119,6 @@ function builtText(): string {
   return texts.join("\n");
 }
 
-/** A frame of `page` whose window holds `name` at `stage`. */
-async function workerAt(
-  page: Page,
-  name: "__kettleChatWorker" | "__contactChatWorker",
-): Promise<Frame | null> {
-  for (const frame of page.frames())
-    if (
-      frame.url().includes("__truapi-worker.html") &&
-      (await frame
-        .evaluate(
-          (key) =>
-            (window as unknown as Record<string, { stage?: string }>)[key]
-              ?.stage === "running",
-          name,
-        )
-        .catch(() => false))
-    )
-      return frame;
-  return null;
-}
-
 describe("a build made with Kettle Chat", () => {
   test.skipIf(!built)(
     "serves Kettle Chat's worker archive, and holds the Chat tab but none of the dev server's demos or controls",
@@ -173,8 +152,22 @@ describe("a build made with Kettle Chat", () => {
         "__truapiNoSubmit",
         "__username-search",
         "truapi-web-signing-host:local-statements:",
+        "truapi-web-signing-host:dev:worker-probes",
       ])
         expect({ absent, found: text.includes(absent) }).toEqual({
+          absent,
+          found: false,
+        });
+      // Neither chat worker's archive holds its test probe.
+      const archives = blocks
+        .map((cid) => readFileSync(join(outDir, "ipfs", cid), "latin1"))
+        .join("\n");
+      for (const absent of [
+        "__kettleChatWorker",
+        "__novaChatWorker",
+        "__contactChatWorker",
+      ])
+        expect({ absent, found: archives.includes(absent) }).toEqual({
           absent,
           found: false,
         });
@@ -228,24 +221,37 @@ describe("a build made with Kettle Chat", () => {
           .waitFor();
         await closeTools(page);
 
-        const deadline = Date.now() + STEP_MS;
-        let kettle: Frame | null = null;
-        while (kettle === null && Date.now() < deadline) {
-          kettle = await workerAt(page, "__kettleChatWorker");
-          if (kettle === null) await page.waitForTimeout(250);
-        }
-        expect(kettle).not.toBeNull();
+        // Kettle Chat says on its console, in the Workers view, which Kettle
+        // it runs and that it runs; no Contact Chat worker is there.
+        await openTools(page, "inspector");
+        await page.click('[data-inspector-view="workers"]');
+        const view = page.locator("#workers-inspector");
+        await view.locator('.wi-row[data-worker^="kettle-chat."]').click();
+        await view
+          .locator(".wi-line", {
+            hasText:
+              "Kettle Chat runs Kettle 4d0764d526e5e32dfc611323e5fa522651f864e6",
+          })
+          .waitFor();
+        await view
+          .locator(".wi-line", { hasText: "Kettle Chat is running." })
+          .waitFor();
         expect(
-          await kettle!.evaluate(
-            () =>
-              (
-                window as unknown as {
-                  __kettleChatWorker: { kettle?: { revision: string } };
-                }
-              ).__kettleChatWorker.kettle?.revision,
-          ),
-        ).toBe("4d0764d526e5e32dfc611323e5fa522651f864e6");
-        expect(await workerAt(page, "__contactChatWorker")).toBeNull();
+          await view.locator('.wi-row[data-worker^="contact-chat."]').count(),
+        ).toBe(0);
+        // A build's chat workers keep no test probe.
+        const frames = page
+          .frames()
+          .filter((frame) => frame.url().includes("__truapi-worker.html"));
+        expect(frames.length).toBeGreaterThan(0);
+        for (const frame of frames)
+          expect(
+            await frame.evaluate(() =>
+              ["__kettleChatWorker", "__contactChatWorker"].some(
+                (key) => key in window,
+              ),
+            ),
+          ).toBe(false);
         await openTools(page, "chat");
         await page
           .locator('[data-chat-product-state="kettle-chat"]', {

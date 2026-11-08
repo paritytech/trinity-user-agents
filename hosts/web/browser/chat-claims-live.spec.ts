@@ -23,6 +23,7 @@ import {
   type RunningHost,
   startHost,
   testBrowser,
+  probeChatWorkers,
 } from "./support/fixtures.js";
 import {
   LIVE_STEP_MS,
@@ -88,6 +89,7 @@ suite(
           viewport: { width: 1280, height: 860 },
         });
         context.setDefaultTimeout(LIVE_STEP_MS);
+        await probeChatWorkers(context);
         await withoutBackup(context);
         const errors: string[] = [];
         const pages: Record<string, Page> = {};

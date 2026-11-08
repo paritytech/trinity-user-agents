@@ -57,6 +57,7 @@ async function bundle(production: boolean, entry = ENTRY): Promise<string> {
     publicDir: false,
     define: {
       "process.env.NODE_ENV": production ? '"production"' : '"development"',
+      __WORKER_PROBE__: JSON.stringify(!production),
     },
     build: {
       write: false,

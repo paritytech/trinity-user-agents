@@ -29,6 +29,7 @@ import {
   startHost,
   testBrowser,
   useChatProducts,
+  probeChatWorkers,
 } from "./support/fixtures.js";
 import {
   LIVE_STEP_MS,
@@ -373,6 +374,7 @@ suite("Kettle Chat between test accounts on Paseo Next v2", () => {
         viewport: { width: 1280, height: 860 },
       });
       for (const context of [aliceContext, bobContext]) {
+        await probeChatWorkers(context);
         context.setDefaultTimeout(LIVE_STEP_MS);
         await withoutBackup(context);
       }

@@ -10,7 +10,9 @@
  * The host builds it into an app archive it serves itself
  * (`contact-chat-plugin.ts`) and runs it through the ordinary worker loader.
  * The Chat screen shows its conversations over the Chat Extension v2 draft
- * bridge. What it keeps is on `window.__novaChatWorker`, for a test to read.
+ * bridge. It says where it stands on its console (`../worker/probe.ts`); with
+ * its test probe, what it keeps is on `window.__novaChatWorker`, for a test
+ * to read.
  */
 import type { HexString } from "@parity/truapi/scale";
 import { getClientSync } from "@parity/truapi/sandbox";
@@ -24,27 +26,31 @@ import { NOVA_HELLO, NOVA_PROTOCOL, type NovaHello } from "./contract.js";
 import { NovaSession, novaHostOver } from "./session.js";
 import { novaStatements } from "./transport.js";
 import { encodeMessage } from "./wire.js";
+import {
+  installProbe,
+  probeAsked,
+  workerStatus,
+  type ProbeStatus,
+} from "../worker/probe.js";
 
-interface WorkerState {
-  stage: "starting" | "running" | "failed";
-  reason?: string;
-  errors: string[];
+/** What Nova Chat's test probe holds. */
+interface NovaChatProbe extends ProbeStatus {
   record(): string | null;
 }
 
 const RECORD_KEY = "nova-chat:record:v1";
 const READS_KEY = "nova-chat:read:v1";
 
-const state: WorkerState = {
-  stage: "starting",
-  errors: [],
-  record: () => null,
-};
-(window as unknown as { __novaChatWorker: WorkerState }).__novaChatWorker =
-  state;
-const report = (reason: string) => {
-  state.errors = [...state.errors, reason].slice(-20);
-};
+const probe =
+  __WORKER_PROBE__ && probeAsked()
+    ? installProbe<NovaChatProbe>("__novaChatWorker", {
+        stage: "starting",
+        errors: [],
+        record: () => null,
+      })
+    : null;
+const status = workerStatus("Nova Chat", probe);
+const report = status.report;
 
 /** Hand the host this frame's port for `nova-chat/1`. */
 function connectHost(): MessagePort {
@@ -65,7 +71,7 @@ async function run(): Promise<void> {
     [RECORD_KEY, READS_KEY],
     (reason) => report(`storage: ${reason}`),
   );
-  state.record = () => storage.getItem(RECORD_KEY);
+  if (probe !== null) probe.record = () => storage.getItem(RECORD_KEY);
   const context = await client.system.getProductContext();
   if (context.isErr())
     throw new Error(`No product context: ${JSON.stringify(context.error)}`);
@@ -124,10 +130,9 @@ async function run(): Promise<void> {
   });
   await session.run();
   await served.ready;
-  state.stage = "running";
+  status.running();
 }
 
-run().catch((error: unknown) => {
-  state.stage = "failed";
-  state.reason = error instanceof Error ? error.message : String(error);
-});
+run().catch((error: unknown) =>
+  status.failed(error instanceof Error ? error.message : String(error)),
+);

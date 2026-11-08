@@ -497,7 +497,12 @@ const walletChat = new WalletChat({
   ...(devSession === null ? {} : { replySuite: devSession.replySuite }),
   ...(chatModality === null
     ? {}
-    : { products: chatModality.walletProducts(() => peopleAccess) }),
+    : {
+        products: chatModality.walletProducts(
+          () => peopleAccess,
+          devSession?.probe,
+        ),
+      }),
 });
 /** Contact Chat in this tab: the invitation demo's test user's, or the signed-in wallet's. */
 const contactChat = devSession?.testChat ?? walletChat.owner;

@@ -21,7 +21,9 @@
  *   one custom relay. The host only chooses the relays; the endpoints are
  *   this product's.
  *
- * What it keeps is on `window.__kettleChatWorker`, for a test to read.
+ * It says on its console which Kettle it runs and where it stands
+ * (`../worker/probe.ts`); with its test probe, what it keeps is on
+ * `window.__kettleChatWorker`, for a test to read.
  */
 import { getClientSync } from "@parity/truapi/sandbox";
 import { connectChatV2 } from "../draft/product.js";
@@ -41,11 +43,15 @@ import {
   type KettleTrace,
 } from "./ports.js";
 import { BAD_RELAY_URL, irohOfParams, type IrohRelays } from "./route.js";
+import {
+  installProbe,
+  probeAsked,
+  workerStatus,
+  type ProbeStatus,
+} from "../worker/probe.js";
 
-interface WorkerState {
-  stage: "starting" | "running" | "failed";
-  reason?: string;
-  errors: string[];
+/** What Kettle Chat's test probe holds. */
+interface KettleChatProbe extends ProbeStatus {
   /** The Kettle revision and protocol the WebAssembly reports. */
   kettle?: { revision: string; protocol: number; loadMs: number };
   /** Kettle's statement submissions this run, by the store's answer or the error's text. */
@@ -66,32 +72,39 @@ interface WorkerState {
 const RECORD_KEY = "kettle-chat:record:v1";
 const READS_KEY = "kettle-chat:read:v1";
 
-const state: WorkerState = {
-  stage: "starting",
-  errors: [],
-  submits: {},
-  submissions: [],
-  trace: [],
-  iroh: null,
-  nodes: {},
-  transfers: [],
-  record: () => null,
-};
-(window as unknown as { __kettleChatWorker: WorkerState }).__kettleChatWorker =
-  state;
-const report = (reason: string) => {
-  state.errors = [...state.errors, reason].slice(-50);
-};
+const probe =
+  __WORKER_PROBE__ && probeAsked()
+    ? installProbe<KettleChatProbe>("__kettleChatWorker", {
+        stage: "starting",
+        errors: [],
+        submits: {},
+        submissions: [],
+        trace: [],
+        iroh: null,
+        nodes: {},
+        transfers: [],
+        record: () => null,
+      })
+    : null;
+const status = workerStatus("Kettle Chat", probe, 50);
+const report = status.report;
 
-const trace = (line: string) => {
-  state.trace = [
-    ...state.trace,
-    `${new Date().toISOString().slice(11, 23)} ${line}`,
-  ].slice(-300);
-};
-
-/** `kettle`, with each node's start and events kept in {@link WorkerState.trace}. */
-function traced(kettle: KettleModule): KettleModule {
+/**
+ * `kettle`, saying when a node runs without the log transfer it was asked
+ * for, and with each node's start and events kept on `into` when there is
+ * one.
+ */
+function started(
+  kettle: KettleModule,
+  into: KettleChatProbe | null,
+): KettleModule {
+  const trace = (line: string) => {
+    if (into === null) return;
+    into.trace = [
+      ...into.trace,
+      `${new Date().toISOString().slice(11, 23)} ${line}`,
+    ].slice(-300);
+  };
   return {
     ...kettle,
     start: async (account, ports, onEvent, options) => {
@@ -101,24 +114,28 @@ function traced(kettle: KettleModule): KettleModule {
         const node = await kettle.start(
           account,
           ports,
-          (event) => {
-            trace(
-              `${who} ${event.type}${typeof event.kind === "string" ? ` ${event.kind}` : ""}${typeof event.message === "string" ? ` ${event.message}` : ""}`,
-            );
-            onEvent(event);
-          },
-          {
-            ...options,
-            onTrace: (event: KettleTrace) => {
-              state.transfers = [
-                ...state.transfers,
-                { ...event, account, at: Date.now() },
-              ].slice(-500);
-            },
-          },
+          into === null
+            ? onEvent
+            : (event) => {
+                trace(
+                  `${who} ${event.type}${typeof event.kind === "string" ? ` ${event.kind}` : ""}${typeof event.message === "string" ? ` ${event.message}` : ""}`,
+                );
+                onEvent(event);
+              },
+          into === null
+            ? options
+            : {
+                ...options,
+                onTrace: (event: KettleTrace) => {
+                  into.transfers = [
+                    ...into.transfers,
+                    { ...event, account, at: Date.now() },
+                  ].slice(-500);
+                },
+              },
         );
         const iroh = node.iroh();
-        state.nodes = { ...state.nodes, [account]: iroh };
+        if (into !== null) into.nodes = { ...into.nodes, [account]: iroh };
         trace(`${who} started · log transfer ${iroh.state}`);
         if (iroh.state === "unavailable")
           report(
@@ -135,10 +152,10 @@ function traced(kettle: KettleModule): KettleModule {
   };
 }
 
-/** `ports`, with each submission's outcome counted in {@link WorkerState.submits}. */
-function counted(ports: KettlePorts): KettlePorts {
+/** `ports`, with each submission's outcome counted in {@link KettleChatProbe.submits}. */
+function counted(ports: KettlePorts, into: KettleChatProbe): KettlePorts {
   const count = (key: string) => {
-    state.submits = { ...state.submits, [key]: (state.submits[key] ?? 0) + 1 };
+    into.submits = { ...into.submits, [key]: (into.submits[key] ?? 0) + 1 };
   };
   return {
     ...ports,
@@ -171,27 +188,32 @@ function irohRelays(): IrohRelays | null {
 async function run(): Promise<void> {
   const client = getClientSync();
   if (client === null) throw new Error("No TrUAPI host.");
-  const started = performance.now();
+  const loadStarted = performance.now();
   const kettle = await loadKettle(import.meta.url);
-  state.kettle = {
+  const loaded = {
     revision: kettle.revision,
     protocol: kettle.protocol,
-    loadMs: Math.round(performance.now() - started),
+    loadMs: Math.round(performance.now() - loadStarted),
   };
+  console.info(
+    `Kettle Chat runs Kettle ${loaded.revision}, protocol ${loaded.protocol}, loaded in ${loaded.loadMs} ms.`,
+  );
+  if (probe !== null) probe.kettle = loaded;
   const storage = await ProductStorage.load(
     client,
     [RECORD_KEY, READS_KEY],
     (reason) => report(`storage: ${reason}`),
   );
-  state.record = () => storage.getItem(RECORD_KEY);
+  if (probe !== null) probe.record = () => storage.getItem(RECORD_KEY);
   const context = await client.system.getProductContext();
   if (context.isErr())
     throw new Error(`No product context: ${JSON.stringify(context.error)}`);
   const productId = context.value.productId;
-  state.iroh = irohRelays();
+  const iroh = irohRelays();
+  if (probe !== null) probe.iroh = iroh;
   const engine = new KettleChat({
     requests: connectHostRequests(),
-    kettle: traced(kettle),
+    kettle: started(kettle, probe),
     account: async (index) => {
       const result = await client.account.getAccount({
         productAccountId: {
@@ -202,25 +224,31 @@ async function run(): Promise<void> {
       if (result.isErr()) throw new Error(JSON.stringify(result.error));
       return result.value.account.publicKey.toLowerCase();
     },
-    ports: (index, allow) =>
-      counted(
-        conversationPorts({
-          client,
-          productId,
-          index,
-          allow,
-          report,
-          observe: (submission) => {
-            state.submissions = [...state.submissions, submission].slice(-200);
-          },
-        }),
-      ),
+    ports: (index, allow) => {
+      const ports = conversationPorts({
+        client,
+        productId,
+        index,
+        allow,
+        report,
+        ...(probe === null
+          ? {}
+          : {
+              observe: (submission: KettleSubmission) => {
+                probe.submissions = [...probe.submissions, submission].slice(
+                  -200,
+                );
+              },
+            }),
+      });
+      return probe === null ? ports : counted(ports, probe);
+    },
     storage,
     recordKey: RECORD_KEY,
     random: cryptoRandom,
     now: Date.now,
     report,
-    ...(state.iroh === null ? {} : { iroh: state.iroh }),
+    ...(iroh === null ? {} : { iroh }),
   });
   const marks = (): Record<string, string> => {
     try {
@@ -262,10 +290,9 @@ async function run(): Promise<void> {
   engine.run();
   postDiagnostics({ conversations: engine.diagnostics() });
   await served.ready;
-  state.stage = "running";
+  status.running();
 }
 
-run().catch((error: unknown) => {
-  state.stage = "failed";
-  state.reason = error instanceof Error ? error.message : String(error);
-});
+run().catch((error: unknown) =>
+  status.failed(error instanceof Error ? error.message : String(error)),
+);

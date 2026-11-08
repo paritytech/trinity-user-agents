@@ -161,6 +161,9 @@ describe("the production build", () => {
       "alice.example",
       "__truapiNoSubmit",
       "__username-search",
+      // The chat workers' test probe, and the tab's choice of one.
+      "__contactChatWorker",
+      "truapi-web-signing-host:dev:worker-probes",
     ])
       expect({ absent, found: text.includes(absent) }).toEqual({
         absent,
@@ -286,26 +289,24 @@ async function logged(page: Page, text: string): Promise<void> {
     .waitFor({ state: "attached" });
 }
 
-/** Contact Chat's worker, loaded from the build's own archive, once its script runs. */
+/**
+ * Contact Chat's worker, loaded from the build's own archive, once it says
+ * on its console, in the Workers view, that it runs. Its frame keeps no
+ * test probe.
+ */
 async function workerRunning(page: Page): Promise<void> {
-  const deadline = Date.now() + STEP_MS;
-  while (Date.now() < deadline) {
-    for (const frame of page.frames())
-      if (
-        frame.url().includes("__truapi-worker.html") &&
-        (await frame
-          .evaluate(
-            () =>
-              (
-                window as unknown as {
-                  __contactChatWorker?: { stage: string };
-                }
-              ).__contactChatWorker?.stage === "running",
-          )
-          .catch(() => false))
-      )
-        return;
-    await page.waitForTimeout(250);
-  }
-  throw new Error("Contact Chat's worker did not run");
+  await openTools(page, "inspector");
+  await page.click('[data-inspector-view="workers"]');
+  const view = page.locator("#workers-inspector");
+  await view.locator('.wi-row[data-worker^="contact-chat."]').click();
+  await view
+    .locator(".wi-line", { hasText: "Contact Chat is running." })
+    .waitFor();
+  await closeTools(page);
+  const probes: boolean[] = [];
+  for (const frame of page.frames())
+    if (frame.url().includes("__truapi-worker.html"))
+      probes.push(await frame.evaluate(() => "__contactChatWorker" in window));
+  expect(probes.length).toBeGreaterThan(0);
+  expect(probes).not.toContain(true);
 }

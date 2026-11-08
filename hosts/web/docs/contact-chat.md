@@ -108,6 +108,11 @@ Both prompts show one line about daily slots and public messages. It opens the d
 - No report carries message text.
 - A report is a `product-diagnostics/draft-1` window message (`src/products/diagnostics.ts`). The host reads it within
   bounds, assigns it to the sending frame, and acts on none of it. A stopped worker's report is stale.
+- Each chat worker (Contact, Kettle and Nova Chat) says on its console that it runs, why it failed, and the errors it
+  reports; Kettle Chat also says which Kettle it loaded. The Workers view shows these lines
+  (`src/chat/worker/probe.ts`).
+- A worker keeps more for a browser test, such as what it received and its stored record, only with its test probe: the
+  dev server built it and the tab asked for it (`tools/demos/worker-probes.ts`). A build's archives hold no probe.
 
 ## Dev server controls
 

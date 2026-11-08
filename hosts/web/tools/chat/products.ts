@@ -466,9 +466,13 @@ export interface ChatModality {
   /**
    * The signed-in wallet's chat products. Kettle Chat waits for each
    * conversation account's claim to finalize at the People chain read
-   * through `people`.
+   * through `people`. `probe` may start a product's worker with its test
+   * probe; absent, none has one.
    */
-  walletProducts(people: () => PeopleAccess | null): readonly ChatProductSpec[];
+  walletProducts(
+    people: () => PeopleAccess | null,
+    probe?: (key: ChatProductKey, spec: ChatProductSpec) => ChatProductSpec,
+  ): readonly ChatProductSpec[];
   /** Show in the Chat tab the state of the chat products the page runs. */
   follow(running: RunningChats): void;
 }
@@ -499,22 +503,25 @@ export function startChatModality(deps: {
   return {
     keys,
     kettleIroh: iroh,
-    walletProducts: (people) =>
+    walletProducts: (people, probe = (_key, spec) => spec) =>
       keys.map((key) =>
-        key === "contact-chat"
-          ? CONTACT_CHAT
-          : key === "kettle-chat"
-            ? kettleChat(finalizedAllowance(people, deps.log), iroh)
-            : novaChat(
-                finalizedAllowance(people, deps.log, {
-                  product: "Nova Chat",
-                  record: "__novaAllowances",
-                  wording: {
-                    account: "Nova Chat's account",
-                    retry: "it may be tried again",
-                  },
-                }),
-              ),
+        probe(
+          key,
+          key === "contact-chat"
+            ? CONTACT_CHAT
+            : key === "kettle-chat"
+              ? kettleChat(finalizedAllowance(people, deps.log), iroh)
+              : novaChat(
+                  finalizedAllowance(people, deps.log, {
+                    product: "Nova Chat",
+                    record: "__novaAllowances",
+                    wording: {
+                      account: "Nova Chat's account",
+                      retry: "it may be tried again",
+                    },
+                  }),
+                ),
+        ),
       ),
     follow: (running) => tab.follow(running),
   };

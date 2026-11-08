@@ -17,7 +17,8 @@
  *   `createProof`, which the host allows through `chatAccount`;
  * - its record is kept in its own TrUAPI storage.
  *
- * What it received from the host, and what it keeps, are on
+ * It says where it stands on its console (`../worker/probe.ts`). With its
+ * test probe, what it received from the host, and what it keeps, are on
  * `window.__contactChatWorker`, for a test to read. A test also drives there
  * what a product does on its own, outside the Chat screen: pick a contact
  * through TrUAPI's `contacts.pick` and send a request to the handle it gets,
@@ -33,11 +34,15 @@ import { ContactChat } from "./engine.js";
 import { connectHostRequests, type HostRequests } from "./requests.js";
 import { simpleText } from "./simple-text.js";
 import { truapiStatements } from "./transport.js";
+import {
+  installProbe,
+  probeAsked,
+  workerStatus,
+  type ProbeStatus,
+} from "../worker/probe.js";
 
-interface WorkerState {
-  stage: "starting" | "running" | "failed";
-  reason?: string;
-  errors: string[];
+/** What Contact Chat's test probe holds. */
+interface ContactChatProbe extends ProbeStatus {
   /** Every message the host sent this product, as JSON, in order. */
   received: string[];
   /** Every start the host asked for, as JSON. */
@@ -59,29 +64,31 @@ const RECORD_KEY = "contact-chat:record:v3";
 const READS_KEY = "contact-chat:read:v1";
 const RECEIVED_MAX = 200;
 
-const state: WorkerState = {
-  stage: "starting",
-  errors: [],
-  received: [],
-  starts: [],
-  record: () => null,
-  pickAndStart: notRunning,
-  cancel: notRunning,
-};
-(
-  window as unknown as { __contactChatWorker: WorkerState }
-).__contactChatWorker = state;
-const report = (reason: string) => {
-  state.errors = [...state.errors, reason].slice(-20);
-};
-const heard = (value: unknown) => {
-  state.received = [...state.received, JSON.stringify(value)].slice(
-    -RECEIVED_MAX,
-  );
-};
+const probe =
+  __WORKER_PROBE__ && probeAsked()
+    ? installProbe<ContactChatProbe>("__contactChatWorker", {
+        stage: "starting",
+        errors: [],
+        received: [],
+        starts: [],
+        record: () => null,
+        pickAndStart: notRunning,
+        cancel: notRunning,
+      })
+    : null;
+const status = workerStatus("Contact Chat", probe);
+const report = status.report;
 
-/** The request service, with every host message it hears kept for a test. */
-function observed(requests: HostRequests): HostRequests {
+/** The request service, with every host message it hears kept on `into`. */
+function observed(
+  requests: HostRequests,
+  into: ContactChatProbe,
+): HostRequests {
+  const heard = (value: unknown) => {
+    into.received = [...into.received, JSON.stringify(value)].slice(
+      -RECEIVED_MAX,
+    );
+  };
   return {
     call: async (call) => {
       const result = await requests.call(call);
@@ -104,13 +111,16 @@ async function run(): Promise<void> {
     [RECORD_KEY, READS_KEY],
     (reason) => report(`storage: ${reason}`),
   );
-  state.record = () => storage.getItem(RECORD_KEY);
+  if (probe !== null) probe.record = () => storage.getItem(RECORD_KEY);
   const context = await client.system.getProductContext();
   if (context.isErr())
     throw new Error(`No product context: ${JSON.stringify(context.error)}`);
   const productId = context.value.productId;
   const engine = new ContactChat({
-    requests: observed(connectHostRequests()),
+    requests:
+      probe === null
+        ? connectHostRequests()
+        : observed(connectHostRequests(), probe),
     protocol: simpleText,
     statements: truapiStatements(client, productId, (task, delayMs) => {
       const timer = setTimeout(task, delayMs);
@@ -149,23 +159,26 @@ async function run(): Promise<void> {
       retry: (id, messageId) => engine.retry(id, messageId),
       act: (id, actionId) => engine.act(id, actionId),
       start: (target, welcome) => {
-        state.starts = [...state.starts, JSON.stringify(target)];
+        if (probe !== null)
+          probe.starts = [...probe.starts, JSON.stringify(target)];
         return engine.start(target, welcome);
       },
       onChange: (listener) => engine.onChange(listener),
     },
     { reads, onError: (what, reason) => report(`${what}: ${reason}`) },
   );
-  state.pickAndStart = async (welcome) => {
-    const picked = await client.contacts.pick({});
-    if (picked.isErr()) throw new Error(JSON.stringify(picked.error));
-    const outcome = picked.value.outcome;
-    if (outcome.tag !== "Picked") return { outcome: outcome.tag };
-    return {
-      roomId: await engine.start({ handle: outcome.value.handle }, welcome),
+  if (probe !== null) {
+    probe.pickAndStart = async (welcome) => {
+      const picked = await client.contacts.pick({});
+      if (picked.isErr()) throw new Error(JSON.stringify(picked.error));
+      const outcome = picked.value.outcome;
+      if (outcome.tag !== "Picked") return { outcome: outcome.tag };
+      return {
+        roomId: await engine.start({ handle: outcome.value.handle }, welcome),
+      };
     };
-  };
-  state.cancel = (roomId) => engine.cancel(roomId);
+    probe.cancel = (roomId) => engine.cancel(roomId);
+  }
   // What the developer tools may see of each conversation, at most twice a second.
   let diagnosticsTimer: ReturnType<typeof setTimeout> | undefined;
   const postReport = () => {
@@ -178,10 +191,9 @@ async function run(): Promise<void> {
   engine.run();
   postReport();
   await served.ready;
-  state.stage = "running";
+  status.running();
 }
 
-run().catch((error: unknown) => {
-  state.stage = "failed";
-  state.reason = error instanceof Error ? error.message : String(error);
-});
+run().catch((error: unknown) =>
+  status.failed(error instanceof Error ? error.message : String(error)),
+);

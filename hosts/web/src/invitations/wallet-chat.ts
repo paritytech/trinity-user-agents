@@ -461,6 +461,9 @@ export class WalletChat {
       if (spec.setup === "nova")
         return {
           workerPath: spec.workerPath,
+          ...(spec.workerParams === undefined
+            ? {}
+            : { workerParams: spec.workerParams }),
           startsChats: index === 0,
           host: this.startNova(session, spec, contacts, keys),
         };

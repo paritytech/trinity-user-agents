@@ -29,6 +29,7 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
   - Other: `core-worker.ts` (the core's Web Worker), `activity.ts`, `codec.ts`, `crypto.ts`.
 - `chat/`: `provider.ts`, `inbox.ts`, `screen.ts`, `tabs.ts`, `conversation-view.ts`, `call-view.ts`.
   - TrUAPI Chat: `product-chat.ts`, `product-room-provider.ts`, `worker/product-storage.ts`.
+  - `worker/probe.ts`: a chat worker's status on its console, and the test probe a dev server tab may ask for.
   - `draft/`: the v2 bridge: `contract.ts`, `host.ts`, `provider.ts`, `calls.ts`, `product.ts`, `conversations.ts`.
   - `contact-chat/`: `worker.ts`, `engine.ts`, `protocol.ts`, `simple-text.ts`, `transport.ts`, `requests.ts`,
     `route.ts`.
@@ -62,7 +63,8 @@ The developer tools, in every build.
 - `demos/`: dev server only, left out of a build: `dev-tools.ts`, `local-demo-route.ts` (loopback check),
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
   network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
-  deliveries), `demo-session.ts` (the tab as a demo user).
+  deliveries), `demo-session.ts` (the tab as a demo user), `worker-probes.ts` (which chat workers start with their test
+  probe).
 
 ## Other
 

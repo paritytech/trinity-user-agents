@@ -71,6 +71,22 @@ export function testBrowser(): Promise<Browser> {
   return sharedBrowser;
 }
 
+/**
+ * Start the chat workers of the host tabs in `context` with their test probe
+ * (`src/chat/worker/probe.ts`), so a test can read what each keeps on its
+ * window. Only the dev server's host reads the choice; a build's workers have
+ * no probe.
+ */
+export async function probeChatWorkers(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (window !== window.top) return;
+    sessionStorage.setItem(
+      "truapi-web-signing-host:dev:worker-probes",
+      "contact-chat,kettle-chat,nova-chat",
+    );
+  });
+}
+
 /** The host page from this tree, served by Vite on loopback with its default settings. */
 export interface RunningHost {
   /** The host's own origin. Its wallets live in this origin's storage. */

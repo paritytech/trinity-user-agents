@@ -902,6 +902,8 @@ describe("the dock", () => {
       await context.routeWebSocket(/.*/, (socket) => socket.close());
       try {
         const page = await openHost(context);
+        const said: string[] = [];
+        page.on("console", (message) => said.push(message.text()));
         // Nothing to turn on: a fresh wallet's Contact Chat uses the network.
         await page.click('#dock [data-destination="pocket"]');
         await signInWith(page, SYNTHETIC_MNEMONIC);
@@ -915,6 +917,29 @@ describe("the dock", () => {
           .locator("#worker-frames iframe")
           .waitFor({ state: "attached" });
         expect(await page.locator("#chat-screen").isHidden()).toBe(true);
+        // An ordinary dev server tab starts it with no test probe: it says
+        // where it stands on its console, and keeps nothing on its window.
+        const deadline = Date.now() + STEP_MS;
+        while (!said.includes("Contact Chat is running.")) {
+          if (Date.now() > deadline)
+            throw new Error("Contact Chat did not say it runs");
+          await page.waitForTimeout(100);
+        }
+        const workers = page
+          .frames()
+          .filter((frame) => frame.url().includes("__truapi-worker.html"));
+        expect(
+          await Promise.all(
+            workers.map(async (frame) => ({
+              probeAsked: new URL(frame.url()).searchParams.has("probe"),
+              probe: await frame.evaluate(() =>
+                Object.keys(window).filter((key) =>
+                  /^__\w+ChatWorker$/.test(key),
+                ),
+              ),
+            })),
+          ),
+        ).toEqual([{ probeAsked: false, probe: [] }]);
 
         await page.click('#dock [data-destination="chat"]');
         expect(await page.locator('[aria-label="New chat"]').count()).toBe(1);

@@ -29,6 +29,7 @@ import {
   testBrowser,
   useChatProducts,
   useInvitationDemo,
+  probeChatWorkers,
 } from "./support/fixtures.js";
 import {
   TEST_USERS,
@@ -79,6 +80,7 @@ async function offline(): Promise<{
     viewport: { width: 1280, height: 860 },
   });
   context.setDefaultTimeout(STEP_MS);
+  await probeChatWorkers(context);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   const outside: string[] = [];
   await context.route(/.*/, (route) => {

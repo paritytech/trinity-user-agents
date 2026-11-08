@@ -32,6 +32,7 @@ import {
   testBrowser,
   useChatProducts,
   useInvitationDemo,
+  probeChatWorkers,
 } from "./support/fixtures.js";
 import {
   KETTLE_WASM,
@@ -166,6 +167,7 @@ async function offline(options: { publicRelays?: boolean } = {}): Promise<{
     viewport: { width: 1280, height: 860 },
   });
   context.setDefaultTimeout(STEP_MS);
+  await probeChatWorkers(context);
   const local = new Set([relay.url, decoy.url].map((url) => new URL(url).host));
   // The public relays answer only a test that asks for them.
   const relays = {

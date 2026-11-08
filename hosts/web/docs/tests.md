@@ -24,6 +24,8 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 - The specs start the host with Vite on loopback. Most close every socket and refuse every request outside this host.
   They use synthetic or public test phrases. No browser test claims or posts on chain.
 - Each spec file opens with a comment that states its setup. Its test names state what it checks.
+- Specs that read a chat worker's state start the workers with their test probe (`probeChatWorkers` in
+  `browser/support/fixtures.ts`). Build specs have none, and read the Workers view instead.
 - `CHAT_SCREENSHOTS` or `STATEMENTS_SCREENSHOT` set to a directory keeps screenshots.
 
 - [`smoke.spec.ts`](../browser/smoke.spec.ts): names and URLs, loading, the dock, workers, contacts, chat products,
