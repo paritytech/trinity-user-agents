@@ -23,7 +23,8 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
   - Storage and wallets: `storage.ts`, `wallets.ts`, `allowance-ledger.ts`, `dev-accounts.ts`.
   - Chain reads: `people-chain.ts`, `chain-directory.ts` (chat keys, usernames, owners), `scale-reader.ts`,
     `subscription.ts`.
-  - Statement Store: `statement.ts`, `statement-store.ts`, `statement-observer.ts`.
+  - Statement Store: `statement.ts`, `statement-store.ts`, `statement-observer.ts`, `allowance-finality.ts` (grant
+    reads, and the wait until a claim's allowance is final).
   - Other: `core-worker.ts` (the core's Web Worker), `activity.ts`, `codec.ts`, `crypto.ts`.
 - `chat/`: `provider.ts`, `inbox.ts`, `screen.ts`, `tabs.ts`, `conversation-view.ts`, `call-view.ts`.
   - TrUAPI Chat: `product-chat.ts`, `product-room-provider.ts`, `worker/product-storage.ts`.
@@ -42,6 +43,8 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
 - `pocket/`: `pocket.ts`, `screen.ts`, `faces.ts`, `card-view.ts`, `widget.ts`.
 - `notifications/`: the Inbox store and screen.
 - `invitations/`: the request service. Files are listed in [Request service](request-service.md#code).
+- `backup/`: the wallet's backup on the network: `host-backup.ts` (keeping and restoring), `snapshot.ts` (what is
+  copied), `sealing.ts` (keys and envelopes), `pointer.ts`. See [Backup](backup.md).
 - `assets/`: fonts and Pocket artwork, with licence notices.
 
 ## `tools/`
@@ -51,12 +54,13 @@ The developer tools, in every build.
 - `mount.ts`, `viewport.ts`, `dock-resize.ts`: the inspector mount and the Preview tab.
 - `inspector/frame-tap.ts`: TrUAPI frames to the debugger.
 - `activity/`, `workers/`, `chat/`, `products/`: those inspector views. `chat/` also holds the Chat tab (`products.ts`)
-  and Kettle Chat's product and finality guard (`kettle.ts`), which only the dev server and a build with
-  `WEB_SIGNING_KETTLE_CHAT=1` load.
+  and Kettle Chat's product and its finality guard (`kettle.ts`, over `src/platform/allowance-finality.ts`), which only
+  the dev server and a build with `WEB_SIGNING_KETTLE_CHAT=1` load.
 - `statements/`: `ledger.ts`, `decode.ts`, `topics.ts`, `actions.ts` (grant read), `evidence.ts`, `transport.ts`
   (wording per People backend), `ui.ts`, `view.ts`.
 - `demos/`: dev server only, left out of a build: `dev-tools.ts`, `local-demo-route.ts` (loopback check),
-  `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance).
+  `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
+  network a browser test runs for the backup).
 
 ## Other
 

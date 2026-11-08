@@ -20,6 +20,16 @@ const SIGNED_OUT_SCOPE = "signed-out";
  */
 const INSTALL_SCOPE = "install";
 
+/**
+ * The prefix of every product storage entry `walletId` holds on `network` in
+ * `localStorage`: the entry's key is this prefix and the core's own encoded
+ * product storage key.
+ */
+export function productSlotPrefix(walletId: string, network: string): string {
+  const id = normalizeNetwork(network);
+  return `${PREFIX}:${id === DEFAULT_NETWORK ? "" : `network:${id}:`}product:${walletId}:`;
+}
+
 /** Subscribes to writes made by other tabs; returns the unsubscribe. */
 export type ExternalChanges = (
   listener: (slot: string | null) => void,
@@ -129,7 +139,7 @@ export class HostStorage {
   }
 
   private productSlot(key: string): string {
-    return `${PREFIX}:${this.networkPrefix()}product:${this.scope}:${key}`;
+    return `${productSlotPrefix(this.scope, this.network)}${key}`;
   }
 
   private coreSlot(key: CoreStorageKey): string {

@@ -30,7 +30,7 @@ import { messagePortBridge } from "./chat/draft/contract.js";
 import { ChatV2Host } from "./chat/draft/host.js";
 import { demoAllowed } from "../tools/demos/local-demo-route.js";
 import { createHostCallbacks } from "./app/callbacks.js";
-import { gatewayPreimages } from "./products/preimage.js";
+import { fetchPreimage, gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";
 import {
   CHAIN_ROLES,
@@ -127,12 +127,21 @@ import {
   scopeOf,
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
+import {
+  HostBackup,
+  backupOn,
+  type BackupSession,
+} from "./backup/host-backup.js";
+import {
+  readGrants,
+  untilFinalizedAllowance,
+} from "./platform/allowance-finality.js";
 import { mountTools } from "../tools/mount.js";
 import { ProductLoadLog } from "../tools/products/log.js";
 import { ActivityLog } from "../tools/activity/log.js";
 import { StatementLedger } from "../tools/statements/ledger.js";
 import { peopleTransport } from "../tools/statements/transport.js";
-import type { PeopleAccess } from "../tools/statements/actions.js";
+import type { PeopleAccess } from "./platform/allowance-finality.js";
 import {
   observeStatements,
   type TrafficSource,
@@ -807,7 +816,139 @@ const walletSession: WalletSession = new WalletSession({
   navigation,
   serial,
   activity: activity.record,
+  afterSignIn: (wallet) => prepareBackup(wallet),
 });
+
+/** The core, for a call that must not run without one. */
+function coreRuntime(): WorkerPairingHostRuntime {
+  if (runtime === null) throw new Error("The core is not running.");
+  return runtime;
+}
+
+/** The simulated backup network a browser test runs on the dev server, or null. */
+const simulatedBackup = devSession?.simulatedBackup ?? null;
+/** The wallet's backup on the network, when this browser turned it on (`BACKUP_SWITCH_KEY`). */
+const hostBackup = new HostBackup({
+  storage: localStorage,
+  core: {
+    account: () => coreRuntime().backupAccount(),
+    claimSlot:
+      simulatedBackup?.claimSlot ??
+      (() => coreRuntime().claimBackupStatementAccount(true)),
+    signPointer: (payload) => coreRuntime().signBackupPointer(payload),
+    storeSnapshot:
+      simulatedBackup?.storeSnapshot ??
+      ((sealed) => coreRuntime().storeBackupBlob(sealed)),
+  },
+  openStore: async () => {
+    const access = chainAccess;
+    if (access === null) throw new Error("The chains are not connected.");
+    return new StatementStore(
+      await access.chain.connect(hexToBytes(access.genesis.people)),
+    );
+  },
+  fetchSnapshot: (key) =>
+    fetchPreimage(
+      activeNetwork.dotns.contentGateway,
+      key,
+      new AbortController().signal,
+      fetch,
+    ),
+  settled: async (claim) => {
+    await untilFinalizedAllowance(claim, {
+      read: async (account) => {
+        const access = peopleAccess;
+        if (access === null)
+          throw new Error("the People chain is not connected");
+        const { block, values } = await readGrants(access, [account]);
+        return { block, grant: values[0]?.value ?? null };
+      },
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: Date.now,
+      running: () => walletSession.active !== null,
+      wording: {
+        account: "The backup's account",
+        retry: "the backup tries again later",
+      },
+    });
+  },
+  acquire: (name, signal) =>
+    new Promise((resolve, reject) => {
+      if (navigator.locks === undefined)
+        return reject(new Error("this browser has no Web Locks"));
+      navigator.locks
+        .request(
+          name,
+          { signal },
+          () => new Promise<void>((release) => resolve(release)),
+        )
+        .catch(reject);
+    }),
+  log: (line, failed) => log(line, failed),
+  ...(simulatedBackup === null
+    ? {}
+    : {
+        openStore: simulatedBackup.openStore,
+        fetchSnapshot: simulatedBackup.fetchSnapshot,
+        settled: simulatedBackup.settled,
+        pace: simulatedBackup.pace,
+      }),
+});
+/**
+ * The wallet whose backup was looked for, so its members may start, and
+ * the backup session to keep while it is signed in, or null when this
+ * session keeps none.
+ */
+let backupPrepared: { walletId: string; session: BackupSession | null } | null =
+  null;
+
+/**
+ * Restore `wallet`'s backup when this browser holds nothing of it, then keep
+ * its backup. Runs once its core session is active and before its workers
+ * and products start, which wait for it ({@link syncChatSession}).
+ */
+async function prepareBackup(wallet: Wallet): Promise<void> {
+  let kept: BackupSession | null = null;
+  try {
+    if (!backupOn(localStorage) || testUser !== null) return;
+    // On the light client, each People connection's statement subscription
+    // replaces the topic filter every connection shares
+    // (`platform/allowance-finality.ts`), so a backup read would take the
+    // chat's topics off it.
+    if (runningBackends.people === "light-client") {
+      log("Backup: off while People runs on the light client.");
+      return;
+    }
+    const account =
+      lastAuthState.tag === "Connected"
+        ? lastAuthState.value
+        : await new Promise<Extract<AuthState, { tag: "Connected" }>["value"]>(
+            (resolve) => connectedWaiters.push(resolve),
+          );
+    const access = chainAccess;
+    if (account.identityAccountId === null || access === null) {
+      log("Backup: off for this wallet: it has no identity account.");
+      return;
+    }
+    const session: BackupSession = {
+      network: activeNetwork.id,
+      walletId: wallet.id,
+      entropy: wallet.entropy,
+      peopleGenesis: access.genesis.people,
+      identity: account.identityAccountId as HexString,
+    };
+    const wanted = () => walletSession.active?.id === wallet.id;
+    const outcome = await hostBackup.prepare(session, wanted);
+    // After a failed look a backup may exist that this browser could not
+    // read; a backup of its own would replace it.
+    if (outcome === "failed")
+      log("Backup: not kept in this session, so it replaces no backup.");
+    else kept = session;
+  } finally {
+    backupPrepared = { walletId: wallet.id, session: kept };
+    syncChatSession();
+  }
+}
 
 /**
  * Session changes and product opens run one at a time, in order. Opening a
@@ -1297,7 +1438,20 @@ function syncChatSession(): void {
     return;
   }
   const access = chainAccess;
-  const wallet = walletSession.active;
+  const active = walletSession.active;
+  // A wallet's members wait until its backup was looked for, so a restore
+  // lands before anything reads or writes the wallet's state.
+  const prepared = backupPrepared?.walletId === active?.id;
+  const wallet =
+    active !== null && backupOn(localStorage) && !prepared ? null : active;
+  // The backup is kept while its wallet is signed in, whatever path the
+  // core's session took to get there.
+  const keeping =
+    lastAuthState.tag === "Connected" && prepared
+      ? (backupPrepared?.session ?? null)
+      : null;
+  if (keeping === null) hostBackup.stop();
+  else if (!hostBackup.keeps(keeping)) hostBackup.start(keeping);
   // Before the session's workers start, so they see Contact Chat among them.
   walletChat.setWallet(
     lastAuthState.tag !== "Connected" || access === null || wallet === null

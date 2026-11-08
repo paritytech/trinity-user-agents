@@ -334,6 +334,57 @@ describe("posting requests and acceptances", () => {
   });
 });
 
+describe("a copy of the host's state taken at any write", () => {
+  test("resumes a pending request under the same request id, so a restore claims no new notification slot", async () => {
+    const store = new MemoryStatementStore();
+    const live = localStorage as MemoryStorage;
+    const cuts: Map<string, string>[] = [];
+    const write = live.setItem.bind(live);
+    live.setItem = (key, value) => {
+      write(key, value);
+      cuts.push(
+        new Map(live.keys().map((each) => [each, live.getItem(each)!])),
+      );
+    };
+    const a = startA(store);
+    await a.host.start();
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    a.host.stop();
+    const [account] = a.claims;
+    expect(a.claims).toEqual([account!]);
+    expect(cuts.length).toBeGreaterThan(1);
+
+    for (const cut of cuts) {
+      const copy = new MemoryStorage();
+      for (const [key, value] of cut) copy.setItem(key, value);
+      Object.assign(globalThis, { localStorage: copy });
+      const network = new MemoryStatementStore();
+      network.statements = [...store.statements];
+      const restored = startA(network);
+      await restored.host.start();
+      const pending = restored.host.sent();
+      if (pending.length > 0 && pending[0]!.paused !== null)
+        await until(() => restored.submits.length === 1);
+      await tick(50);
+      // Whatever the copy held, the restored host claims for no other
+      // account than the request's own on this day.
+      expect(restored.claims.every((claimed) => claimed === account)).toBe(
+        true,
+      );
+      expect(restored.host.sent().map((each) => each.paused)).toEqual(
+        pending.length === 0 ? [] : [null],
+      );
+      restored.host.stop();
+    }
+  });
+});
+
 describe("Decline and Block", () => {
   test("Decline in the Inbox frees the person for a new chat, and a repost of the declined request is not listed again", async () => {
     const store = new MemoryStatementStore();

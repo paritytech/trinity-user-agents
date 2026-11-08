@@ -13,7 +13,8 @@ npm run test:browser   # every spec under browser/, in headless Chrome
   tests need the signing core's WASM bundle. Run them by hand when the host or the core changes.
 - These gates catch a broken host, not a hostile product.
 - [`tests/unit/chat/kettle-chat/wasm.test.ts`](../tests/unit/chat/kettle-chat/wasm.test.ts) runs Kettle's WebAssembly
-  over scripted ports. It is skipped until `npm run build:kettle` has run, so CI skips it.
+  over scripted ports, and [`tests/unit/backup/kettle-restore.test.ts`](../tests/unit/backup/kettle-restore.test.ts)
+  restores its real MLS state from a backup. Both are skipped until `npm run build:kettle` has run, so CI skips them.
 
 ## Browser tests
 
@@ -38,6 +39,11 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 - [`open-apps.spec.ts`](../browser/open-apps.spec.ts): Browse, the Apps shelf, `navigateTo`.
 - [`preimage-image.spec.ts`](../browser/preimage-image.spec.ts): preimage lookups.
 - [`workers-menu.spec.ts`](../browser/workers-menu.spec.ts): Product → Workers.
+- [`backup.spec.ts`](../browser/backup.spec.ts): the backup between two browser profiles of one wallet, on a simulated
+  network the test runs (`tools/demos/backup-demo.ts`), with the core deriving the backup account and signing the
+  pointer: a fresh profile restores with no prompt and nothing claimed, stored or posted; one that holds the wallet
+  keeps its state; one that cannot read the backup keeps none of its own; one tab holds a wallet's writer lock, and a
+  wallet switch hands it on.
 - [`chat-screen.spec.ts`](../browser/chat-screen.spec.ts): the Chat screen over its providers, New chat, blocking.
 - [`notifications.spec.ts`](../browser/notifications.spec.ts): the Inbox.
 - [`contacts-pick.spec.ts`](../browser/contacts-pick.spec.ts): `contacts.pick` for demo users.

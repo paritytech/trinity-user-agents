@@ -86,6 +86,9 @@ and Pocket: [docs/dock-and-pocket.md](docs/dock-and-pocket.md).
 - Import a wallet from its BIP-39 phrase. The host creates none.
 - Three shared test accounts (Alice, Bob, Carol) have public phrases.
 - A session belongs to the tab. Storage is per wallet and product.
+- **Backup** (prototype, off by default): the host keeps a sealed backup of a wallet's local state on the network, and a
+  browser that signs in with the same wallet and holds nothing of it restores it. Not sync. See
+  [docs/backup.md](docs/backup.md).
 
 Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
 
@@ -141,7 +144,8 @@ Specs and their scope: [docs/tests.md](docs/tests.md).
 
 - `src/main.ts`: the composition root. `src/app/`: the shell.
 - `src/platform/`: network, storage, wallets, the core's Web Worker, Statement Store access.
-- `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`: features.
+- `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`, `src/backup/`:
+  features.
 - `tools/`: developer tools. `tools/demos/` is dev-server only.
 - `fixtures/`: synthetic data. `tests/`, `browser/`: tests.
 - `*-plugin.ts`: Vite plugins.

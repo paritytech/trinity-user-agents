@@ -72,4 +72,5 @@ The same product opened with another wallet starts with that wallet's data.
 
 - The browser does not separate paths on one origin. The host does not wrap storage APIs.
 - A product can reach the host page's storage through `window.parent`.
-- Keep a product's lasting data in TrUAPI storage.
+- Keep a product's lasting data in TrUAPI storage. It is also what the [backup](backup.md) copies; a frame's own browser
+  storage is not.

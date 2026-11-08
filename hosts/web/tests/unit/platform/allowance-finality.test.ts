@@ -3,8 +3,8 @@ import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import {
   untilFinalizedAllowance,
   type FinalizedAllowanceOptions,
-} from "../../../../tools/chat/kettle.js";
-import type { Grant } from "../../../../tools/statements/actions.js";
+  type Grant,
+} from "../../../src/platform/allowance-finality.js";
 
 const CLAIM: StatementAccountClaim = {
   account: `0x${"ab".repeat(32)}`,

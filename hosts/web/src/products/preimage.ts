@@ -44,7 +44,8 @@ export function gatewayPreimages(
   };
 }
 
-async function fetchPreimage(
+/** The bytes `gateway` serves for preimage `key`, or undefined when it serves none. Unchecked: the caller compares them with the key. */
+export async function fetchPreimage(
   gateway: string,
   key: Uint8Array,
   signal: AbortSignal,

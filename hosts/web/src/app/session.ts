@@ -36,6 +36,11 @@ export interface WalletSessionDeps {
   navigation: ProductNavigation;
   serial(task: (runtime: Runtime) => Promise<void>): Promise<void>;
   activity: ActivitySink;
+  /**
+   * Run once a wallet's core session is active, before any product reopens:
+   * the wallet's backup restores here (`../backup/host-backup.ts`).
+   */
+  afterSignIn?(wallet: Wallet): Promise<void>;
 }
 
 /**
@@ -79,6 +84,7 @@ export class WalletSession {
           `Could not sign in with ${wallet.name}: ${String(error)}`,
         );
       }
+      await this.deps.afterSignIn?.(wallet);
       sessionStorage.setItem(tabWalletKey(network.id), wallet.id);
       activity({
         category: "session",
