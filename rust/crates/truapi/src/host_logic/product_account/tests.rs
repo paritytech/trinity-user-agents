@@ -240,7 +240,7 @@ fn identity_is_peopl_dot_default_product_account_and_signs() {
 		"5FhRx3HstiFQ8vx3fJhUHQpTJoEwG8RG6XSv48haMuzxrUGT"
 	);
 
-	let message = b"RFC-0022 identity signing vector";
+	let message = b"RFC-0028 identity signing vector";
 	let signature = identity.secret.sign_simple(SR25519_SIGNING_CONTEXT, message, &identity.public);
 	assert!(
 		identity

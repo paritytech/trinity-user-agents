@@ -6,7 +6,7 @@
 //! `/usernames`. Polls the dotNS contracts on Asset Hub until the lite username
 //! lands.
 //!
-//! Registers the signing host's RFC-0022 `peopl.<suffix>` identity account. The paired
+//! Registers the signing host's RFC-0028 `peopl.<suffix>` identity account. The paired
 //! host can then resolve its username via `get_user_id`.
 
 use std::time::Duration;

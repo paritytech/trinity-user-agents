@@ -302,9 +302,8 @@ that can't mean it:
   `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
-  from host-held secret material. Its public identity is the RFC-0022
-  `peopl.<tld>` index-0 product account of the configured network, which also owns the
-  person's dotNS usernames. RFC-0024 ring-VRF keys are explicit,
+  from host-held secret material. Its public identity is the RFC-0028
+  `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
   product-owned registry entries; aliases, proofs, direct signatures, and
   internal personhood flows use the requested or user-selected registered key
   without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values

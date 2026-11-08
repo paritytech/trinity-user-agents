@@ -103,7 +103,7 @@ pub struct LiteRegistration {
 /// Error while building lite-person registration parameters.
 #[derive(Debug, Error, derive_more::From)]
 pub enum LiteRegistrationError {
-	/// RFC-0022 `peopl.<suffix>` identity-account derivation failed.
+	/// RFC-0028 `peopl.<suffix>` identity-account derivation failed.
 	#[error("identity account derivation failed: {0}")]
 	CandidateDerivation(#[source] ProductAccountError),
 	/// Ring-VRF proof-of-ownership failed.
@@ -115,9 +115,9 @@ pub enum LiteRegistrationError {
 /// (6+ lowercase letters, no digit suffix) against the backend `verifier`.
 ///
 /// `network_suffix` is the dotNS TLD of the network being registered on
-/// (`paseo`, `testnet`): the candidate account is `peopl.<suffix>` account 0 and
-/// the member key the `peopl.<suffix>` lite ring-VRF key, the same person every
-/// other host derives there.
+/// (`paseo`, `testnet`): the candidate account is the RFC-0028 identity account
+/// and the member key the `peopl.<suffix>` lite ring-VRF key, the same person
+/// every other host derives there.
 /// The people and Asset Hub signing contexts a registration is signed under,
 /// each read from that chain's metadata.
 pub struct SigningContexts {
@@ -146,7 +146,7 @@ pub fn build_lite_registration(
 	}: SigningContexts,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	// Registration, local activation, and the SSO responder all use the
-	// RFC-0022 `peopl.<suffix>` default product account.
+	// RFC-0028 identity account.
 	let candidate = derive_identity_keypair(entropy, network_suffix)?;
 	let candidate_public_key = candidate.public.to_bytes();
 

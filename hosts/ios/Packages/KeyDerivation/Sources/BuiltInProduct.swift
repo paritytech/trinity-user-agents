@@ -27,8 +27,8 @@ public enum BuiltInProduct {
         try productIdFromName(name: "chat", networkSuffix: tld)
     }
 
-    /// Personhood — ring-VRF key domain for full/light person keys, and the product whose
-    /// account 0 is the wallet's main account and owns the person's dotNS usernames.
+    /// Personhood — ring-VRF key domain for full/light person keys; account 0 is the main
+    /// account (RFC-0028).
     public static func personhood(for tld: String) throws -> ProductId {
         try productIdFromName(name: "peopl", networkSuffix: tld)
     }

@@ -121,10 +121,10 @@ pub struct AccountRecord {
 	pub mnemonic: String,
 	/// Lite username registered through the identity backend.
 	pub lite_username: String,
-	/// Hex-encoded RFC-0022 `peopl.<suffix>` identity public key on this
+	/// Hex-encoded RFC-0028 `peopl.<suffix>` identity public key on this
 	/// account's network.
 	pub public_key_hex: String,
-	/// SS58 address for the RFC-0022 `peopl.<suffix>` identity public key.
+	/// SS58 address for the RFC-0028 `peopl.<suffix>` identity public key.
 	pub address: String,
 	/// Creation timestamp.
 	pub created_at_unix: u64,

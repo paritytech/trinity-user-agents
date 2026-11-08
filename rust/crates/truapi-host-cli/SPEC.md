@@ -1141,7 +1141,7 @@ Before a signing host answers a link, it:
 
 1. ensures a signer;
 2. decodes the V2 handshake;
-3. derives its RFC-0022 `peopl.<tld>` identity account;
+3. derives its RFC-0028 `peopl.<tld>` identity account;
 4. reads the pairing device Statement Store account from the proposal;
 5. finds the signer's rings through the pairing-attestation bootstrap `peopl.<tld>`
    keys, index 0 for `People` and index 1 for `LitePeople`, scanning back from
@@ -1261,7 +1261,7 @@ A new auto account:
 
 1. acquires `accounts.json.lock` and validates its username base before onboarding;
 2. generates a 12-word mnemonic;
-3. derives the RFC-0022 `peopl.<tld>` index-0 sr25519 identity account;
+3. derives the RFC-0028 `peopl.<tld>` index-0 sr25519 identity account;
 4. chooses `auto-<n>` as its local name;
 5. checks that the requested Lite username base has an available numerical
    alias;
@@ -1288,7 +1288,7 @@ attempts. Identity-backend HTTP clients use a 30-second timeout.
 
 The backend's username routes are bearer-gated. Unless
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies one, the CLI mints an access token
-for the mnemonic's RFC-0022 `peopl.<tld>` account. It takes a challenge from
+for the mnemonic's RFC-0028 `peopl.<tld>` account. It takes a challenge from
 `auth/challenges`. It answers `auth/token` with an sr25519 proof over
 `SHA256(challenge || clientId || SHA256(body))`, signed by that identity key.
 The backend requires the JWT subject to equal `candidateAccountId` on
@@ -1420,7 +1420,7 @@ may remain.
 `/session --mnemonic "<phrase>"` is an import-only flow:
 
 1. parse and normalize the BIP-39 phrase;
-2. derive the RFC-0022 `peopl.<tld>` identity;
+2. derive the RFC-0028 `peopl.<tld>` identity;
 3. read its optional full or Lite dotNS username from Asset Hub;
 4. when no dotNS mirror exists, search the identity backend's assigned username
    records for the derived candidate account;
@@ -1636,7 +1636,7 @@ state, and other role-owned runtime data.
 - network id;
 - plaintext BIP-39 mnemonic;
 - final Lite username;
-- RFC-0022 `peopl.<tld>` index-0 public key and address;
+- RFC-0028 `peopl.<tld>` index-0 public key and address;
 - creation timestamp;
 - attested state; and
 - exhausted Statement Store periods.
@@ -2236,7 +2236,7 @@ truapi-host identity-check \
 The command derives and queries two accounts:
 
 - root; and
-- RFC-0022 `//product//peopl.<tld>/index_bytes(0)`, `<tld>` being the selected
+- RFC-0028 `//product//peopl.<tld>/index_bytes(0)`, `<tld>` being the selected
   network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
   `dot` for `pcf-devnet`).
 

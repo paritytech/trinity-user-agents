@@ -982,7 +982,7 @@ The real statement store enforces per-account allowance. Before pairing, the
 signing host grants it on-chain exactly as a real client does: it proves its
 personhood ring membership with a bandersnatch ring-VRF and submits an unsigned
 General (v5) `Resources.set_statement_store_account` extrinsic for each account
-that submits statements — its RFC-0022 `peopl.<tld>` identity account and the
+that submits statements — its RFC-0028 `peopl.<tld>` identity account and the
 pairing host's per-pairing device key. The shared native implementation lives in
 `truapi/src/runtime/statement_allowance/` (metadata-driven
 signed-extension encoding, ring fetch, slot scan, ring-VRF proof, extrinsic

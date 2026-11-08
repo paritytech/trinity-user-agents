@@ -15,11 +15,7 @@ class ReservedProductAccountDerivationProviderTest {
         coEvery { getTld() } returns Result.success(DotNsTld.parse("paseo")!!)
     }
 
-    /**
-     * RFC-0022 / individuality-apps#1639: the wallet's main account is the personhood product's
-     * account 0, `//product//peopl.<tld>/index_bytes(0)`, so the `peopl` product owns the
-     * person's dotNS usernames. The retired `uid` product must not be derived anywhere.
-     */
+    /** RFC-0028: the wallet's main account is `//product//peopl.<tld>/index_bytes(0)`. */
     @Test
     fun `wallet account is the personhood product account 0`() = runBlocking<Unit> {
         val provider = ReservedProductAccountDerivationProvider(tldProvider, ReservedProductIds::personhood)

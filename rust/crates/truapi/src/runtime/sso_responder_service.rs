@@ -289,8 +289,8 @@ impl SsoResponderService {
 			.root_entropy()
 			.map_err(|err| format!("signing host has no active local session: {err}"))?;
 		// Product accounts and the SSO statement identity derive from the
-		// canonical root key; the identity is the RFC-0022 `peopl.<suffix>` default
-		// (index-0) account of the network this host is configured for.
+		// canonical root key; the identity is the RFC-0028 `peopl.<suffix>` account 0
+		// of the network this host is configured for.
 		let root = derive_root_keypair_from_entropy(&entropy)
 			.map_err(|err| format!("root account derivation failed: {err}"))?;
 		let (identity, identity_chat_private_key) =

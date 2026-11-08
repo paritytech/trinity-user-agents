@@ -3,9 +3,8 @@
 //! Product subtrees use hard HDKD at `//product//{product_id}`. Individual
 //! accounts use one soft junction carrying the RFC-0022 32-byte derivation
 //! index, so a paired host can derive children from the subtree public key.
-//! Reserved built-ins additionally pin the `peopl.<suffix>` identity account
-//! (the personhood product's account 0, which owns the person's dotNS
-//! usernames) and the `peopl.<suffix>` full/lite ring-VRF keyed-hash paths used
+//! Reserved built-ins additionally pin the RFC-0028 `peopl.<suffix>` identity
+//! account and the `peopl.<suffix>` full/lite ring-VRF keyed-hash paths used
 //! by pairing attestation, where `<suffix>` is the network's dotNS TLD (`dot`, `paseo`,
 //! `testnet`) from [`crate::platform::SigningHostConfig::network_suffix`]. The
 //! People chain scopes its proof contexts with the same suffix, so one
@@ -27,11 +26,10 @@ use crate::platform::ProductId;
 
 const JUNCTION_ID_LEN: usize = 32;
 const PRODUCT_JUNCTION: &str = "product";
-/// Reserved RFC-0022 dotNS label of the personhood product. Its ring-VRF
-/// domain holds the full and light person keys, and its index-0 product
-/// account is the wallet's main identity account and the owner of the
-/// person's dotNS usernames (individuality-apps#1639); the product id is
-/// `peopl.<network suffix>`, see [`personhood_product_id`].
+/// Reserved RFC-0022 dotNS label of the personhood product: its ring-VRF
+/// domain holds the person keys and its account 0 is the RFC-0028 identity
+/// account; the product id is `peopl.<network suffix>`, see
+/// [`personhood_product_id`].
 pub const PERSONHOOD_LABEL: &str = "peopl";
 const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 
@@ -107,12 +105,9 @@ pub fn derivation_index_bytes(index: &truapi::v01::DerivationIndex) -> [u8; 32] 
 		truapi::v01::DerivationIndex::Raw(bytes) => *bytes,
 	}
 }
-/// Derive the RFC-0022 identity account on the network with `network_suffix`:
-/// `//product//peopl.<network_suffix>/index_bytes(0)`. It is the account a
-/// `peopl.<network_suffix>` product app sees as its account 0, which is what
-/// lets the personhood product own the person's usernames; it is also the
-/// wallet's main account, so a username resolves to an account the wallet
-/// shows.
+/// Derive the RFC-0028 identity account on the network with `network_suffix`:
+/// `//product//peopl.<network_suffix>/index_bytes(0)`, the personhood
+/// product's account 0.
 pub fn derive_identity_keypair(
 	entropy: &[u8],
 	network_suffix: &str,
