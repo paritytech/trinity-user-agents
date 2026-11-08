@@ -73,16 +73,15 @@ import {
  */
 
 /**
- * The switch that turns the backup on in this browser: `"on"` under this
- * `localStorage` key. Off by default, because a backup claims slots and
- * stores on the network for the signed-in wallet, which nothing should do
- * before the wallet's owner chose it.
+ * The switch that turns the backup off in this browser: `"off"` under this
+ * `localStorage` key. The backup is on otherwise. It runs only where the
+ * host's core has the backup accounts ({@link HostBackup.prepare}).
  */
 export const BACKUP_SWITCH_KEY = "truapi-web-signing-host:backup:switch";
 
-/** Whether the backup is on in this browser. */
+/** Whether the backup is on in this browser: unless it was switched off. */
 export const backupOn = (storage: Storage): boolean =>
-  storage.getItem(BACKUP_SWITCH_KEY) === "on";
+  storage.getItem(BACKUP_SWITCH_KEY) !== "off";
 
 /** The core's backup accounts, as the host calls them. */
 export interface BackupCore {
@@ -126,9 +125,16 @@ export interface HostBackupDeps {
 /**
  * How a sign-in's look for a backup ended. Only `"restored"`, `"none"` and
  * `"kept"` let the session keep a backup: after `"failed"` a backup may
- * exist that this browser could not read, and its own would replace it.
+ * exist that this browser could not read, and its own would replace it;
+ * `"unavailable"` means the host's core has no backup accounts, so nothing
+ * was read or written.
  */
-export type PrepareOutcome = "restored" | "none" | "kept" | "failed";
+export type PrepareOutcome =
+  | "restored"
+  | "none"
+  | "kept"
+  | "failed"
+  | "unavailable";
 
 const SCHEMA = "truapi-web-host/backup/1";
 const INSTALL_KEY = "truapi-web-signing-host:backup-install:v1";
@@ -248,14 +254,23 @@ export class HostBackup {
   /**
    * Before `session`'s workers and products start: restore its backup when
    * this browser holds nothing of the wallet on this network, or keep what
-   * it holds. Only reads the network; never claims or stores. A failure
-   * leaves the browser as it was, and so does a session `wanted` no longer
-   * wants once the snapshot is read.
+   * it holds. Only reads the network; never claims or stores. A core
+   * without the backup accounts reads nothing. A failure leaves the browser
+   * as it was, and so does a session `wanted` no longer wants once the
+   * snapshot is read.
    */
   async prepare(
     session: BackupSession,
     wanted: () => boolean = () => true,
   ): Promise<PrepareOutcome> {
+    try {
+      await this.deps.core.account();
+    } catch (error) {
+      this.deps.log(
+        `Backup: off in this session: this host's core has no backup accounts (${errorText(error)}).`,
+      );
+      return "unavailable";
+    }
     let release = () => {};
     try {
       release = await this.deps.acquire(

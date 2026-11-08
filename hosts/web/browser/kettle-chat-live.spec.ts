@@ -36,6 +36,7 @@ import {
   openInbox,
   ready,
   sendChatRequest,
+  withoutBackup,
 } from "./support/live.js";
 import { NETWORKS } from "../src/platform/network-config.js";
 import {
@@ -371,8 +372,10 @@ suite("Kettle Chat between test accounts on Paseo Next v2", () => {
       const bobContext = await browser.newContext({
         viewport: { width: 1280, height: 860 },
       });
-      for (const context of [aliceContext, bobContext])
+      for (const context of [aliceContext, bobContext]) {
         context.setDefaultTimeout(LIVE_STEP_MS);
+        await withoutBackup(context);
+      }
       const errors: string[] = [];
       const pages: Record<string, Page> = {};
       const steps: { step: string; at: string }[] = [];

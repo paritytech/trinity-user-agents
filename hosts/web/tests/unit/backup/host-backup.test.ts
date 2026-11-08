@@ -7,7 +7,9 @@ import { blake2b256 } from "../../../src/platform/crypto.js";
 import { decodeStatement } from "../../../src/platform/statement.js";
 import { productSlotPrefix } from "../../../src/platform/storage.js";
 import {
+  BACKUP_SWITCH_KEY,
   HostBackup,
+  backupOn,
   MAX_WRITES_PER_DAY,
   MIN_INTERVAL_MS,
   QUIET_MS,
@@ -50,6 +52,10 @@ class Network {
 
   pointers(): Uint8Array[] {
     return this.store.statements;
+  }
+
+  counts() {
+    return { claims: this.claims, stores: this.stores };
   }
 }
 
@@ -355,5 +361,55 @@ describe("a browser that signs in with the same wallet", () => {
     network.tampered = null;
     expect(await b.backup.prepare(session("wb"), () => false)).toBe("failed");
     expect(b.storage.keys()).toEqual([]);
+  });
+});
+
+describe("a host whose core has no backup accounts", () => {
+  test("reads, claims, stores and posts nothing, and says why", async () => {
+    const network = new Network();
+    const lines: string[] = [];
+    const backup = new HostBackup({
+      storage: new MemoryStorage(),
+      core: {
+        account: async () => {
+          throw new Error("signing.backupAccount is not a function");
+        },
+        claimSlot: async () => {
+          throw new Error("no claim expected");
+        },
+        signPointer: async () => {
+          throw new Error("no signature expected");
+        },
+        storeSnapshot: async () => {
+          throw new Error("no store expected");
+        },
+      },
+      openStore: async () => {
+        throw new Error("no read expected");
+      },
+      fetchSnapshot: async () => undefined,
+      settled: async () => {},
+      acquire: async () => {
+        throw new Error("no lock expected");
+      },
+      log: (line) => lines.push(line),
+      readMs: 30,
+    });
+    expect(await backup.prepare(session("wb"))).toBe("unavailable");
+    expect(network.counts()).toEqual({ claims: 0, stores: 0 });
+    expect(lines).toEqual([
+      "Backup: off in this session: this host's core has no backup accounts (signing.backupAccount is not a function).",
+    ]);
+  });
+});
+
+describe("the switch", () => {
+  test("is on unless this browser switched it off", () => {
+    const storage = new MemoryStorage();
+    expect(backupOn(storage)).toBe(true);
+    storage.setItem(BACKUP_SWITCH_KEY, "on");
+    expect(backupOn(storage)).toBe(true);
+    storage.setItem(BACKUP_SWITCH_KEY, "off");
+    expect(backupOn(storage)).toBe(false);
   });
 });

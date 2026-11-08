@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Frame, Page } from "playwright-core";
+import type { BrowserContext, Frame, Page } from "playwright-core";
 import { closeTools, openTools } from "./fixtures.js";
 
 /**
@@ -196,4 +196,14 @@ export async function keepEvidence(
   }
   writeFileSync(join(dir, "report.json"), JSON.stringify(report, null, 2));
   return dir;
+}
+
+/**
+ * Keep the host's backup off in `context`, which is on by default, so a live
+ * spec spends on chain only what it tests.
+ */
+export async function withoutBackup(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() =>
+    localStorage.setItem("truapi-web-signing-host:backup:switch", "off"),
+  );
 }

@@ -122,7 +122,7 @@ afterAll(async () => {
   await host?.close();
 });
 
-/** A browser profile on `network`, with the backup on unless `off`. */
+/** A browser profile on `network`, with the backup on by default, or switched off until the page switches it on. */
 async function profile(
   network: Network,
   options: { off?: boolean } = {},
@@ -130,11 +130,10 @@ async function profile(
   const context = await browser.newContext();
   context.setDefaultTimeout(STEP_MS);
   await context.exposeFunction("__truapiBackupNetwork", network.answer);
-  if (!options.off)
-    await context.addInitScript(
-      (key) => localStorage.setItem(key, "on"),
-      SWITCH,
-    );
+  if (options.off)
+    await context.addInitScript((key) => {
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, "off");
+    }, SWITCH);
   return context;
 }
 

@@ -4,12 +4,16 @@ The host keeps a backup of a signed-in wallet's local state on the network, with
 the same wallet and holds nothing of it restores that backup before the wallet's chat and products start. It is a
 backup, not sync: each browser keeps its own state, and the newest backup wins.
 
-**Off by default.** A backup claims slots and stores on the network for the signed-in wallet. Turn it on per browser, in
-the DevTools console:
+**On by default** for a signed-in wallet, except the public development phrase and the invitation demo's test users. It
+runs only where the host's core has the backup accounts; with an older core it logs "Backup: off in this session" and
+reads and writes nothing. A backup claims slots and stores on the network for the wallet, with no prompt. Turn it off
+per browser, in the DevTools console:
 
 ```js
-localStorage.setItem("truapi-web-signing-host:backup:switch", "on");
+localStorage.setItem("truapi-web-signing-host:backup:switch", "off");
 ```
+
+The live browser specs turn it off, so they spend on chain only what they test.
 
 Code: `src/backup/` (`host-backup.ts`, `snapshot.ts`, `sealing.ts`, `pointer.ts`), wired in `src/main.ts`. The core's
 part: `rust/crates/truapi/src/runtime/signing_host/wallet_account_holder/allowance/backup.rs`.

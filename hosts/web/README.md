@@ -86,8 +86,8 @@ and Pocket: [docs/dock-and-pocket.md](docs/dock-and-pocket.md).
 - Import a wallet from its BIP-39 phrase. The host creates none.
 - Three shared test accounts (Alice, Bob, Carol) have public phrases.
 - A session belongs to the tab. Storage is per wallet and product.
-- **Backup** (prototype, off by default): the host keeps a sealed backup of a wallet's local state on the network, and a
-  browser that signs in with the same wallet and holds nothing of it restores it. Not sync. See
+- **Backup** (prototype, on by default): the host keeps a sealed backup of a wallet's local state on the network, and a
+  browser that signs in with the same wallet and holds nothing of it restores it, with no prompt. Not sync. See
   [docs/backup.md](docs/backup.md).
 
 Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).

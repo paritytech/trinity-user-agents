@@ -32,6 +32,7 @@ import {
   openInbox,
   sendChatRequest,
   validatingWalletTab,
+  withoutBackup,
 } from "./support/live.js";
 
 const LIVE = process.env.TRUAPI_LIVE === "1";
@@ -87,6 +88,7 @@ suite(
           viewport: { width: 1280, height: 860 },
         });
         context.setDefaultTimeout(LIVE_STEP_MS);
+        await withoutBackup(context);
         const errors: string[] = [];
         const pages: Record<string, Page> = {};
         let step = "open";

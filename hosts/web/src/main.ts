@@ -127,6 +127,7 @@ import {
   scopeOf,
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
+import { chatRefusal } from "./invitations/gate.js";
 import {
   HostBackup,
   backupOn,
@@ -910,7 +911,13 @@ let backupPrepared: { walletId: string; session: BackupSession | null } | null =
 async function prepareBackup(wallet: Wallet): Promise<void> {
   let kept: BackupSession | null = null;
   try {
-    if (!backupOn(localStorage) || testUser !== null) return;
+    // The public development phrase keeps nothing of its own on the network.
+    if (
+      !backupOn(localStorage) ||
+      testUser !== null ||
+      chatRefusal(wallet.entropy) !== null
+    )
+      return;
     // On the light client, each People connection's statement subscription
     // replaces the topic filter every connection shares
     // (`platform/allowance-finality.ts`), so a backup read would take the
@@ -943,7 +950,7 @@ async function prepareBackup(wallet: Wallet): Promise<void> {
     // read; a backup of its own would replace it.
     if (outcome === "failed")
       log("Backup: not kept in this session, so it replaces no backup.");
-    else kept = session;
+    else if (outcome !== "unavailable") kept = session;
   } finally {
     backupPrepared = { walletId: wallet.id, session: kept };
     syncChatSession();
