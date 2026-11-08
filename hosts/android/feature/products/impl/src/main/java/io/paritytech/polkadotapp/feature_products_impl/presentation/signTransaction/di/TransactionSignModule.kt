@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningConte
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.CreateTransactionInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.IdentityAccountSigningSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.LegacyAccountSigningSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ProductAccountSigningSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ProductSigningSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.SignPayloadJsonInteractor
@@ -44,9 +43,6 @@ class TransactionSignModule {
         val signingSource: ProductSigningSource = when (val account = signingContext.signingAccount) {
             is SigningAccount.Product -> productSigningSourceFactory.create(account.accountId)
             SigningAccount.IdentityAccount -> identityAccountSigningSource
-            // Only reachable from the TrUAPI core, which signs these itself, so
-            // the source exists to name the account and refuses to sign.
-            is SigningAccount.Legacy -> LegacyAccountSigningSource(account.accountId)
         }
 
         return when (val body = signingContext.signingRequestBody) {

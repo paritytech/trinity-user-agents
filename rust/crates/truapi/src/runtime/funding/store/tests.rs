@@ -16,14 +16,14 @@ fn session(intent: &str) -> FundingSession {
 	)
 }
 
-fn summary(intent: &str) -> FundingSessionSummary {
-	FundingSessionSummary::from(FundingSession {
+fn summary(intent: &str) -> PackedSession {
+	PackedSession::from(&FundingSession {
 		stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
 		..session(intent)
 	})
 }
 
-fn stored(db: &Db) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
+fn stored(db: &Db) -> (Vec<FundingSession>, Vec<PackedSession>) {
 	block_on(load(db)).expect("loaded")
 }
 

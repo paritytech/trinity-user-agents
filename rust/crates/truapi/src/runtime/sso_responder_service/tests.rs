@@ -46,7 +46,10 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 }
 use crate::{
 	host_logic::statement_store::decode_verified_statement_data,
-	platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
+	platform::{
+		CreateTransactionReview, HostInfo, LegacySigningAccount, Platform, PlatformInfo,
+		SigningHostConfig,
+	},
 	runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
 	test_support::{StubPlatform, test_spawner},
 };
@@ -797,11 +800,12 @@ fn resource_consent_cannot_survive_disconnect() {
 
 #[test]
 fn legacy_transaction_request_uses_the_controlled_identity_account() {
-	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform {
+	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,
 		chain_connect_error: Some("fixture has no live chain"),
 		..StubPlatform::default()
-	}));
+	});
+	let (_, signing_host) = signing_fixture(platform.clone());
 	let identity = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
 	let payload = api::LegacyAccountTxPayload {
 		signer: identity.public.to_bytes(),
@@ -820,7 +824,7 @@ fn legacy_transaction_request_uses_the_controlled_identity_account() {
 		"legacy-tx-1",
 		v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
 			sso_messages::CreateTransactionWithLegacyAccountRequest {
-				payload: sso_messages::CreateTransactionLegacyPayload::V1(payload),
+				payload: sso_messages::CreateTransactionLegacyPayload::V1(payload.clone()),
 			},
 		),
 	);
@@ -832,6 +836,63 @@ fn legacy_transaction_request_uses_the_controlled_identity_account() {
 	// the runtime metadata.
 	let error = response.payload.expect_err("fixture has no chain metadata");
 	assert!(format!("{error:?}").contains("cannot load chain metadata"), "{error:?}");
+	assert_eq!(
+		*platform.create_transaction_reviews.lock().unwrap(),
+		vec![CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			payload,
+		}]
+	);
+}
+
+#[test]
+fn a_legacy_request_for_another_account_is_refused_before_the_user_sees_it() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		create_transaction_confirmed: true,
+		..StubPlatform::default()
+	});
+	let (_, signing_host) = signing_fixture(platform.clone());
+	let other_account = [7; 32];
+
+	let raw = answer(
+		&signing_host,
+		"legacy-raw-other",
+		v1::RemoteMessage::SignRawWithLegacyAccountRequest(
+			sso_messages::SignRawWithLegacyAccountRequest {
+				account: other_account,
+				data: api::RawPayload::Bytes { bytes: vec![1] },
+			},
+		),
+	);
+	let transaction = answer(
+		&signing_host,
+		"legacy-tx-other",
+		v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
+			sso_messages::CreateTransactionWithLegacyAccountRequest {
+				payload: sso_messages::CreateTransactionLegacyPayload::V1(
+					api::LegacyAccountTxPayload {
+						signer: other_account,
+						genesis_hash: [0xaa; 32],
+						call_data: vec![0x00, 0x00],
+						extensions: vec![],
+						tx_ext_version: 0,
+					},
+				),
+			},
+		),
+	);
+
+	let v1::RemoteMessage::SignRawWithLegacyAccountResponse(raw) = raw else {
+		panic!("expected legacy raw signing response");
+	};
+	let v1::RemoteMessage::CreateTransactionResponse(transaction) = transaction else {
+		panic!("expected create transaction response");
+	};
+	assert!(raw.payload.is_err());
+	assert!(transaction.payload.is_err());
+	assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+	assert!(platform.create_transaction_reviews.lock().unwrap().is_empty());
 }
 
 #[test]

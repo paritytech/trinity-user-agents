@@ -67,5 +67,3 @@ contracts and attester do not change: `reserve_name` accepts any candidate and `
   the wallet's main account. Secrets are not exposed, and the main account's address is already public as the name
   owner, but the wallet behind any `peopl` product account becomes identifiable to subtree-key holders. Accepted.
 - No `uid` fallback and no migration. The derivation has not shipped to production; test identities re-attest.
-- Dropped: lite name on a devicehood account, membership name on `peopl/0`. There is no devicehood account, and the
-  gateway requires one owner for a linked registration; two owners need a gateway change and lose the shared chat key.
