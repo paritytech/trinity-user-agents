@@ -1,7 +1,7 @@
 [package]
 name = "trinity-stack"
 # Follows @parity/trinity-stack's version; scripts/sync-release-versions.mjs writes it.
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 description = "Parses, verifies and signs Trinity stack descriptors; ships to JavaScript as @parity/trinity-stack"
