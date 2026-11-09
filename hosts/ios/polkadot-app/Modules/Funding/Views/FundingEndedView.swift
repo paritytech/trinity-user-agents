@@ -34,7 +34,7 @@ struct FundingEndedView: View {
             bottomAction
         }
         .fundingToast($copied)
-        .task(id: ended.record.providerId) { await loadProviderName() }
+        .task(id: ended.providerId) { await loadProviderName() }
     }
 }
 
@@ -56,7 +56,7 @@ private extension FundingEndedView {
                 .minimumScaleFactor(0.5)
             }
             if ended.succeeded {
-                Text(verbatim: FundingActivityDate.moment(ended.record.settledAt))
+                Text(verbatim: FundingActivityDate.moment(ended.endedAt))
                     .typography(.bodySmall)
                     .foregroundStyle(.fgSecondary)
             }
@@ -103,7 +103,7 @@ private extension FundingEndedView {
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.large))
     }
 
-    /// What is known about the session, one row each; a value the record
+    /// What is known about the session, one row each; a value the summary
     /// does not hold has no row.
     var rows: some View {
         VStack(spacing: DSSpacings.extraSmall) {
@@ -113,7 +113,7 @@ private extension FundingEndedView {
                 }
             }
 
-            if let settled = ended.record.settledAmount.flatMap({ cash.label(units: $0) }) {
+            if let settled = ended.settledAmount.flatMap({ cash.label(units: $0) }) {
                 FundingValueRow(title: settledCaption) {
                     VStack(alignment: .trailing, spacing: DSSpacings.extraSmall) {
                         value(settled)
@@ -151,7 +151,7 @@ private extension FundingEndedView {
                 }
             }
 
-            if let transactionId = nonEmpty(ended.record.transactionId) {
+            if let transactionId = nonEmpty(ended.summary.transactionId) {
                 FundingCopyRow(
                     title: String(localized: .Funding.endedTransactionId),
                     text: transactionId,
@@ -160,7 +160,7 @@ private extension FundingEndedView {
                 )
             }
 
-            if let reference = nonEmpty(ended.record.reference) {
+            if let reference = nonEmpty(ended.summary.reference) {
                 FundingCopyRow(
                     title: String(localized: .Funding.depositReference),
                     text: reference,
@@ -169,11 +169,11 @@ private extension FundingEndedView {
             }
 
             FundingValueRow(title: String(localized: .Funding.endedStarted)) {
-                value(dateTime(ended.record.openedAt))
+                value(dateTime(ended.openedAt))
             }
 
             FundingValueRow(title: endedCaption) {
-                value(dateTime(ended.record.settledAt))
+                value(dateTime(ended.endedAt))
             }
         }
     }
@@ -249,17 +249,17 @@ private extension FundingEndedView {
              .succeeded:
             return ""
         case let .payoutFailed(reason):
-            if let refunded = ended.record.refundedAmount.flatMap({ cash.label(units: $0) }) {
+            if let refunded = ended.summary.refunded.flatMap({ cash.label(units: $0) }) {
                 return String(localized: .Funding.endedWithdrawRefunded(amount: refunded))
             }
-            switch ended.record.rail {
+            switch ended.rail {
             case .crypto: return String(localized: .Funding.progressPayoutFailed(reason: reason))
             case .card: return String(localized: .Funding.endedPayoutFailedCard)
             case .bank,
                  nil: return String(localized: .Funding.endedPayoutFailed)
             }
         case .failed(.cancelled):
-            if let refunded = ended.record.refundedAmount.flatMap({ cash.label(units: $0) }) {
+            if let refunded = ended.summary.refunded.flatMap({ cash.label(units: $0) }) {
                 return String(localized: .Funding.activityRefundedAmount(amount: refunded))
             }
             return ended.direction == .in ? topUpNote(.cancelled) : withdrawNote(.cancelled)
@@ -270,7 +270,7 @@ private extension FundingEndedView {
 
     func topUpNote(_ failure: FundingFailure) -> String {
         if ended.isDeclined {
-            switch ended.record.rail {
+            switch ended.rail {
             case .bank: return String(localized: .Funding.endedBankDeclined)
             case .card: return String(localized: .Funding.endedCardDeclined)
             case .crypto,
@@ -292,7 +292,7 @@ private extension FundingEndedView {
 
     var refundedNote: String {
         let paid = ended.quotedAmount
-        switch ended.record.rail {
+        switch ended.rail {
         case .bank:
             return paid.map { String(localized: .Funding.endedRefundedBank(amount: $0)) }
                 ?? String(localized: .Funding.endedRefundedBankUnknown)
@@ -320,7 +320,7 @@ private extension FundingEndedView {
     }
 
     var amountCaption: String {
-        switch (ended.direction, ended.record.rail) {
+        switch (ended.direction, ended.rail) {
         case (.in, .card):
             String(localized: .Funding.endedPaid)
         case (.in, _):
@@ -342,7 +342,7 @@ private extension FundingEndedView {
 
     /// How the user paid or was paid, with the network for crypto.
     var method: String? {
-        guard let rail = ended.record.rail else { return nil }
+        guard let rail = ended.rail else { return nil }
         switch rail {
         case .card:
             return String(localized: .Funding.railCard)
@@ -350,7 +350,7 @@ private extension FundingEndedView {
             return String(localized: .Funding.endedMethodBank)
         case .crypto:
             let crypto = String(localized: .Funding.railCrypto)
-            guard let network = nonEmpty(ended.record.paidNetwork) else { return crypto }
+            guard let network = nonEmpty(ended.network) else { return crypto }
             let name = FundingNetwork(id: network).name
             return String(localized: .Funding.endedMethodNetwork(method: crypto, network: name))
         }
@@ -386,7 +386,7 @@ private extension FundingEndedView {
     }
 
     func loadProviderName() async {
-        guard let providerId = ended.record.providerId else { return }
+        guard let providerId = ended.providerId else { return }
         providerName = await branding.brand(for: providerId).name
     }
 }

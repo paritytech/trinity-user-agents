@@ -8,43 +8,32 @@ import UIKit
 
 private let provider = try! ProductId("provider.dot")
 
-/// The history is the core's, read each time it is drawn.
+/// The history is the core's, each row drawn from its summary.
 struct FundingHistoryTests {
     @Test
-    func aSummaryAloneIsListedFromTheCoresHistory() throws {
-        let records = FundingActivityCenter.historyRecords(
-            summaries: [summary("old", settledAtMs: 1_000)],
-            ended: []
-        )
-
-        let record = try #require(records.first)
-        #expect(records.map(\.intent) == ["old"])
-        #expect(record.settledAmount == "50000000")
-    }
-
-    @Test
-    func aSessionFromAnEarlierRunKeepsItsDetails() throws {
-        let record = try #require(FundingRecord(summary: summary("old", settledAtMs: 1_000)))
-        let item = FundingActivityItem(record: record)
-
+    func aSummaryKeepsItsDetails() throws {
+        let item = try #require(FundingActivityItem(summary: summary("old", settledAtMs: 1_000)))
         let ended = try #require(FundingEndedSession(summary: summary("old", settledAtMs: 1_000)))
 
-        #expect(record.providerId == provider)
-        #expect(record.rail == .crypto)
-        #expect(record.asset == "USDC")
-        #expect(record.paidNetwork == "polkadot")
+        #expect(ended.providerId == provider)
+        #expect(ended.rail == .crypto)
+        #expect(ended.network == "polkadot")
+        #expect(ended.settledAmount == "50000000")
         #expect(ended.quotedAmount == FundingAssetUnit(code: "USDC", decimals: 2).format("4600"))
-        #expect(record.transactionId == "tx")
-        #expect(record.reference == "ref")
+        #expect(ended.summary.transactionId == "tx")
         #expect(item.status == .toppedUp)
         #expect(item.rail == .crypto)
+        #expect(item.date == Date(milliseconds: openedAtMs + 1_000))
     }
 
     @Test
-    func theSummarysStatusDecidesHowItEnded() throws {
-        let cancelled = try #require(FundingRecord(
-            summary: withdrawal(status: .cancelled(refunded: "40000000"), payout: nil, refunded: "40000000")
-        ))
+    func theCoresEndingDecidesTheRow() throws {
+        let cancelled = withdrawal(
+            status: .cancelled(refunded: "40000000"),
+            payout: nil,
+            refunded: "40000000",
+            outcome: .failed(reason: .cancelled)
+        )
         let payoutFailedSummary = withdrawal(
             status: .payoutFailed(refunded: "50000000"),
             payout: .failed(reason: "rejected"),
@@ -53,47 +42,20 @@ struct FundingHistoryTests {
             payoutState: .failed,
             stoppedAt: .sent
         )
-        let payoutFailed = try #require(FundingRecord(summary: payoutFailedSummary))
         let sentSummary = withdrawal(
             status: .paidOutAfterCancel,
             payout: .paidOut,
             refunded: nil,
             payoutState: .paidOut
         )
-        let sent = try #require(FundingRecord(summary: sentSummary))
 
-        #expect(FundingActivityItem(record: cancelled).status == .cancelled(refunded: "40000000"))
-        #expect(FundingActivityItem(record: payoutFailed).status == .payoutFailed(refunded: "50000000"))
+        #expect(FundingActivityItem(summary: cancelled)?.status == .cancelled(refunded: "40000000"))
+        #expect(FundingActivityItem(summary: payoutFailedSummary)?.status == .payoutFailed(refunded: "50000000"))
         let payoutFailedDetail = try #require(FundingEndedSession(summary: payoutFailedSummary))
         #expect(payoutFailedDetail.outcome == .payoutFailed(reason: "rejected"))
         #expect(payoutFailedDetail.stoppedAt == 2)
-        #expect(FundingActivityItem(record: sent).status == .sent)
+        #expect(FundingActivityItem(summary: sentSummary)?.status == .sent)
         #expect(FundingEndedSession(summary: sentSummary)?.payoutState == .paidOut)
-    }
-
-    @Test
-    func aSessionPushedThisRunKeepsItsDetails() throws {
-        let pushed = try #require(FundingRecord(session: session("intent", stage: delivered(2_000)), progress: nil))
-
-        let records = FundingActivityCenter.historyRecords(
-            summaries: [summary("intent", settledAtMs: 2_000)],
-            ended: [pushed]
-        )
-
-        #expect(records == [pushed])
-        #expect(records.first?.providerId == provider)
-    }
-
-    @Test
-    func anEndedSessionTheHistoryDoesNotListYetIsKeptNewestFirst() throws {
-        let pushed = try #require(FundingRecord(session: session("new", stage: delivered(3_000)), progress: nil))
-
-        let records = FundingActivityCenter.historyRecords(
-            summaries: [summary("old", settledAtMs: 1_000)],
-            ended: [pushed]
-        )
-
-        #expect(records.map(\.intent) == ["new", "old"])
     }
 }
 
@@ -163,6 +125,7 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         transactionId: "tx",
         reference: "ref",
         ended: .init(
+            atMs: openedAtMs + settledAtMs,
             outcome: .succeeded,
             payoutState: nil,
             cashAmount: "50000000",
@@ -195,6 +158,7 @@ private func withdrawal(
         transactionId: nil,
         reference: nil,
         ended: .init(
+            atMs: openedAtMs + 1_000,
             outcome: outcome,
             payoutState: payoutState,
             cashAmount: "50000000",
@@ -299,8 +263,8 @@ private struct PlaceholderBranding: FundingProviderBranding {
     }
 }
 
-/// An ended session shown again is acknowledged once its sheet is on screen,
-/// and not when nothing could present it.
+/// An ended session shown again is drawn from its summary and acknowledged
+/// once its sheet is on screen, and not when nothing could present it.
 @MainActor
 struct FundingReopenTests {
     @Test
@@ -308,11 +272,12 @@ struct FundingReopenTests {
         let environment = WindowEnvironment()
         let runtime = MockFundingRuntime()
         runtime.hold(session("intent", stage: delivered(2_000)))
+        runtime.record(history: [summary("intent", settledAtMs: 2_000)])
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         coordinator.reopen(intent: "intent")
 
-        #expect(environment.presented.last is FundingSheetController)
+        #expect(environment.presented.last is FundingEndedSheetController)
         try await environment.waitUntil { _ in runtime.acknowledged == ["intent"] }
     }
 
@@ -322,6 +287,7 @@ struct FundingReopenTests {
         environment.presents = false
         let runtime = MockFundingRuntime()
         runtime.hold(session("intent", stage: delivered(2_000)))
+        runtime.record(history: [summary("intent", settledAtMs: 2_000)])
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         coordinator.reopen(intent: "intent")

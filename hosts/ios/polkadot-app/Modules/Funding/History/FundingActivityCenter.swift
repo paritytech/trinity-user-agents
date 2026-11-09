@@ -7,8 +7,8 @@ import TrUAPIHost
 /// pushed, then the ended ones from the core's history, read again on every
 /// refresh.
 ///
-/// An ended session is acknowledged once the history has shown it, after
-/// which the core stops handing it over on each resume.
+/// An ended session is acknowledged while the history shows it, after which
+/// the core stops handing it over on each resume.
 @MainActor
 @Observable
 final class FundingActivityCenter {
@@ -20,7 +20,6 @@ final class FundingActivityCenter {
     /// they did, so their rows arrive in the history with their completion.
     private(set) var justFinished: [String: Date] = [:]
 
-    private var records: [String: FundingRecord] = [:]
     private var historyShown = 0
     private var refreshTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
@@ -42,20 +41,10 @@ final class FundingActivityCenter {
         Self.attached.withLock { $0.overlay }?.reopen(intent: intent)
     }
 
-    /// Shows an ended session's detail screen.
-    func showEnded(intent: String) {
-        guard let record = records[intent] else { return }
-        Self.attached.withLock { $0.overlay }?.showEnded(record)
-    }
-
     /// Shows a row's session: in flight on its progress screen, ended on its
     /// detail screen.
     func openDetail(_ item: FundingActivityItem) {
-        if item.isInProgress {
-            open(intent: item.id)
-        } else {
-            showEnded(intent: item.id)
-        }
+        open(intent: item.id)
     }
 
     /// Shows the sessions in flight in `direction` before starting another.
@@ -116,12 +105,11 @@ private extension FundingActivityCenter {
 
     func reload() async {
         let runtime = runtime
-        var sessions: [FundingBookEntry] = []
-        if let runtime {
-            sessions = await Task.detached { runtime.fundingEntries() }.value
-        }
+        let (entries, summaries) = await Task.detached {
+            (runtime?.fundingEntries() ?? [], runtime?.fundingHistory() ?? [])
+        }.value
 
-        let moving = sessions.filter(\.progress.status.isInFlight)
+        let moving = entries.filter(\.progress.status.isInFlight)
         justFinished = Self.finished(
             before: inFlight.map(\.id),
             after: moving.map(\.session.intent),
@@ -133,25 +121,15 @@ private extension FundingActivityCenter {
             .sorted { $0.date > $1.date }
         scheduleTakingLonger(moving.compactMap(\.progress.longerAtMs))
 
-        let ended = sessions
-            .filter { !$0.progress.status.isInFlight }
-            .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
-        var summaries: [FundingSessionSummary] = []
-        if let runtime {
-            summaries = await Task.detached { runtime.fundingHistory() }.value
-        }
         let inFlightIds = Set(inFlight.map(\.id))
-        let records = Self.historyRecords(summaries: summaries, ended: ended)
+        history = summaries
             .filter { !inFlightIds.contains($0.intent) }
-
-        self.records = Dictionary(records.map { ($0.intent, $0) }) { first, _ in first }
-        history = records.filter { !$0.isCancelledUnpaid }.map(FundingActivityItem.init(record:))
+            .compactMap(FundingActivityItem.init(summary:))
 
         guard historyShown > 0, let runtime else { return }
-        do {
-            try await runtime.acknowledgeFundingShown(intents: records.map(\.intent))
-        } catch {
-            Logger.shared.error("[funding] acknowledging the shown history failed: \(error)")
+        let owed = Set(entries.filter { !$0.session.acknowledged }.map(\.session.intent))
+        for item in history where owed.contains(item.id) {
+            await runtime.acknowledgeShown(intent: item.id, logger: Logger.shared)
         }
     }
 
@@ -171,21 +149,6 @@ private extension FundingActivityCenter {
 }
 
 extension FundingActivityCenter {
-    /// The ended sessions, newest first: each one in the core's history, from
-    /// the session the core pushed this run where there is one, as that keeps
-    /// the steps it reached, plus any ended session pushed before the history
-    /// listed it.
-    nonisolated static func historyRecords(
-        summaries: [FundingSessionSummary],
-        ended: [FundingRecord]
-    ) -> [FundingRecord] {
-        let pushed = Dictionary(ended.map { ($0.intent, $0) }) { first, _ in first }
-        let listed = summaries.compactMap { pushed[$0.intent] ?? FundingRecord(summary: $0) }
-        let listedIds = Set(listed.map(\.intent))
-        return (listed + ended.filter { !listedIds.contains($0.intent) })
-            .sorted { $0.settledAt > $1.settledAt }
-    }
-
     /// The sessions that just left In progress, added to those still within
     /// their arrival window.
     nonisolated static func finished(

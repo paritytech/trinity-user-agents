@@ -43,13 +43,17 @@ extension FundingActivityItem {
             .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
     }
 
-    init(record: FundingRecord) {
-        id = record.intent
-        direction = record.direction
-        rail = record.rail
-        amount = (record.settledAmount ?? record.requestedAmount).flatMap { Balance($0) }
-        date = record.settledAt
-        status = record.outcome.activityStatus(payout: record.payout, refunded: record.refundedAmount)
+    /// The row for an ended session from its summary in the core's history;
+    /// nil while it is open.
+    init?(summary: FundingSessionSummary) {
+        guard let status = Status(ended: summary) else { return nil }
+
+        id = summary.intent
+        direction = summary.direction
+        rail = summary.choice?.rail
+        amount = summary.ended.cashAmount.flatMap { Balance($0) }
+        date = Date(milliseconds: summary.ended.atMs)
+        self.status = status
     }
 
     var isInProgress: Bool {
@@ -64,26 +68,23 @@ extension FundingActivityItem {
     }
 }
 
-private extension FundingRecord.Outcome {
-    /// The row's status for a record that ended this way; a release whose
-    /// payout failed reads as a failed payout.
-    func activityStatus(payout: FundingRecord.Payout?, refunded: U128?) -> FundingActivityItem.Status {
-        switch self {
-        case .delivered:
-            .toppedUp
-        case .released:
-            if case .failed = payout {
-                .payoutFailed(refunded: refunded)
-            } else {
-                .sent
-            }
-        case .refunded:
-            .refunded
-        case .cancelled,
-             .failed(.cancelled):
-            .cancelled(refunded: refunded)
-        case let .failed(failure):
-            .failed(failure)
+private extension FundingActivityItem.Status {
+    /// How the core says `summary` ended; a cancel reads as cancelled, with
+    /// what came back when money had moved.
+    init?(ended summary: FundingSessionSummary) {
+        switch summary.ended.outcome {
+        case .open:
+            return nil
+        case .succeeded:
+            self = summary.direction == .in ? .toppedUp : .sent
+        case .payoutFailed:
+            self = .payoutFailed(refunded: summary.refunded)
+        case .failed(.cancelled):
+            self = .cancelled(refunded: summary.refunded)
+        case .failed(.refunded):
+            self = .refunded
+        case let .failed(reason):
+            self = .failed(reason)
         }
     }
 }
@@ -101,5 +102,11 @@ extension FundingStatus {
         case .retrying, .retryingPayout, .takingLonger, .cancelOffered, .cancelRefused: true
         default: false
         }
+    }
+}
+
+extension Date {
+    init(milliseconds: UInt64) {
+        self.init(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
     }
 }

@@ -1,3 +1,4 @@
+import BulletinChain
 import Coinage
 import Foundation
 import Products
@@ -66,8 +67,10 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         let flowState = flowStateProvider.flowState()
 
         // A provider the app ships opens from its own files, under its own id.
-        let bundled = bundledProducts.product(providerId)
-            .flatMap { $0.hasApp() ? $0 : nil }
+        var bundled: BundleEntry?
+        if case let .bundled(entry) = bundledProducts.source(of: providerId), entry.hasApp {
+            bundled = entry
+        }
         let page = bundled.flatMap { $0.page(navigationDestination: destination) }
             ?? flowState.hostProvider.page(navigationDestination: destination)
         guard let page else { return nil }
@@ -116,27 +119,41 @@ private final class FundingPresentedController: ControllerBackedProtocol {
 }
 
 /// A provider's name and icon from its product's root manifest, resolved
-/// once per provider. A provider the app ships has no manifest read for it.
+/// once per provider: the bundled copy for a provider the app ships, the
+/// published one otherwise.
 actor ManifestFundingProviderBranding: FundingProviderBranding {
     private let flowStateProvider: SPAFlowStateProviding
     private let bundledProducts: BundledProducts
+    private let ipfsFetcher: IpfsFetching
     private var resolved: [ProductId: FundingProviderBrand] = [:]
 
-    init(flowStateProvider: SPAFlowStateProviding, bundledProducts: BundledProducts = .none) {
+    init(
+        flowStateProvider: SPAFlowStateProviding,
+        bundledProducts: BundledProducts = .none,
+        ipfsFetcher: IpfsFetching = IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main)
+    ) {
         self.flowStateProvider = flowStateProvider
         self.bundledProducts = bundledProducts
+        self.ipfsFetcher = ipfsFetcher
     }
 
     func brand(for providerId: ProductId) async -> FundingProviderBrand {
         if let brand = resolved[providerId] { return brand }
 
-        guard bundledProducts.product(providerId) == nil else {
-            return FundingProviderBrand.placeholder(for: providerId)
+        let name: String?
+        let iconData: Data?
+        if case let .bundled(entry) = bundledProducts.source(of: providerId) {
+            name = entry.displayName
+            if let cid = entry.iconCid {
+                iconData = try? await ipfsFetcher.lookupBy(cid: cid)
+            } else {
+                iconData = nil
+            }
+        } else {
+            let resolver = flowStateProvider.flowState().productResolver
+            name = try? await resolver.resolve(providerId).displayName
+            iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
         }
-
-        let resolver = flowStateProvider.flowState().productResolver
-        let name = try? await resolver.resolve(providerId).displayName
-        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
 
         let brand = FundingProviderBrand(
             name: name ?? FundingProviderBrand.placeholder(for: providerId).name,

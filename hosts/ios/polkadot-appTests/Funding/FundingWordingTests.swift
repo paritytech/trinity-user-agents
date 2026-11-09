@@ -3,7 +3,7 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-/// How a session's band reads, and which ended sessions the history drops.
+/// How a session's band reads.
 struct FundingWordingTests {
     /// Each band reads as the line the core docs give it for its direction
     /// and rail, whatever language the catalog is in.
@@ -22,36 +22,5 @@ struct FundingWordingTests {
         #expect(delayed?.text == String(localized: .Funding.bandDelayedOut))
         #expect(delayed?.isWarning == true)
         #expect(FundingWording.band(.cancel, direction: .in, rail: .card, asset: nil, amount: nil) == nil)
-    }
-
-    @Test
-    func aTopUpCancelledBeforePayingLeavesTheHistory() {
-        #expect(record(.failed(.cancelled), settled: nil).isCancelledUnpaid)
-        #expect(!record(.failed(.cancelled), settled: "5000").isCancelledUnpaid)
-        #expect(!record(.failed(.declined), settled: nil).isCancelledUnpaid)
-    }
-
-    private func record(_ outcome: FundingRecord.Outcome, settled: String?) -> FundingRecord {
-        let now = Date(timeIntervalSince1970: 1_792_324_800)
-        return FundingRecord(
-            intent: "fs_1",
-            direction: .in,
-            rail: .bank,
-            asset: nil,
-            providerId: nil,
-            requestedAmount: "5000",
-            settledAmount: settled,
-            paidAmount: nil,
-            paidAsset: nil,
-            paidDecimals: nil,
-            paidNetwork: nil,
-            outcome: outcome,
-            payout: nil,
-            refundedAmount: nil,
-            transactionId: nil,
-            reference: nil,
-            openedAt: now,
-            settledAt: now
-        )
     }
 }

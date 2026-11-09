@@ -55,7 +55,7 @@ actor FundingFlowService: FundingFlowServiceProtocol {
     }
 
     nonisolated func summary(intent: String) -> FundingSessionSummary? {
-        runtime.fundingHistory().first { $0.intent == intent }
+        runtime.fundingSummary(intent: intent)
     }
 
     func select(_ selection: FundingSelection, intent: String) -> FundingOptions? {

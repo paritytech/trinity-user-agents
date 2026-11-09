@@ -1,15 +1,16 @@
 import Foundation
 import TrUAPIHost
 
-/// An ended session as its detail screen draws it: its record, with the
-/// core's view of how it ended, plus the quote and the steps the core
-/// reported while it still holds the session. Without them the steps are the
-/// direction's milestones.
+/// An ended session as its detail screen draws it: the core's summary, whose
+/// `ended` says how it ended, plus the quote, the deposit's network and the
+/// steps the core reported while it still holds the session. Without them
+/// the steps are the direction's milestones.
 struct FundingEndedSession: Equatable {
-    let record: FundingRecord
-    /// The core's summary, whose `ended` says how the session ended.
     let summary: FundingSessionSummary
     var quote: FundingQuote?
+    /// The crypto network the value moved on: the one the provider named for
+    /// the deposit, or the one the quote was asked for.
+    var network: String?
     var reportedSteps: [FundingProgressStep]?
 }
 
@@ -17,20 +18,43 @@ extension FundingEndedSession {
     /// The detail of an ended session from its summary in the core's
     /// history, with the session and progress while the core holds them.
     init?(summary: FundingSessionSummary, session: FundingSession? = nil, progress: FundingProgress? = nil) {
-        guard summary.ended.outcome != .open,
-              let record = FundingRecord(summary: summary, network: progress?.deposit?.network)
-        else { return nil }
+        guard summary.ended.outcome != .open else { return nil }
 
         self.init(
-            record: record,
             summary: summary,
             quote: session?.choice?.quote ?? summary.choice?.quote,
+            network: progress?.deposit?.network ?? summary.choice?.network,
             reportedSteps: progress?.steps
         )
     }
 
     var direction: FundingDirection {
-        record.direction
+        summary.direction
+    }
+
+    var rail: FundingRail? {
+        summary.choice?.rail
+    }
+
+    var providerId: ProductId? {
+        summary.providerId
+    }
+
+    var openedAt: Date {
+        Date(milliseconds: summary.openedAtMs)
+    }
+
+    var endedAt: Date {
+        Date(milliseconds: summary.ended.atMs)
+    }
+
+    /// The CASH credited or debited, once it was.
+    var settledAmount: U128? {
+        switch summary.stage {
+        case let .delivered(credited, _): credited
+        case let .released(debited, _): debited
+        case .open, .failed: nil
+        }
     }
 
     var outcome: FundingEndedOutcome {
@@ -48,15 +72,11 @@ extension FundingEndedSession {
     }
 
     /// What the user paid for value in, or receives for value out, in the
-    /// asset of the quote the session ran on: the record's copy, or the quote
-    /// while the core still holds it.
+    /// asset of the quote the session ran on.
     var quotedAmount: String? {
-        let quoted = quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount }
-        guard let units = record.paidAmount ?? quoted,
-              let asset = record.paidAsset ?? record.asset,
-              let decimals = record.paidDecimals ?? quote?.assetDecimals
-        else { return nil }
-        return FundingAssetUnit(code: asset, decimals: decimals).format(units)
+        guard let quote, let asset = summary.choice?.asset else { return nil }
+        let units = direction == .in ? quote.sendAmount : quote.receiveAmount
+        return FundingAssetUnit(code: asset, decimals: quote.assetDecimals).format(units)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.
