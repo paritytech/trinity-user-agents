@@ -2367,18 +2367,28 @@ fn type_codec_expr_mode_qualified(
 			if is_unit_only_enum(ty) {
 				unit_enum_codec_expr(variants)
 			} else {
+				let has_explicit_discriminants = variants.iter().enumerate().any(
+					|(position, variant)| variant.codec_index.map_or(position, usize::from) != position,
+				);
 				let variants = variants
 					.iter()
-					.map(|variant| {
-						Ok(format!(
-							"{}: {}",
-							variant.name,
-							variant_codec_expr_mode(&variant.fields, qualified, ctx, mode)?
-						))
+					.enumerate()
+					.map(|(position, variant)| {
+						let codec = variant_codec_expr_mode(&variant.fields, qualified, ctx, mode)?;
+						Ok(if has_explicit_discriminants {
+							let index = variant.codec_index.map_or(position, usize::from);
+							format!("{}: [{index}, {codec}] as const", variant.name)
+						} else {
+							format!("{}: {codec}", variant.name)
+						})
 					})
 					.collect::<Result<Vec<_>>>()?
 					.join(", ");
-				Ok(format!("S.TaggedUnion({{{variants}}})"))
+				if has_explicit_discriminants {
+					Ok(format!("S.indexedTaggedUnion({{{variants}}})"))
+				} else {
+					Ok(format!("S.TaggedUnion({{{variants}}})"))
+				}
 			}
 		},
 	}
@@ -3204,6 +3214,37 @@ mod tests {
 		assert_ne!(
 			wire_schema_hash(&build("u32"), 1, 1).unwrap(),
 			wire_schema_hash(&build("u64"), 1, 1).unwrap(),
+		);
+	}
+
+	#[test]
+	fn payload_enum_codec_preserves_explicit_discriminant_gaps() {
+		let ty = TypeDef {
+			name: "Permission".to_string(),
+			module_path: Vec::new(),
+			generic_params: Vec::new(),
+			docs: None,
+			kind: TypeDefKind::Enum(vec![
+				VariantDef {
+					name: "Ordinary".to_string(),
+					fields: VariantFields::Unit,
+					docs: None,
+					codec_index: None,
+				},
+				VariantDef {
+					name: "Validator".to_string(),
+					fields: VariantFields::Unnamed(vec![TypeRef::Primitive("u8".to_string())]),
+					docs: None,
+					codec_index: Some(6),
+				},
+			]),
+		};
+		let codec = type_codec_expr_mode_qualified(
+			&ty, &ty.name, &CodecContext::default(), NameMode::Public, false,
+		).unwrap();
+		assert_eq!(
+			codec,
+			"S.indexedTaggedUnion({Ordinary: [0, S._void] as const, Validator: [6, S.u8] as const})",
 		);
 	}
 

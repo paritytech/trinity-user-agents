@@ -303,7 +303,7 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
     /// Live OS permission state, when the host serves that capability. Absent
     /// leaves the stored decision governing on its own.
     status: Option<&'a dyn PermissionStatusHost>,
-    /// Whether non-device permissions are granted without records or prompts.
+    /// Whether ordinary non-device permissions default to granted; never Validator.
     trusted_product: bool,
     /// One-use grants remain local to the execution that requested them.
     temporary_permissions: Arc<TemporaryPermissions>,
@@ -397,7 +397,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
         let Some(domains) = requested_domains(request) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), request);
-            return self.cached_remote_authorization(&key, false).await;
+			return self.cached_remote_authorization(&key, &request.permission, false).await;
         };
         match self.resolve_domains(domains).await?.0 {
             BundleResolution::Authorized => Ok(PermissionAuthorizationStatus::Authorized),
@@ -516,11 +516,13 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     async fn cached_remote_authorization(
         &self,
         key: &CoreStorageKey,
+        permission: &RemotePermission,
         consume: bool,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
         let status = self.cached_authorization(key, consume).await?;
         Ok(
-            if self.trusted_product && status == PermissionAuthorizationStatus::NotDetermined {
+            if self.trusted_product && status == PermissionAuthorizationStatus::NotDetermined
+                && !matches!(permission, RemotePermission::Validator { .. }) {
                 PermissionAuthorizationStatus::Authorized
             } else {
                 status
@@ -817,7 +819,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         let revision = scope.revision();
         let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
-            match self.cached_remote_authorization(&key, consume).await? {
+            match self.cached_remote_authorization(&key, &request.permission, consume).await? {
 				PermissionAuthorizationStatus::NotDetermined => {},
                 decided => return Ok(decided),
             }
@@ -2053,6 +2055,46 @@ mod tests {
     }
 
     #[test]
+	fn first_party_remote_trust_never_grants_validator_custody() {
+		for (allowed, expected) in [
+			(false, PermissionAuthorizationStatus::Denied),
+			(true, PermissionAuthorizationStatus::Authorized),
+		] {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::new(vec![], vec![allowed]);
+			let service = trusted_service(&storage, &prompt);
+			let request = remote(RemotePermission::Validator {
+				genesis: [1; 32], account: [2; 32], execution: "7".into(),
+			});
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+			);
+			assert_eq!(
+				futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap(),
+				expected,
+			);
+			assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+			for distinct in [
+				remote(RemotePermission::Validator {
+					genesis: [3; 32], account: [2; 32], execution: "7".into(),
+				}),
+				remote(RemotePermission::Validator {
+					genesis: [1; 32], account: [3; 32], execution: "7".into(),
+				}),
+				remote(RemotePermission::Validator {
+					genesis: [1; 32], account: [2; 32], execution: "8".into(),
+				}),
+			] {
+				assert_eq!(
+					futures::executor::block_on(service.peek_remote(&distinct)).unwrap(),
+					PermissionAuthorizationStatus::NotDetermined,
+				);
+			}
+		}
+	}
+
+	#[test]
     fn a_trusted_product_is_authorized_for_any_domain() {
         let storage = MemStorage::default();
         let prompt = ScriptedPrompt::new(vec![], vec![]);

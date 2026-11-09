@@ -21,7 +21,7 @@ use crate::{
 		callback_namespace, collect_local_bridge_payload_types, composed_traits,
 		optional_trait_names, platform_trait_names, raw_callback_adapter_name, raw_callback_name,
 		raw_callback_type_name, raw_callback_wire_name, stream_item, to_camel_case,
-		trait_object_return_name,
+		trait_object_return_name, uses_scale_result,
 	},
 	rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
 	ts::ts_string_literal,
@@ -203,6 +203,11 @@ fn emit_wasm_adapter(
 						&mut adapter_local_codec_types,
 					);
 					collect_extra_named(ok, codec_types, &local, &mut extra_types);
+					if uses_scale_result(&method.return_shape.inner)
+						&& let PlatformInner::Result { err, .. } = &method.return_shape.inner
+					{
+						collect_codec_imports(err, codec_types, &mut imports);
+					}
 				},
 				PlatformInner::Stream(item) => {
 					support_imports.insert("driveResultStream".to_string());
@@ -234,6 +239,11 @@ fn emit_wasm_adapter(
         "#,
 	)
 	.unwrap();
+	if traits.iter().any(|trait_def| trait_def.methods.iter()
+		.any(|method| uses_scale_result(&method.return_shape.inner)))
+	{
+		out.push_str("import * as S from \"@parity/truapi/scale\";\n");
+	}
 	emit_import_block(&mut out, false, "@parity/truapi", &imports);
 	emit_import_block(&mut out, true, "@parity/truapi", &extra_types);
 	emit_import_block(&mut out, false, "./host-callbacks.js", &adapter_local_codec_types);
@@ -834,6 +844,7 @@ fn raw_member(
 				.collect::<Vec<_>>()
 				.join(", ");
 			let ok = match inner {
+				inner if uses_scale_result(inner) => "Uint8Array".to_string(),
 				PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
 					raw_ok_ts(ok, codec_types, local_codec_types)
 				},
@@ -1136,6 +1147,12 @@ fn adapter_unary_impl(
 		.collect::<Vec<_>>()
 		.join(", ");
 	let call = format!("{host_method}({args})");
+	if uses_scale_result(&method.return_shape.inner)
+		&& let PlatformInner::Result { err, .. } = &method.return_shape.inner
+	{
+		let codec = format!("S.Result({}, {})", local_codec_expr(ok)?, local_codec_expr(err)?);
+		return Ok(format!("async ({params}) => {codec}.enc(await {call})"));
+	}
 	let body = match ok {
 		TypeRef::Named { name: ty, .. }
 			if codec_types.contains(ty) || local_codec_types.contains(ty) =>
@@ -1582,9 +1599,13 @@ fn collect_named_types(definition: &PlatformDefinition) -> BTreeSet<String> {
 				collect_from_type(&param.type_ref, &mut out);
 			}
 			match &method.return_shape.inner {
-				// Err type is not part of the TS signature (errors throw),
-				// so don't import its name.
-				PlatformInner::Result { ok, .. } => collect_from_type(ok, &mut out),
+				// Validator returns domain errors as SCALE values; other callbacks throw.
+				PlatformInner::Result { ok, err } => {
+					collect_from_type(ok, &mut out);
+					if uses_scale_result(&method.return_shape.inner) {
+						collect_from_type(err, &mut out);
+					}
+				},
 				PlatformInner::Stream(inner) => collect_from_type(inner, &mut out),
 				PlatformInner::Plain(inner) => collect_from_type(inner, &mut out),
 				// A trait object returns its bare trait name in the TS
@@ -1630,6 +1651,19 @@ fn collect_from_type(ty: &TypeRef, out: &mut BTreeSet<String>) {
 fn format_return(ret: &PlatformReturn) -> Result<String> {
 	let inner = match &ret.inner {
 		PlatformInner::Unit => "void".to_string(),
+		PlatformInner::Result { ok, err } if uses_scale_result(&ret.inner) => {
+			let ok = if matches!(ok, TypeRef::Unit)
+				|| matches!(ok, TypeRef::Tuple(items) if items.is_empty())
+			{
+				"undefined".to_string()
+			} else {
+				ts_type(ok)?
+			};
+			format!(
+				"{{ success: true; value: {ok} }} | {{ success: false; value: {} }}",
+				ts_type(err)?,
+			)
+		},
 		PlatformInner::Result { ok, .. } => ts_type(ok)?,
 		PlatformInner::Stream(item) => format!("AsyncIterable<{}>", ts_type(item)?),
 		PlatformInner::TraitObject(name) => name.clone(),

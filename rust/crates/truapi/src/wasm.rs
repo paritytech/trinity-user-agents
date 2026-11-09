@@ -805,6 +805,7 @@ struct WasmPlatformAdapters {
     contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
     game_platform: Option<Arc<dyn GamePlatform>>,
 	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 }
@@ -815,6 +816,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_contacts = bridge.has_contacts();
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
+    let has_validator = bridge.has_validator();
     let has_game = bridge.has_game();
 	let has_scanner = bridge.has_scanner();
     let platform = Arc::new(WasmPlatform::new(bridge));
@@ -822,6 +824,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+    let validator = has_validator.then(|| platform.clone() as Arc<dyn crate::platform::ValidatorPlatform>);
     let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
 	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
     WasmPlatformAdapters {
@@ -830,6 +833,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         contacts_platform: contacts,
         status_host: status,
         pocket_platform: pocket,
+        validator_platform: validator,
         game_platform: game,
 		scanner_platform: scanner,
     }
@@ -848,6 +852,7 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
+        validator_platform,
         game_platform,
         scanner_platform,
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
@@ -859,6 +864,7 @@ fn connection_adapters_from_js(
         // One-use grants belong to this execution, not the shared host.
         permission_grants: Arc::default(),
         pocket_platform,
+        validator_platform,
         game_platform,
         scanner_platform,
         expanded_card: None,
@@ -940,6 +946,7 @@ impl WasmPairingHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            validator_platform,
             game_platform,
 			scanner_platform,
         } = wasm_platform(bridge);
@@ -959,6 +966,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            runtime.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -1259,6 +1269,7 @@ impl WasmSigningHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            validator_platform,
             game_platform,
 			scanner_platform,
         } = wasm_platform(bridge);
@@ -1278,6 +1289,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            runtime.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -1648,6 +1662,7 @@ impl WasmProductRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            validator_platform,
             game_platform,
 			scanner_platform,
         } = wasm_platform(bridge);
@@ -1664,6 +1679,9 @@ impl WasmProductRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             pairing.set_pocket_platform(pocket_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            pairing.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             pairing.set_game_platform(game_platform);

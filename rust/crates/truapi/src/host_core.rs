@@ -314,6 +314,11 @@ impl PairingHostRuntime {
         self.services.contact_handles.clear();
     }
 
+	/// Install protected validator custody before creating product connections.
+	pub fn set_validator_platform(&self, platform: Arc<dyn crate::platform::ValidatorPlatform>) -> bool {
+		self.services.install_validator_platform(platform)
+	}
+
     /// Build a product-facing runtime from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -750,6 +755,11 @@ impl SigningHostRuntime {
     pub fn notify_contacts_changed(&self) {
         self.services.contact_handles.clear();
     }
+
+	/// Install protected validator custody before creating product connections.
+	pub fn set_validator_platform(&self, platform: Arc<dyn crate::platform::ValidatorPlatform>) -> bool {
+		self.services.install_validator_platform(platform)
+	}
 
     /// Install the host's [`DevicePairingObserver`], told whenever a device
     /// finishes pairing with this signing host.
@@ -1331,6 +1341,8 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    /// Protected validator custody, when supplied by the host.
+    pub validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
     pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
@@ -1349,6 +1361,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            validator_platform: services.validator_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
             scanner_platform: services.scanner_platform(),

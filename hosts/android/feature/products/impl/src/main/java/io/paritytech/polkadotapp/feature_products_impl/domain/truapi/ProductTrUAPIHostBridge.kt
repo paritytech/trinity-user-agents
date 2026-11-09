@@ -235,11 +235,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
-        ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestRemotePermissionDecision(callingProductId, request.toDomain())
+        ): TrUAPIPermissionDecision {
+            // This host has no protected validator custody.
+            val domainRequest = request.toDomain() ?: return TrUAPIPermissionDecision.DENY
+            return hostApiInteractor
+                .requestRemotePermissionDecision(callingProductId, domainRequest)
                 .getOrElse { throw it }
                 .toNative()
+        }
 
         /**
          * Answered from the same snapshot [chainConnect] dials rather than the
@@ -455,12 +458,13 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    is RemotePermission.Validator -> null
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

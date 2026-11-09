@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "841ea8fac7e2a0bc";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0b0188a24ce985e9";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -2151,6 +2151,246 @@ impl RequestMethod for WorkerEndOperation {
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `validator_open` method marker.
+pub struct ValidatorOpen;
+impl ValidatorOpen {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "open",
+		wire_name: "validator_open",
+		request_type: "truapi::versioned::validator::HostValidatorOpenRequest",
+		response_type: "truapi::versioned::validator::HostValidatorOpenResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorOpenError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 0 }),
+	};
+}
+impl RequestMethod for ValidatorOpen {
+	type Request = truapi::versioned::validator::HostValidatorOpenRequest;
+	type Response = truapi::versioned::validator::HostValidatorOpenResponse;
+	type Error = truapi::versioned::validator::HostValidatorOpenError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_commit` method marker.
+pub struct ValidatorCommit;
+impl ValidatorCommit {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "commit",
+		wire_name: "validator_commit",
+		request_type: "truapi::versioned::validator::HostValidatorCommitRequest",
+		response_type: "truapi::versioned::validator::HostValidatorCommitResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorCommitError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 1 }),
+	};
+}
+impl RequestMethod for ValidatorCommit {
+	type Request = truapi::versioned::validator::HostValidatorCommitRequest;
+	type Response = truapi::versioned::validator::HostValidatorCommitResponse;
+	type Error = truapi::versioned::validator::HostValidatorCommitError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_sign` method marker.
+pub struct ValidatorSign;
+impl ValidatorSign {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "sign",
+		wire_name: "validator_sign",
+		request_type: "truapi::versioned::validator::HostValidatorSignRequest",
+		response_type: "truapi::versioned::validator::HostValidatorSignResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorSignError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 2 }),
+	};
+}
+impl RequestMethod for ValidatorSign {
+	type Request = truapi::versioned::validator::HostValidatorSignRequest;
+	type Response = truapi::versioned::validator::HostValidatorSignResponse;
+	type Error = truapi::versioned::validator::HostValidatorSignError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_close` method marker.
+pub struct ValidatorClose;
+impl ValidatorClose {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "close",
+		wire_name: "validator_close",
+		request_type: "truapi::versioned::validator::HostValidatorCloseRequest",
+		response_type: "truapi::versioned::validator::HostValidatorCloseResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorCloseError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 3 }),
+	};
+}
+impl RequestMethod for ValidatorClose {
+	type Request = truapi::versioned::validator::HostValidatorCloseRequest;
+	type Response = truapi::versioned::validator::HostValidatorCloseResponse;
+	type Error = truapi::versioned::validator::HostValidatorCloseError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_vrf_output` method marker.
+pub struct ValidatorVrfOutput;
+impl ValidatorVrfOutput {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "vrf_output",
+		wire_name: "validator_vrf_output",
+		request_type: "truapi::versioned::validator::HostValidatorVrfOutputRequest",
+		response_type: "truapi::versioned::validator::HostValidatorVrfOutputResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorVrfOutputError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 4 }),
+	};
+}
+impl RequestMethod for ValidatorVrfOutput {
+	type Request = truapi::versioned::validator::HostValidatorVrfOutputRequest;
+	type Response = truapi::versioned::validator::HostValidatorVrfOutputResponse;
+	type Error = truapi::versioned::validator::HostValidatorVrfOutputError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_ticket_prove` method marker.
+pub struct ValidatorTicketProve;
+impl ValidatorTicketProve {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "ticket_prove",
+		wire_name: "validator_ticket_prove",
+		request_type: "truapi::versioned::validator::HostValidatorTicketProveRequest",
+		response_type: "truapi::versioned::validator::HostValidatorTicketProveResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorTicketProveError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 5 }),
+	};
+}
+impl RequestMethod for ValidatorTicketProve {
+	type Request = truapi::versioned::validator::HostValidatorTicketProveRequest;
+	type Response = truapi::versioned::validator::HostValidatorTicketProveResponse;
+	type Error = truapi::versioned::validator::HostValidatorTicketProveError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_entropy_source` method marker.
+pub struct ValidatorEntropySource;
+impl ValidatorEntropySource {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "entropy_source",
+		wire_name: "validator_entropy_source",
+		request_type: "truapi::versioned::validator::HostValidatorEntropySourceRequest",
+		response_type: "truapi::versioned::validator::HostValidatorEntropySourceResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorEntropySourceError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 6 }),
+	};
+}
+impl RequestMethod for ValidatorEntropySource {
+	type Request = truapi::versioned::validator::HostValidatorEntropySourceRequest;
+	type Response = truapi::versioned::validator::HostValidatorEntropySourceResponse;
+	type Error = truapi::versioned::validator::HostValidatorEntropySourceError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_seal` method marker.
+pub struct ValidatorSeal;
+impl ValidatorSeal {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "seal",
+		wire_name: "validator_seal",
+		request_type: "truapi::versioned::validator::HostValidatorSealRequest",
+		response_type: "truapi::versioned::validator::HostValidatorSealResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorSealError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 7 }),
+	};
+}
+impl RequestMethod for ValidatorSeal {
+	type Request = truapi::versioned::validator::HostValidatorSealRequest;
+	type Response = truapi::versioned::validator::HostValidatorSealResponse;
+	type Error = truapi::versioned::validator::HostValidatorSealError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_full_sign` method marker.
+pub struct ValidatorFullSign;
+impl ValidatorFullSign {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "full_sign",
+		wire_name: "validator_full_sign",
+		request_type: "truapi::versioned::validator::HostValidatorFullSignRequest",
+		response_type: "truapi::versioned::validator::HostValidatorFullSignResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorFullSignError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 8 }),
+	};
+}
+impl RequestMethod for ValidatorFullSign {
+	type Request = truapi::versioned::validator::HostValidatorFullSignRequest;
+	type Response = truapi::versioned::validator::HostValidatorFullSignResponse;
+	type Error = truapi::versioned::validator::HostValidatorFullSignError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `validator_audit_prove` method marker.
+pub struct ValidatorAuditProve;
+impl ValidatorAuditProve {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Validator",
+		method: "audit_prove",
+		wire_name: "validator_audit_prove",
+		request_type: "truapi::versioned::validator::HostValidatorAuditProveRequest",
+		response_type: "truapi::versioned::validator::HostValidatorAuditProveResponse",
+		error_type: Some("truapi::versioned::validator::HostValidatorAuditProveError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 112, method_id: 9 }),
+	};
+}
+impl RequestMethod for ValidatorAuditProve {
+	type Request = truapi::versioned::validator::HostValidatorAuditProveRequest;
+	type Response = truapi::versioned::validator::HostValidatorAuditProveResponse;
+	type Error = truapi::versioned::validator::HostValidatorAuditProveError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// Generated `APP_METHODS` execution catalog.
 pub const APP_METHODS: &[MethodDescriptor] = &[
 	AccountConnectionStatusSubscribe::DESCRIPTOR,
@@ -2229,6 +2469,16 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	SystemHostInfo::DESCRIPTOR,
 	SystemGetProductContext::DESCRIPTOR,
 	ThemeSubscribe::DESCRIPTOR,
+	ValidatorOpen::DESCRIPTOR,
+	ValidatorCommit::DESCRIPTOR,
+	ValidatorSign::DESCRIPTOR,
+	ValidatorClose::DESCRIPTOR,
+	ValidatorVrfOutput::DESCRIPTOR,
+	ValidatorTicketProve::DESCRIPTOR,
+	ValidatorEntropySource::DESCRIPTOR,
+	ValidatorSeal::DESCRIPTOR,
+	ValidatorFullSign::DESCRIPTOR,
+	ValidatorAuditProve::DESCRIPTOR,
 ];
 
 /// Generated `WIDGET_METHODS` execution catalog.
@@ -2310,6 +2560,16 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	SystemHostInfo::DESCRIPTOR,
 	SystemGetProductContext::DESCRIPTOR,
 	ThemeSubscribe::DESCRIPTOR,
+	ValidatorOpen::DESCRIPTOR,
+	ValidatorCommit::DESCRIPTOR,
+	ValidatorSign::DESCRIPTOR,
+	ValidatorClose::DESCRIPTOR,
+	ValidatorVrfOutput::DESCRIPTOR,
+	ValidatorTicketProve::DESCRIPTOR,
+	ValidatorEntropySource::DESCRIPTOR,
+	ValidatorSeal::DESCRIPTOR,
+	ValidatorFullSign::DESCRIPTOR,
+	ValidatorAuditProve::DESCRIPTOR,
 ];
 
 /// Generated `WORKER_METHODS` execution catalog.
@@ -2402,6 +2662,16 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	ThemeSubscribe::DESCRIPTOR,
 	WorkerBeginOperation::DESCRIPTOR,
 	WorkerEndOperation::DESCRIPTOR,
+	ValidatorOpen::DESCRIPTOR,
+	ValidatorCommit::DESCRIPTOR,
+	ValidatorSign::DESCRIPTOR,
+	ValidatorClose::DESCRIPTOR,
+	ValidatorVrfOutput::DESCRIPTOR,
+	ValidatorTicketProve::DESCRIPTOR,
+	ValidatorEntropySource::DESCRIPTOR,
+	ValidatorSeal::DESCRIPTOR,
+	ValidatorFullSign::DESCRIPTOR,
+	ValidatorAuditProve::DESCRIPTOR,
 ];
 
 /// Generated `WORKER_ONLY_METHODS` execution catalog.

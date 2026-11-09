@@ -25,6 +25,7 @@ mod system;
 mod theme;
 mod transaction;
 mod worker;
+mod validator;
 
 pub use account::*;
 pub use chain::*;
@@ -51,3 +52,4 @@ pub use system::*;
 pub use theme::*;
 pub use transaction::*;
 pub use worker::*;
+pub use validator::*;

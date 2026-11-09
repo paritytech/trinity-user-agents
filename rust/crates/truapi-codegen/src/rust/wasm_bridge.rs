@@ -11,7 +11,7 @@ use crate::{
 	platform_callbacks::{
 		callback_namespace, collect_local_bridge_payload_types, composed_traits,
 		optional_trait_names, platform_trait_names, raw_callback_field_name, raw_callback_name,
-		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
+		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name, uses_scale_result,
 	},
 	rustdoc::{
 		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
@@ -296,7 +296,17 @@ fn emit_result_method(
 	let params = rust_params(method, ctx)?;
 	let map_err = error_mapper(err, ctx)?;
 
-	let body = if is_unit(ok) {
+	let body = if uses_scale_result(&method.return_shape.inner) {
+		let err_ty = rust_type(err, ctx)?;
+		let sanitized = format!(
+			".map_err(|_| {err_ty}::Unknown {{ reason: \"validator callback failed\".into() }})"
+		);
+		let call = bridge_call("invoke_bytes_return", &method.name, &args, &[]);
+		let await_bytes = await_chain(&call, &format!("{sanitized}?"));
+		format!(
+			"let bytes = {await_bytes};\n<{ret} as parity_scale_codec::DecodeAll>::decode_all(&mut bytes.as_slice())\n{sanitized}?",
+		)
+	} else if is_unit(ok) {
 		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
 	} else if is_bool(ok) {
 		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)

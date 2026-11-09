@@ -57,6 +57,7 @@ pub mod statement_store;
 pub mod system;
 pub mod theme;
 pub mod worker;
+pub mod validator;
 
 #[cfg(test)]
 mod tests {

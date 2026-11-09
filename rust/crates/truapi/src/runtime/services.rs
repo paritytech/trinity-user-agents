@@ -53,6 +53,9 @@ pub struct RuntimeServices {
     /// Host Pocket adapter, installed once at startup by a host with a Pocket
     /// surface. Unset leaves every product Pocket call `Unsupported`.
     pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+    validator_platform: OnceLock<Arc<dyn crate::platform::ValidatorPlatform>>,
+    /// Live custody owners, addressed by trusted product and execution.
+    pub(super) validator_owners: parking_lot::Mutex<std::collections::HashMap<(String, String), super::validator::ValidatorRevocation>>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
@@ -145,6 +148,8 @@ impl RuntimeServices {
             chat_platform: None,
             permission_status: OnceLock::new(),
             pocket_platform: OnceLock::new(),
+            validator_platform: OnceLock::new(),
+            validator_owners: Default::default(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             game_platform: OnceLock::new(),
@@ -239,6 +244,16 @@ impl RuntimeServices {
         platform: Arc<dyn crate::platform::PocketPlatform>,
     ) -> bool {
         self.pocket_platform.set(platform).is_ok()
+    }
+
+    /// Install protected validator custody once, before creating connections.
+    pub fn install_validator_platform(&self, platform: Arc<dyn crate::platform::ValidatorPlatform>) -> bool {
+        self.validator_platform.set(platform).is_ok()
+    }
+
+    /// The host's protected validator custody adapter, when installed.
+    pub fn validator_platform(&self) -> Option<Arc<dyn crate::platform::ValidatorPlatform>> {
+        self.validator_platform.get().cloned()
     }
 
     /// The host's Pocket adapter, when one is installed.

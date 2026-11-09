@@ -83,6 +83,18 @@ pub enum RemotePermission {
 	/// Submitting statements on behalf of the user via `remote_statement_store_submit`.
 	#[display("submit statements")]
 	StatementSubmit,
+	/// Experimental host-custodied validator signing.
+	/// Scope is one trusted account and execution; artifacts need host consent.
+	#[display("run this validator during this session")]
+	#[codec(index = 6)]
+	Validator {
+		/// Enrolled chain genesis.
+		genesis: [u8; 32],
+		/// Trusted runtime account.
+		account: [u8; 32],
+		/// Trusted execution id, not a guest-selected namespace.
+		execution: String,
+	},
 }
 
 /// remote-permission request (RFC 0002).

@@ -40,6 +40,7 @@ pub mod statement_allowance;
 pub mod statement_store;
 mod statement_store_rpc;
 mod vrf;
+mod validator;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -316,6 +317,9 @@ pub struct ProductRuntimeHost {
     chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
+    validator_state: futures::lock::Mutex<validator::ValidatorState>,
+    validator_revoked: Arc<std::sync::atomic::AtomicBool>,
     game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
     scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
@@ -330,6 +334,11 @@ pub const USER_TAP_WINDOW_SECS: u64 = 5;
 impl Drop for ProductRuntimeHost {
     fn drop(&mut self) {
         self.release_open_operations();
+		self.services.validator_owners.lock()
+			.remove(&(self.product.product_id.clone(), self.execution_id()));
+		if let Some(platform) = &self.validator_platform {
+			platform.validator_revoke(self.execution_id());
+		}
     }
 }
 
@@ -356,6 +365,9 @@ impl ProductRuntimeHost {
             chat: adapters.chat,
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
+            validator_platform: adapters.validator_platform,
+            validator_state: futures::lock::Mutex::new(validator::ValidatorState::default()),
+            validator_revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expanded_card: adapters.expanded_card,
             game_platform: adapters.game_platform,
             scanner_platform: adapters.scanner_platform,
@@ -497,6 +509,9 @@ impl ProductRuntimeHost {
             chat,
             renderer,
             pocket_platform: None,
+            validator_platform: None,
+            validator_state: futures::lock::Mutex::new(validator::ValidatorState::default()),
+            validator_revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expanded_card: None,
             game_platform: None,
             scanner_platform: None,
@@ -680,8 +695,20 @@ impl ProductRuntimeHost {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
+		if status != PermissionAuthorizationStatus::Authorized
+			&& let PermissionAuthorizationRequest::Remote(remote) = &request
+		{
+			self.services.revoke_validator_permission(&self.product.product_id, &remote.permission);
+		}
         let service = self.permissions_service();
-        service.set_authorization_status(&request, status).await
+		let result = service.set_authorization_status(&request, status).await;
+		// An acquire may have registered while persistence was pending.
+		if status != PermissionAuthorizationStatus::Authorized
+			&& let PermissionAuthorizationRequest::Remote(remote) = &request
+		{
+			self.services.revoke_validator_permission(&self.product.product_id, &remote.permission);
+		}
+		result
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]

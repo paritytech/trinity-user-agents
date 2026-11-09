@@ -118,9 +118,11 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        // This host has no protected validator custody.
+        guard let domainRequest = request.toDomainRequest() else { return .deny }
+        return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: domainRequest.toDomainPermissions()
         ).hostDecision
     }
 
@@ -295,13 +297,14 @@ extension HostDevicePermissionRequest {
 
 extension RemotePermission {
     /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    func toDomainRequest() -> Products.RemotePermissionRequest? {
         switch self {
         case let .remote(domains): .remote(domains: domains)
         case .webRtc: .webRTC
         case .chainSubmit: .chainSubmit
         case .preimageSubmit: .preimageSubmit
         case .statementSubmit: .statementSubmit
+        case .validator: nil
         }
     }
 }

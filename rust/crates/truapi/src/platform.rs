@@ -47,6 +47,17 @@ use truapi::{
 	},
 	v01::HostAccountSignVrfRequest,
 };
+use crate::latest::{
+	HostValidatorError, HostValidatorOpenRequest, HostValidatorOpenResponse,
+	HostValidatorCommitRequest, HostValidatorCommitResponse, HostValidatorSignRequest,
+	HostValidatorSignResponse, HostValidatorCloseRequest, ValidatorAuthority,
+	HostValidatorVrfOutputRequest, HostValidatorVrfOutputResponse,
+	HostValidatorTicketProveRequest, HostValidatorTicketProveResponse,
+	HostValidatorEntropySourceRequest, HostValidatorEntropySourceResponse,
+	HostValidatorSealRequest, HostValidatorSealResponse,
+	HostValidatorFullSignRequest, HostValidatorFullSignResponse,
+	HostValidatorAuditProveRequest, HostValidatorAuditProveResponse,
+};
 use url::{Host, Url};
 
 /// Role-neutral host identity supplied by the embedding host.
@@ -3179,6 +3190,87 @@ pub trait PocketPlatform: Send + Sync {
     ) -> Result<(), HostPocketRemoveCardError>;
 }
 
+/// Optional protected validator custody backend. The runtime supplies authority,
+/// never the guest. The adapter must bind the verified artifact and live account
+/// to this execution, obtain fresh artifact consent, serialize accepted work and
+/// retain ownership until persistence, signing and peer transport are drained.
+#[async_trait]
+pub trait ValidatorPlatform: Send + Sync {
+	/// Acquire existing enrolled custody, read recovery bytes, or acknowledge replay.
+	async fn validator_open(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorOpenRequest,
+	) -> Result<HostValidatorOpenResponse, HostValidatorError>;
+
+	/// Bounded immutable recovery upload or durable compare-and-append checkpoint.
+	async fn validator_commit(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorCommitRequest,
+	) -> Result<HostValidatorCommitResponse, HostValidatorError>;
+
+	/// Guard and persist a typed intent before invoking the native signer.
+	async fn validator_sign(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorSignRequest,
+	) -> Result<HostValidatorSignResponse, HostValidatorError>;
+
+	/// Typed Safrole eligibility under the immutable authoring role.
+	async fn validator_vrf_output(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorVrfOutputRequest,
+	) -> Result<HostValidatorVrfOutputResponse, HostValidatorError>;
+
+	/// Bounded ticket proof for the enrolled Bandersnatch identity.
+	async fn validator_ticket_prove(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorTicketProveRequest,
+	) -> Result<HostValidatorTicketProveResponse, HostValidatorError>;
+
+	/// Typed JAM entropy-source signature.
+	async fn validator_entropy_source(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorEntropySourceRequest,
+	) -> Result<HostValidatorEntropySourceResponse, HostValidatorError>;
+
+	/// Durable one-payload-per-slot seal with complete recovery material.
+	async fn validator_seal(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorSealRequest,
+	) -> Result<HostValidatorSealResponse, HostValidatorError>;
+
+	/// Explicit role-4 typed signing with durable conflict guards.
+	async fn validator_full_sign(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorFullSignRequest,
+	) -> Result<HostValidatorFullSignResponse, HostValidatorError>;
+
+	/// Typed Bandersnatch audit selection under explicit role-4 consent.
+	async fn validator_audit_prove(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorAuditProveRequest,
+	) -> Result<HostValidatorAuditProveResponse, HostValidatorError>;
+
+	/// Return only after accepted work and owned peer transport are drained/reaped.
+	async fn validator_close(
+		&self,
+		authority: &ValidatorAuthority,
+		request: HostValidatorCloseRequest,
+	) -> Result<(), HostValidatorError>;
+
+	/// Immediately fence admission on teardown/revocation, then drain and reap
+	/// asynchronously. Ambiguous completion must keep ownership or poison it.
+	fn validator_revoke(&self, execution_id: String);
+}
+
 /// Host-implemented adapter that holds a product's next-game reminder.
 /// Optional: a host that omits it leaves Game requests answered `Unsupported`.
 /// See [`OptionalPlatform`].
@@ -3497,6 +3589,7 @@ pub trait OptionalPlatform:
 	+ PocketPlatform
 	+ GamePlatform
 	+ ScannerPlatform
+	+ ValidatorPlatform
 {
 }
 
@@ -3507,5 +3600,6 @@ impl<T> OptionalPlatform for T where
 		+ PocketPlatform
 		+ GamePlatform
 		+ ScannerPlatform
+		+ ValidatorPlatform
 {
 }

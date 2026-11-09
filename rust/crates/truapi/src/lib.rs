@@ -86,6 +86,23 @@ pub mod latest {
     use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
+        HostValidatorError, HostValidatorOpenRequest, HostValidatorOpenResponse,
+        HostValidatorCommitRequest, HostValidatorCommitResponse, HostValidatorSignRequest,
+        HostValidatorSignResponse, HostValidatorCloseRequest, ValidatorAuthority,
+        ValidatorRecoveryRef, ValidatorGrandpaDuty, ValidatorIntent, ValidatorProtection,
+        VALIDATOR_MAX_RECOVERY_BYTES, VALIDATOR_MAX_CHUNK_BYTES,
+        HostValidatorVrfOutputRequest, HostValidatorVrfOutputResponse,
+        HostValidatorTicketProveRequest, HostValidatorTicketProveResponse,
+        HostValidatorEntropySourceRequest, HostValidatorEntropySourceResponse,
+        HostValidatorSealRequest, HostValidatorSealResponse,
+        HostValidatorFullSignRequest, HostValidatorFullSignResponse,
+        HostValidatorAuditProveRequest, HostValidatorAuditProveResponse,
+        ValidatorFullDuty, ValidatorFullIntent, ValidatorAuditInput, ValidatorAuditReport,
+        ValidatorSealInput, ValidatorSealDuty, ValidatorSealIntent,
+        VALIDATOR_MAX_PARAMETERS_BYTES, VALIDATOR_MAX_RING,
+    };
+
+    pub use crate::v01::{
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
