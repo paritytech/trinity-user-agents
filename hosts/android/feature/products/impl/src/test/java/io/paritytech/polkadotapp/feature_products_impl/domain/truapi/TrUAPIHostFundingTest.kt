@@ -54,8 +54,8 @@ class TrUAPIHostFundingTest {
     @Test
     fun `the activity is the core's rows, read once the core started`() = runBlocking {
         activity.value = FundingActivity(
-            inFlight = listOf(row("a", FundingStatus.WaitingForTransfer, inFlight = true)),
-            history = listOf(row("b", FundingStatus.ToppedUp, inFlight = false)),
+            inFlight = listOf(row("a", FundingStatus.WaitingForTransfer)),
+            history = listOf(row("b", FundingStatus.ToppedUp)),
         )
 
         val read = funding.observeActivity().first()
@@ -77,16 +77,13 @@ class TrUAPIHostFundingTest {
         coVerify { runtime.acknowledgeShown(listOf("b")) }
     }
 
-    private fun row(intent: String, status: FundingStatus, inFlight: Boolean) = FundingActivityRow(
+    private fun row(intent: String, status: FundingStatus) = FundingActivityRow(
         intent = intent,
         direction = CoreFundingDirection.IN,
         rail = FundingRail.BANK,
         amount = "50000000",
         atMs = 1_000uL,
         status = status,
-        inFlight = inFlight,
-        delayed = false,
-        paid = null,
     )
 
     private fun item(id: String, status: FundingActivityStatus) = FundingActivityItem(
