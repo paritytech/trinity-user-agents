@@ -156,7 +156,7 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `networks carry the core's names and minimums`() {
+    fun `networks carry the core's minimums`() {
         val flow = state(
             options(
                 defaultRail = FundingRail.CRYPTO,
@@ -167,7 +167,7 @@ class FundingFlowStateTest {
             ),
         )
 
-        assertEquals(listOf(FundingNetwork("ethereum", "Ethereum"), FundingNetwork("polkadot", "Polkadot")), flow.networks)
+        assertEquals(listOf("ethereum", "polkadot"), flow.networks)
         assertEquals(BigDecimal("30") to null, flow.minimum("ethereum") to flow.minimum("polkadot"))
     }
 
@@ -204,8 +204,7 @@ class FundingFlowStateTest {
         countries = countries,
         limits = limits,
         networks = networks,
-        rails = listOf(FundingRail.CRYPTO, FundingRail.CARD),
-        defaultRail = defaultRail,
+        rails = listOf(defaultRail) + (listOf(FundingRail.CRYPTO, FundingRail.CARD) - defaultRail),
         asset = asset,
         tokens = emptyList(),
         detectedCountry = null,

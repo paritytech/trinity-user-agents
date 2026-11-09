@@ -447,7 +447,7 @@ export interface FundingQuoteList {
    * gave. ``undefined`` while any is pending or quoted, or when they gave
    * different reasons.
    */
-  refusal?: FundingQuotesRefusal;
+  refusal?: FundingQuoteUnavailable;
 
   /**
    * Once every provider answered and none quoted, what their refusals
@@ -502,24 +502,6 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
-
-/**
- * Why no provider can serve an ask, when every one of them gave the same
- * reason.
- */
-export type FundingQuotesRefusal =
-  /**
-   * No provider answered in time.
-   */
-  | { tag: "Timeout"; value?: undefined }
-  /**
-   * No provider serves the user's country.
-   */
-  | { tag: "CountryUnsupported"; value?: undefined }
-  /**
-   * Every provider refused with this message.
-   */
-  | { tag: "Other"; value: { message: string } };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -1307,7 +1289,7 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       best: S.Option(ProductId),
       refreshAtMs: S.u64,
       amount: S.u128,
-      refusal: S.Option(FundingQuotesRefusal),
+      refusal: S.Option(FundingQuoteUnavailable),
       issue: S.Option(FundingAmountIssue),
     }) as S.Codec<FundingQuoteList>,
 );
@@ -1349,19 +1331,6 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
         reason: FundingQuoteRefusal;
       }>,
       Timeout: S._void,
-    }),
-);
-
-/**
- * Why no provider can serve an ask, when every one of them gave the same
- * reason.
- */
-export const FundingQuotesRefusal: S.Codec<FundingQuotesRefusal> = S.lazy(
-  (): S.Codec<FundingQuotesRefusal> =>
-    S.TaggedUnion({
-      Timeout: S._void,
-      CountryUnsupported: S._void,
-      Other: S.Struct({ message: S.str }) as S.Codec<{ message: string }>,
     }),
 );
 

@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost
 
-import com.google.gson.Gson
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -8,9 +7,8 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
-import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.TestScope
 import org.junit.Test
@@ -23,22 +21,18 @@ class RuntimeSelectingSpaHostTest {
         every { with(scope) { with(messageDisplay) { createSession(any(), any()) } } } returns session
     }
     private val truapi = mockk<TrUAPISpaHost> {
-        every { with(scope) { with(messageDisplay) { createSession(any(), any()) } } } returns session
+        every { with(scope) { with(messageDisplay) { createSession(any(), any(), any()) } } } returns session
     }
     private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
-    private val bundledProducts = BundledProducts(
-        InMemoryBundledProductFiles(mapOf("bundled-products/provider.dot/app/index.html" to "<html></html>")),
-        ManifestParser(Gson()),
-        enabled = true,
-    )
-    private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, bundledProducts)
+    private val bundledProducts = bundledProducts(mapOf("bundled-products/provider.dot/app/index.html" to "<html></html>"))
+    private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, productSources(bundledProducts))
 
     // Only TrUAPI serves a product the app ships, so it opens there with the TrUAPI runtime switched off.
     @Test
     fun `a bundled product opens on TrUAPI whatever the toggle`() {
         with(scope) { with(messageDisplay) { host.createSession("https://provider.dot/card", underCard = false) } }
 
-        verify { with(scope) { with(messageDisplay) { truapi.createSession("https://provider.dot/card", false) } } }
+        verify { with(scope) { with(messageDisplay) { truapi.createSession("https://provider.dot/card", false, any()) } } }
         verify(exactly = 0) { with(scope) { with(messageDisplay) { native.createSession(any(), any()) } } }
     }
 
@@ -47,6 +41,6 @@ class RuntimeSelectingSpaHostTest {
         with(scope) { with(messageDisplay) { host.createSession("https://coinflip.dot", underCard = false) } }
 
         verify { with(scope) { with(messageDisplay) { native.createSession("https://coinflip.dot", any()) } } }
-        verify(exactly = 0) { with(scope) { with(messageDisplay) { truapi.createSession(any(), any()) } } }
+        verify(exactly = 0) { with(scope) { with(messageDisplay) { truapi.createSession(any(), any(), any()) } } }
     }
 }

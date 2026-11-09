@@ -19,6 +19,7 @@
 #   ios:     hosts/ios/polkadot-app/BundledProducts.bundle/fundtest-provider.dot/
 #   android: hosts/android/feature/products/impl/bundled-assets/bundled-products/fundtest-provider.dot/
 #            (packaged only into the debug, nightly and safetynet builds)
+#     manifest.json          the product's root manifest: its displayName and icon.cid
 #     worker-manifest.json
 #     worker/index.js
 #     app/...
@@ -121,6 +122,14 @@ STAGING="$DEST_ROOT/.$PRODUCT_ID.staging"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/worker"
 cp "$SOURCE/worker-manifest.json" "$STAGING/worker-manifest.json"
+# The root manifest names the product and its icon. A source without one gets the displayName its
+# deploy config gives, since the published manifest is written at deploy time.
+if [ -f "$SOURCE/manifest.json" ]; then
+  cp "$SOURCE/manifest.json" "$STAGING/manifest.json"
+else
+  NAME="$(sed -n 's/^ *displayName: *"\(.*\)",*$/\1/p' "$SOURCE/bulletin-deploy.config.ts" 2>/dev/null | head -n1 || true)"
+  printf '{"$v":1,"displayName":"%s"}\n' "${NAME:-$PRODUCT_ID}" > "$STAGING/manifest.json"
+fi
 cp "$SOURCE/dist/worker/index.js" "$STAGING/worker/index.js"
 cp -R "$SOURCE/dist/app" "$STAGING/app"
 
