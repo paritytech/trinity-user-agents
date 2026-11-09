@@ -33,6 +33,7 @@ class RootNavBarViewModelDockletTest {
             tabBarVisibilityHolder = mockk(relaxed = true),
             tabBarOffsetHolder = mockk(relaxed = true),
             bottomNavHeightProvider = mockk(relaxed = true),
+            tabSelection = mockk(relaxed = true),
             scanPanelRequests = mockk(relaxed = true),
             dockletInputEvents = mockk(relaxed = true),
         )
