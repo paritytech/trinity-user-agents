@@ -12,22 +12,12 @@ use truapi::latest::HostFundingStatusSubscribeItem;
 use super::lock;
 use crate::{
 	host_logic::{
-		funding::{FundingProgress, FundingSession, FundingSessionSummary},
-		funding_activity::{ActivityView, activity},
+		funding::{FundingSession, FundingSessionSummary},
+		funding_activity::{ActivityView, FundingBookEntry, activity},
 		funding_providers::FundingOptions,
 	},
 	platform::FundingQuoteList,
 };
-
-/// A session the host has heard of, with its progress now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct FundingBookEntry {
-	/// The session.
-	pub session: FundingSession,
-	/// Its progress now.
-	pub progress: FundingProgress,
-}
 
 /// The funding state the core keeps for the host beside the sessions
 /// themselves, which the registry holds.
@@ -44,8 +34,6 @@ struct BookState {
 	quotes: HashMap<String, FundingQuoteList>,
 	/// Ended sessions the host has not acknowledged.
 	unacknowledged: BTreeSet<String>,
-	/// Whether a provider still works on any session, once funding resumed.
-	in_progress: Option<bool>,
 	/// The activity as last worked out, until a session changes.
 	activity: Option<ActivityView>,
 }
@@ -76,11 +64,6 @@ impl FundingSessionBook {
 		} else {
 			state.unacknowledged.remove(intent);
 		}
-	}
-
-	/// Record whether a provider still works on any session.
-	pub fn in_progress_changed(&self, in_progress: bool) {
-		lock(&self.state).in_progress = Some(in_progress);
 	}
 
 	/// Record what session `intent`'s overlay offers.
@@ -122,17 +105,11 @@ impl FundingSessionBook {
 		lock(&self.state).unacknowledged.iter().cloned().collect()
 	}
 
-	/// Whether a provider still works on any session; `None` until funding
-	/// resumed.
-	pub fn in_progress(&self) -> Option<bool> {
-		lock(&self.state).in_progress
-	}
-
 	/// The activity from `entries` and `history`, worked out once until a
 	/// session changes.
 	pub fn activity(
 		&self,
-		entries: impl FnOnce() -> Vec<(FundingSession, FundingProgress)>,
+		entries: impl FnOnce() -> Vec<FundingBookEntry>,
 		history: impl FnOnce() -> Vec<FundingSessionSummary>,
 	) -> ActivityView {
 		if let Some(view) = lock(&self.state).activity.clone() {

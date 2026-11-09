@@ -196,7 +196,7 @@ extension FundingFlowModel {
 extension FundingFlowModel {
     /// The networks the core says a crypto route takes, named as it names them.
     var networks: [FundingNetwork] {
-        networkLimits.map { FundingNetwork(id: $0.network, name: $0.displayName) }
+        networkLimits.map { FundingNetwork(id: $0.network) }
     }
 
     /// The smallest amount the core says this network takes for the

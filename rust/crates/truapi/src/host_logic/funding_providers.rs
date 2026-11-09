@@ -510,8 +510,6 @@ pub struct FundingOptions {
 pub struct FundingNetworkLimits {
 	/// The network, as routes declare it.
 	pub network: String,
-	/// The network's canonical English name, which hosts may localise.
-	pub display_name: String,
 	/// The amounts the selection takes on it.
 	pub limits: FundingAmountLimits,
 }

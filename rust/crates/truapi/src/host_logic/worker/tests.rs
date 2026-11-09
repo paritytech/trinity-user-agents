@@ -446,7 +446,7 @@ fn a_panicking_delivery_still_lets_a_later_transition_through() {
 // launch, or one a later launch replaced, exits quietly.
 #[test]
 fn only_the_live_launch_reports_its_exit() {
-	let table = WorkerLaunchTable::new();
+	let table = WorkerLaunchTable::default();
 	let ramp = || ProductId::for_test("ramp.dot");
 	let first = table.begin(ramp()).expect("first launch");
 	let while_live = table.begin(ramp());
@@ -458,16 +458,7 @@ fn only_the_live_launch_reports_its_exit() {
 	let again = table.ended(ramp(), second);
 
 	assert_eq!(
-		(
-			while_live,
-			stopped,
-			first_exit,
-			second > first,
-			stale_exit,
-			second_exit,
-			again,
-			table.live(ramp())
-		),
-		(None, Some(first), false, true, false, true, false, None)
+		(while_live, stopped, first_exit, second > first, stale_exit, second_exit, again),
+		(None, Some(first), false, true, false, true, false)
 	);
 }

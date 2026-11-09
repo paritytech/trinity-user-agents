@@ -335,8 +335,8 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.open_funding(direction, amount).await?)
 	}
 
-	/// Funding session `intent` as the core holds it in full, `None` once
-	/// only its summary is kept or for no such session.
+	/// Funding session `intent` as the core holds it in full; see
+	/// [`SigningHostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
@@ -366,39 +366,20 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_quotes(&intent)
 	}
 
-	/// Every funding session the host has heard of that the core holds in
-	/// full, with its progress now, newest opened first.
+	/// The funding sessions the host has heard of that the core holds in
+	/// full, with their progress now, newest opened first.
 	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
 		self.runtime.funding_entries()
 	}
 
-	/// The ended funding sessions the host has not acknowledged.
-	pub fn funding_unacknowledged(&self) -> Vec<String> {
-		self.runtime.funding_unacknowledged()
-	}
-
-	/// Whether a provider still works on any funding session; `None` until
-	/// funding resumed.
-	pub fn funding_in_progress(&self) -> Option<bool> {
-		self.runtime.funding_in_progress()
-	}
-
-	/// Whether funding session `intent`'s payment moved: it ended, or it
-	/// reached a step past Started. `false` for a session the core does not
-	/// hold.
-	pub fn funding_payment_moved(&self, intent: String) -> bool {
-		self.runtime.funding_payment_moved(&intent)
-	}
-
 	/// The user's funding activity: sessions in flight and the history of
-	/// ended ones, worked out again only once a session changed.
+	/// ended ones.
 	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
 		self.runtime.funding_activity()
 	}
 
 	/// Acknowledge that the user saw how the ended funding sessions
-	/// `intents` went, and with them the ended sessions history leaves out,
-	/// so none is owed to the host again. Answers the sessions acknowledged.
+	/// `intents` went; see [`SigningHostRuntime::acknowledge_funding_shown`].
 	pub async fn acknowledge_funding_shown(
 		&self,
 		intents: Vec<String>,
@@ -406,11 +387,8 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_shown(intents).await?)
 	}
 
-	/// Offer the funding providers the host's remote configuration lists by
-	/// product name, then the `bundled` ones it does not name. Names that are
-	/// not product ids are skipped and logged, and a call listing what the
-	/// last one listed changes nothing, so the host calls it on every
-	/// configuration refresh.
+	/// Offer the funding providers the remote configuration names, then the
+	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
