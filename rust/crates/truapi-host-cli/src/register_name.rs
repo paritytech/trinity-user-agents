@@ -17,7 +17,7 @@ use subxt::{tx::Signer, utils::H256};
 use tracing::debug;
 use truapi::{
 	Sr25519Signer,
-	chain::{EvmContractCaller, EvmContractError},
+	chain::EvmContractCaller,
 	host_logic::{
 		dotns_gateway::{
 			AsDotnsGatewayExtension, ClaimBlocker, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,
@@ -279,8 +279,8 @@ struct QueueClear<'a> {
 /// A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` of them and a
 /// reverted claim keeps none of that, so a longer run has to be cleared first.
 /// The fee and the storage deposit are paid in PGAS. The account claims PGAS
-/// first when it holds none, or when the dry-run fails because the account
-/// cannot fund the storage deposit.
+/// first when it holds less than one claim's worth, or when the dry-run fails
+/// because the account cannot fund the storage deposit.
 async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 	let QueueClear {
 		reader,
@@ -300,15 +300,16 @@ async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 	let input = expire_reservation_call(label);
 	let call_name = format!("DotnsPopController.expireReservation({label:?})");
 
-	let unfunded_deposit = module_error_hex(
-		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?,
-	);
+	let unfunded_deposit =
+		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?;
 	let dry_run = contracts.dry_run(who, &controller, &input).await;
+	// A balance below one claim may not cover the fee, and a failed call would
+	// leave the next run in the same place, so only a full claim's worth skips it.
 	let needs_pgas = match &dry_run {
 		Ok(_) => {
-			alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await? == 0
+			!alloc::pgas::holds_a_full_claim(asset_hub_rpc, asset_hub_metadata, &who_public).await?
 		},
-		Err(EvmContractError::Dispatch { detail }) if *detail == unfunded_deposit => true,
+		Err(error) if error.is_module_error(unfunded_deposit) => true,
 		Err(error) => bail!("{call_name} fails in a dry-run: {error}"),
 	};
 	let prepared = if needs_pgas {
@@ -353,12 +354,6 @@ async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 			 front of this claim"
 		),
 	}
-}
-
-/// The hex a dry-run reports for `DispatchError::Module` at
-/// `[pallet_index, error_index]`.
-fn module_error_hex([pallet_index, error_index]: [u8; 2]) -> String {
-	format!("0x{}", hex::encode([0x03, pallet_index, error_index, 0, 0, 0]))
 }
 
 /// The expired or emptied reservations to clear before `who` can claim `label`,

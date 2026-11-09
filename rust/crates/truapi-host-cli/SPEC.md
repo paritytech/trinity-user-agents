@@ -2302,13 +2302,13 @@ right before the claim. When more of them stand in front of the claim then
 (dotNS 1.1.0 and later), it first clears the queue with
 `DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
 the account, with the weight and storage deposit limits of a dry-run from it.
-The fee and the storage deposit are paid in PGAS. When the account holds no
-PGAS, or the dry-run fails because the account cannot fund the deposit, the
-command claims PGAS into the account with the same People ring membership
-(`Pgas.claim_pgas`, one daily slot) and dry-runs again. Any other dry-run
-failure stops the command. After the call is finalized, it reads the queue
-again and stops if the claim would still revert. Clearing prints, before
-`REGISTER_SUBMITTED`:
+The fee and the storage deposit are paid in PGAS. When the account holds less
+than one claim's worth of PGAS (`Pgas.PgasClaimAmount`), or the dry-run fails
+because the account cannot fund the deposit, the command claims PGAS into the
+account with the same People ring membership (`Pgas.claim_pgas`, one daily
+slot) and dry-runs again. Any other dry-run failure stops the command. After
+the call is finalized, it reads the queue again and stops if the claim would
+still revert. Clearing prints, before `REGISTER_SUBMITTED`:
 
 ```text
 REGISTER_QUEUE_BLOCKED label=<label> dead=<count>

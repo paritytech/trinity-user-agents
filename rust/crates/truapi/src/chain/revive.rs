@@ -99,6 +99,19 @@ pub enum EvmContractError {
 	},
 }
 
+impl EvmContractError {
+	/// Whether a simulation failed with the pallet error at
+	/// `[pallet_index, error_index]`.
+	///
+	/// The indices come from the runtime metadata, so the error is matched by
+	/// its pallet and variant names whatever positions they take.
+	pub fn is_module_error(&self, [pallet_index, error_index]: [u8; 2]) -> bool {
+		// `DispatchError::Module(ModuleError { index, error: [u8; 4] })`.
+		let module_error = encode_hex(&[3, pallet_index, error_index, 0, 0, 0]);
+		matches!(self, Self::Dispatch { detail } if *detail == module_error)
+	}
+}
+
 /// A simulated contract write bound to its signer and to the caller that
 /// simulated it.
 ///
