@@ -8,7 +8,7 @@ use crate::{
 			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
 			index_bytes,
 		},
-		statement_store::{MAX_MATCH_ANY_TOPICS, TopicFilterKind},
+		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
 	platform::{CoreStorageKey, ProductContext},
 	test_support::{
@@ -387,7 +387,7 @@ fn statement_store_submit_posts_signed_statement_and_waits_for_ack() {
 	let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
 	assert_eq!(sent.len(), 1);
 	let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
-	assert_eq!(request["method"], "statement_submit");
+	assert_eq!(request["method"], SUBMIT_STATEMENT_METHOD);
 	let statement_hex = request["params"][0].as_str().unwrap();
 	let statement = hex::decode(statement_hex.strip_prefix("0x").unwrap_or(statement_hex)).unwrap();
 	assert_eq!(
