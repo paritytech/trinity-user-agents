@@ -167,15 +167,19 @@ class DockletHideState internal constructor(
         }
     }
 
-    fun tuck() {
+    fun tuck() = snapTo(1f)
+
+    fun untuck() = snapTo(0f)
+
+    private fun snapTo(to: Float) {
         if (isHeld) return
         stopMotion()
         landingPending = false
         quiet = false
-        target = 1f
+        target = to
         settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             peek.snapTo(0f)
-            progress.snapTo(1f)
+            progress.snapTo(to)
             barAlpha.snapTo(1f)
         }
     }

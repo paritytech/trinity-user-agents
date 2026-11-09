@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
+import android.graphics.Bitmap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -24,9 +25,12 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -34,14 +38,15 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 private val GlowWidth = DockletDrawbridge.GlowWidth.dp
-private val FeatherLength = 22.dp
-private val ShimmerColumn = 4.dp
-private const val ProfileStops = 13
 private const val BoostAlphaScale = 1.9f
 private const val BoostCopyOpacity = 0.6f
 private const val BoostScale = 1.08f
@@ -50,6 +55,8 @@ private const val BoostInMillis = 220
 private const val FadeOutMillis = 320
 private const val ShimmerCycleMillis = 1400
 private const val ShimmerOpacity = 0.95f
+private const val MaxAlpha = 255
+private const val PixelCenter = 0.5f
 
 @Composable
 fun DockletEdgeGlow(
@@ -76,6 +83,8 @@ fun DockletEdgeGlow(
         }
     }
     val composed by remember(state) { derivedStateOf { state.countsAsHidden || fade.value > 0f } }
+    val glowProgress = remember(state, hidden) { { if (hidden) state.glowAlpha else fade.value } }
+    val maskCache = remember { GlowMaskCache() }
     LaunchedEffect(boosted) {
         launch { boost.animateTo(if (boosted) 1f else 0f, tween(if (boosted) BoostInMillis else FadeOutMillis)) }
         launch { scale.animateTo(if (boosted) BoostScale else 1f, spring(dampingRatio = BoostDamping)) }
@@ -104,56 +113,79 @@ fun DockletEdgeGlow(
                 }
                 .then(rememberDockletRestoreDrag(state) { held = it })
                 .graphicsLayer {
-                    alpha = if (hidden) state.glowAlpha else fade.value
+                    alpha = glowProgress()
                     compositingStrategy = CompositingStrategy.Offscreen
                 }
                 .drawWithCache {
                     val bandWidth = GlowWidth.toPx()
                     val bandLeft = size.width - bandWidth
-                    val band = profileBrush(color, bandLeft, size.width, alphaScale = 1f)
-                    val boosted = profileBrush(color, bandLeft, size.width, alphaScale = BoostAlphaScale)
-                    val feather = FeatherLength.toPx().coerceAtMost(size.height / 2) / size.height
-                    val featherMask = Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        feather to Color.Black,
-                        1f - feather to Color.Black,
-                        1f to Color.Transparent,
-                    )
+                    val masks = maskCache.masks(this, bandWidth, size.height)
+                    val tint = ColorFilter.tint(color)
                     val rainbow = Brush.verticalGradient(DockletShimmerColors, startY = 0f, endY = size.height, tileMode = TileMode.Repeated)
-                    val column = ShimmerColumn.toPx()
-                    val columns = (bandWidth / column).toInt()
-                    val bandSize = Size(bandWidth, size.height)
+                    val band = Rect(bandLeft, 0f, size.width, size.height)
+                    val bandOrigin = Offset(bandLeft, 0f)
+                    val shimmerLayer = Paint().apply { blendMode = BlendMode.Plus }
                     onDrawBehind {
-                        scale(scaleX = scale.value, scaleY = 1f, pivot = Offset(size.width, size.height / 2)) {
-                            drawRect(band, topLeft = Offset(bandLeft, 0f), size = bandSize)
-                            drawRect(boosted, topLeft = Offset(bandLeft, 0f), size = bandSize, alpha = boost.value * BoostCopyOpacity)
+                        val widthScale = DockletGlowProfile.widthScale(glowProgress()) * scale.value
+                        scale(scaleX = widthScale, scaleY = 1f, pivot = Offset(size.width, size.height / 2)) {
+                            drawImage(masks.base, topLeft = bandOrigin, colorFilter = tint)
+                            drawImage(masks.boost, topLeft = bandOrigin, alpha = boost.value * BoostCopyOpacity, colorFilter = tint)
                             if (shimmer.value > 0f) {
+                                drawContext.canvas.saveLayer(band, shimmerLayer)
                                 translate(top = phase.value * size.height) {
-                                    repeat(columns) { index ->
-                                        val strength = (index + 1f) / columns
-                                        drawRect(
-                                            brush = rainbow,
-                                            topLeft = Offset(size.width - (columns - index) * column, -size.height),
-                                            size = Size(column, size.height * 2),
-                                            alpha = shimmer.value * ShimmerOpacity * strength,
-                                            blendMode = BlendMode.Plus,
-                                        )
-                                    }
+                                    drawRect(
+                                        brush = rainbow,
+                                        topLeft = Offset(bandLeft, -size.height),
+                                        size = Size(bandWidth, size.height * 2),
+                                        alpha = shimmer.value * ShimmerOpacity,
+                                    )
                                 }
+                                drawImage(masks.shimmer, topLeft = bandOrigin, blendMode = BlendMode.DstIn)
+                                drawContext.canvas.restore()
                             }
                         }
-                        drawRect(featherMask, blendMode = BlendMode.DstIn)
                     }
                 },
         )
     }
 }
 
-private fun profileBrush(color: Color, left: Float, right: Float, alphaScale: Float): Brush {
-    val stops = Array(ProfileStops) { index ->
-        val fraction = index / (ProfileStops - 1f)
-        val inFromEdge = DockletDrawbridge.GlowWidth * (1f - fraction)
-        fraction to color.copy(alpha = (DockletDrawbridge.glowAlpha(inFromEdge) * alphaScale).coerceIn(0f, 1f))
+private class GlowMasks(val width: Float, val height: Float, val base: ImageBitmap, val boost: ImageBitmap, val shimmer: ImageBitmap)
+
+private class GlowMaskCache {
+    private var cached: GlowMasks? = null
+
+    fun masks(density: Density, bandWidthPx: Float, heightPx: Float): GlowMasks =
+        cached?.takeIf { it.width == bandWidthPx && it.height == heightPx }
+            ?: density.glowMasks(bandWidthPx, heightPx).also { cached = it }
+}
+
+private fun Density.glowMasks(bandWidthPx: Float, heightPx: Float): GlowMasks {
+    val length = heightPx / density
+    return GlowMasks(
+        width = bandWidthPx,
+        height = heightPx,
+        base = alphaMask(bandWidthPx, heightPx) { inFromEdge, along -> DockletGlowProfile.glowAlpha(inFromEdge, along, length) },
+        boost = alphaMask(bandWidthPx, heightPx) { inFromEdge, along ->
+            min(1f, BoostAlphaScale * DockletGlowProfile.glowAlpha(inFromEdge, along, length))
+        },
+        shimmer = alphaMask(bandWidthPx, heightPx) { inFromEdge, along -> DockletGlowProfile.shimmerStrength(inFromEdge, along, length) },
+    )
+}
+
+private fun Density.alphaMask(widthPx: Float, heightPx: Float, alpha: (inFromEdge: Float, along: Float) -> Float): ImageBitmap {
+    val width = widthPx.roundToInt().coerceAtLeast(1)
+    val height = heightPx.roundToInt().coerceAtLeast(1)
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8)
+    val rowBytes = bitmap.rowBytes
+    val pixels = ByteArray(rowBytes * height)
+    for (row in 0 until height) {
+        val along = (row + PixelCenter) / density
+        for (column in 0 until width) {
+            val inFromEdge = (width - column - PixelCenter) / density
+            pixels[row * rowBytes + column] = (alpha(inFromEdge, along).coerceIn(0f, 1f) * MaxAlpha).roundToInt().toByte()
+        }
     }
-    return Brush.horizontalGradient(*stops, startX = left, endX = right)
+    bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
+    return bitmap.asImageBitmap()
 }

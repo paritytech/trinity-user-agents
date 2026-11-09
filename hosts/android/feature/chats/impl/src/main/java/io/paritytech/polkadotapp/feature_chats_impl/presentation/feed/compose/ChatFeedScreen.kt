@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.tabbar.HideTabBar
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -55,6 +56,8 @@ private val ACTION_MENU_BLUR_RADIUS = 25.dp
 
 @Composable
 fun ChatFeedScreen(contract: ChatFeedContract) {
+    HideTabBar()
+
     val config by contract.config.collectAsStateWithLifecycle()
     val chatInputState by contract.chatInputUiState.collectAsStateWithLifecycle()
     val chatMessagesState by contract.chatMessagesState.collectAsStateWithLifecycle()

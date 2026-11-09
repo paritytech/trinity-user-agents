@@ -6,7 +6,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.exp
 
 class DockletDrawbridgeTest {
     private val reference = drawbridge(402.dp, 874.dp)
@@ -115,13 +114,6 @@ class DockletDrawbridgeTest {
     @Test
     fun `the Back pull band runs from the glow's top to the dock's old bottom, 24 dp either way`() {
         assertEquals(396f..871f, reference.backBand())
-    }
-
-    @Test
-    fun `glow alpha is strongest at the edge and gone 24 dp in`() {
-        assertEquals(0.56f, DockletDrawbridge.glowAlpha(0f), EPS)
-        assertEquals(0.5f * exp(-1f) + 0.06f * exp(-4.2f / 14f) * (1f - 4.2f / 24f), DockletDrawbridge.glowAlpha(4.2f), EPS)
-        assertEquals(0f, DockletDrawbridge.glowAlpha(24f), EPS)
     }
 
     @Test

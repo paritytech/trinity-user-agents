@@ -65,14 +65,14 @@ class ForceShowTabBarTest {
 
     @Test
     fun aProductScreenPinsTheBarOverItselfOnceItResumes() {
-        pinBar { ShowTabBarOverProduct() }
+        pinBar { ShowTabBarTucked() }
         moveHostTo(Lifecycle.State.STARTED)
-        assertNull(holder.productPin.value)
+        assertNull(holder.tuckedPin.value)
 
         moveHostTo(Lifecycle.State.RESUMED)
 
         assertTrue(holder.forced.value)
-        assertNotNull(holder.productPin.value)
+        assertNotNull(holder.tuckedPin.value)
     }
 
     @Test
@@ -80,7 +80,7 @@ class ForceShowTabBarTest {
         pinBar()
         moveHostTo(Lifecycle.State.RESUMED)
 
-        assertNull(holder.productPin.value)
+        assertNull(holder.tuckedPin.value)
     }
 
     @Test

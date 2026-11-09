@@ -50,7 +50,8 @@ import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotAction
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarBaseInset
-import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarProductPin
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarHiddenPin
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarTuckedPin
 import io.paritytech.polkadotapp.common.presentation.tabbar.dockletSlotTap
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
@@ -97,7 +98,8 @@ private const val BEHIND_CARD_DIM = 1f - DockletMaterials.BehindCardBrightness
 fun RootNavBarOverlay(
     hidden: Boolean,
     forceShown: Boolean,
-    productPin: TabBarProductPin?,
+    tuckedPin: TabBarTuckedPin?,
+    hiddenPin: TabBarHiddenPin?,
     screenKey: String?,
     currentTab: BottomTab,
     tabWarnings: ImmutableMap<BottomTab, Boolean>,
@@ -177,9 +179,12 @@ fun RootNavBarOverlay(
         }
     }
 
-    val overProduct = productPin != null
-    LaunchedEffect(productPin) {
-        if (overProduct) hideState.tuck()
+    val onTuckedScreen = tuckedPin != null
+    LaunchedEffect(tuckedPin) {
+        if (onTuckedScreen) hideState.tuck()
+    }
+    LaunchedEffect(hiddenPin) {
+        if (hiddenPin != null) hideState.untuck()
     }
 
     openScanPanelRequests.collectAsEffect { _, _ ->
@@ -276,7 +281,7 @@ fun RootNavBarOverlay(
                     hideState = hideState,
                     onDockletAreas = { dockletAreas = it },
                     onSlotClick = { target ->
-                        when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown && !overProduct, cardOpen = pull.scanExpanded)) {
+                        when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown && !onTuckedScreen, cardOpen = pull.scanExpanded)) {
                             DockletSlotAction.CloseCard -> pull.collapsePanels()
                             DockletSlotAction.ToggleApps -> pull.toggleApps()
                             DockletSlotAction.ToggleNetworkStatus -> pull.toggleNetworkStatus()
@@ -309,7 +314,7 @@ fun RootNavBarOverlay(
             RootNavBarHide(
                 hideState = hideState,
                 searchOpen = pull.scanExpanded,
-                restoresOnBack = !overProduct,
+                restoresOnBack = !onTuckedScreen,
                 panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                 scannerTooltipVisible = tooltipVisible,
                 dockletTip = dockletTip,

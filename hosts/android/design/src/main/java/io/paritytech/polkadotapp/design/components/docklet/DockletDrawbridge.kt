@@ -10,7 +10,6 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -122,10 +121,6 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
         private const val PeekDepth = 0.14f
         private const val QuietFadeScale = 1.12f
         private const val QuietFadePower = 1.15f
-        private const val GlowSharpWeight = 0.5f
-        private const val GlowSharpDecay = 4.2f
-        private const val GlowSoftWeight = 0.06f
-        private const val GlowSoftDecay = 14f
 
         fun rubberBand(distance: Float, limit: Float): Float = limit * (1f - 1f / (1f + distance / limit))
 
@@ -146,12 +141,6 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
 
         fun quietFadeAlpha(progress: Float): Float =
             (1f - QuietFadeScale * progress.coerceIn(0f, 1f).pow(QuietFadePower)).coerceIn(0f, 1f)
-
-        fun glowAlpha(inFromEdge: Float): Float {
-            if (inFromEdge >= GlowWidth) return 0f
-            return GlowSharpWeight * exp(-inFromEdge / GlowSharpDecay) +
-                GlowSoftWeight * exp(-inFromEdge / GlowSoftDecay) * (1f - inFromEdge / GlowWidth)
-        }
     }
 }
 

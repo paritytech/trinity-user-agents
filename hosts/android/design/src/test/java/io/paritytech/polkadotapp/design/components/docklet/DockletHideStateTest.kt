@@ -177,6 +177,18 @@ class DockletHideStateTest {
     }
 
     @Test
+    fun `an untuck shows a hidden dock at once with no landing or haptic`() = runTest {
+        val state = hiddenState()
+
+        state.untuck()
+        advanceUntilIdle()
+
+        assertTrue(state.isShownAtRest)
+        assertEquals(emptyList<DockletLanding>(), landings)
+        assertEquals(emptyList<DockletMoment>(), moments)
+    }
+
+    @Test
     fun `a tuck stops a restore in flight without reporting the dock shown`() = runTest {
         val state = hiddenState()
         state.restore()

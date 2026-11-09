@@ -14,7 +14,7 @@ import javax.inject.Singleton
 
 /**
  * Whether the bar is shown at all. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
- * [ShowTabBarOverProduct] (a product); everywhere else it is absent entirely: no nub, nothing to pull out.
+ * [ShowTabBarTucked]; everywhere else it is absent entirely: no nub, nothing to pull out.
  * There is deliberately no opt-out state in between, so a screen cannot end up with a bar it did not ask for.
  */
 @Singleton
@@ -29,29 +29,36 @@ class TabBarVisibilityHolder @Inject constructor() {
     val forced: StateFlow<Boolean>
         field = MutableStateFlow(false)
 
-    val productPin: StateFlow<TabBarProductPin?>
+    val tuckedPin: StateFlow<TabBarTuckedPin?>
+        field = MutableStateFlow(null)
+
+    val hiddenPin: StateFlow<TabBarHiddenPin?>
         field = MutableStateFlow(null)
 
     @Synchronized
-    fun forceShow(key: Any) {
+    fun pin(key: Any) {
         forceKeys.add(key)
         recompute()
     }
 
     @Synchronized
-    fun releaseForce(key: Any) {
+    fun release(key: Any) {
         forceKeys.remove(key)
         recompute()
     }
 
     private fun recompute() {
-        forced.value = forceKeys.isNotEmpty()
-        hidden.value = forceKeys.isEmpty()
-        productPin.value = forceKeys.filterIsInstance<TabBarProductPin>().lastOrNull()
+        val showing = forceKeys.any { it !is TabBarHiddenPin }
+        forced.value = showing
+        hidden.value = !showing
+        tuckedPin.value = forceKeys.filterIsInstance<TabBarTuckedPin>().lastOrNull()
+        hiddenPin.value = forceKeys.filterIsInstance<TabBarHiddenPin>().lastOrNull()
     }
 }
 
-class TabBarProductPin
+class TabBarTuckedPin
+
+class TabBarHiddenPin
 
 val LocalTabBarVisibility = staticCompositionLocalOf<TabBarVisibilityHolder?> { null }
 
@@ -65,8 +72,13 @@ fun ForceShowTabBar() {
 }
 
 @Composable
-fun ShowTabBarOverProduct() {
-    PinTabBar(::TabBarProductPin)
+fun ShowTabBarTucked() {
+    PinTabBar(::TabBarTuckedPin)
+}
+
+@Composable
+fun HideTabBar() {
+    PinTabBar(::TabBarHiddenPin)
 }
 
 @Composable
@@ -79,8 +91,8 @@ private fun PinTabBar(newKey: () -> Any) {
     if (holder != null && resumed) {
         DisposableEffect(holder) {
             val key = newKey()
-            holder.forceShow(key)
-            onDispose { holder.releaseForce(key) }
+            holder.pin(key)
+            onDispose { holder.release(key) }
         }
     }
 }
