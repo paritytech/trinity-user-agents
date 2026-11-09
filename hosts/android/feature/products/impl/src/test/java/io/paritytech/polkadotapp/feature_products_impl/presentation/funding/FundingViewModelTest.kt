@@ -227,7 +227,7 @@ class FundingViewModelTest {
     fun `the core is told each selection, and the amount limits it pushes back reach the amount screen`() = runTest(testDispatcher) {
         val model = viewModel()
         advanceUntilIdle()
-        coVerify { interactor.selectOptions("intent", FundingSelection(FundingRail.CARD, "EUR", null, "DE", "EUR")) }
+        coVerify { interactor.selectOptions("intent", FundingSelection(FundingRail.CARD, null, null, "DE", "EUR")) }
 
         pushedOptions.value = options(cardCandidate(), min = "20000000")
         advanceUntilIdle()

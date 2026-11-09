@@ -475,7 +475,7 @@ pub struct FundingOptions {
 	/// The providers the session can be handed to.
 	pub candidates: Vec<FundingCandidate>,
 	/// What the core knows about each country for the selection's rail and
-	/// asset. Empty until an asset is picked.
+	/// `asset`. Empty while there is no `asset`.
 	pub countries: Vec<FundingCountry>,
 	/// The amounts the selection takes across every provider. The minimum
 	/// is never below [`FUNDING_MIN_AMOUNT`].
@@ -490,10 +490,11 @@ pub struct FundingOptions {
 	/// The default rail: the first of `rails`, or card when none is
 	/// routed.
 	pub default_rail: FundingRail,
-	/// The asset an ask for the selection names: the picked token for
-	/// crypto, and for card or bank the user's currency when a provider
-	/// takes it, else the first fiat one lists. `None` before a selection,
-	/// and for crypto before a token is picked.
+	/// The asset an ask for the selection names, which `countries`, `limits`
+	/// and `networks` go by: the picked asset, else for card or bank the
+	/// user's currency when a provider takes it, else the first fiat one
+	/// lists. `None` before a selection, and for crypto before a token is
+	/// picked.
 	pub asset: Option<String>,
 	/// For crypto, the tokens a session can use on the picked network, or
 	/// on any before one is picked, each once in the order first listed.
@@ -509,8 +510,6 @@ pub struct FundingOptions {
 pub struct FundingNetworkLimits {
 	/// The network, as routes declare it.
 	pub network: String,
-	/// The network's canonical English name, which hosts may localise.
-	pub display_name: String,
 	/// The amounts the selection takes on it.
 	pub limits: FundingAmountLimits,
 }

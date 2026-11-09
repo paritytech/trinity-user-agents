@@ -43,8 +43,8 @@ class AppFundingHostBridgeTest {
     private val funding = mockk<TrUAPIFundingRuntime>(relaxed = true)
     private val resolveProduct = mockk<ResolveProductUseCase>()
     private val bridge = AppFundingHostBridge(Lazy { overlay }, Lazy { funding }, countryDetector, resolveProduct)
-    private val app = FundingFrameContext(appPath = "/kyc", awaitsUserTransfer = false)
-    private val page = FundingFrameContext(appPath = null, awaitsUserTransfer = true)
+    private val app = FundingFrameContext(awaitsUserTransfer = false)
+    private val page = FundingFrameContext(awaitsUserTransfer = true)
 
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test
@@ -85,14 +85,14 @@ class AppFundingHostBridgeTest {
         }
     }
 
-    // The core normalises the route into the path the frame opens, and says whether the user transfers outside it.
+    // The frame opens the route the core checked, and the core says whether the user transfers outside it.
     @Test
-    fun `a provider frame opens the core's path and answers how it closed`() = runBlocking {
+    fun `a provider frame opens the core's route and answers how it closed`() = runBlocking {
         coEvery {
             overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/kyc"), false)
         } returns ProviderFrameOutcome.Closed
 
-        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.App("kyc"), app))
+        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.App("/kyc"), app))
     }
 
     // The worker reads the onramp's result from the query of the page it returned to.

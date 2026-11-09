@@ -1170,10 +1170,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Every ended funding session, as summaries newest first. Read it whenever the host shows history. */
     fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
 
-    /**
-     * Record that the host told the user how ended session [intent] went; until then it stays in
-     * [fundingUnacknowledged].
-     */
+    /** Record that the host told the user how ended session [intent] went. */
     @Throws(HostRejection::class)
     suspend fun acknowledgeFundingSession(intent: String): Boolean = inner.acknowledgeFundingSession(intent)
 
@@ -1191,15 +1188,6 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Every funding session the core holds in full, with its progress now, newest opened first. */
     fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
-
-    /** The ended funding sessions the host has not acknowledged. */
-    fun fundingUnacknowledged(): List<String> = inner.fundingUnacknowledged()
-
-    /** Whether a provider still works on any funding session; `null` until funding resumed. */
-    fun fundingInProgress(): Boolean? = inner.fundingInProgress()
-
-    /** Whether funding session [intent]'s payment moved; `false` for a session the core does not hold. */
-    fun fundingPaymentMoved(intent: String): Boolean = inner.fundingPaymentMoved(intent)
 
     /** The user's funding activity: sessions in flight, then the history of ended ones. */
     fun fundingActivity(): FundingActivity = inner.fundingActivity()

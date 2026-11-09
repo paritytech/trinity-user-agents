@@ -312,7 +312,6 @@ impl Drop for DrainGuard<'_> {
 /// starts workers can tell the exit of the current launch from that of one
 /// it already replaced or stopped. A launch is a number that only grows.
 #[derive(Default)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Object))]
 pub struct WorkerLaunchTable {
 	state: Mutex<Launches>,
 }
@@ -323,14 +322,7 @@ struct Launches {
 	live: HashMap<ProductId, u64>,
 }
 
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
 impl WorkerLaunchTable {
-	/// An empty table.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::constructor)]
-	pub fn new() -> Self {
-		Self::default()
-	}
-
 	/// Start a launch of `product_id`'s worker and answer its number, or
 	/// `None` while one is live, which the host keeps.
 	pub fn begin(&self, product_id: ProductId) -> Option<u64> {
@@ -362,13 +354,6 @@ impl WorkerLaunchTable {
 		self.lock().live.remove(&product_id)
 	}
 
-	/// The live launch of `product_id`'s worker.
-	pub fn live(&self, product_id: ProductId) -> Option<u64> {
-		self.lock().live.get(&product_id).copied()
-	}
-}
-
-impl WorkerLaunchTable {
 	fn lock(&self) -> MutexGuard<'_, Launches> {
 		self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}

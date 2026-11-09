@@ -69,7 +69,7 @@ interface FundingRuntime {
     /** The user's answer to the provider's cancel offer: the terms shown to accept them, `null` to decline. */
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
 
-    /** Records that the user was shown how ended session [intent] went; until then it stays [unacknowledged]. */
+    /** Records that the user was shown how ended session [intent] went. */
     suspend fun acknowledge(intent: String): Result<Boolean>
 
     /**
