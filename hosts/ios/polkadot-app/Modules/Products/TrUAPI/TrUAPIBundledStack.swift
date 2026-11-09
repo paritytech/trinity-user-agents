@@ -1,60 +1,40 @@
 import Foundation
 import TrUAPIHost
 
-/// The Trinity stacks the app bundles, and which one each build runs. The core
-/// takes every chain it uses, the network it reports and the TLD the wallet's
-/// reserved identities derive under from the running stack's descriptor.
+/// The Trinity stacks the app bundles, and which one each build runs.
 ///
-/// Each descriptor is a signed copy under `Stacks/`, kept byte for byte as
-/// published; `scripts/update-stacks.sh` refreshes it with the CLI's copy of
-/// the same stack. The core verifies it against its link's key when the
-/// runtime starts, so a copy refreshed without its link stops the runtime.
+/// Each stack ships as two files under `Stacks/`: `<resource>.link`, the
+/// stack's pointer, and `<resource>.json`, its signed descriptor, which
+/// `scripts/update-stacks.sh` refreshes from the CLI's copy. The core checks
+/// the descriptor against the pointer's key when the runtime starts.
 enum TrUAPIBundledStack {
     enum Error: Swift.Error, Equatable {
-        case missingDescriptor(resource: String)
+        case missingResource(name: String)
     }
 
-    /// One stack the app bundles: its descriptor resource, the link it was
-    /// published under, and whether it may use Polkadot's genesis hashes and
-    /// the `dot` TLD, which only the mainnet build allows.
+    /// One stack the app bundles, and whether it may use Polkadot's genesis
+    /// hashes and the `dot` TLD.
     struct Definition {
-        let descriptorResource: String
-        let pointer: String
+        let resource: String
         let allowsReservedValues: Bool
 
-        /// The stack with its descriptor read from `bundle`, as the core takes it.
+        /// The stack read from `bundle`, as the core takes it.
         func load(from bundle: Bundle = .main) throws -> BundledStack {
-            guard let url = bundle.url(forResource: descriptorResource, withExtension: "json") else {
-                throw Error.missingDescriptor(resource: descriptorResource)
-            }
+            let pointer = try String(contentsOf: url(of: "link", in: bundle), encoding: .utf8)
             return try BundledStack(
-                pointer: pointer,
-                descriptor: Data(contentsOf: url),
+                pointer: pointer.trimmingCharacters(in: .whitespacesAndNewlines),
+                descriptor: Data(contentsOf: url(of: "json", in: bundle)),
                 allowsReservedValues: allowsReservedValues
             )
         }
     }
 
-    static let previewnet = Definition(
-        descriptorResource: "trinity-stack-previewnet",
-        pointer: "polkadotapp://stack?key=0x4d43362f03d5511632a210632d1fb7760b5a663580f12ffca34619f79357e239"
-            + "&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json",
-        allowsReservedValues: false
-    )
+    static let previewnet = Definition(resource: "trinity-stack-previewnet", allowsReservedValues: false)
 
-    static let paseoNextV2 = Definition(
-        descriptorResource: "trinity-stack-paseo-next-v2",
-        pointer: "polkadotapp://stack?key=0x2b89d8ca74aa2e11ab55f5af1168cd6929b88d1998aecd979b42cfc1078d5377"
-            + "&url=https%3A%2F%2Fstack-paseo-next.parity-testnet.parity.io%2F.well-known%2Ftrinity-stack.json",
-        allowsReservedValues: false
-    )
+    static let paseoNextV2 = Definition(resource: "trinity-stack-paseo-next-v2", allowsReservedValues: false)
 
-    static let polkadot = Definition(
-        descriptorResource: "trinity-stack-polkadot",
-        pointer: "polkadotapp://stack?key=0xdcddb708759dade2e3850368ce0add2072f424ba53f1a2128f3339d646cffe28"
-            + "&url=https%3A%2F%2Fstack.api.pcf.network%2F.well-known%2Ftrinity-stack.json",
-        allowsReservedValues: true
-    )
+    /// The only stack allowed Polkadot's reserved values.
+    static let polkadot = Definition(resource: "trinity-stack-polkadot", allowsReservedValues: true)
 
     /// The stack this build runs.
     static var current: Definition {
@@ -65,5 +45,14 @@ enum TrUAPIBundledStack {
         #else
             polkadot
         #endif
+    }
+}
+
+private extension TrUAPIBundledStack.Definition {
+    func url(of fileExtension: String, in bundle: Bundle) throws -> URL {
+        guard let url = bundle.url(forResource: resource, withExtension: fileExtension) else {
+            throw TrUAPIBundledStack.Error.missingResource(name: "\(resource).\(fileExtension)")
+        }
+        return url
     }
 }
