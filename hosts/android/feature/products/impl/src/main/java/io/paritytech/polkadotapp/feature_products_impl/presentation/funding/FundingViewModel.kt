@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountries
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
@@ -24,7 +25,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Job
@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
@@ -286,14 +287,15 @@ class FundingViewModel @AssistedInject constructor(
     private suspend fun initialState(): FundingFlowState {
         val cash = interactor.cash()
         val request = context.request
-        val detected = interactor.detectedCountry()
+        val options = interactor.options(intent).first()
+        val detected = options?.detectedCountry?.let(FundingCountries::country)
         detectedCountry.value = detected
 
         return FundingFlowState.initial(
             direction = request.direction.toCore(),
             cash = cash,
             spendable = interactor.spendable(cash),
-            candidates = interactor.options(intent).first()?.candidates.orEmpty(),
+            options = options,
             amount = request.amount?.let { cash.decimal(it.value.toString()) },
             country = detected,
         )
@@ -327,7 +329,7 @@ class FundingViewModel @AssistedInject constructor(
             .collect(::onSession)
     }
 
-    private fun onSession(entry: FundingSessionEntry?) {
+    private fun onSession(entry: FundingBookEntry?) {
         progress.value = entry?.progress
         val session = entry?.session
         followCancel(session?.cancel)
@@ -414,8 +416,11 @@ class FundingViewModel @AssistedInject constructor(
         }
     }
 
+    /** The core's options; a country it detected after the sheet opened becomes the payment country until the user picks one. */
     private fun onOptions(options: FundingOptions) {
-        flow.update { it?.withOptions(options) }
+        val detected = options.detectedCountry?.takeIf { detectedCountry.value == null }?.let(FundingCountries::country)
+        if (detected != null) detectedCountry.value = detected
+        flow.update { state -> state?.withOptions(options)?.let { if (detected != null && it.country == null) it.withCountry(detected) else it } }
         loadBrands(options.candidates.map { it.providerId })
     }
 

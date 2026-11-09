@@ -1,12 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
-import io.paritytech.polkadotapp.chains.network.binding.intoBalance
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import org.junit.Assert.assertEquals
@@ -15,19 +10,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingEndedOutcome
+import uniffi.truapi.FundingEndedView
+import uniffi.truapi.FundingFailure
+import uniffi.truapi.FundingPayout
+import uniffi.truapi.FundingPayoutState
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.FundingStage
+import uniffi.truapi.FundingStatus
+import uniffi.truapi.FundingStep
 import uniffi.truapi.ProductId
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
+// The core says how a session ended, what it moved and where it stopped; these check the screen reads those facts.
 class FundingEndedMapperTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val mapper = FundingEndedMapper(FundingCash(symbol = "CASH", precision = 6))
 
     @Test
     fun `a top-up that went through is signed, green, with every milestone done`() {
-        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Delivered))
+        val ended = map(summary(FundingDirection.IN, delivered(), FundingEndedOutcome.Succeeded))
 
         assertEquals(true, ended.succeeded)
         assertEquals(FundingEndedIcon.IN, ended.icon)
@@ -39,8 +44,10 @@ class FundingEndedMapperTest {
     }
 
     @Test
-    fun `a declined card payment stops on the payment step and says why`() {
-        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Failed(FundingFailureReason.Declined)))
+    fun `a declined card payment is red on the step the core says it stopped at, and says why`() {
+        val ended = map(
+            summary(FundingDirection.IN, failed(FundingFailure.Declined), FundingEndedOutcome.Failed(FundingFailure.Declined), stoppedAt = FundingStep.RECEIVED),
+        )
 
         assertEquals(FundingEndedIcon.FAILED, ended.icon)
         assertEquals("$50", ended.figure)
@@ -53,9 +60,29 @@ class FundingEndedMapperTest {
     }
 
     @Test
+    fun `a refund the provider made after receiving the payment is red on the last step`() {
+        val ended = map(
+            summary(FundingDirection.IN, failed(FundingFailure.Refunded), FundingEndedOutcome.Failed(FundingFailure.Refunded), stoppedAt = FundingStep.ADDED),
+        )
+
+        assertEquals(FundingDotState.FAILED, ended.timeline.dots.last())
+        assertEquals(RCommon.string.funding_activity_refunded, ended.timeline.labels.last())
+        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_refunded_card, listOf(PAID)), ended.note)
+        assertEquals(FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)), ended.rows.first())
+    }
+
+    @Test
     fun `a failed payout stops on the payout and says what came back`() {
-        val ended = mapper.map(
-            record(FundingDirection.OUT, FundingRecordOutcome.Released, payout = FundingRecordPayout.Failed("rejected"), refunded = 49_000_000),
+        val ended = map(
+            summary(
+                FundingDirection.OUT,
+                released(),
+                FundingEndedOutcome.PayoutFailed("rejected"),
+                payout = FundingPayout.Failed("rejected"),
+                payoutState = FundingPayoutState.FAILED,
+                refunded = "49000000",
+                stoppedAt = FundingStep.SENT,
+            ),
         )
 
         assertEquals(RCommon.string.funding_activity_payout_failed, ended.timeline.labels.last())
@@ -65,7 +92,7 @@ class FundingEndedMapperTest {
 
     @Test
     fun `a released withdrawal waits on its payout`() {
-        val ended = mapper.map(record(FundingDirection.OUT, FundingRecordOutcome.Released))
+        val ended = map(summary(FundingDirection.OUT, released(), FundingEndedOutcome.Succeeded, payoutState = FundingPayoutState.PENDING))
 
         assertEquals(true, ended.succeeded)
         assertEquals("-$50", ended.figure)
@@ -78,9 +105,9 @@ class FundingEndedMapperTest {
     }
 
     @Test
-    fun `rows hold only what the record knows`() {
-        val ended = mapper.map(
-            record(FundingDirection.IN, FundingRecordOutcome.Delivered, requested = 60_000_000, transactionId = "tx-1"),
+    fun `rows hold only what the summary knows`() {
+        val ended = map(
+            summary(FundingDirection.IN, delivered(), FundingEndedOutcome.Succeeded, differingRequested = "60000000", transactionId = "tx-1"),
         )
 
         assertEquals(
@@ -98,14 +125,14 @@ class FundingEndedMapperTest {
     }
 
     @Test
-    fun `a session's quote shows what was paid and a crypto network`() {
+    fun `a session's quote shows what was paid and the core's name for its crypto network`() {
         val choice = FundingChoice(
             quote = FundingQuote("q", "2500000", "50000000", "0", "0", null, null, 6u),
             rail = FundingRail.CRYPTO,
             asset = "USDC",
             network = "polkadot",
         )
-        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Delivered, choice = choice))
+        val ended = map(summary(FundingDirection.IN, delivered(), FundingEndedOutcome.Succeeded, choice = choice))
 
         assertEquals(
             listOf(
@@ -120,38 +147,55 @@ class FundingEndedMapperTest {
     }
 
     @Test
-    fun `a refunded card top-up says what came back to the card`() {
-        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Refunded))
-
-        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_refunded_card, listOf(PAID)), ended.note)
-        assertEquals(FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)), ended.rows.first())
+    fun `a session that has not ended has no detail`() {
+        assertNull(mapper.map(summary(FundingDirection.IN, FundingStage.Open, FundingEndedOutcome.Open)))
     }
 
-    private fun record(
+    private fun map(summary: FundingSessionSummary) = requireNotNull(mapper.map(summary))
+
+    private fun delivered() = FundingStage.Delivered(credited = "50000000", settledAtMs = SETTLED_MS)
+
+    private fun released() = FundingStage.Released(debited = "50000000", settledAtMs = SETTLED_MS)
+
+    private fun failed(reason: FundingFailure) = FundingStage.Failed(reason = reason, settledAtMs = SETTLED_MS)
+
+    private fun summary(
         direction: FundingDirection,
-        outcome: FundingRecordOutcome,
-        payout: FundingRecordPayout? = null,
-        refunded: Long? = null,
-        requested: Long = 50_000_000,
+        stage: FundingStage,
+        outcome: FundingEndedOutcome,
+        payout: FundingPayout? = null,
+        payoutState: FundingPayoutState? = null,
+        refunded: String? = null,
+        differingRequested: String? = null,
+        stoppedAt: FundingStep? = null,
         transactionId: String? = null,
         choice: FundingChoice? = CARD,
-    ) = FundingRecord(
+    ) = FundingSessionSummary(
         intent = "fs_1",
+        ownerProductId = null,
         direction = direction,
-        choice = choice,
+        amount = "50000000",
+        stage = stage,
+        openedAtMs = OPENED_MS,
         providerId = ramp,
-        requestedAmount = requested.intoBalance(),
-        settledAmount = 50_000_000L.intoBalance().takeIf { outcome !is FundingRecordOutcome.Failed },
-        outcome = outcome,
+        choice = choice,
+        status = FundingStatus.ToppedUp,
         payout = payout,
-        refunded = refunded?.intoBalance(),
+        refunded = refunded,
         transactionId = transactionId,
         reference = null,
-        openedAt = OPENED,
-        settledAt = SETTLED,
+        ended = FundingEndedView(
+            outcome = outcome,
+            payoutState = payoutState,
+            cashAmount = "50000000",
+            differingRequested = differingRequested,
+            stoppedAt = stoppedAt,
+        ),
     )
 
     private companion object {
+        const val OPENED_MS = 1_000uL
+        const val SETTLED_MS = 2_000uL
         val CARD = FundingChoice(
             quote = FundingQuote("q", "5100", "50000000", "0", "0", null, null, 2u),
             rail = FundingRail.CARD,
@@ -159,7 +203,7 @@ class FundingEndedMapperTest {
             network = null,
         )
         val PAID = FundingAssetUnit.of("USD", 2).format("5100")
-        val OPENED = Instant.fromEpochMilliseconds(1_000)
-        val SETTLED = Instant.fromEpochMilliseconds(2_000)
+        val OPENED = Instant.fromEpochMilliseconds(OPENED_MS.toLong())
+        val SETTLED = Instant.fromEpochMilliseconds(SETTLED_MS.toLong())
     }
 }

@@ -6,9 +6,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRow
@@ -99,7 +101,17 @@ class FundingUiMapperTest {
         direction = FundingDirection.IN,
         cash = FundingCash(symbol = "CASH", precision = 6),
         spendable = null,
-        candidates = listOf(candidate(providerA), candidate(providerB)),
+        options = FundingOptions(
+            candidates = listOf(candidate(providerA), candidate(providerB)),
+            countries = emptyList(),
+            limits = FundingAmountLimits(min = null, max = null),
+            networks = emptyList(),
+            rails = listOf(FundingRail.CARD),
+            defaultRail = FundingRail.CARD,
+            asset = "EUR",
+            tokens = emptyList(),
+            detectedCountry = null,
+        ),
         amount = null,
         country = FundingCountry("DE", "Germany", "EUR", "Euro"),
     ).withAmountText("50")
@@ -124,6 +136,9 @@ class FundingUiMapperTest {
         rows = listOf(quoted(providerA, send = "5200", expiresAt = 90_000uL), quoted(providerB, send = "5100", expiresAt = 60_000uL)),
         best = providerB,
         refreshAtMs = 60_000uL,
+        amount = "50000000",
+        refusal = null,
+        issue = null,
     )
 
     private fun quoted(providerId: ProductId, send: String, expiresAt: ULong) = FundingQuoteRow(

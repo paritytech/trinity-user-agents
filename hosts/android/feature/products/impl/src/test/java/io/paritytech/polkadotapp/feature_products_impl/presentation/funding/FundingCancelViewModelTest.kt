@@ -9,13 +9,11 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModelEvent
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelChildren
@@ -41,7 +39,9 @@ import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingBand
+import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingCancelAvailability
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
@@ -55,9 +55,12 @@ class FundingCancelViewModelTest {
     private val context = FundingOverlayContext(request, FundingOverlayMode.Resumed)
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
-    private val sessions = MutableStateFlow<FundingSessionEntry?>(null)
+    private val sessions = MutableStateFlow<FundingBookEntry?>(null)
     private var cancel: FundingCancel? = null
     private var moneyMoved = false
+
+    /** What the core says of cancelling now, which it works out from the session's status and money moved. */
+    private var cancelAvailability = FundingCancelAvailability.AVAILABLE
     private val models = mutableListOf<FundingViewModel>()
 
     private val interactor = mockk<FundingFlowInteractor> {
@@ -65,7 +68,6 @@ class FundingCancelViewModelTest {
         coEvery { spendable(any()) } returns null
         every { options("intent") } returns flowOf(null)
         coEvery { selectOptions("intent", any()) } returns Unit
-        coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
         every { session("intent") } returns sessions
@@ -98,6 +100,7 @@ class FundingCancelViewModelTest {
         model.onCancelTopUp()
         model.onConfirmCancel()
         cancel = FundingCancel.Requested
+        cancelAvailability = FundingCancelAvailability.AVAILABLE_AGAIN
         publish()
         runCurrent()
 
@@ -119,6 +122,7 @@ class FundingCancelViewModelTest {
     fun `once money moved, a cancel with the provider can't be sent again`() = runCancelTest {
         moneyMoved = true
         cancel = FundingCancel.Requested
+        cancelAvailability = FundingCancelAvailability.UNAVAILABLE
         val model = resumed()
 
         assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
@@ -181,6 +185,7 @@ class FundingCancelViewModelTest {
         val model = resumed()
 
         cancel = FundingCancel.Offered(fee = "2500000", refund = "1000250000", expiresAt = null)
+        cancelAvailability = FundingCancelAvailability.UNAVAILABLE
         publish()
         runCurrent()
 
@@ -246,11 +251,13 @@ class FundingCancelViewModelTest {
     fun `a refusal shows the provider's reason and lets the user ask again`() = runCancelTest {
         moneyMoved = true
         cancel = FundingCancel.Requested
+        cancelAvailability = FundingCancelAvailability.UNAVAILABLE
         val model = resumed()
         assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
         assertFalse(deposit(model).canCancel)
 
         cancel = FundingCancel.Refused(reason = "the payout already left")
+        cancelAvailability = FundingCancelAvailability.AVAILABLE
         publish()
         runCurrent()
 
@@ -282,11 +289,12 @@ class FundingCancelViewModelTest {
         status = FundingStatus.WaitingForPayment,
         longerAtMs = null,
         moneyMoved = moneyMoved,
+        cancel = cancelAvailability,
     )
 
     /** The core pushes the session as it now stands. */
     private fun publish() {
-        sessions.value = FundingSessionEntry(session(), progress())
+        sessions.value = FundingBookEntry(session(), progress())
     }
 
     private fun TestScope.resumed(): FundingViewModel {

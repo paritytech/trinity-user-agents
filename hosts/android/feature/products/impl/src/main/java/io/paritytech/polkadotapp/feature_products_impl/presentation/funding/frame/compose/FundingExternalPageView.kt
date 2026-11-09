@@ -25,9 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.reachesReturnUrl
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingExternalPage
 import kotlinx.coroutines.launch
+import uniffi.truapi.fundingPageAllowsMedia
+import uniffi.truapi.fundingPageAllowsNavigation
+import uniffi.truapi.fundingPageMatchesReturn
 
 /** Back navigation inside the external page, which the frame's own back button tries first. */
 class FundingExternalPageState {
@@ -99,17 +101,16 @@ fun FundingExternalPageView(
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val url = request.url.toString()
-                        if (request.isForMainFrame && page.returnUrl != null && reachesReturnUrl(url, page.returnUrl)) {
+                        if (request.isForMainFrame && page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
                             returned(url)
                             return true
                         }
-                        // Only https pages load here, as the page itself must be; any other scheme would hand the user
-                        // to an app outside the frame.
-                        return !request.url.scheme.equals("https", ignoreCase = true)
+                        // The core says what may load: any other scheme would hand the user to an app outside the frame.
+                        return !fundingPageAllowsNavigation(url, request.isForMainFrame)
                     }
 
                     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                        if (page.returnUrl != null && reachesReturnUrl(url, page.returnUrl)) {
+                        if (page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
                             view.stopLoading()
                             returned(url)
                         } else {
@@ -127,8 +128,11 @@ fun FundingExternalPageView(
                 }
 
                 webChromeClient = object : WebChromeClient() {
+                    // The camera only, which ID checks need, and only for the on-screen page's own origin, as the core rules.
                     override fun onPermissionRequest(request: PermissionRequest) {
-                        if (request.resources.any { it != PermissionRequest.RESOURCE_VIDEO_CAPTURE }) {
+                        val pageUrl = state.webView?.url
+                        val allowed = pageUrl != null && fundingPageAllowsMedia(pageUrl, request.origin.toString())
+                        if (!allowed || request.resources.any { it != PermissionRequest.RESOURCE_VIDEO_CAPTURE }) {
                             request.deny()
                             return
                         }

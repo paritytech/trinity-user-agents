@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
+import uniffi.truapi.fundingPageOrigin
 
 data class FundingProviderFrameUiState(
     val showsSentFunds: Boolean,
@@ -146,11 +147,9 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
         failed = false,
     )
 
-    private fun originOf(url: String): String {
-        val uri = Uri.parse(url)
-        val port = uri.port.takeIf { it != -1 }?.let { ":$it" }.orEmpty()
-        return "${uri.host.orEmpty()}$port"
-    }
+    /** "ramp.example" or "ramp.example:8443": the core's origin of [url], with its port only when not the default. */
+    private fun originOf(url: String): String? =
+        fundingPageOrigin(url)?.let { origin -> origin.host + origin.port?.let { ":$it" }.orEmpty() }
 
     @AssistedFactory
     interface Factory {

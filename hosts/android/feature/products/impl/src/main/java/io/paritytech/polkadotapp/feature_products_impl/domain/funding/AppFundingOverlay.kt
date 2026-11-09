@@ -6,22 +6,11 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import timber.log.Timber
-import uniffi.truapi.FundingDirection
-import uniffi.truapi.FundingRail
-import uniffi.truapi.FundingStep
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -31,12 +20,12 @@ import javax.inject.Inject
  *
  * A started session runs on without its screens, so leaving one closes the screen but not the session. A frame left
  * that way is not answered, because a provider reads an early answer as the user giving up; the CASH card opens it
- * again, loading the provider's page afresh. A frame
- * answers `Closed` when the user says they sent a bank transfer, or once the provider's part is done: the payment
- * seen or the session over. An external page answers `Returned` once it reaches its return URL.
+ * again, loading the provider's page afresh. A frame answers `Closed` when the user says they sent a bank transfer.
+ * An external page answers `Returned` once it reaches its return URL.
  *
- * A provider may close its frame itself once done with it, such as a card payment the user made: the frame answers
- * `Closed` and the session's sheet shows in its place.
+ * A frame closes, answering `Closed`, once the provider's part is done: the core closes it once the payment moved,
+ * and a provider may close its own, such as after a card payment the user made. The session's sheet shows in its
+ * place.
  *
  * The core drops a call when its product or worker goes away. The sheet or frame it showed then closes, rather than
  * staying up with nothing to answer. One that cannot close because another screen sits on it closes itself once it is
@@ -73,37 +62,18 @@ class AppFundingOverlay @Inject constructor(
         providerId: ProductId,
         intent: String,
         target: ProviderFrameTarget,
+        awaitsUserTransfer: Boolean,
     ): ProviderFrameOutcome {
-        // The core announces a session once the user starts it, so a frame shown as the session is handed over
-        // goes by what the sheet reported.
-        val session = runtime.session(intent)
-        val overlay = contexts.get(intent)
-        val rail = session?.choice?.rail ?: overlay?.selection?.rail
-        val direction = session?.direction ?: overlay?.request?.direction?.toCore()
-        if (rail == null) Timber.w("Funding frame for $intent opened with no rail known, so it offers no sent-funds answer")
-
         val frame = FundingFrameContext(
             providerId = providerId,
             intent = intent,
             target = target,
-            showsSentFunds = rail == FundingRail.BANK && direction == FundingDirection.IN,
+            showsSentFunds = awaitsUserTransfer,
         )
         frames.put(frame)
         val outcome = try {
             router.openFundingProviderFrame(intent)
-
-            coroutineScope {
-                // The frame may be hidden when the payment moves, so the overlay, not the screen, watches for it.
-                val watcher = launch {
-                    runtime.sessionChanges()
-                        .filter { it == intent }
-                        .map { }
-                        .onStart { emit(Unit) }
-                        .first { runtime.paymentMoved(intent) }
-                    frame.answer(ProviderFrameOutcome.Closed)
-                }
-                frame.awaitOutcome().also { watcher.cancel() }
-            }
+            frame.awaitOutcome()
         } finally {
             frames.remove(frame)
             withContext(NonCancellable) { router.closeFundingProviderFrame(intent) }
@@ -149,12 +119,3 @@ private suspend fun FundingOverlayContext.awaitShown(): Boolean =
     withTimeoutOrNull(SHEET_SHOWN_TIMEOUT_MS) { awaitShownOrAnswered() } != null
 
 private const val SHEET_SHOWN_TIMEOUT_MS = 10_000L
-
-/** The provider's screen has done its part once the payment is seen or the session is over. */
-fun FundingRuntime.paymentMoved(intent: String): Boolean {
-    // The core announces a session once the user starts it; until then nothing has moved.
-    val (session, progress) = sessions.value[intent] ?: return false
-    if (!session.stage.isOpen) return true
-
-    return progress?.steps.orEmpty().any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
-}

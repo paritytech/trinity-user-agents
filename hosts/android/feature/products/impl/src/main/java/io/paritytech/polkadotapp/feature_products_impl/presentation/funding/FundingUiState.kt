@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import kotlinx.collections.immutable.ImmutableList
+import uniffi.truapi.FundingCancelAvailability
 import uniffi.truapi.FundingDetail
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
@@ -238,28 +239,22 @@ data class FundingDepositUiState(
     val failed: Boolean,
     val isCancelling: Boolean,
     val cancel: FundingCancelUiState?,
-    /** The core's `FundingProgress.moneyMoved`: only the provider can end the session; before, a second cancel ends it. */
+    /** The core's `FundingProgress.moneyMoved`, which the cancel sheet words its body by. */
     val moneyMoved: Boolean,
+    /** Whether the core lets the user cancel now, and whether that cancel ends the session at once. */
+    val cancelAvailability: FundingCancelAvailability,
     /** "$50", as the figure over the milestones. */
     val figure: String,
     /** Once the session started: its milestones, what is happening now, and when the provider last reported. */
     val progress: FundingLiveProgressUi?,
     val content: FundingDepositContent,
 ) {
-    /**
-     * The user can ask to cancel, and ask again after a refusal. Before money moved a second cancel ends the session,
-     * so a provider that went silent cannot hold it; after, a cancel with the provider waits for its answer.
-     */
     val canCancel: Boolean
-        get() = started && !failed && when (cancel) {
-            null, is FundingCancelUiState.Refused -> true
-            FundingCancelUiState.Requested -> !moneyMoved
-            else -> false
-        }
+        get() = started && !failed && cancelAvailability != FundingCancelAvailability.UNAVAILABLE
 
     /** A second cancel ends the session at once, so it reads differently from the first. */
     val isSecondCancel: Boolean
-        get() = cancel == FundingCancelUiState.Requested && !moneyMoved
+        get() = cancelAvailability == FundingCancelAvailability.AVAILABLE_AGAIN
 }
 
 data class FundingLiveProgressUi(
