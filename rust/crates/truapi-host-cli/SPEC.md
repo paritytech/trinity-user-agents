@@ -2305,11 +2305,35 @@ REGISTER_CONFIRMED label=<label> full_username=<name>
 
 `REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
 account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
-`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar` (a
-pending reservation is not a mint and stays claimable); the account must not
-already hold a `DotnsGateway.AccountAlias`; a linked lite username must be
-owned by the account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
+`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar`;
+another account must not hold the first active reservation in the label's
+reservation queue on `DotnsPopController`; the account must not already hold a
+`DotnsGateway.AccountAlias`; a linked lite username must be owned by the
+account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 `RegisterFullName` shape differs are rejected.
+
+A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+reservations from the front of the queue, and a reverted claim keeps none of
+that clearing. The command reads the queue again after the ring revision wait,
+right before the claim. When more of them stand in front of the claim then
+(dotNS 1.1.0 and later), it first clears the queue with
+`DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
+the account, with the weight and storage deposit limits of a dry-run from it.
+The fee and the storage deposit are paid in PGAS. When the account holds less
+than one claim's worth of PGAS (`Pgas.PgasClaimAmount`), or the dry-run fails
+because the account cannot fund the deposit, the command claims PGAS into the
+account with the same People ring membership (`Pgas.claim_pgas`, one daily
+slot) and dry-runs again. Any other dry-run failure stops the command. After
+the call is finalized, it reads the queue again and stops if the claim would
+still revert. Clearing prints, before `REGISTER_SUBMITTED`:
+
+```text
+REGISTER_QUEUE_BLOCKED label=<label> dead=<count>
+REGISTER_PGAS_CLAIMED block=<hash>
+REGISTER_QUEUE_CLEARED label=<label>
+```
+
+`REGISTER_PGAS_CLAIMED` appears only when a claim was needed.
 
 ### 19.3 `alloc-check`
 
