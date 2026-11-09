@@ -14,6 +14,24 @@ created: 2026-10-29
 
 One table in the core decides which diagnostics may leave a device. Every host reads it rather than keeping its own copy. The table is exposed through a `#[uniffi::export]` function, so it reaches iOS and Android over the bindings that exist today with no new emitter and no change to the callback signature.
 
+## Conventions
+
+These are the standards for anything that sends telemetry from a host, and `AGENTS.md` points here for them. The rest of this document is the design they came out of.
+
+**Logs, issues and metrics are three products, not three spellings of one.** Sentry stores and indexes a log line, a captured event and a gauge separately. A diagnostic line goes to the log sink, something that broke goes out as an event, and a measurement goes out as a gauge. Sending one as another leaves it unqueryable beside its own kind.
+
+**A feature reports through the host's capture, never to Sentry.** An Android feature takes `HostEventCapture` and an iOS feature takes `HostEventRecording` or `IssueReporting`. A feature module that depends on the Sentry SDK is itself the defect, because it is a second place deciding what leaves the device.
+
+**Tags are the only field a query can select on.** Whatever a search, a dashboard or an alert needs to filter by belongs in tags. Extras carry the detail you read once you have already found the event, and `setExtra` is deprecated in favour of structured contexts, so detail that belongs together belongs on a context.
+
+**Every captured event sets a fingerprint.** An event that sets none is grouped by the stack trace Sentry attaches, which splits one event name across several groups as its frames drift. One group per event name is the default, and an event supplies its own key only where its grouping is finer than its name, as an issue does on its flow and kind.
+
+**Severity says whether something broke.** A flow that broke carries `error` and a lifecycle step carries `info`, which is what makes `level` worth filtering on at all.
+
+**The core's marker table decides what may leave the device.** A host matches a target against the table rather than keeping a list of its own, so the question of what is exportable is answered in one reviewable place.
+
+**No free text in a tag.** A tag's value comes from a closed set the code already knows. `CriticalIssue` takes its flow and kind as `StaticString` so an interpolated value cannot become one, and the key a threshold diagnostic counts against stays on the device.
+
 ## Motivation
 
 Writing the export rule once per host is the obvious shape, and it does not hold. The same rule has to exist in Swift and in Kotlin, with a restatement in the prose beside each of them, and nothing can compare the copies.
