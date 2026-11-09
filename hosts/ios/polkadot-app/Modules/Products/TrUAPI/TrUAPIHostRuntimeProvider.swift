@@ -72,9 +72,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
 
-    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
-    /// it is built, or right away if it already is.
-    private var paymentsBridge: RustPaymentsBridge?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -159,6 +156,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
+            databaseDirectory: try Self.coreDatabaseDirectory(),
             coinageInstanceId: AppConfig.Coinage.instanceId
         )
 
@@ -188,7 +186,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
-        paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -266,6 +263,7 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
+        databaseDirectory: String,
         coinageInstanceId: UInt32
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)

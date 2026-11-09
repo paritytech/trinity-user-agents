@@ -5,6 +5,7 @@ import androidx.lifecycle.Lifecycle
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.parity.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
@@ -20,7 +21,6 @@ import org.junit.Test
 import uniffi.truapi.CodeFormat
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ProductExecutionKind
 
 class TrUAPIProductScansTest {
     private val request = HostScannerScanRequest(listOf(CodeFormat.QR), null, null)

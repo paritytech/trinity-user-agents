@@ -4,6 +4,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.parity.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductScanRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProductScans
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIPrompt
@@ -22,7 +23,6 @@ import org.junit.Test
 import uniffi.truapi.CodeFormat
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ProductExecutionKind
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIProductScanViewModelTest {

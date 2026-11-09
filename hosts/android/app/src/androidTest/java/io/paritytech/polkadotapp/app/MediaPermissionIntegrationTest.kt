@@ -13,11 +13,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dagger.hilt.android.testing.HiltAndroidTest
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
+import io.parity.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import io.parity.truapi.ProductExecutionConfig
+import io.parity.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult

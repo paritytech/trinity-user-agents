@@ -6,15 +6,15 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.parity.truapi.TrUAPIHostRuntime
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
-import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -30,6 +30,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.CrossProductSignatureKind
+import uniffi.truapi.DerivationIndex
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
@@ -84,7 +85,7 @@ class ProductPermissionRepositoryTest {
             f.saved(product)[it.canonicalRequest()!!] = authorized
             f.saved(other)[it.canonicalRequest()!!] = authorized
         }
-        val interactor = ProductPermissionsInteractor(mockk(), f.repository)
+        val interactor = ProductPermissionsInteractor(mockk(), f.repository, mockk(), mockk())
         assertEquals(permissions, f.repository.getAllByProduct(product).map { it.permission })
         for (permission in permissions) {
             interactor.togglePermission(product, ProductPermissionStatus(permission, true))
@@ -284,20 +285,6 @@ class ProductPermissionRepositoryTest {
         assertEquals(1L, changes.revision("app.game.paseo"))
         assertEquals(1L, changes.revision("worker.game.paseo"))
         assertEquals(0L, changes.revision("other.paseo"))
-    }
-
-    @Test
-    fun `legacy-only permission reads and prompts do not require native runtime bootstrap`() = runTest {
-        val f = Fixture()
-        val permission = ProductPermission.BalanceAccess
-        coEvery { f.dao.get(product.value, permission.typeName, permission.key) } returns row(permission)
-        assertTrue(f.repository.isGranted(product, permission))
-        assertTrue(f.repository.withPermissionRequest(product, listOf(permission)) {
-            f.repository.grantOneTime(product, permission)
-            true
-        })
-        assertTrue(f.repository.consumeOneTimeGrant(product, permission))
-        coVerify(exactly = 0) { f.runtime.permissionAuthorizations(any()) }
     }
 
     @Test

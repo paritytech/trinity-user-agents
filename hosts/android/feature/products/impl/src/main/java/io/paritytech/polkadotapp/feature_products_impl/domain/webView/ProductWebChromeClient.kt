@@ -1,11 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
 import android.net.Uri
+import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.view.View
 import android.webkit.WebView
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -90,7 +90,6 @@ class ProductWebChromeClient @AssistedInject constructor(
         const val UNKNOWN_CONSOLE_SOURCE = "unknown"
     }
 }
-
 
 private fun ConsoleMessage.MessageLevel?.timberLog(message: String) {
     when (this) {

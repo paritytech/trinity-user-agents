@@ -103,7 +103,7 @@ together when updating it.
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)
-and opens the execution with `ProductExecutionKind.CHAT`:
+and opens an app execution with the Chat callback:
 
 ```kotlin
 import io.parity.truapi.*
@@ -147,6 +147,7 @@ val runtime = TrUAPIHostRuntime(
         bulletinChainGenesisHash = bulletinChainGenesisHash,
         assetHubChainGenesisHash = assetHubChainGenesisHash,
         networkSuffix = "dot",
+        databaseDirectory = databaseDirectory, // existing writable no-backup directory
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -154,7 +155,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.CHAT),
+    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.APP),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()
@@ -473,6 +474,7 @@ val runtimeConfig = HostRuntimeConfig(
     // `trustedProducts` grant.
     assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
     networkSuffix = "dot",
+    databaseDirectory = webView.context.noBackupFilesDir.resolve("truapi").apply { mkdirs() }.absolutePath,
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,

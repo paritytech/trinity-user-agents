@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
+import io.parity.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -11,7 +12,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.Expa
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 
 /**
@@ -74,7 +74,13 @@ class TrUAPISessionStarter @Inject constructor(
 
         val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP,
+            .attach(
+                runtime = runtime,
+                productId = productId,
+                chains = chainDirectory.resolve(),
+                navigationPolicy = navigation,
+                kind = kind,
+                card = card,
                 onPermissionRevoked = { provider.disposeRevokedExecution() },
             ) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))

@@ -5,7 +5,9 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
+import io.parity.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
+import io.parity.truapi.ProductExecutionConfig
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
@@ -21,6 +23,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -44,9 +48,7 @@ import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
-import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
@@ -74,6 +76,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
     private val permissionChanges: PermissionAuthorizationChanges,
+    private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -84,6 +87,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val sessionMutation = Mutex()
     private val revision = MutableStateFlow(0L)
     val sessionRevision: StateFlow<Long> = revision.asStateFlow()
+
     @Volatile internal var sessionOwner: Long? = null
         private set
 
@@ -134,10 +138,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private fun wire(runtime: TrUAPIHostRuntime) {
-        // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers payments Unsupported.
+        // Install process-wide host callbacks before any product execution opens.
         runtime.setContacts(contactsBridge)
-        paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -271,9 +273,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER) != PermissionDecision.DENY
-
-        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-            confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
 
         override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
             confirmationLauncher.decidePermission(review, requesterFallback = HOST_REQUESTER)

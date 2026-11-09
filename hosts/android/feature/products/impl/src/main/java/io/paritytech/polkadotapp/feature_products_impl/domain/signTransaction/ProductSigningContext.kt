@@ -29,4 +29,3 @@ class ProductSigningContext(
 
     suspend fun awaitResult(): Result<SignedTransaction> = result.await()
 }
-

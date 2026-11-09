@@ -5,13 +5,13 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
-import io.paritytech.polkadotapp.test_shared.whenever
 import uniffi.truapi.AuthState
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.SessionUiInfo
@@ -25,7 +25,10 @@ class AutomaticPreimagePermissionTest {
     private val core = mock(TrUAPIHostRuntime::class.java)
     private val legacyPermissions = mock(ProductPermissionRepository::class.java)
     private val interactor = ProductPermissionsInteractor(
-        mock(ProductRepository::class.java), legacyPermissions, provider,
+        mock(ProductRepository::class.java),
+        legacyPermissions,
+        provider,
+        mock(),
     )
     private val rendered = AutomaticPreimagePermission(
         oldRoot, "0x" + "03".repeat(32), PermissionAuthorizationStatus.AUTHORIZED,

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.parity.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
@@ -32,7 +33,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -145,6 +145,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
+                chat = if (script.includesChat) {
+                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
+                } else {
+                    null
+                },
                 onPermissionRevoked = {
                     provider.disposeRevokedExecution()
                     scope.launch { transitions.withLock { stop(productId) } }

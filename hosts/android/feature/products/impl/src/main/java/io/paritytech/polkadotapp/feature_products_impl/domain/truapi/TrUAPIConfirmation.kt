@@ -68,10 +68,15 @@ sealed interface TrUAPIConfirmation {
         val resources: List<String>,
     ) : TrUAPIConfirmation.Prompt
 
-    /** Submit a preimage to the host-selected backend. */
+    /** Submit a preimage, with the exact scope and bounds of an automatic grant. */
     class PreimageSubmit(
         override val requesterProductId: String,
         val sizeBytes: Long,
+        val rootPublicKey: String,
+        val genesisHash: String,
+        val automaticMaxBytes: ULong,
+        val automaticMaxUploads: UInt,
+        val automaticWindowSeconds: UInt,
     ) : TrUAPIConfirmation.Prompt
 
     /** Let one product act on another product's account. */
@@ -90,8 +95,6 @@ sealed interface TrUAPIConfirmation {
         val network: String,
         val account: String,
     ) : TrUAPIConfirmation.Prompt
-
-    class ChatAuthority(override val requesterProductId: String) : TrUAPIConfirmation.Prompt
 
     class MainPurseChatPayment(
         override val requesterProductId: String,

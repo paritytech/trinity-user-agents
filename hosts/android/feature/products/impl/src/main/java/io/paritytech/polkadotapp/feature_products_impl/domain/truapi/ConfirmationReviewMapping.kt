@@ -78,8 +78,13 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.PreimageSubmit ->
         TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = callingProductId,
+            requesterProductId = v1.productId,
             sizeBytes = v1.size.toLong(),
+            rootPublicKey = v1.rootPublicKey.hex(),
+            genesisHash = v1.genesisHash.hex(),
+            automaticMaxBytes = v1.automaticMaxBytes,
+            automaticMaxUploads = v1.automaticMaxUploads,
+            automaticWindowSeconds = v1.automaticWindowSeconds,
         )
 
     is UserConfirmationReview.AccountAccess ->
@@ -93,6 +98,24 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProfileDisclosure ->
         TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
+
+    is UserConfirmationReview.Calling ->
+        TrUAPIConfirmation.Calling(
+            requesterProductId = v1.productId,
+            network = v1.network.hex(),
+            account = v1.account.hex(),
+        )
+
+    is UserConfirmationReview.MainPurseChatPayment ->
+        TrUAPIConfirmation.MainPurseChatPayment(
+            requesterProductId = v1.callingProductId,
+            recipient = v1.recipientUsername ?: v1.recipientIdentity.hex(),
+            amountCents = v1.amountCents,
+            maxDebitCents = v1.maxDebitCents,
+            chain = v1.genesisHash.hex(),
+            assetInstance = v1.coinageInstanceId?.toString() ?: "legacy",
+            operationId = v1.operationId.hex(),
+        )
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -113,7 +136,6 @@ private fun AllocatableResource.describe(): String = when (this) {
     is AllocatableResource.BulletinAllowance -> "bulletin allowance"
     is AllocatableResource.SmartContractAllowance -> "smart-contract allowance"
     is AllocatableResource.AutoSigning -> "auto-signing"
-    is AllocatableResource.ProductStatementStoreAllowance -> "product statement-store allowance"
 }
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(

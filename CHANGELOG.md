@@ -60,6 +60,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   iOS, and CLI artifacts; pin the browser WASM artifact tools to the lockfile,
   emit the Android host `cdylib` explicitly, and sync only the generated Swift
   namespace that the unified core produces.
+- Compile the Android and iOS wrappers against the consolidated native ABI:
+  preserve generated implementation type names, forward receiving and game
+  callbacks, require the core database directory, and remove the retired
+  platform payment callback layer in favor of runtime-owned Coinage custody.
 
 - persist typed Statement Store allowance approvals and denials per product and
   account selector for implicit, idempotent provisioning; explicit requests for

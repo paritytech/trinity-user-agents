@@ -32,10 +32,6 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         RCommon.string.truapi_confirm_title_identity_disclosure,
     )
 
-    is TrUAPIConfirmation.ChatAuthority -> build(
-        RCommon.string.truapi_confirm_title_chat_authority,
-    )
-
     is TrUAPIConfirmation.ProfileDisclosure -> build(
         RCommon.string.truapi_confirm_title_profile_disclosure,
     )
@@ -48,6 +44,12 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.PreimageSubmit -> build(
         RCommon.string.truapi_confirm_title_preimage_submit,
         detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
+        detail(RCommon.string.truapi_confirm_label_root_account, rootPublicKey),
+        detail(RCommon.string.truapi_confirm_label_bulletin_network, genesisHash),
+        detail(
+            RCommon.string.truapi_confirm_label_automatic_uploads,
+            "$automaticMaxBytes bytes, $automaticMaxUploads uploads / $automaticWindowSeconds seconds",
+        ),
     )
 
     is TrUAPIConfirmation.AccountAccess -> build(

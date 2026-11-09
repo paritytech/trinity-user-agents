@@ -4,44 +4,41 @@ import android.content.Context
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
-import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
-import kotlinx.coroutines.flow.flowOf
-import uniffi.truapi.ProductExecutionKind
+import io.parity.truapi.HostBridge
+import io.parity.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
-import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
+import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
-import io.paritytech.polkadotapp.test_shared.whenever
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
+import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ProductExecutionKind
-import uniffi.truapi.WsBridgeEndpoint
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProfileDisclosureReview
+import uniffi.truapi.UserConfirmationReview
 
 class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
@@ -62,6 +59,10 @@ class ProductTrUAPIHostBridgeTest {
         },
         permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
         permissionChanges = PermissionAuthorizationChanges(),
+        mediaFactory = mockk {
+            every { create(any()) } returns mockk(relaxed = true)
+        },
+        productGameReminder = mockk(relaxed = true),
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
@@ -92,6 +93,7 @@ class ProductTrUAPIHostBridgeTest {
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.APP,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
         assertTrue(outcome.isFailure)
@@ -102,10 +104,10 @@ class ProductTrUAPIHostBridgeTest {
     fun `profile permission and action callbacks await explicit review without optimistic approval`() = runTest {
         val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("seity.paseo"))
         for (permissionCallback in listOf(true, false)) {
-            for (approved in listOf(true, false)) {
+            for (decision in PermissionDecision.entries) {
                 val launcher = mockk<TrUAPIConfirmationLauncher>()
                 val prompted = CompletableDeferred<TrUAPIConfirmation>()
-                val answer = CompletableDeferred<Boolean>()
+                val answer = CompletableDeferred<PermissionDecision>()
                 coEvery { launcher.awaitDecision(any()) } coAnswers {
                     prompted.complete(firstArg())
                     answer.await()
@@ -118,12 +120,9 @@ class ProductTrUAPIHostBridgeTest {
                 val confirmation = prompted.await() as TrUAPIConfirmation.ProfileDisclosure
                 assertEquals("seity.paseo", confirmation.requesterProductId)
                 assertFalse(pending.isCompleted)
-                answer.complete(approved)
-                val expected: Any = if (permissionCallback) {
-                    if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
-                } else {
-                    approved
-                }
+                answer.complete(decision)
+                val expected: Any =
+                    if (permissionCallback) decision else decision != PermissionDecision.DENY
                 assertEquals(expected, pending.await())
                 coVerify(exactly = 1) { launcher.awaitDecision(any()) }
             }
@@ -152,7 +151,8 @@ class ProductTrUAPIHostBridgeTest {
         for (approved in listOf(true, false)) {
             val prompts = mutableListOf<TrUAPIConfirmation>()
             val launcher = mockk<TrUAPIConfirmationLauncher>()
-            coEvery { launcher.awaitDecision(capture(prompts)) } returns approved
+            coEvery { launcher.awaitDecision(capture(prompts)) } returns
+                if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
             val callbacks = callbacks(launcher)
 
             assertEquals(

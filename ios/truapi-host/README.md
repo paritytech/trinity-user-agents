@@ -214,7 +214,8 @@ let runtime = try TrUAPIHostRuntime(
         peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
         bulletinChainGenesisHash: bulletinChainGenesisHash,
         assetHubChainGenesisHash: assetHubChainGenesisHash,
-        networkSuffix: "dot"
+        networkSuffix: "dot",
+        databaseDirectory: databaseDirectory   // existing, writable, excluded from backup
     )
 )
 // Chat needs an active session; without one every Chat call answers denied.
@@ -222,7 +223,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .app),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -380,32 +381,22 @@ the product as a host failure carrying its reason.
 
 ## Payments
 
-A host with a wallet serves top-ups, payments and the spendable balance by
-installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
-on the runtime, before any product opens. A runtime without one answers the
-matching calls `Unsupported`.
+Payment, top-up, and balance operations are owned by the runtime's Coinage
+wallet. Pass a `NativeCoinageHost` as `nativeWallet:` when the app already owns
+Coinage custody; omit it to use built-in Rust custody:
 
 ```swift
-runtime.setTopUp(wallet)
-runtime.setPayments(wallet)
-runtime.setBalance(wallet)
-
-// Later, from the wallet's own status and balance streams:
-runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
-runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
-runtime.notifyBalance(purse: nil, available: "1500000000")
+let runtime = try TrUAPIHostRuntime(
+    bridge: bridge,
+    runtimeConfig: runtimeConfig,
+    nativeWallet: wallet
+)
 ```
 
-The core checks the session, the source keys, a positive amount and the
-product's balance access, so the host never prompts for balance access. A
-payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
-which the core turns into `Rejected` for a product without balance access. The
-balance is what a payment can spend now, as a decimal string of CASH units.
-
-`topUpStatus` and `paymentStatus` answer the current status of an id inline,
-or `nil` when the host holds none. Every later status goes through
-`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
-core relays each to the products following that id.
+The native adapter receives only host-private `NativeCoinageRequest` values and
+returns sanitized `NativeCoinageResponse` values. Product executions cannot
+replace it. Once a native adapter is registered, temporary lock, unavailability,
+or failure never falls back to a second Rust wallet.
 
 ## Architecture
 
@@ -732,7 +723,8 @@ let runtimeConfig = HostRuntimeConfig(
     // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
     // `trustedProducts` grant.
     assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-    networkSuffix: "dot"
+    networkSuffix: "dot",
+    databaseDirectory: databaseDirectory
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)

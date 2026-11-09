@@ -41,6 +41,7 @@ public struct HostRuntimeConfig: Sendable, Equatable {
     /// person ring-VRF keys, the same person the app's own onboarding derives
     /// on that network.
     public let networkSuffix: String
+    public let databaseDirectory: String
     public let localSessionSecret: Data?
     public let localSessionLiteUsername: String?
     /// Trusted asset instance, required for instance-scoped Coinage runtimes.
@@ -57,6 +58,7 @@ public struct HostRuntimeConfig: Sendable, Equatable {
         bulletinChainGenesisHash: Data,
         assetHubChainGenesisHash: Data,
         networkSuffix: String,
+        databaseDirectory: String,
         localSessionSecret: Data? = nil,
         localSessionLiteUsername: String? = nil,
         coinageInstanceId: UInt32? = nil
@@ -70,6 +72,7 @@ public struct HostRuntimeConfig: Sendable, Equatable {
         self.bulletinChainGenesisHash = bulletinChainGenesisHash
         self.assetHubChainGenesisHash = assetHubChainGenesisHash
         self.networkSuffix = networkSuffix
+        self.databaseDirectory = databaseDirectory
         self.localSessionSecret = localSessionSecret
         self.localSessionLiteUsername = localSessionLiteUsername
         self.coinageInstanceId = coinageInstanceId
@@ -80,15 +83,15 @@ public struct HostRuntimeConfig: Sendable, Equatable {
             hostName: hostName,
             hostIcon: hostIcon,
             hostVersion: hostVersion,
-            hostPlatform: .ios,
             platformType: platformType,
             platformVersion: platformVersion,
             peopleChainGenesisHash: peopleChainGenesisHash,
             bulletinChainGenesisHash: bulletinChainGenesisHash,
+            assetHubChainGenesisHash: assetHubChainGenesisHash,
             networkSuffix: networkSuffix,
+            databaseDirectory: databaseDirectory,
             localSessionSecret: localSessionSecret,
             localSessionLiteUsername: localSessionLiteUsername,
-            assetHubChainGenesisHash: assetHubChainGenesisHash,
             coinageInstanceId: coinageInstanceId
         )
     }
@@ -109,6 +112,10 @@ public struct ProductExecutionConfig: Sendable, Equatable {
             productId: productId,
             executionKind: executionKind
         )
+    }
+
+    fileprivate init(native: NativeProductExecutionConfig) {
+        self.init(productId: native.productId, executionKind: native.executionKind)
     }
 }
 
@@ -344,6 +351,24 @@ public protocol HostBridge: NativeChatFilesHost {
 
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
+
+    /// Return the current trusted receiving scope, or nil when resident receiving is unsupported.
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority?
+
+    /// Request host-owned receiving consent. Unsupported hosts deny without prompting.
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool
+
+    /// Wake resident transport synchronization after enrollment changes.
+    func receiverChanged() async throws
+
+    /// Forward a trusted receiving command, or return nil to use the native resident engine.
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data?
+
+    /// Non-consuming pending activation batch for this execution's trusted scope.
+    func activationEvents() async throws -> [NotificationActivation]
+
+    /// Acknowledge one activation sequence.
+    func acknowledgeActivation(sequence: UInt64) async throws
 
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
@@ -627,60 +652,6 @@ public extension ContactsHostBridge {
     }
 }
 
-/// Host-implemented top-up engine: claims a source's funds into the user's
-/// balance.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setTopUp(_:)``.
-/// The core has already checked the session and the source keys; a
-/// `productAccount` source arrives as its derivation index for the host to
-/// derive. The host owns claiming, retries, partial claims, persistence and
-/// scoping ids to the product. A runtime without one answers `topUp` and
-/// `topUpStatusSubscribe` with `Unsupported`.
-public protocol TopUpHostBridge: AnyObject, Sendable {
-    /// Start `request` for `productId`, returning once the host has accepted
-    /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
-    /// else reaches the product as `Unknown`.
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws
-
-    /// The current status of `productId`'s top-up `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
-    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
-}
-
-/// Host-implemented payment engine: pays from the user's balance to an
-/// account once the user approves.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setPayments(_:)``.
-/// Answer `InsufficientBalance` whenever the balance is short: the core turns
-/// it into `Rejected` for a product without balance access. A runtime without
-/// one answers `request` and `statusSubscribe` with `Unsupported`.
-public protocol PaymentHostBridge: AnyObject, Sendable {
-    /// Ask the user to approve `request` for `productId`, returning once the
-    /// user authorized it and the host took it on. Throw a `HostPaymentError`
-    /// to answer with its code; anything else reaches the product as
-    /// `Unknown`.
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws
-
-    /// The current status of `productId`'s payment `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
-    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem?
-}
-
-/// Host-implemented balance view: what a payment request can spend right now.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setBalance(_:)``.
-/// The core checks the product's balance access itself, so never prompt for
-/// it here. A runtime without one answers `balanceSubscribe` with
-/// `Unsupported`.
-public protocol BalanceHostBridge: AnyObject, Sendable {
-    /// The current balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units. The balance is the user's, the same for every
-    /// product; `productId` only names who is asking. Report every change with
-    /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
-    func balance(productId: String, purse: UInt32?) async throws -> U128
-}
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
@@ -692,11 +663,31 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
     ) async throws -> HostScan
 }
 
+private final class DefaultOperationIds: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt32 = 0
+
+    func take() -> UInt32 {
+        lock.lock()
+        defer { lock.unlock() }
+        value &+= 1
+        return value
+    }
+}
+
+private let defaultOperationIds = DefaultOperationIds()
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? { nil }
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool { false }
+    func receiverChanged() async throws {}
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? { nil }
+    func activationEvents() async throws -> [NotificationActivation] { [] }
+    func acknowledgeActivation(sequence: UInt64) async throws {}
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] { [] }
@@ -938,25 +929,6 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     }
 }
 
-/// Adapter that bridges the public `BalanceHostBridge` to the generated UniFFI
-/// `NativeBalanceCallbacks` protocol.
-private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked Sendable {
-    private let bridge: BalanceHostBridge
-
-    init(bridge: BalanceHostBridge) {
-        self.bridge = bridge
-    }
-
-    func balance(productId: String, purse: UInt32?) async throws -> U128 {
-        do {
-            return try await bridge.balance(productId: productId, purse: purse)
-        } catch let error as HostPaymentBalanceSubscribeError {
-            throw error
-        } catch {
-            throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-}
 
 /// Adapter that bridges the public `HostBridge` to the generated UniFFI
 /// `HostCallbacks` protocol. Kept private so the generated names never
@@ -1006,13 +978,41 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? {
+        try await withHostRejection { try await bridge.receiverAuthority(productId: productId) }
+    }
+
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
+        try await withHostRejection {
+            try await bridge.receiverConsent(authority: authority, watches: watches)
+        }
+    }
+
+    func receiverChanged() async throws {
+        try await withHostRejection { try await bridge.receiverChanged() }
+    }
+
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? {
+        try await withHostRejection {
+            try await bridge.receiverCommand(productId: productId, action: action, payload: payload)
+        }
+    }
+
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
+    }
+
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
+    }
+
     func devicePermission(
-        product: ProductExecutionConfig,
+        product: NativeProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> PermissionDecision {
         try await withHostRejection {
             try await bridge.devicePermission(
-                product: product,
+                product: ProductExecutionConfig(native: product),
                 request: request
             )
         }
@@ -1033,12 +1033,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     }
 
     func remotePermission(
-        product: ProductExecutionConfig,
+        product: NativeProductExecutionConfig,
         request: RemotePermission
     ) async throws -> PermissionDecision {
         try await withHostRejection {
             try await bridge.remotePermission(
-                product: product,
+                product: ProductExecutionConfig(native: product),
                 request: request
             )
         }
@@ -1083,7 +1083,7 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func compareExchangeCoreStorage(
         key: Data, expected: Data?, replacement: Data, notifyOnSuccess: Bool
     ) async throws -> Bool {
-        try await withHostRejection {
+        try withHostRejection {
             try CoreStorageCoordinator.shared.transaction(store: coreStorage.storageIdentifier, key: key) {
                 guard try coreStorage.read(key: key) == expected else { return false }
                 try coreStorage.write(key: key, value: replacement)
@@ -1298,10 +1298,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var scannerRetainer: NativeScannerCallbacks?
     private let coreGroup = UUID()
 
     /// Register native custody once; nil selects the built-in Rust wallet.
-    public init(
+    public convenience init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
         nativeWallet: NativeCoinageHost? = nil
@@ -1324,7 +1325,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         callbackRetainer = adapter
         let walletAdapter = nativeWallet.map { NativeCoinageCallbackAdapter(bridge: $0) }
         nativeWalletRetainer = walletAdapter
-        inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
+        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
             runtimeConfig: runtimeConfig.native,
             nativeWallet: walletAdapter
@@ -1407,6 +1408,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = nil,
         pocket: PocketHostBridge? = nil,
+        game: GameHostBridge? = nil,
         media: NativeMediaCallbacks? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge, coreGroup: coreGroup)
@@ -1417,14 +1419,16 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             callbacks: adapter,
             chatCallbacks: chatAdapter,
             pocketCallbacks: pocketAdapter,
+            gameCallbacks: gameAdapter,
             mediaCallbacks: media,
-            executionConfig: configuration
+            executionConfig: configuration.native
         )
         return TrUAPIProductExecution(
             inner: execution,
             callbackRetainer: adapter,
             chatRetainer: chatAdapter,
             pocketRetainer: pocketAdapter,
+            gameRetainer: gameAdapter,
             mediaRetainer: media,
             coreGroup: coreGroup,
             storageIdentifier: bridge.coreStorage.storageIdentifier,
@@ -1455,13 +1459,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.permissionAuthorizations(productId: productId)
     }
 
-    public func setPermissionAuthorizationStatus(
-        productId: String,
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) async throws {
-        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
-    }
 
     public func importPermissionAuthorizations(
         productId: String,
@@ -1722,6 +1719,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
     private let pocketRetainer: NativePocketCallbacks?
+    private let gameRetainer: NativeGameCallbacks?
     private let localeObservers: [NSObjectProtocol]
     private let mediaRetainer: NativeMediaCallbacks?
     fileprivate let registrationId = UUID()
@@ -1732,6 +1730,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         callbackRetainer: HostCallbacks,
         chatRetainer: NativeChatCallbacks?,
         pocketRetainer: NativePocketCallbacks?,
+        gameRetainer: NativeGameCallbacks?,
         mediaRetainer: NativeMediaCallbacks?,
         coreGroup: UUID,
         storageIdentifier: String,
@@ -1741,6 +1740,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
         self.pocketRetainer = pocketRetainer
+        self.gameRetainer = gameRetainer
         localeObservers = [
             NSLocale.currentLocaleDidChangeNotification,
             NSNotification.Name.NSSystemTimeZoneDidChange,
@@ -1772,6 +1772,10 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func isClosed() -> Bool {
         inner.isClosed()
+    }
+
+    fileprivate func refreshPermissionAuthorization(request: PermissionAuthorizationRequest) async throws {
+        try await inner.refreshPermissionAuthorization(request: request)
     }
 
     public func close() {

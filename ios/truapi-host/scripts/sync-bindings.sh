@@ -33,6 +33,11 @@ for namespace in $NAMESPACES; do
         "$PACKAGE_ROOT/Sources/${namespace}FFI/include"
     cp "$UNIFFI_OUT/${namespace}.swift" \
         "$PACKAGE_ROOT/Sources/TrUAPIHost/${namespace}.swift"
+    # Keep generated implementation records distinct from the package's stable
+    # public configuration wrappers. The split namespaces used these Native*
+    # names; consolidated UniFFI emits the records unprefixed.
+    perl -pi -e 's/\bHostRuntimeConfig\b/NativeHostRuntimeConfig/g; s/\bProductExecutionConfig\b/NativeProductExecutionConfig/g' \
+        "$PACKAGE_ROOT/Sources/TrUAPIHost/${namespace}.swift"
     cp "$UNIFFI_OUT/${namespace}FFI.h" \
         "$PACKAGE_ROOT/Sources/${namespace}FFI/include/${namespace}FFI.h"
     # The SwiftPM systemLibrary target looks for module.modulemap by name.

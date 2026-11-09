@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
@@ -28,10 +29,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
-import android.net.Uri
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.

@@ -4,9 +4,9 @@ import Coinage
 import Products
 import SubstrateSdk
 
-/// The payment steps both product bridges run: the JS-bridge handlers in
-/// `ProductsNativeApi+Payment` and the Rust core's ``RustPaymentsBridge``. It speaks the engines'
-/// own types; each caller maps their errors and statuses to its wire.
+/// Shared payment steps for the JS-bridge handlers in
+/// `ProductsNativeApi+Payment`. It speaks the engine's own types; callers map
+/// errors and statuses to their wire representations.
 struct ProductPayments {
     let support: PaymentsSupport
     let approvalRequester: PaymentApprovalRequesting

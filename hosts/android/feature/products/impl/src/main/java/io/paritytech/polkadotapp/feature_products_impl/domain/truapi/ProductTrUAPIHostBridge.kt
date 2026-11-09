@@ -4,30 +4,22 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import androidx.core.content.ContextCompat
-import dagger.hilt.android.qualifiers.ApplicationContext
-import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
-import java.time.ZoneId
-import java.util.Locale
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.first
-import uniffi.truapi.HostLocaleSubscribeItem
-import android.Manifest
-import android.content.pm.PackageManager
 import android.webkit.WebView
-import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend
-import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
-import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaConsent
-import uniffi.truapi.DevicePermissionStatus
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import io.parity.truapi.ProductExecutionConfig
+import io.parity.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -46,15 +38,20 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductThe
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,16 +62,17 @@ import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
+import uniffi.truapi.HostLocaleSubscribeItem
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.NftPurseOwner
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
+import java.time.ZoneId
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -105,6 +103,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLanguageProvider: AppLanguageProvider,
     private val permissionRepository: Lazy<ProductPermissionRepository>,
     private val permissionChanges: PermissionAuthorizationChanges,
+    private val mediaFactory: NativeMediaBackendFactory,
+    private val productGameReminder: ProductGameReminder,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -230,9 +230,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value) != TrUAPIPermissionDecision.DENY
 
         override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
-
-        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
             confirmationLauncher.decidePermission(review, requesterFallback = callingProductId.value)
 
         override suspend fun devicePermission(
@@ -264,7 +261,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                     hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
                 else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
-        }
                 .getOrElse { throw it }
                 .toNative()
         }
@@ -318,6 +314,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        chat: ChatHostBridge? = null,
+        card: ExpandedCardFace? = null,
         onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
@@ -339,6 +337,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 configuration = ProductExecutionConfig(productId.value, kind),
                 chat = chat,
                 pocket = pocket,
+                game = gameBridge(productId),
                 media = media,
             )
             execution = opened
@@ -430,7 +429,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     /** Settings use the same callbacks/storage and process runtime, without a second backend. */
     fun openPermissionExecution(runtime: TrUAPIHostRuntime, productId: ProductId): TrUAPIProductExecution =
         runtime.openProductExecution(
-            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }),
+            buildBridge(
+                productId,
+                NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") },
+                card = null,
+            ),
             ProductExecutionConfig(productId.value, ProductExecutionKind.APP),
         )
 
@@ -487,11 +490,7 @@ internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
     review: UserConfirmationReview,
     requesterFallback: String,
 ): TrUAPIPermissionDecision {
-    return if (awaitDecision(review.toConfirmation(requesterFallback))) {
-        TrUAPIPermissionDecision.ALLOW_ALWAYS
-    } else {
-        TrUAPIPermissionDecision.DENY
-    }
+    return awaitDecision(review.toConfirmation(requesterFallback))
 }
 
 // Reports the theme name the native host's `themeSubscribe` already sends, so a
@@ -528,6 +527,8 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    is RemotePermission.JamPeers ->
+        RemotePermissionRequest.JamPeers("0x${genesis.toHexString()}")
     RemotePermission.Calling -> error("Calling requires a scoped core review")
     RemotePermission.BalanceAccess -> error("balance access has its own prompt")
     is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")

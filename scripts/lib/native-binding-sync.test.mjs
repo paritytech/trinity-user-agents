@@ -28,14 +28,22 @@ test("host binding sync removes obsolete namespaces without deleting hand-writte
     symlinkSync(join(repoRoot, scriptPath), script);
     mkdirSync(hostSources, { recursive: true });
     mkdirSync(generated, { recursive: true });
-    writeFileSync(join(hostSources, "TrUAPIHost.swift"), "// hand-written host\n");
+    writeFileSync(
+      join(hostSources, "TrUAPIHost.swift"),
+      "// hand-written host\n",
+    );
     mkdirSync(join(hostSources, "Resources"));
     writeFileSync(
       join(hostSources, "Resources/truapi-container.js"),
       "// container\n",
     );
     for (const namespace of ["truapi", "truapi_server", "truapi_platform"]) {
-      writeFileSync(join(generated, `${namespace}.swift`), "// generated\n");
+      writeFileSync(
+        join(generated, `${namespace}.swift`),
+        namespace === "truapi"
+          ? "struct HostRuntimeConfig {}\nstruct ProductExecutionConfig {}\n"
+          : "// generated\n",
+      );
       writeFileSync(join(generated, `${namespace}FFI.h`), "// header\n");
       writeFileSync(
         join(generated, `${namespace}FFI.modulemap`),
@@ -45,15 +53,15 @@ test("host binding sync removes obsolete namespaces without deleting hand-writte
       mkdirSync(headers, { recursive: true });
       writeFileSync(join(headers, `${namespace}FFI.h`), "// stale header\n");
       writeFileSync(join(headers, "module.modulemap"), "// stale modulemap\n");
-      writeFileSync(join(hostSources, `${namespace}.swift`), "// stale binding\n");
+      writeFileSync(
+        join(hostSources, `${namespace}.swift`),
+        "// stale binding\n",
+      );
     }
 
     execFileSync("sh", [script], { cwd: workspace });
 
-    assert.deepEqual(readdirSync(sources).sort(), [
-      "TrUAPIHost",
-      "truapiFFI",
-    ]);
+    assert.deepEqual(readdirSync(sources).sort(), ["TrUAPIHost", "truapiFFI"]);
     assert.deepEqual(readdirSync(hostSources).sort(), [
       "Resources",
       "TrUAPIHost.swift",
@@ -66,6 +74,10 @@ test("host binding sync removes obsolete namespaces without deleting hand-writte
     assert.equal(
       readFileSync(join(hostSources, "Resources/truapi-container.js"), "utf8"),
       "// container\n",
+    );
+    assert.equal(
+      readFileSync(join(hostSources, "truapi.swift"), "utf8"),
+      "struct NativeHostRuntimeConfig {}\nstruct NativeProductExecutionConfig {}\n",
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });

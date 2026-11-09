@@ -11,6 +11,9 @@ internal class RealEncryptedPreferences @Inject constructor(
     private val preferences: RealPreferences,
     private val encryptionUtil: EncryptionUtil
 ) : EncryptedPreferences {
+    override val storageIdentifier: String
+        get() = preferences.storageIdentifier
+
     override fun keys(): Set<String> = preferences.keys()
 
     override fun putEncryptedString(
@@ -18,6 +21,13 @@ internal class RealEncryptedPreferences @Inject constructor(
         value: String,
     ) {
         preferences.putString(field, encryptionUtil.encrypt(value))
+    }
+
+    override fun putEncryptedStringCommitted(
+        field: String,
+        value: String,
+    ) {
+        preferences.putStringCommitted(field, encryptionUtil.encrypt(value))
     }
 
     override fun getDecryptedString(field: String): String? {
@@ -31,6 +41,10 @@ internal class RealEncryptedPreferences @Inject constructor(
 
     override fun removeKey(field: String) {
         preferences.removeField(field)
+    }
+
+    override fun removeKeyCommitted(field: String) {
+        preferences.removeFieldCommitted(field)
     }
 
     override fun decryptedStringFlow(field: String) = flowOfAll {

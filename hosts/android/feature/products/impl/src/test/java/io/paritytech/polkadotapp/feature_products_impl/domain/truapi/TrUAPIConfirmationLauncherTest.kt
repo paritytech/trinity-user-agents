@@ -70,7 +70,7 @@ class TrUAPIConfirmationLauncherTest {
 
     private fun upload() = TrUAPIConfirmation.PreimageSubmit(
         requesterProductId = "product.paseo",
-        sizeBytes = 1024uL,
+        sizeBytes = 1024L,
         rootPublicKey = "0x" + "01".repeat(32),
         genesisHash = "0x" + "02".repeat(32),
         automaticMaxBytes = 262144uL,

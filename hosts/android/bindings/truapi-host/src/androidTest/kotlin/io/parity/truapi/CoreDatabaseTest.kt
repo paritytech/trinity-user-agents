@@ -52,37 +52,4 @@ class CoreDatabaseTest {
         }
     }
 
-    private fun config(databaseDirectory: String) = HostRuntimeConfig(
-        hostName = "Core database test",
-        peopleChainGenesisHash = ByteArray(32) { 0xa2.toByte() },
-        bulletinChainGenesisHash = ByteArray(32) { 0xbb.toByte() },
-        assetHubChainGenesisHash = ByteArray(32) { 0xcc.toByte() },
-        networkSuffix = "paseo",
-        databaseDirectory = databaseDirectory,
-    )
-
-    private inner class InertBridge : HostBridge {
-        override fun permissionAuthorizationsChanged(productId: String) = Unit
-        override val storage = PrefsHostStorage(
-            context.getSharedPreferences(productStorageName, android.content.Context.MODE_PRIVATE),
-        )
-        override val coreStorage = PrefsHostCoreStorage(
-            context.getSharedPreferences(coreStorageName, android.content.Context.MODE_PRIVATE),
-            File(context.applicationInfo.dataDir, "shared_prefs/$coreStorageName.xml").canonicalPath,
-        )
-
-        override suspend fun navigateTo(url: String) = Unit
-
-        override suspend fun devicePermission(
-            product: ProductExecutionConfig,
-            request: HostDevicePermissionRequest,
-        ) = PermissionDecision.DENY
-
-        override suspend fun remotePermission(
-            product: ProductExecutionConfig,
-            request: RemotePermission,
-        ) = PermissionDecision.DENY
-
-        override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
-    }
 }

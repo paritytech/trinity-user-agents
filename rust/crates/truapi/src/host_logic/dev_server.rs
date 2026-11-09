@@ -11,7 +11,7 @@ use core::{net::Ipv4Addr, str::FromStr};
 
 use url::{Host, Url};
 
-use crate::platform::{ProductId, ProductIdError};
+use crate::latest::{ProductId, ProductIdError};
 
 const HTTP_PREFIX: &str = "http://";
 const HTTPS_PREFIX: &str = "https://";
@@ -89,6 +89,12 @@ impl FromStr for DevServerProduct {
 		let product_id = product_id.parse::<ProductId>()?;
 		Ok(Self { product_id, origin, url: parsed.into() })
 	}
+}
+
+/// Parses a development product address for native hosts.
+#[uniffi::export]
+pub fn parse_dev_server(address: String) -> Result<DevServerProduct, DevServerError> {
+	address.parse()
 }
 
 fn is_dev_address(address: Ipv4Addr) -> bool {

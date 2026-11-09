@@ -7,9 +7,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.webrtc.*
+import uniffi.truapi.*
 import uniffi.truapi.NativeMediaRemoteState
 import uniffi.truapi.NativeMediaTrackState
-import uniffi.truapi.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -141,7 +141,9 @@ internal class NativeMediaPeer(
             val description = create(true)
             set(description, true)
             if (!closed) emit(NativeMediaBackendEvent.Description(sessionId, participantId, NativeMediaDescription(NativeMediaDescriptionKind.OFFER, description.description)))
-        } finally { makingOffer = false }
+        } finally {
+            makingOffer = false
+        }
     }
 
     suspend fun description(description: NativeMediaDescription) = observeNegotiation { negotiation.withLock {
@@ -188,9 +190,11 @@ internal class NativeMediaPeer(
 
     private suspend fun observeNegotiation(action: suspend () -> Unit) {
         if (closed) return
-        try { action() }
-        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (_: Throwable) {
+        try {
+            action()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
             if (!closed) {
                 emit(NativeMediaBackendEvent.PeerStateChanged(sessionId, participantId, NativeMediaBackendPeerState.FAILED))
                 close()

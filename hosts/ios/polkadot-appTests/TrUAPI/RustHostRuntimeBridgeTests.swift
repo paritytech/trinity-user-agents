@@ -156,6 +156,7 @@ struct TrUAPIHostRuntimeProviderConfigTests {
                 secret: Data([0x01]),
                 liteUsername: nil,
                 networkSuffix: "paseo",
+                databaseDirectory: "/tmp",
                 coinageInstanceId: 7
             )
         }

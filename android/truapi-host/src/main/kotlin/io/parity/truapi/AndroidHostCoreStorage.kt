@@ -13,7 +13,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import uniffi.truapi_server.HostRejection
+import uniffi.truapi.HostRejection
 
 /**
  * Durable, device-only core storage, separate from every product's local storage.

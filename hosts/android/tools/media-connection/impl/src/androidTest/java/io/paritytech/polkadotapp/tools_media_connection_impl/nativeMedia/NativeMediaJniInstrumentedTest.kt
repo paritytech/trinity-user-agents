@@ -53,9 +53,9 @@ import uniffi.truapi.ProductContext
 import uniffi.truapi.NativeMediaBackendCapabilities
 import uniffi.truapi.NativeMediaBackendResponse
 import uniffi.truapi.NativeMediaCallbacks
-import uniffi.truapi.HostRuntimeConfig
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import io.parity.truapi.HostRuntimeConfig
+import io.parity.truapi.ProductExecutionConfig
+import io.parity.truapi.ProductExecutionKind
 
 @RunWith(AndroidJUnit4::class)
 class NativeMediaJniInstrumentedTest {

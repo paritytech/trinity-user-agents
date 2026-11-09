@@ -78,14 +78,12 @@ class NativeMediaPermissions @Inject constructor(
             }
             runtimeProvider.withSessionMutation {
                 checkScope(product, permission, execution)
-                withContext(Dispatchers.IO) {
-                    execution.setPermissionAuthorizationStatus(request,
-                        if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED)
-                }
+                runtimeProvider.runtime().getOrThrow().setPermissionAuthorizationStatus(
+                    product.value,
+                    request,
+                    if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED
+                )
             }
-            // Commit and enqueue happen atomically in the SDK. Never await a refresh under
-            // the session mutation gate: refresh may need that same runtime to make progress.
-            execution.awaitCoreStorageChanges()
         }
     }
 

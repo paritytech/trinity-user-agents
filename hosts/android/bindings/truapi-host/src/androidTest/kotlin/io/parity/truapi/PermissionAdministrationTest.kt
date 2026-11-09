@@ -10,13 +10,10 @@ import org.junit.runner.RunWith
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostRejection
-import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -87,6 +84,7 @@ class PermissionAdministrationTest {
     }
 
     private class Storage : HostCoreStorage, HostStorage {
+        override val storageIdentifier = "permission-administration-test"
         private val core = ConcurrentHashMap<List<Byte>, ByteArray>()
         private val product = ConcurrentHashMap<String, ByteArray>()
         @Volatile var failWrites = false

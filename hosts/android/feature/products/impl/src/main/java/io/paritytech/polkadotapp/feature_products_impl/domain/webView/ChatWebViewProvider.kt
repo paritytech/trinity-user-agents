@@ -21,8 +21,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClie
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
-import kotlinx.coroutines.CoroutineScope
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
+import kotlinx.coroutines.CoroutineScope
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,

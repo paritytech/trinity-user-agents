@@ -10,6 +10,7 @@ pub mod attestation;
 pub mod contact_substitution;
 pub mod device_key;
 pub mod dotns;
+pub mod dev_server;
 pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;

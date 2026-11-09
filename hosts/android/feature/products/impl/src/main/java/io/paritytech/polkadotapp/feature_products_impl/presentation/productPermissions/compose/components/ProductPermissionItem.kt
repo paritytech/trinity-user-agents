@@ -10,15 +10,15 @@ import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
-import io.paritytech.polkadotapp.common.R as RCommon
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.PermissionAuthorizationRequest
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 internal fun ProductPermissionItem(permissionStatus: ProductPermissionStatus, onToggle: () -> Unit) {
@@ -137,4 +137,5 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     ProductPermission.RemotePermission.ChainSubmitAccess,
     ProductPermission.RemotePermission.StatementSubmitAccess,
     ProductPermission.RemotePermission.PreimageSubmitAccess -> RCommon.string.product_permission_type_remote
+    is ProductPermission.RemotePermission.JamPeersAccess -> RCommon.string.product_permission_type_remote
 }

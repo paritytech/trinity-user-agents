@@ -3,12 +3,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostLocalStorageReadException
-import uniffi.truapi.HostRejection
-import java.text.Normalizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
+import java.text.Normalizer
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.

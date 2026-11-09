@@ -5,12 +5,12 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccou
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Parks a [ProductSigningContext], opens the signing confirmation screen and awaits the user's
@@ -44,5 +44,4 @@ class ProductSigningScreenLauncher @Inject constructor(
 
         context.awaitResult()
     }
-
 }

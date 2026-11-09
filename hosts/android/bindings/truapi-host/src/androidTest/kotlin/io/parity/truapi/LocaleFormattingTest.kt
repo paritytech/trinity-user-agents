@@ -17,7 +17,6 @@ import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleLocalizeTimestampsRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.PermissionDecision
-import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
 
 @RunWith(AndroidJUnit4::class)

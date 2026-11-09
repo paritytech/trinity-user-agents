@@ -3,9 +3,7 @@ package io.parity.truapi
 import android.content.Context
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
-import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
 
 /** A bridge that refuses everything a product could ask for, for runtime-level tests. */
@@ -18,6 +16,7 @@ class InertHostBridge(
     )
     override val coreStorage = PrefsHostCoreStorage(
         context.getSharedPreferences("truapi_inert_bridge_core", Context.MODE_PRIVATE),
+        "shared-preferences:truapi_inert_bridge_core",
     )
 
     override fun permissionAuthorizationsChanged(productId: String) = Unit
@@ -38,7 +37,6 @@ class InertHostBridge(
 
     override fun durableWorkChanged(pending: Boolean) = onDurableWork(pending)
 
-    override fun permissionAuthorizationsChanged(productId: String) = Unit
 }
 
 /** A runtime config whose core database lives in [databaseDirectory]. */

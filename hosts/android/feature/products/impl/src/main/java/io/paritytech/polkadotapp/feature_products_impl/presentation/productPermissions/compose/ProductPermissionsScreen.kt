@@ -2,9 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.productPerm
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -12,27 +12,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.loading.onLoading
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
+import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.progress.LoadingScreenState
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
+import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.AutomaticPreimagePermission
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.ProductPermissionsViewModel
+import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.compose.components.NativeMediaPermissionItem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.compose.components.ProductPermissionItem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
-import io.novasama.substrate_sdk_android.extensions.toHexString
-import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
-import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
-import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.AutomaticPreimagePermission
 import uniffi.truapi.PermissionAuthorizationStatus
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -45,6 +47,7 @@ fun ProductPermissionsScreen(viewModel: ProductPermissionsViewModel) {
         onBack = viewModel::onBack,
         onPermissionToggle = viewModel::onPermissionToggle,
         onAutomaticUploadsChanged = viewModel::onAutomaticUploadsChanged,
+        onMediaPermissionToggle = viewModel::onMediaPermissionToggle,
     )
 }
 
@@ -54,6 +57,7 @@ private fun ProductPermissionsScreenInternal(
     onBack: () -> Unit,
     onPermissionToggle: (ProductPermissionStatus) -> Unit,
     onAutomaticUploadsChanged: (AutomaticPreimagePermission, PermissionAuthorizationStatus) -> Unit,
+    onMediaPermissionToggle: (NativeMediaPermissionStatus) -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -169,6 +173,7 @@ private fun ProductPermissionsScreenPreview() {
             onBack = {},
             onPermissionToggle = { _ -> },
             onAutomaticUploadsChanged = { _, _ -> },
+            onMediaPermissionToggle = { _ -> },
         )
     }
 }

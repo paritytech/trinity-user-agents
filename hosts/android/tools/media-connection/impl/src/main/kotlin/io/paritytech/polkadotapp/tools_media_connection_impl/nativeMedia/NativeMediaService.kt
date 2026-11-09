@@ -11,14 +11,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import androidx.core.app.NotificationManagerCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeout
 import java.lang.ref.WeakReference
 import java.util.UUID

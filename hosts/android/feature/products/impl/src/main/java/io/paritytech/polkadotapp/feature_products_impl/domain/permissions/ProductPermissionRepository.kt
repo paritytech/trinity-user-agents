@@ -4,11 +4,11 @@ import dagger.Lazy
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionDeniedException
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.NetworkAccessPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionDeniedException
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.normalizeProductId
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
@@ -75,7 +75,7 @@ class RealProductPermissionRepository @Inject constructor(
         return withContext(revision) {
             try {
                 block() && if (revision.core == null) revision.local == changes.revision(product)
-                    else revision.core == runtime().permissionAuthorizationRevision(product)
+                else revision.core == runtime().permissionAuthorizationRevision(product)
             } catch (_: ProductPermissionDeniedException) {
                 false
             }
@@ -196,7 +196,7 @@ class RealProductPermissionRepository @Inject constructor(
         }
         val runtime = runtime()
         return if (imports.isEmpty()) runtime.permissionAuthorizations(id(productId))
-            else runtime.importPermissionAuthorizations(id(productId), imports)
+        else runtime.importPermissionAuthorizations(id(productId), imports)
     }
 
     private fun effectiveStatuses(

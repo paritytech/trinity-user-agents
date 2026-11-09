@@ -2,19 +2,22 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
-import uniffi.truapi.DerivationIndex
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.normalizeProductId
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Locale
 
 internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationRequest? = when (this) {
-    ProductPermission.BalanceAccess -> null
+    ProductPermission.BalanceAccess -> PermissionAuthorizationRequest.Remote(
+        RemotePermissionRequest(RemotePermission.BalanceAccess)
+    )
     ProductPermission.UserIdentityAccess -> PermissionAuthorizationRequest.IdentityDisclosure
     ProductPermission.ChatAuthority -> PermissionAuthorizationRequest.ChatAuthority
     ProductPermission.ProfileDisclosure -> PermissionAuthorizationRequest.ProfileDisclosure
@@ -25,36 +28,71 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
             is AllowanceAccountSelector.Raw -> DerivationIndex.Raw(selector.value.value)
         }
     )
+    is ProductPermission.NftPurseRead -> PermissionAuthorizationRequest.Remote(
+        RemotePermissionRequest(
+            RemotePermission.NftPurseRead(
+                ownerProductId?.let(NftPurseOwner::Product) ?: NftPurseOwner.Root
+            )
+        )
+    )
     is ProductPermission.AccountAccess -> PermissionAuthorizationRequest.AccountAccess(bareProductLabel(targetProductId))
     is ProductPermission.DeviceCapability -> PermissionAuthorizationRequest.Device(capability.native())
-    is ProductPermission.RemotePermission -> PermissionAuthorizationRequest.Remote(RemotePermissionRequest(when (this) {
-        is ProductPermission.RemotePermission.NetworkAccess -> RemotePermission.Remote(listOf(canonicalDomain(domain)))
-        is ProductPermission.RemotePermission.NetworkAccessSet -> RemotePermission.Remote(domains.map(::canonicalDomain).distinct().sorted())
-        ProductPermission.RemotePermission.WebRtcAccess -> RemotePermission.WebRtc
-        ProductPermission.RemotePermission.ChainSubmitAccess -> RemotePermission.ChainSubmit
-        ProductPermission.RemotePermission.StatementSubmitAccess -> RemotePermission.StatementSubmit
-        ProductPermission.RemotePermission.PreimageSubmitAccess -> RemotePermission.PreimageSubmit
-    }))
+    is ProductPermission.RemotePermission -> PermissionAuthorizationRequest.Remote(
+        RemotePermissionRequest(
+            when (this) {
+                is ProductPermission.RemotePermission.NetworkAccess ->
+                    RemotePermission.Remote(listOf(canonicalDomain(domain)))
+                is ProductPermission.RemotePermission.NetworkAccessSet ->
+                    RemotePermission.Remote(domains.map(::canonicalDomain).distinct().sorted())
+                ProductPermission.RemotePermission.WebRtcAccess -> RemotePermission.WebRtc
+                ProductPermission.RemotePermission.ChainSubmitAccess -> RemotePermission.ChainSubmit
+                ProductPermission.RemotePermission.StatementSubmitAccess -> RemotePermission.StatementSubmit
+                ProductPermission.RemotePermission.PreimageSubmitAccess -> RemotePermission.PreimageSubmit
+                is ProductPermission.RemotePermission.JamPeersAccess ->
+                    RemotePermission.JamPeers(genesis.removePrefix("0x").hexToByteArray())
+            }
+        )
+    )
 }
 
 internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission? = when (this) {
-    is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
+    is PermissionAuthorizationRequest.Device ->
+        ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
+    PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
+    PermissionAuthorizationRequest.ProfileDisclosure -> ProductPermission.ProfileDisclosure
+    is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
+        when (val selector = derivationIndex) {
+            null -> null
+            is DerivationIndex.Index -> AllowanceAccountSelector.Index(selector.v1)
+            is DerivationIndex.Raw -> AllowanceAccountSelector.Raw(selector.v1.toDataByteArray())
+        }
+    )
+    is PermissionAuthorizationRequest.Calling,
+    is PermissionAuthorizationRequest.AutomaticPreimageSubmit,
     is PermissionAuthorizationRequest.CrossProductSignature -> null
     is PermissionAuthorizationRequest.Remote -> when (val remote = v1.permission) {
         is RemotePermission.Remote -> {
             val domains = remote.domains.map(::canonicalDomain).distinct().sorted()
             require(domains.isNotEmpty()) { "Cannot display an empty canonical network permission" }
-            if (domains.size == 1) ProductPermission.RemotePermission.NetworkAccess(domains.single())
-                else ProductPermission.RemotePermission.NetworkAccessSet(domains)
+            if (domains.size == 1) {
+                ProductPermission.RemotePermission.NetworkAccess(domains.single())
+            } else {
+                ProductPermission.RemotePermission.NetworkAccessSet(domains)
+            }
         }
         RemotePermission.WebRtc -> ProductPermission.RemotePermission.WebRtcAccess
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
+        is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(
+            "0x${remote.genesis.toHexString()}"
+        )
+        RemotePermission.BalanceAccess -> ProductPermission.BalanceAccess
+        is RemotePermission.NftPurseRead -> ProductPermission.NftPurseRead(remote.owner.productId)
+        RemotePermission.Calling -> null
     }
-    is PermissionAuthorizationRequest.CrossProductSignature -> null
 }
 
 private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (this) {
@@ -67,6 +105,7 @@ private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (t
     DeviceCapabilityType.Clipboard -> HostDevicePermissionRequest.CLIPBOARD
     DeviceCapabilityType.Biometrics -> HostDevicePermissionRequest.BIOMETRICS
     DeviceCapabilityType.OpenUrl -> HostDevicePermissionRequest.OPEN_URL
+    DeviceCapabilityType.Motion -> HostDevicePermissionRequest.MOTION
 }
 
 internal fun canonicalDomain(domain: String): String {
@@ -83,6 +122,12 @@ internal fun canonicalDomain(domain: String): String {
     }
     return (if (wildcard) "*." else "") + canonical
 }
+
+private val NftPurseOwner.productId: String?
+    get() = when (this) {
+        is NftPurseOwner.Product -> v1
+        NftPurseOwner.Root -> null
+    }
 
 /** Mirrors the core's account-context key, shared by executable subnames. */
 internal fun bareProductLabel(productId: String): String {

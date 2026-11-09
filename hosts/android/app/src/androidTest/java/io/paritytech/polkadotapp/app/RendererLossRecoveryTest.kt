@@ -32,9 +32,9 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import uniffi.truapi.HostRuntimeConfig
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import io.parity.truapi.HostRuntimeConfig
+import io.parity.truapi.ProductExecutionConfig
+import io.parity.truapi.ProductExecutionKind
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
