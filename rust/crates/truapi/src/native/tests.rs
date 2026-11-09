@@ -3155,6 +3155,13 @@ fn the_host_reads_back_what_the_core_says_changed() {
 	let session = host.funding_session(intent.clone()).expect("session held");
 	assert_eq!(
 		(
+			host.funding_session_open(intent.clone()),
+			host.funding_session_open("unknown".to_string())
+		),
+		(true, false)
+	);
+	assert_eq!(
+		(
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Options)),
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Session)),
 			changes.contains(&(None, FundingChangeKind::InProgress)),

@@ -344,6 +344,15 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_session(&intent)
 	}
 
+	/// Whether funding session `intent` is still open, so its overlay can be
+	/// shown again. `false` once it ended, even while the core still pushes
+	/// it until acknowledged, and for a session it does not hold in full.
+	pub fn funding_session_open(&self, intent: String) -> bool {
+		self.runtime
+			.funding_session(&intent)
+			.is_some_and(|session| !session.is_terminal())
+	}
+
 	/// Funding session `intent`'s progress now, while the core holds it in
 	/// full.
 	pub fn funding_progress(
