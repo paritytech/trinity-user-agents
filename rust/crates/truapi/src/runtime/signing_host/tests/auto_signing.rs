@@ -12,7 +12,7 @@ use truapi::versioned::{
 };
 
 /// Allocate an AutoSigning grant for the runtime's own product.
-fn grant_auto_signing(runtime: &ProductRuntimeHost) {
+pub fn grant_auto_signing(runtime: &ProductRuntimeHost) {
 	let allocation = futures::executor::block_on(ResourceAllocation::request(
 		runtime,
 		&CallContext::default(),
