@@ -197,8 +197,8 @@ impl Stack {
 	}
 
 	/// The dotNS TLD without the leading dot. The signing role derives every
-	/// reserved RFC-0022 identity under it: `uid.<tld>` for the identity
-	/// account, `peopl.<tld>` for the person ring-VRF keys.
+	/// reserved RFC-0022 identity under it: `peopl.<tld>` for the identity
+	/// account and for the person ring-VRF keys.
 	pub fn tld(&self) -> &str {
 		&self.tld
 	}
