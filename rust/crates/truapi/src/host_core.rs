@@ -660,7 +660,7 @@ impl SigningHostRuntime {
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
-			.derive_subtree_public_key(product_id)
+			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
@@ -798,6 +798,12 @@ impl SigningHostRuntime {
 	/// funding. Set-once; returns whether this call installed it.
 	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
 		self.services.funding().install_feed(feed)
+	}
+
+	/// Role-neutral services shared with every product runtime.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
+		&self.services
 	}
 
 	/// Every ended funding session, as summaries newest first: the ones

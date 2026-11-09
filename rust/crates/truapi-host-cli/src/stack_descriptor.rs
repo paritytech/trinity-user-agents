@@ -1,5 +1,5 @@
 //! Reading Trinity stack descriptors: where a stack value points, fetching and
-//! loading its descriptor, and the fields of it a stack-derived network reads.
+//! loading its descriptor, and the roles a stack-derived network serves.
 
 use std::{
 	fs,
@@ -82,15 +82,8 @@ pub const ROLE_NAMES: Roles<&str> =
 	Roles { people: "People", asset_hub: "AssetHub", bulletin: "Bulletin" };
 
 impl<T> Roles<T> {
-	pub fn map<U>(self, mut transform: impl FnMut(T) -> U) -> Roles<U> {
-		Roles {
-			people: transform(self.people),
-			asset_hub: transform(self.asset_hub),
-			bulletin: transform(self.bulletin),
-		}
-	}
-
-	/// [`Self::map`] with a fallible `transform`; fails with its first error.
+	/// Each role's value through a fallible `transform`; fails with its first
+	/// error.
 	pub fn try_map<U, E>(
 		self,
 		mut transform: impl FnMut(T) -> Result<U, E>,
@@ -102,48 +95,47 @@ impl<T> Roles<T> {
 		})
 	}
 
-	pub fn zip<U>(self, other: Roles<U>) -> Roles<(T, U)> {
-		Roles {
-			people: (self.people, other.people),
-			asset_hub: (self.asset_hub, other.asset_hub),
-			bulletin: (self.bulletin, other.bulletin),
-		}
+	/// Each role's value, People first, then Asset Hub, then Bulletin.
+	pub fn iter(&self) -> impl Iterator<Item = &T> {
+		[&self.people, &self.asset_hub, &self.bulletin].into_iter()
 	}
 }
 
-/// The descriptor fields a stack-derived network is built from, and
-/// `generation`. Only a change to these makes the runtime notice print.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StackProjection<'a> {
-	pub generation: &'a str,
-	pub tld: &'a str,
-	/// `rpc[0]` and `genesisHash` of each role's chain, when present.
-	pub roles: Roles<Option<(&'a str, &'a str)>>,
-	pub dub: Option<&'a str>,
-	pub pop_controller: Option<&'a str>,
+/// Whether `stack` and `other` agree in every field the CLI reads: `id`, which
+/// is the product namespace, the TLD, `generation`, the `dub` service,
+/// `dotns.popController`, and the genesis hash and full `rpc` list of People,
+/// Asset Hub and Bulletin. The full lists are compared because the Polkadot
+/// fork check contacts every node the reference lists for a chain.
+pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
+	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
+		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
+	}
+	stack.id == other.id &&
+		stack.tld == other.tld &&
+		stack.generation == other.generation &&
+		stack.service("dub") == other.service("dub") &&
+		stack.dotns_address("popController") == other.dotns_address("popController") &&
+		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
 }
 
-impl<'a> StackProjection<'a> {
-	pub fn of(descriptor: &'a Descriptor) -> Self {
-		Self {
-			generation: &descriptor.generation,
-			tld: &descriptor.tld,
-			roles: ROLE_NAMES.map(|role| {
-				let chain = descriptor.chain(role)?;
-				Some((chain.rpc[0].as_str(), chain.genesis_hash.as_str()))
-			}),
-			dub: descriptor
-				.services
-				.iter()
-				.find(|service| service.kind == "dub")
-				.and_then(|service| service.urls.first())
-				.map(String::as_str),
-			pop_controller: descriptor
-				.dotns
-				.as_ref()
-				.and_then(|dotns| dotns.get("popController"))
-				.map(String::as_str),
-		}
+/// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
+/// a change to the TLD, which every account derives under, or to the `id`,
+/// the namespace every session and account is stored under. `None` when both
+/// stay.
+pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<String> {
+	if fetched.tld != stored.tld {
+		Some(format!(
+			"changes the tld from {} to {}, which changes every account derived under it",
+			stored.tld, fetched.tld
+		))
+	} else if fetched.id != stored.id {
+		Some(format!(
+			"changes the id from {} to {}, which moves every session and account to another \
+			 namespace",
+			stored.id, fetched.id
+		))
+	} else {
+		None
 	}
 }
 
