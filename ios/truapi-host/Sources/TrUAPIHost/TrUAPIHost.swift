@@ -1204,18 +1204,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingEntries()
     }
 
-    /// Whether the provider's part of session `intent` is done: its payment
-    /// moved or the session is over.
-    public func fundingPaymentMoved(intent: String) -> Bool {
-        inner.fundingPaymentMoved(intent: intent)
-    }
-
-    /// The CASH card's funding rows: the sessions in flight and the history,
-    /// sorted, with the sessions the history leaves out already left out.
-    public func fundingActivity() -> FundingActivity {
-        inner.fundingActivity()
-    }
-
     /// Record that the history showing `intents` is on screen, so the core
     /// stops handing their endings over on each resume. Call it only while
     /// the history is actually shown. Answers the sessions acknowledged.

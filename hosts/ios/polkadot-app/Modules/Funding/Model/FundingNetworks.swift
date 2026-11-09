@@ -11,13 +11,9 @@ struct FundingNetwork: Identifiable, Hashable {
     let id: String
     let name: String
 
-    init(id: String, name: String) {
-        self.id = id
-        self.name = name
-    }
-
     init(id: String) {
-        self.init(id: id, name: fundingNetworkName(id: id))
+        self.id = id
+        name = fundingNetworkName(id: id)
     }
 
     var tint: Color {

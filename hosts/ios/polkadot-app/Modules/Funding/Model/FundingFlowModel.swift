@@ -42,7 +42,7 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     private(set) var tokenSymbols: [String] = []
     /// The amounts the core says the reported selection takes across every provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
-    /// The same for each network a crypto route declares, with its name.
+    /// The same for each network a crypto route declares.
     private(set) var networkLimits: [FundingNetworkLimits] = []
     /// What the core knows about each country on the reported rail and asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]

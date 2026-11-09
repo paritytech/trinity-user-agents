@@ -22,7 +22,7 @@ pub enum FundingChangeKind {
 }
 
 /// The resume marker's path under `database_directory`.
-pub fn resume_marker(database_directory: &Path) -> PathBuf {
+fn resume_marker(database_directory: &Path) -> PathBuf {
 	database_directory.join(RESUME_MARKER)
 }
 
@@ -42,6 +42,14 @@ pub fn write_resume_marker(database_directory: &Path, in_progress: bool) {
 	if let Err(error) = written {
 		tracing::error!(marker = %marker.display(), %error, "funding resume marker not written");
 	}
+}
+
+/// Whether a provider still worked on a funding session when the runtime
+/// over `database_directory` last ran, so the host starts it at launch to
+/// let funding carry on. Read before any runtime is built.
+#[uniffi::export]
+pub fn funding_resume_pending(database_directory: String) -> bool {
+	resume_marker(Path::new(&database_directory)).exists()
 }
 
 #[cfg(test)]

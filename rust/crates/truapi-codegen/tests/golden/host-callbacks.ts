@@ -375,13 +375,6 @@ export type FundingAmountIssue =
  */
 export interface FundingFrameContext {
   /**
-   * For an App route, the path inside the provider's App origin: the
-   * route itself when it starts with `/` or `#`, otherwise the route after
-   * a `/`. ``undefined`` for an external page.
-   */
-  appPath?: string;
-
-  /**
    * Whether the session waits on a transfer the user makes outside the
    * frame: an inbound bank deposit.
    */
@@ -1281,10 +1274,7 @@ export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
  */
 export const FundingFrameContext: S.Codec<FundingFrameContext> = S.lazy(
   (): S.Codec<FundingFrameContext> =>
-    S.Struct({
-      appPath: S.Option(S.str),
-      awaitsUserTransfer: S.bool,
-    }) as S.Codec<FundingFrameContext>,
+    S.Struct({ awaitsUserTransfer: S.bool }) as S.Codec<FundingFrameContext>,
 );
 
 /**
