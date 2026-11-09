@@ -23,11 +23,14 @@ use truapi::versioned::signing::{
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
 fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 	let entry = CachedManifest {
+		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
 	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
+			&ProductId::for_test(owner),
+		)),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");

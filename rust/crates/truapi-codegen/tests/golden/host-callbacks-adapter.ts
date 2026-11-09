@@ -31,7 +31,6 @@ import {
 import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
-  CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
   HostContactLookup,
@@ -40,6 +39,7 @@ import {
   HostScan,
   PermissionDecision,
   ProductContext,
+  StackStorageKey,
   UserConfirmationReview,
 } from "./host-callbacks.js";
 import type { RequiredHostCallbacks } from "./host-callbacks.js";
@@ -191,14 +191,14 @@ export function createWasmRawCallbacks(
         }
       : {}),
     readCoreStorage: async (key) =>
-      await callbacks.coreStorage.readCoreStorage(CoreStorageKey.dec(key)),
+      await callbacks.coreStorage.readCoreStorage(StackStorageKey.dec(key)),
     writeCoreStorage: async (key, value) =>
       await callbacks.coreStorage.writeCoreStorage(
-        CoreStorageKey.dec(key),
+        StackStorageKey.dec(key),
         value,
       ),
     clearCoreStorage: async (key) =>
-      await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+      await callbacks.coreStorage.clearCoreStorage(StackStorageKey.dec(key)),
     transactionExtensionVersions: async () =>
       ExtensionVersionMap.enc(
         await callbacks.extrinsicVersion.transactionExtensionVersions(),

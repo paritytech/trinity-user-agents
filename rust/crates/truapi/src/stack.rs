@@ -5,13 +5,21 @@
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
 //! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
 //! chain's genesis hash, and answers `get_chain_info`.
+//!
+//! What the core stores belongs to one stack: [`Stack::storage`] is the only
+//! way the core reaches [`CoreStorage`](crate::platform::CoreStorage), and it
+//! puts [`Stack::id`] in every key.
+
+mod storage;
+
+pub use storage::StackStorage;
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{dotns_name::DOTNS_TLDS, platform::CoreStorage};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -51,9 +59,23 @@ const RESERVED_TLD: &str = "dot";
 /// and the genesis hash of each chain role the core uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+}
+
+/// What tells a stack from every other stack, and one run of its chains from
+/// the next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// The stack's identity: `trinity_stack::Pointer::stack_id` of its pointer.
+	/// A fork and its source have different ones, though their chains share
+	/// genesis hashes.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe.
+	pub generation: String,
 }
 
 /// The genesis hash of each chain role a stack names. People and Bulletin are
@@ -131,6 +153,7 @@ impl Stack {
 		if pointer.key().is_none() {
 			return Err(StackError::Unsigned);
 		}
+		let id = pointer.stack_id();
 		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
@@ -144,7 +167,8 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let identity = StackIdentity { id, generation: descriptor.generation };
+		Self::new(identity, descriptor.network, descriptor.tld, chains, allows_reserved_values)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -152,6 +176,7 @@ impl Stack {
 	///
 	/// Applies the same TLD and reserved-value rules as [`Self::bundled`].
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
@@ -169,7 +194,24 @@ impl Stack {
 				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
 			)?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { identity, network, tld, chains })
+	}
+
+	/// The stack's identity, which every key the core stores carries. See
+	/// [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. What the core cached about the chains
+	/// under another generation is stale. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
+	}
+
+	/// The core's storage for this stack over the host's `storage`.
+	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
+		StackStorage::new(storage, &self.identity.id)
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

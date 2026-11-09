@@ -18,25 +18,31 @@ use crate::{
 	platform::{
 		AccountAccessReview, CoreStorageKey, CreateTransactionReview, CrossProductSignatureKind,
 		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
-		SignRawReview, UserConfirmationReview,
+		SignRawReview, Stack, StackStorage, UserConfirmationReview,
 	},
 };
 
 /// One runtime's consent policy: one decision store, one prompt at a time, one set of rules.
 pub struct ProductConsent {
 	platform: Arc<dyn Platform>,
+	stack: Stack,
 	permission_prompt: futures::lock::Mutex<()>,
 	allowed_once: Mutex<HashSet<(String, String)>>,
 }
 
 impl ProductConsent {
-	/// Store decisions through `platform`, the runtime-wide one.
-	pub fn new(platform: Arc<dyn Platform>) -> Self {
+	/// Store decisions for `stack` through `platform`, the runtime-wide one.
+	pub fn new(platform: Arc<dyn Platform>, stack: Stack) -> Self {
 		Self {
 			platform,
+			stack,
 			permission_prompt: futures::lock::Mutex::new(()),
 			allowed_once: Mutex::default(),
 		}
+	}
+
+	fn storage(&self) -> StackStorage<'_, dyn Platform> {
+		self.stack.storage(self.platform.as_ref())
 	}
 
 	/// Whether `requester` may use `target`'s accounts, prompting through `prompt`
@@ -79,7 +85,7 @@ impl ProductConsent {
 			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
 		};
 		set_authorization_status(
-			self.platform.as_ref(),
+			&self.storage(),
 			CoreStorageKey::product_account_access_authorization(requester, target),
 			status,
 		)
@@ -161,7 +167,7 @@ impl ProductConsent {
 		target: &ProductId,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
 		let stored = authorization_status(
-			self.platform.as_ref(),
+			&self.storage(),
 			CoreStorageKey::product_account_access_authorization(requester, target),
 		)
 		.await

@@ -20,7 +20,7 @@ use crate::{
 		session::{SessionInfo, SessionState, encode_persisted_session},
 		session_store::SessionStoreChangeNotifier,
 	},
-	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext},
+	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, StackStorage},
 	session_usernames::SessionUsernames,
 	subscription::Spawner,
 };
@@ -153,6 +153,10 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
+	fn storage(&self) -> StackStorage<'_, dyn Platform> {
+		self.host_config.stack.storage(self.platform.as_ref())
+	}
+
 	/// Select paired sessions for `owner`, which keeps their account material.
 	pub fn new(
 		services: Arc<RuntimeServices>,
@@ -317,7 +321,7 @@ impl SsoRequestService {
 		{
 			return Ok(());
 		}
-		let blob = match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
+		let blob = match self.storage().read(CoreStorageKey::AuthSession).await {
 			Ok(Some(blob)) => blob,
 			Ok(None) => {
 				self.clear_disconnected_session(false).await;
@@ -326,7 +330,7 @@ impl SsoRequestService {
 			Err(error) => {
 				self.clear_disconnected_session(false).await;
 				if clear_after_read_error {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+					let _ = self.storage().clear(CoreStorageKey::AuthSession).await;
 				}
 				return Err(StoredSessionActivationError::Read(error.reason));
 			},
@@ -348,12 +352,12 @@ impl SsoRequestService {
 		// Identity resolution can await chain I/O. Re-read the slot before
 		// installation so an older activation cannot overwrite or expose a
 		// session replaced while that lookup was in flight.
-		let latest = match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
+		let latest = match self.storage().read(CoreStorageKey::AuthSession).await {
 			Ok(latest) => latest,
 			Err(error) => {
 				self.clear_disconnected_session(false).await;
 				if clear_after_read_error {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+					let _ = self.storage().clear(CoreStorageKey::AuthSession).await;
 				}
 				return Err(StoredSessionActivationError::Read(error.reason));
 			},
@@ -365,10 +369,7 @@ impl SsoRequestService {
 
 		let resolved_blob = encode_persisted_session(&resolved);
 		if resolved_blob != blob {
-			let _ = self
-				.platform
-				.write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
-				.await;
+			let _ = self.storage().write(CoreStorageKey::AuthSession, resolved_blob).await;
 		}
 		self.set_connected_session(resolved).await;
 		Ok(())
@@ -402,14 +403,14 @@ impl SsoRequestService {
 	/// Discard pairing bootstrap material so the next login generates a new
 	/// device keypair and topic.
 	pub async fn forget_pairing_identity(&self) -> Result<(), String> {
-		self.platform
-			.clear_core_storage(CoreStorageKey::PairingDeviceIdentity)
+		self.storage()
+			.clear(CoreStorageKey::PairingDeviceIdentity)
 			.await
 			.map_err(|error| {
 				format!("session disconnected, but pairing identity reset failed: {}", error.reason)
 			})?;
-		self.platform
-			.clear_core_storage(CoreStorageKey::LastProcessedPairingStatement)
+		self.storage()
+			.clear(CoreStorageKey::LastProcessedPairingStatement)
 			.await
 			.map_err(|error| {
 				format!(
@@ -490,7 +491,7 @@ impl SsoRequestService {
 		};
 		self.stop_session_channel(previous.as_ref());
 		if clear_auth_session {
-			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+			let _ = self.storage().clear(CoreStorageKey::AuthSession).await;
 		}
 		if let Some(owner) = self.owner.upgrade() {
 			owner.session_cleared().await;
@@ -588,8 +589,8 @@ impl SsoRequestService {
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
 
 		if let Err(err) = self
-			.platform
-			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
+			.storage()
+			.write(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
 			.await
 		{
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
@@ -598,11 +599,8 @@ impl SsoRequestService {
 		match self.session_state.current() {
 			Some(live) if live != resolved => {
 				if let Err(err) = self
-					.platform
-					.write_core_storage(
-						CoreStorageKey::AuthSession,
-						encode_persisted_session(&live),
-					)
+					.storage()
+					.write(CoreStorageKey::AuthSession, encode_persisted_session(&live))
 					.await
 				{
 					warn!(reason = %err.reason, "live session identity persist repair failed");
@@ -610,9 +608,7 @@ impl SsoRequestService {
 				Some(authority_session(&live))
 			},
 			None => {
-				if let Err(err) =
-					self.platform.clear_core_storage(CoreStorageKey::AuthSession).await
-				{
+				if let Err(err) = self.storage().clear(CoreStorageKey::AuthSession).await {
 					warn!(reason = %err.reason, "cleared session identity persist repair failed");
 				}
 				None
@@ -681,7 +677,7 @@ impl HostSession for SsoRequestService {
 			},
 			SsoPairingOutcome::Success(session) => {
 				if !self.is_current_login_attempt(login_generation) {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+					let _ = self.storage().clear(CoreStorageKey::AuthSession).await;
 					login_owner.finish(Ok(()));
 					return Ok(api::HostRequestLoginResponse::Rejected);
 				}

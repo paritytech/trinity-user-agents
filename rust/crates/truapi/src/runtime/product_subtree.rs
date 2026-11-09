@@ -8,7 +8,7 @@
 //! slot it already stores and derive product account addresses from it without
 //! decoding anything this module owns.
 
-use crate::platform::{CoreStorage, CoreStorageKey, ProductId};
+use crate::platform::{CoreStorage, CoreStorageKey, ProductId, StackStorage};
 use truapi::latest::GenericError;
 
 use super::{allowances::session_storage_id, authority::AuthorityError};
@@ -19,12 +19,12 @@ use crate::host_logic::session::SessionInfo;
 /// A slot that is not exactly 32 bytes reads as a miss, so a truncated or
 /// over-written entry re-asks the wallet rather than deriving a wrong account.
 pub async fn read_product_subtree(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	session: &SessionInfo,
 	product_id: &ProductId,
 ) -> Result<Option<[u8; 32]>, AuthorityError> {
 	let stored = storage
-		.read_core_storage(product_subtree_key(session, product_id)?)
+		.read(product_subtree_key(session, product_id)?)
 		.await
 		.map_err(storage_error)?;
 	Ok(stored.and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok()))
@@ -32,25 +32,25 @@ pub async fn read_product_subtree(
 
 /// Persist `product_id`'s subtree public key.
 pub async fn write_product_subtree(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	session: &SessionInfo,
 	product_id: &ProductId,
 	public_key: [u8; 32],
 ) -> Result<(), AuthorityError> {
 	storage
-		.write_core_storage(product_subtree_key(session, product_id)?, public_key.to_vec())
+		.write(product_subtree_key(session, product_id)?, public_key.to_vec())
 		.await
 		.map_err(storage_error)
 }
 
 /// Drop `product_id`'s persisted subtree key.
 pub async fn remove_product_subtree(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	session: &SessionInfo,
 	product_id: &ProductId,
 ) -> Result<(), AuthorityError> {
 	storage
-		.clear_core_storage(product_subtree_key(session, product_id)?)
+		.clear(product_subtree_key(session, product_id)?)
 		.await
 		.map_err(storage_error)
 }

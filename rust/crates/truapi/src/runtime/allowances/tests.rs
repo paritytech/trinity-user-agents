@@ -12,21 +12,24 @@ struct MemStorage {
 impl CoreStorage for MemStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(
+		&self,
+		key: crate::platform::StackStorageKey,
+	) -> Result<(), GenericError> {
 		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
 		Ok(())
 	}
@@ -49,7 +52,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -58,7 +61,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		.await
 		.unwrap();
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::StatementStore,
@@ -69,7 +72,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
@@ -80,7 +83,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::StatementStore
@@ -91,7 +94,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("other.dot"),
 				AllowanceResource::Bulletin
@@ -110,7 +113,7 @@ fn clears_session_allowance_keys() {
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -118,10 +121,12 @@ fn clears_session_allowance_keys() {
 		)
 		.await
 		.unwrap();
-		clear_session_allowance_keys(&storage, &session).await.unwrap();
+		clear_session_allowance_keys(&crate::test_support::test_storage(&storage), &session)
+			.await
+			.unwrap();
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin

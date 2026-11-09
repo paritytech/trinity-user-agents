@@ -126,14 +126,18 @@ impl PairingHost {
 				chain: services.chain.clone(),
 				session_state: session_state.clone(),
 				session,
-				consent: ProductConsent::new(services.platform.clone()),
+				consent: ProductConsent::new(services.platform.clone(), services.stack().clone()),
 				grants: HostGrantStore::new(
 					services.platform.clone(),
+					services.stack().clone(),
 					GrantKeeping::Paired,
 					session_state,
 				),
 				ring_resolver: ChainRingResolver::new(services.chain.clone()),
-				ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
+				ring_vrf_registry: RingVrfRegistryStore::new(
+					services.platform.clone(),
+					services.stack().clone(),
+				),
 				#[cfg(feature = "test-host")]
 				submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 				weak_self: weak_self.clone(),

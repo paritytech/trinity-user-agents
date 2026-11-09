@@ -49,7 +49,8 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProviderError, ScannerPlatform, StackStorageKey, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -799,9 +800,13 @@ fn hex_key(bytes: &[u8; 32]) -> String {
 	bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Stable string key for a typed core-storage slot.
-fn core_key(key: &CoreStorageKey) -> String {
-	match key {
+/// Stable string key for a typed core-storage slot of one stack.
+fn core_key(key: &StackStorageKey) -> String {
+	format!("{}@{}", slot_key(&key.slot), key.stack)
+}
+
+fn slot_key(slot: &CoreStorageKey) -> String {
+	match slot {
 		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
 		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
 		CoreStorageKey::PermissionAuthorization { scope, request } => {
@@ -925,7 +930,7 @@ impl ProductStorage for MockPlatform {
 impl CoreStorage for MockPlatform {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 	) -> Result<Option<Vec<u8>>, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
 			return Err(latest::GenericError { reason: reason.clone() });
@@ -935,7 +940,7 @@ impl CoreStorage for MockPlatform {
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
@@ -945,7 +950,7 @@ impl CoreStorage for MockPlatform {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), latest::GenericError> {
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
@@ -985,6 +990,9 @@ impl Notifications for MockPlatform {
 	}
 }
 
+/// Identity of every [`mock_stack`].
+pub const MOCK_STACK_ID: &str = "mock";
+
 /// A stack for tests that need particular genesis hashes: network `mock`
 /// under the `paseo` TLD, without a relay.
 pub fn mock_stack(
@@ -992,8 +1000,12 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: Option<truapi::Bytes32>,
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: MOCK_STACK_ID.to_string(),
+		generation: "mock".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
+	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
 		.expect("a mock stack names no reserved value")
 }
 

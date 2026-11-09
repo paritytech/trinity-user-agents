@@ -1,6 +1,10 @@
+use parity_scale_codec::Encode;
+use truapi::latest::GenericError;
+
 use super::*;
-use crate::test_support::{
-	sign_test_descriptor, test_descriptor, test_descriptor_chain, test_stack_link,
+use crate::{
+	platform::{CoreStorageKey, ProductId, StackStorageKey},
+	test_support::{sign_test_descriptor, test_descriptor, test_descriptor_chain, test_stack_link},
 };
 
 const POLKADOT_PEOPLE: [u8; 32] = [
@@ -19,6 +23,10 @@ fn bundled(
 ) -> Result<Stack, StackError> {
 	let (pointer, bytes) = sign_test_descriptor(descriptor);
 	Stack::bundled(&pointer, &bytes, allows_reserved_values)
+}
+
+fn identity() -> StackIdentity {
+	StackIdentity { id: "stack".to_string(), generation: "generation".to_string() }
 }
 
 fn info(
@@ -116,7 +124,7 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 	let tlds = ["kusama", "", ".paseo", "Paseo"];
 
 	assert_eq!(
-		tlds.map(|tld| Stack::new("paseo".into(), tld.into(), chains.clone(), true)),
+		tlds.map(|tld| Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true)),
 		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
 	);
 	assert_eq!(
@@ -160,9 +168,111 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 
 	assert_eq!(
 		(
-			Stack::new("polkadot".into(), "paseo".into(), chains.clone(), false).err(),
-			Stack::new("polkadot".into(), "paseo".into(), chains, true).is_ok(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains.clone(), false).err(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains, true).is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
+}
+
+/// Host storage that keeps whatever key it is given.
+#[derive(Default)]
+struct MemoryStorage(std::sync::Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl CoreStorage for MemoryStorage {
+	async fn read_core_storage(
+		&self,
+		key: StackStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: StackStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+		Ok(())
+	}
+
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
+}
+
+/// The session, a stored permission, a cached manifest and the device key:
+/// one slot of each kind the core keeps.
+fn slots() -> [CoreStorageKey; 4] {
+	let product = ProductId::for_test("app.paseo");
+	[
+		CoreStorageKey::AuthSession,
+		CoreStorageKey::identity_disclosure_authorization(&product),
+		CoreStorageKey::product_manifest(&product),
+		CoreStorageKey::DeviceEncryptionKey,
+	]
+}
+
+async fn read_slots(storage: &StackStorage<'_, MemoryStorage>) -> [Option<Vec<u8>>; 4] {
+	let mut values = [const { None }; 4];
+	for (value, slot) in values.iter_mut().zip(slots()) {
+		*value = storage.read(slot).await.expect("memory storage reads");
+	}
+	values
+}
+
+/// A reader keys what it stores by the stack's identity, and drops chain
+/// caches when the generation changes, so both come from the bundled copy.
+#[test]
+fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
+	let (link, _) = sign_test_descriptor(&descriptor);
+	let stack = bundled(&descriptor, false).expect("stack is valid");
+
+	assert_eq!(
+		(stack.id(), stack.generation()),
+		(
+			Pointer::from_link(&link)
+				.expect("test link is a stack link")
+				.stack_id()
+				.as_str(),
+			descriptor["generation"].as_str().expect("test descriptor names a generation"),
+		)
+	);
+}
+
+/// A fork runs chains with its source's genesis hashes, so only the stack's
+/// identity tells their state apart. A user signed in on the source must not
+/// find that session, its permissions or its cached chain data on the fork.
+#[test]
+fn a_fork_and_its_source_share_no_stored_state() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: Some([0xc3; 32]),
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let stack = |id: &str| {
+		let identity = StackIdentity { id: id.to_string(), generation: "generation".to_string() };
+		Stack::new(identity, "paseo".into(), "paseo".into(), chains.clone(), false)
+			.expect("stack is valid")
+	};
+	let (source, fork) = (stack("source"), stack("fork"));
+	let host = MemoryStorage::default();
+
+	futures::executor::block_on(async {
+		let source = source.storage(&host);
+		for slot in slots() {
+			source.write(slot, b"source's".to_vec()).await.expect("memory storage writes");
+		}
+		let fork = fork.storage(&host);
+		assert_eq!(read_slots(&fork).await, [const { None }; 4]);
+
+		for slot in slots() {
+			fork.clear(slot).await.expect("memory storage clears");
+		}
+		assert_eq!(read_slots(&source).await, slots().map(|_| Some(b"source's".to_vec())));
+	});
 }

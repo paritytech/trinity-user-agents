@@ -31,7 +31,7 @@ pub use crate::{
 	product_id::{
 		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError},
+	stack::{Stack, StackChains, StackError, StackIdentity, StackStorage},
 };
 
 use truapi::{
@@ -1224,6 +1224,21 @@ pub enum CoreStorageKey {
 	FundingSupport,
 }
 
+/// A [`CoreStorageKey`] slot of one stack: the key a host stores core-owned
+/// state under.
+///
+/// `stack` is the stack's identity, [`Stack::id`]: its key in hex. Two stacks
+/// never share a key, even when their chains have the same genesis hashes, as
+/// a fork's and its source's do. A host stores every slot under the whole
+/// encoded key and never under the slot alone.
+#[derive(Encode, Decode)]
+pub struct StackStorageKey {
+	/// Identity of the stack the slot belongs to.
+	pub stack: String,
+	/// The slot.
+	pub slot: CoreStorageKey,
+}
+
 /// Permission storage payload, whose targets can be bare manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum StoredPermissionRequest {
@@ -1263,12 +1278,15 @@ impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
 	}
 }
 
-/// Stable metadata describing one strictly decoded [`CoreStorageKey`].
+/// Stable metadata describing one strictly decoded [`StackStorageKey`].
 ///
-/// `kind` is the Rust variant name and is part of the host embedding contract.
-/// `owner` distinguishes full product identities from shared manifest labels.
+/// `kind` is the Rust variant name of the slot and is part of the host
+/// embedding contract. `owner` distinguishes full product identities from
+/// shared manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
+	/// Identity of the stack the slot belongs to.
+	pub stack: String,
 	/// Stable storage-key variant name.
 	pub kind: &'static str,
 	/// Product or manifest label that owns this slot.
@@ -1284,29 +1302,29 @@ pub enum CoreStorageKeyOwner {
 	ProductLabel(String),
 }
 
-/// Failure to decode exactly one [`CoreStorageKey`].
+/// Failure to decode exactly one [`StackStorageKey`].
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum CoreStorageKeyDescriptionError {
 	/// The bytes are not a valid SCALE-encoded key.
-	#[display("invalid CoreStorageKey encoding")]
+	#[display("invalid StackStorageKey encoding")]
 	InvalidEncoding,
 	/// A valid key was followed by additional bytes.
-	#[display("CoreStorageKey encoding contains trailing bytes")]
+	#[display("StackStorageKey encoding contains trailing bytes")]
 	TrailingBytes,
 }
 
-/// Strictly decode one SCALE-encoded [`CoreStorageKey`] and return stable
+/// Strictly decode one SCALE-encoded [`StackStorageKey`] and return stable
 /// metadata suitable for choosing host-private storage policy.
 pub fn describe_core_storage_key(
 	encoded: &[u8],
 ) -> Result<CoreStorageKeyDescription, CoreStorageKeyDescriptionError> {
 	let mut input = encoded;
-	let key = CoreStorageKey::decode(&mut input)
+	let StackStorageKey { stack, slot } = StackStorageKey::decode(&mut input)
 		.map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
-	let (kind, owner) = match key {
+	let (kind, owner) = match slot {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
 		CoreStorageKey::PermissionAuthorization { scope, .. } => {
@@ -1338,7 +1356,7 @@ pub fn describe_core_storage_key(
 		},
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
 	};
-	Ok(CoreStorageKeyDescription { kind, owner })
+	Ok(CoreStorageKeyDescription { stack, kind, owner })
 }
 
 impl CoreStorageKey {
@@ -1543,6 +1561,10 @@ mod tests;
 
 /// Host-private persistence for core-owned state.
 ///
+/// Every key names the stack its slot belongs to. The core reads and writes
+/// only the stack it runs, so what a host stored for one stack is never read
+/// for another.
+///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run
 /// has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1558,18 +1580,20 @@ mod tests;
 #[async_trait::async_trait]
 pub trait CoreStorage: Send + Sync {
 	/// Read a core-owned value by typed slot.
-	async fn read_core_storage(&self, key: CoreStorageKey)
-	-> Result<Option<Vec<u8>>, GenericError>;
+	async fn read_core_storage(
+		&self,
+		key: StackStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError>;
 
 	/// Write a core-owned value by typed slot.
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError>;
 
 	/// Clear a core-owned value by typed slot.
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError>;
 }
 
 /// Decoded session fields a host shell needs to render account UI without

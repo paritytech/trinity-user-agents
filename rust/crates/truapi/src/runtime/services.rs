@@ -20,7 +20,8 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, StackStorage,
+		TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
@@ -270,6 +271,11 @@ impl RuntimeServices {
 	/// The stack the host runs.
 	pub fn stack(&self) -> &Stack {
 		&self.stack
+	}
+
+	/// The stack's slots in the host's storage.
+	pub fn storage(&self) -> StackStorage<'_, dyn Platform> {
+		self.stack.storage(self.platform.as_ref())
 	}
 
 	/// The Asset Hub dotNS reads run against, when the stack has one.
@@ -522,10 +528,8 @@ impl RuntimeServices {
 	/// second secret and overwriting the one peers were told to address.
 	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
 		let _guard = self.device_encryption_key.lock().await;
-		crate::host_logic::device_key::read_or_create_device_encryption_secret(
-			self.platform.as_ref(),
-		)
-		.await
+		crate::host_logic::device_key::read_or_create_device_encryption_secret(&self.storage())
+			.await
 	}
 
 	/// Allocate the next per-product-runtime id, used to scope chain follow
