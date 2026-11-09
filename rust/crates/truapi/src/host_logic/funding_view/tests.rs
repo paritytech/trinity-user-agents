@@ -1,4 +1,6 @@
-use truapi::latest::{FundingDirection, FundingFailure, FundingPayout, FundingQuote, FundingRail};
+use truapi::latest::{
+	FundingDirection, FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote, FundingRail,
+};
 
 use super::*;
 use crate::{
@@ -447,4 +449,27 @@ fn fiat_is_told_from_crypto_by_iso_code() {
 		assert_eq!(asset_is_fiat(code), fiat, "{code}");
 	}
 	assert!(ISO_4217.windows(2).all(|pair| pair[0] < pair[1]), "sorted for binary search");
+}
+
+// Divergence "Sent funds button": the fact behind it holds on a bank top-up
+// only; an App route gets the path inside the App.
+#[test]
+fn a_frame_knows_its_app_path_and_whether_the_user_transfers() {
+	let app = |route: &str| FundingFrameTarget::App { route: route.to_string() };
+	let page =
+		FundingFrameTarget::Page { url: "https://pay.example".to_string(), return_url: None };
+	let cases = [
+		(app("kyc"), FundingDirection::In, Some(FundingRail::Bank), Some("/kyc"), true),
+		(app("/card?x=1"), FundingDirection::In, Some(FundingRail::Card), Some("/card?x=1"), false),
+		(app("#pay"), FundingDirection::Out, Some(FundingRail::Bank), Some("#pay"), false),
+		(page, FundingDirection::In, None, None, false),
+	];
+	for (target, direction, rail, path, transfer) in cases {
+		let context = frame_context(&target, direction, rail);
+		assert_eq!(
+			(context.app_path.as_deref(), context.awaits_user_transfer),
+			(path, transfer),
+			"{target:?}"
+		);
+	}
 }

@@ -2726,6 +2726,7 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		self.framed.lock().expect("framed mutex poisoned").push(target);
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
@@ -3019,6 +3020,7 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -3073,6 +3075,7 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -3323,6 +3326,7 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -8116,6 +8120,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			has_app: None,
 		}])
 		.expect("provider offered");
 }
@@ -8649,6 +8654,64 @@ fn a_provider_frame_opens_only_https_pages() {
 	);
 }
 
+// Divergence "Frame auto-close with no session": a provider's frame closes
+// once the session's payment moved, and stays open for a session the core
+// does not hold.
+#[test]
+fn a_provider_frame_closes_once_the_payment_moved() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let provider = ProductContext::new(ProductId::for_test("ramp.dot"));
+	let _frame = services.funding().track_frame(&intent, provider.clone());
+	let _unknown = services.funding().track_frame("fs_unknown", provider);
+	let closed = || platform.closed.lock().expect("closed mutex poisoned").clone();
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment),
+	)
+	.expect("awaiting");
+	let before = closed();
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: false,
+			mismatch: None,
+		}),
+	)
+	.expect("received");
+
+	assert_eq!(
+		(
+			before,
+			eventually(5, || closed() == vec![intent.clone()]),
+			services.funding().payment_moved("fs_unknown")
+		),
+		(Vec::<String>::new(), true, false)
+	);
+}
+
 // A provider without an App shows external pages only, so the core refuses
 // an App route of its before the host sees it.
 #[test]
@@ -8889,6 +8952,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				})
 				.to_vec(),
 		)
@@ -8965,6 +9029,7 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			has_app: None,
 		}])
 		.expect("providers offered");
 	let intent = futures::executor::block_on(services.open_funding(
@@ -9016,6 +9081,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				})
 				.to_vec(),
 		)
@@ -9136,6 +9202,7 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			has_app: None,
 		}])
 		.expect("providers offered");
 
@@ -9288,6 +9355,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
 		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+		has_app: None,
 	};
 	services
 		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
@@ -9357,11 +9425,13 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				},
 			])
 			.expect("providers offered");
@@ -9932,6 +10002,7 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -11277,6 +11348,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				})
 				.to_vec(),
 		)
@@ -11696,6 +11768,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					has_app: None,
 				})
 				.collect(),
 		)

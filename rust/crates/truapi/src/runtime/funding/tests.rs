@@ -591,6 +591,7 @@ impl FundingPlatform for ReentrantHost {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -687,6 +688,7 @@ impl FundingPlatform for SilentPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}

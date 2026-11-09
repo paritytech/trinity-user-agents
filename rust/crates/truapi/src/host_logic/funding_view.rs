@@ -6,7 +6,8 @@
 //! These are facts and rules only. Each host decides how to present them.
 
 use truapi::latest::{
-	FundingDirection, FundingFailure, FundingPayout, FundingQuote, FundingQuoteRefusal, FundingRail,
+	FundingDirection, FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote,
+	FundingQuoteRefusal, FundingRail,
 };
 
 use crate::{
@@ -15,10 +16,31 @@ use crate::{
 		funding_providers::{CASH_DECIMALS, FundingAmountLimits, FundingCandidate},
 	},
 	platform::{
-		FundingAmountIssue, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable,
-		FundingQuotesRefusal,
+		FundingAmountIssue, FundingFrameContext, FundingQuoteRow, FundingQuoteState,
+		FundingQuoteUnavailable, FundingQuotesRefusal,
 	},
 };
+
+/// The frame facts for `target` in a session moving value in `direction` by
+/// `rail`: the path an App route opens at, and whether the user makes the
+/// transfer themselves, outside the frame, as on a bank top-up.
+pub fn frame_context(
+	target: &FundingFrameTarget,
+	direction: FundingDirection,
+	rail: Option<FundingRail>,
+) -> FundingFrameContext {
+	let app_path = match target {
+		FundingFrameTarget::App { route } if route.starts_with('/') || route.starts_with('#') => {
+			Some(route.clone())
+		},
+		FundingFrameTarget::App { route } => Some(format!("/{route}")),
+		FundingFrameTarget::Page { .. } => None,
+	};
+	FundingFrameContext {
+		app_path,
+		awaits_user_transfer: rail == Some(FundingRail::Bank) && direction == FundingDirection::In,
+	}
+}
 
 /// The rails in core order, which decides the default one.
 pub const FUNDING_RAIL_ORDER: [FundingRail; 3] =

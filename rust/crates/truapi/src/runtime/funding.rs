@@ -425,6 +425,8 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
+	/// The provider frames open, by session, with the provider showing each.
+	frames: Mutex<HashMap<String, ProductContext>>,
 }
 
 impl FundingRegistry {
@@ -745,6 +747,48 @@ impl FundingRegistry {
 			Some(session) => session.is_terminal().then(|| session.wire_item()),
 			None => held.pack.get(intent).map(|packed| packed.summary.wire_item()),
 		}
+	}
+
+	/// Every session held in full whose overlay is no longer up: those the
+	/// host has heard of.
+	pub fn announced(&self) -> Vec<FundingSession> {
+		let held = self.lock_held();
+		held.sessions
+			.values()
+			.filter(|session| !held.presenting.contains_key(&session.intent))
+			.cloned()
+			.collect()
+	}
+
+	/// Whether session `intent`'s payment moved, so its provider's frame is
+	/// done: it ended, held in full or compacted, or reached a milestone past
+	/// Started. `false` for a session the core does not hold.
+	pub fn payment_moved(&self, intent: &str) -> bool {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
+			Some(session) => session.payment_moved(),
+			None => held.pack.contains_key(intent),
+		}
+	}
+
+	/// Track the frame `provider` shows for session `intent` until the
+	/// returned guard drops, so the core can close it once the payment moved.
+	/// One that already moved is closed as soon as the session next changes.
+	pub fn track_frame(&self, intent: &str, provider: ProductContext) -> FrameTrack<'_> {
+		lock(&self.frames).insert(intent.to_string(), provider);
+		FrameTrack { registry: self, intent: intent.to_string() }
+	}
+
+	/// Close session `intent`'s provider frame through `platform` if one is
+	/// open and its payment moved, once.
+	fn close_moved_frame(&self, platform: &dyn FundingPlatform, intent: &str) {
+		if !self.payment_moved(intent) {
+			return;
+		}
+		let Some(provider) = lock(&self.frames).remove(intent) else {
+			return;
+		};
+		platform.close_provider_frame(&provider, intent.to_string());
 	}
 
 	/// The sessions whose overlay is up.
@@ -1603,6 +1647,7 @@ impl FundingRegistry {
 			let feed = self.feed();
 			match next {
 				Some(Announcement::Session(intent, item, queued)) => {
+					self.close_moved_frame(platform.as_ref(), &intent);
 					platform.funding_session_changed(intent.clone(), item.clone());
 					if let Some(feed) = feed {
 						// The record the session has now, or the one it was
@@ -1649,6 +1694,18 @@ impl FundingRegistry {
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
+	}
+}
+
+/// A provider frame the registry tracks, until it drops.
+pub struct FrameTrack<'a> {
+	registry: &'a FundingRegistry,
+	intent: String,
+}
+
+impl Drop for FrameTrack<'_> {
+	fn drop(&mut self) {
+		lock(&self.registry.frames).remove(&self.intent);
 	}
 }
 

@@ -1582,6 +1582,19 @@ impl FundingSession {
 		!self.started.is_empty() || self.funds_moving()
 	}
 
+	/// Whether the provider's part in front of the user is done, so a frame
+	/// it shows for the session can close: the session ended, or it reached a
+	/// milestone past Started.
+	pub fn payment_moved(&self) -> bool {
+		if !matches!(self.stage, FundingStage::Open) {
+			return true;
+		}
+		self.progress(self.opened_at_ms)
+			.steps
+			.iter()
+			.any(|step| step.step != FundingStep::Started && step.reached_at_ms.is_some())
+	}
+
 	/// Whether money moved for the session: the provider started funds for
 	/// it or saw the user's payment. From then on nothing but the provider
 	/// ends the session: a cancel is a request it answers, and no deadline

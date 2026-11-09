@@ -15,6 +15,7 @@ use truapi::latest::{FundingDirection, FundingRail};
 
 use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
+use tracing::warn;
 
 use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
 use crate::{
@@ -23,7 +24,7 @@ use crate::{
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
 			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
-			LearnedSupport, LimitScope, amount_limits, country_support,
+			LearnedSupport, LimitScope, amount_limits, country_support, provider_config,
 		},
 		funding_view,
 		worker_manifest::WorkerManifest,
@@ -40,6 +41,8 @@ struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
 	origin: FundingProviderOrigin,
+	/// Whether it ships an App, when the host said.
+	has_app: Option<bool>,
 	/// What dotNS last said the provider publishes: its Worker manifest, or
 	/// `None` for nothing usable. `None` until dotNS has answered.
 	live: Option<Option<WorkerManifest>>,
@@ -74,6 +77,9 @@ pub struct FundingProviders {
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
 	changed: WakeSignal,
+	/// The providers the host's configuration last listed, so a refresh
+	/// that lists the same ones changes nothing.
+	configured: Mutex<Option<Vec<FundingProviderEntry>>>,
 }
 
 impl FundingProviders {
@@ -217,6 +223,14 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
+	/// Whether `provider_id` ships an App, when the host said so.
+	pub fn has_app(&self, provider_id: &ProductId) -> Option<bool> {
+		lock(&self.entries)
+			.iter()
+			.find(|entry| entry.product_id == *provider_id)
+			.and_then(|entry| entry.has_app)
+	}
+
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)
@@ -260,6 +274,28 @@ impl RuntimeServices {
 			self.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
+		Ok(())
+	}
+
+	/// Offer the providers the host's remote configuration lists by name,
+	/// then the `bundled` ones it does not name. A name that is not a
+	/// product id is skipped and logged. A call listing what the last one
+	/// did changes nothing, so the host can call it on every refresh.
+	pub fn set_funding_provider_config(
+		self: &Arc<Self>,
+		published_names: Vec<String>,
+		bundled: Vec<FundingProviderEntry>,
+	) -> Result<(), FundingSessionError> {
+		let (entries, invalid) = provider_config(&published_names, bundled);
+		for name in invalid {
+			warn!(%name, "funding provider configuration names no product");
+		}
+		let mut configured = lock(&self.funding_providers().configured);
+		if configured.as_ref() == Some(&entries) {
+			return Ok(());
+		}
+		self.set_funding_providers(entries.clone())?;
+		*configured = Some(entries);
 		Ok(())
 	}
 
@@ -492,6 +528,7 @@ fn offered_providers(
 				product_id,
 				snapshot,
 				origin: entry.origin,
+				has_app: entry.has_app,
 				live: None,
 				reading: false,
 			});

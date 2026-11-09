@@ -800,6 +800,12 @@ impl SigningHostRuntime {
 		self.services.funding().install_feed(feed)
 	}
 
+	/// Role-neutral services shared with every product runtime.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
+		&self.services
+	}
+
 	/// Every ended funding session, as summaries newest first: the ones
 	/// held in full and the ones compacted, which are kept for good. The
 	/// host reads it whenever it shows history.
