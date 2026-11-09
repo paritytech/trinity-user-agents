@@ -9,7 +9,7 @@ use super::{
 	authority::{AuthoritySession, authority_session},
 	connected_session_ui_info,
 	identity::resolve_session_identity_with_chain,
-	services::RuntimeServices,
+	services::{DotnsReads, RuntimeServices},
 	sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey},
 	statement_store_rpc::StatementStoreRpc,
 	vrf,
@@ -129,6 +129,9 @@ pub struct SsoRequestService {
 	platform: Arc<dyn Platform>,
 	host_config: PairingHostConfig,
 	chain: ChainRuntime,
+	/// dotNS reads shared with the rest of this host, so username lookups that
+	/// overlap read once.
+	dotns_reads: DotnsReads,
 	session_state: Arc<SessionState>,
 	session_store_changes: Arc<SessionStoreChangeNotifier>,
 	auth_state: AuthStateMachine,
@@ -169,6 +172,7 @@ impl SsoRequestService {
 			platform,
 			host_config,
 			chain: services.chain.clone(),
+			dotns_reads: services.dotns_reads.clone(),
 			session_state: SessionState::new(),
 			session_store_changes: SessionStoreChangeNotifier::new(),
 			auth_state,
@@ -286,6 +290,7 @@ impl SsoRequestService {
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.stack.chains().asset_hub,
 			session,
@@ -343,6 +348,7 @@ impl SsoRequestService {
 			},
 		};
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.stack.chains().asset_hub,
 			session,
@@ -574,6 +580,7 @@ impl SsoRequestService {
 		}
 
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.stack.chains().asset_hub,
 			current.clone(),

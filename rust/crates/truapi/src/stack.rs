@@ -114,6 +114,16 @@ pub enum StackError {
 		/// The missing role.
 		chain: ChainIdentifier,
 	},
+	/// The Relay or Asset Hub genesis hash is all zero, which names no chain.
+	/// A stack without one of them leaves the role out.
+	#[display(
+		"stack {} chain has an all-zero genesis hash; leave the role out instead",
+		<&str>::from(*chain)
+	)]
+	ZeroGenesis {
+		/// The role with the all-zero hash.
+		chain: ChainIdentifier,
+	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
 	UnsupportedTld {
@@ -174,7 +184,8 @@ impl Stack {
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's.
 	///
-	/// Applies the same TLD and reserved-value rules as [`Self::bundled`].
+	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
+	/// refuses an all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
 		identity: StackIdentity,
 		network: String,
@@ -185,11 +196,19 @@ impl Stack {
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
+		let StackChains { relay, asset_hub, people, bulletin } = chains;
+		let optional_roles =
+			[(ChainIdentifier::Relay, relay), (ChainIdentifier::AssetHub, asset_hub)];
+		if let Some((chain, _)) = optional_roles
+			.into_iter()
+			.find(|(_, genesis_hash)| *genesis_hash == Some([0; 32]))
+		{
+			return Err(StackError::ZeroGenesis { chain });
+		}
 		if !allows_reserved_values {
 			if tld == RESERVED_TLD {
 				return Err(StackError::ReservedTld);
 			}
-			let StackChains { relay, asset_hub, people, bulletin } = chains;
 			refuse_reserved_genesis(
 				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
 			)?;
@@ -220,8 +239,8 @@ impl Stack {
 	}
 
 	/// The dotNS TLD without the leading dot. The signing role derives every
-	/// reserved RFC-0022 identity under it: `uid.<tld>` for the identity
-	/// account, `peopl.<tld>` for the person ring-VRF keys.
+	/// reserved RFC-0022 identity under it: `peopl.<tld>` for the identity
+	/// account and for the person ring-VRF keys.
 	pub fn tld(&self) -> &str {
 		&self.tld
 	}

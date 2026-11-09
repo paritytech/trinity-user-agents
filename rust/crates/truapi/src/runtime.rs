@@ -37,6 +37,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod single_flight;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;

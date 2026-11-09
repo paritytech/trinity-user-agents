@@ -442,7 +442,7 @@ impl WalletKeys {
 		derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id.as_str()])
 	}
 
-	/// The network's RFC-0022 `uid.<suffix>` statement identity with the SSO
+	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO
 	/// encryption key, and the identity chat key.
 	fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
 		let statement = derive_identity_keypair(&self.entropy, &self.network_suffix)?;

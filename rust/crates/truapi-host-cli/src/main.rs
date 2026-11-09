@@ -294,7 +294,7 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
-	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// Attest a mnemonic's `peopl.<tld>` identity for a lite username, wait until
 	/// it is a personhood ring member, and print `{address, publicKey,
 	/// liteUsername}` as one JSON line. For e2e suites that hold their own
 	/// test mnemonics; the account store is not touched.
@@ -1334,9 +1334,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
+		network.core_stack().context("invalid stack")?,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1881,10 +1879,7 @@ fn build_signing_runtime(
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
-		network.tld().to_string(),
+		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
