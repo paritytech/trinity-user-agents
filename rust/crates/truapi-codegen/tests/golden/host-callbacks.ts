@@ -354,6 +354,41 @@ export interface ExtensionVersionMap {
 }
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export type FundingAmountIssue =
+  /**
+   * A withdrawal of more than the user can spend.
+   */
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
+
+/**
+ * Facts about the session a provider frame is shown for.
+ */
+export interface FundingFrameContext {
+  /**
+   * For an App route, the path inside the provider's App origin: the
+   * route itself when it starts with `/` or `#`, otherwise the route after
+   * a `/`. ``undefined`` for an external page.
+   */
+  appPath?: string;
+
+  /**
+   * Whether the session waits on a transfer the user makes outside the
+   * frame: an inbound bank deposit.
+   */
+  awaitsUserTransfer: boolean;
+}
+
+/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -407,6 +442,26 @@ export interface FundingQuoteList {
    * row keeps its answer until the provider answers again.
    */
   refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuotesRefusal;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
 }
 
 /**
@@ -454,6 +509,24 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
+
+/**
+ * Why no provider can serve an ask, when every one of them gave the same
+ * reason.
+ */
+export type FundingQuotesRefusal =
+  /**
+   * No provider answered in time.
+   */
+  | { tag: "Timeout"; value?: undefined }
+  /**
+   * No provider serves the user's country.
+   */
+  | { tag: "CountryUnsupported"; value?: undefined }
+  /**
+   * Every provider refused with this message.
+   */
+  | { tag: "Other"; value: { message: string } };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -1192,6 +1265,29 @@ export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
 );
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
+);
+
+/**
+ * Facts about the session a provider frame is shown for.
+ */
+export const FundingFrameContext: S.Codec<FundingFrameContext> = S.lazy(
+  (): S.Codec<FundingFrameContext> =>
+    S.Struct({
+      appPath: S.Option(S.str),
+      awaitsUserTransfer: S.bool,
+    }) as S.Codec<FundingFrameContext>,
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1220,6 +1316,9 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(ProductId),
       refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuotesRefusal),
+      issue: S.Option(FundingAmountIssue),
     }) as S.Codec<FundingQuoteList>,
 );
 
@@ -1260,6 +1359,19 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
         reason: FundingQuoteRefusal;
       }>,
       Timeout: S._void,
+    }),
+);
+
+/**
+ * Why no provider can serve an ask, when every one of them gave the same
+ * reason.
+ */
+export const FundingQuotesRefusal: S.Codec<FundingQuotesRefusal> = S.lazy(
+  (): S.Codec<FundingQuotesRefusal> =>
+    S.TaggedUnion({
+      Timeout: S._void,
+      CountryUnsupported: S._void,
+      Other: S.Struct({ message: S.str }) as S.Codec<{ message: string }>,
     }),
 );
 
@@ -1993,12 +2105,15 @@ export interface FundingPlatform {
    * Show `target` for `provider`'s session `intent` in a frame the host
    * owns, and answer once it closes. A page is an https URL the core has
    * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL.
+   * `Returned` when the page reaches its return URL. `context` carries
+   * facts about the session the frame is for. The core closes the frame itself, through
+   * `Self::close_provider_frame`, once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
     intent: string,
     target: FundingFrameTarget,
+    context: FundingFrameContext,
   ): Promise<FundingFrameOutcome>;
 
   /**

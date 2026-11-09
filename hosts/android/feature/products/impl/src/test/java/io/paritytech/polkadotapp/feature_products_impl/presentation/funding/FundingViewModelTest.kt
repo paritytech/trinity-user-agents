@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
@@ -71,7 +70,6 @@ class FundingViewModelTest {
         coEvery { spendable(any()) } returns null
         every { options("intent") } returns pushedOptions
         coEvery { selectOptions("intent", any()) } returns Unit
-        coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
         every { session("intent") } returns flowOf(null)
@@ -229,7 +227,7 @@ class FundingViewModelTest {
     fun `the core is told each selection, and the amount limits it pushes back reach the amount screen`() = runTest(testDispatcher) {
         val model = viewModel()
         advanceUntilIdle()
-        coVerify { interactor.selectOptions("intent", FundingSelection(FundingRail.CARD, "EUR", null, "DE")) }
+        coVerify { interactor.selectOptions("intent", FundingSelection(FundingRail.CARD, "EUR", null, "DE", "EUR")) }
 
         pushedOptions.value = options(cardCandidate(), min = "20000000")
         advanceUntilIdle()
@@ -239,12 +237,21 @@ class FundingViewModelTest {
         cancelTicker(model)
     }
 
-    private fun options(vararg candidates: FundingCandidate, min: String? = null) = FundingOptions(
-        candidates = candidates.toList(),
-        countries = emptyList(),
-        limits = FundingAmountLimits(min = min, max = null),
-        networks = emptyList(),
-    )
+    // What the core offers: card with the user's currency, or crypto, on the country it detected.
+    private fun options(vararg candidates: FundingCandidate, min: String? = null): FundingOptions {
+        val rail = candidates.first().routes.first().rail
+        return FundingOptions(
+            candidates = candidates.toList(),
+            countries = emptyList(),
+            limits = FundingAmountLimits(min = min, max = null),
+            networks = emptyList(),
+            rails = listOf(rail),
+            defaultRail = rail,
+            asset = "EUR".takeIf { rail == FundingRail.CARD },
+            tokens = emptyList(),
+            detectedCountry = "DE",
+        )
+    }
 
     private fun cryptoCandidate(providerId: ProductId) = FundingCandidate(
         providerId = providerId,
@@ -282,8 +289,15 @@ class FundingViewModelTest {
         assetDecimals = 2u,
     )
 
-    private fun list(vararg rows: FundingQuoteRow, best: ProductId?) =
-        FundingQuoteList(requestId = 1uL, rows = rows.toList(), best = best, refreshAtMs = 60_000uL)
+    private fun list(vararg rows: FundingQuoteRow, best: ProductId?) = FundingQuoteList(
+        requestId = 1uL,
+        rows = rows.toList(),
+        best = best,
+        refreshAtMs = 60_000uL,
+        amount = "50000000",
+        refusal = null,
+        issue = null,
+    )
 
     private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 

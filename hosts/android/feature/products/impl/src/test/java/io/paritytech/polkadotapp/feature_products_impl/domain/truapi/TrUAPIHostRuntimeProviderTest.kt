@@ -15,7 +15,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedP
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.pinnedCard
 import io.paritytech.polkadotapp.test_shared.testDispatchers
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
@@ -40,7 +40,7 @@ class TrUAPIHostRuntimeProviderTest {
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
     private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
-    private val configuredProviders = CompletableDeferred<Result<List<ProductId>>>()
+    private val configuredNames = MutableSharedFlow<List<String>>()
     private var bundledProviders = emptyList<FundingProviderEntry>()
     private val paseo = requireNotNull(DotNsTld.parse("paseo"))
 
@@ -61,56 +61,40 @@ class TrUAPIHostRuntimeProviderTest {
     }
 
     @Test
-    fun `lists the bundled providers at once and the configured ones once remote config arrives`() = runTest {
-        val bundledOnly = bundled("fundtest.dot")
-        val bundledAlsoConfigured = bundled("ramp.dot")
-        bundledProviders = listOf(bundledAlsoConfigured, bundledOnly)
-        provider().runtime().getOrThrow()
-        runCurrent()
-
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(any()) }
-        verify { nativeRuntime.setFundingProviders(bundledProviders) }
-
-        configuredProviders.complete(Result.success(listOf(id("ramp.dot"), id("other.dot"))))
-        runCurrent()
-
-        verify {
-            nativeRuntime.setFundingProviders(listOf(published("ramp.dot"), published("other.dot"), bundledOnly))
-        }
-    }
-
-    @Test
-    fun `keeps the bundled providers when remote config cannot be read`() = runTest {
+    fun `offers the bundled providers at once and the configured ones on every remote config refresh`() = runTest {
         bundledProviders = listOf(bundled("fundtest.dot"))
         provider().runtime().getOrThrow()
-
-        configuredProviders.complete(Result.failure(IllegalStateException("offline")))
         runCurrent()
 
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(bundledProviders) }
-        verify(exactly = 1) { nativeRuntime.setFundingProviders(any()) }
+        verify(exactly = 1) { nativeRuntime.setFundingProviderConfig(emptyList(), bundledProviders) }
+
+        configuredNames.emit(listOf("ramp.dot", "other.dot"))
+        configuredNames.emit(listOf("ramp.dot"))
+        runCurrent()
+
+        verify { nativeRuntime.setFundingProviderConfig(listOf("ramp.dot", "other.dot"), bundledProviders) }
+        verify { nativeRuntime.setFundingProviderConfig(listOf("ramp.dot"), bundledProviders) }
     }
 
     @Test
-    fun `lists nothing before remote config when no provider is bundled`() = runTest {
+    fun `offers nothing before remote config when no provider is bundled`() = runTest {
         provider().runtime().getOrThrow()
         runCurrent()
 
-        verify(exactly = 0) { nativeRuntime.setFundingProviders(any()) }
+        verify(exactly = 0) { nativeRuntime.setFundingProviderConfig(any(), any()) }
 
-        configuredProviders.complete(Result.success(listOf(id("ramp.dot"))))
+        configuredNames.emit(listOf("ramp.dot"))
         runCurrent()
 
-        verify { nativeRuntime.setFundingProviders(listOf(published("ramp.dot"))) }
+        verify { nativeRuntime.setFundingProviderConfig(listOf("ramp.dot"), emptyList()) }
     }
 
-    private fun id(name: String) = ProductId.parse(name).getOrThrow()
-
-    private fun published(name: String) =
-        FundingProviderEntry(productId = id(name), workerManifest = null, origin = FundingProviderOrigin.PUBLISHED)
-
-    private fun bundled(name: String) =
-        FundingProviderEntry(productId = id(name), workerManifest = "{}", origin = FundingProviderOrigin.BUNDLED)
+    private fun bundled(name: String) = FundingProviderEntry(
+        productId = ProductId.parse(name).getOrThrow(),
+        workerManifest = "{}",
+        origin = FundingProviderOrigin.BUNDLED,
+        hasApp = true,
+    )
 
     // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
     // name shows no cards offline. The name an earlier run read is the one this build's network has.
@@ -162,7 +146,7 @@ class TrUAPIHostRuntimeProviderTest {
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
         fundingBridge = mockk(relaxed = true),
         bundledProducts = mockk { every { fundingProviders() } returns bundledProviders },
-        fundingProvidersConfig = mockk { coEvery { getFundingProviderIds() } coAnswers { configuredProviders.await() } },
+        fundingProvidersConfig = mockk { every { publishedNames() } returns configuredNames },
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),

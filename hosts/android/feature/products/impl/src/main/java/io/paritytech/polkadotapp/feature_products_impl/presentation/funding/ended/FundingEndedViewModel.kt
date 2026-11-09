@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingActivityCenter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +26,6 @@ data class FundingEndedScreenState(
 @HiltViewModel
 class FundingEndedViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val activity: FundingActivityCenter,
     private val interactor: FundingFlowInteractor,
     private val presenter: FundingSessionPresenter,
     private val router: ProductsRouter,
@@ -36,15 +34,15 @@ class FundingEndedViewModel @Inject constructor(
     private val intent = savedStateHandle.get<String>(FundingEndedBottomSheet.INTENT).orEmpty()
 
     val state: StateFlow<LoadingState<FundingEndedScreenState>> = flow {
-        val record = activity.ended(intent)
-        if (record == null) {
+        val summary = interactor.endedSummary(intent)
+        val ended = summary?.let { FundingEndedMapper(interactor.cash()).map(it) }
+        if (summary == null || ended == null) {
             close()
             return@flow
         }
-        val ended = FundingEndedMapper(interactor.cash()).map(record)
-        emit(LoadingState.Loaded(FundingEndedScreenState(ended, record.direction, providerName = null)))
-        record.providerId?.let { providerId ->
-            emit(LoadingState.Loaded(FundingEndedScreenState(ended, record.direction, interactor.brand(providerId).name)))
+        emit(LoadingState.Loaded(FundingEndedScreenState(ended, summary.direction, providerName = null)))
+        summary.providerId?.let { providerId ->
+            emit(LoadingState.Loaded(FundingEndedScreenState(ended, summary.direction, interactor.brand(providerId).name)))
         }
     }.stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 

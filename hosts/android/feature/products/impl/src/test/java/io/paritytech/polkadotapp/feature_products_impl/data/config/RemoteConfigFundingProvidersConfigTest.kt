@@ -1,61 +1,44 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.config
 
-import com.google.gson.Gson
-import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi.ProductId
 
+// The core reads the names, dropping repeats and the ones that are not product ids; this only takes them out of the JSON.
 class RemoteConfigFundingProvidersConfigTest {
     private val remoteConfig = mockk<RemoteConfigService>()
     private val config = RemoteConfigFundingProvidersConfig(remoteConfig)
 
     @Test
-    fun `lists the configured providers in order`() = runTest {
-        remoteConfigReturns("""{ "onrampUrl": "legacy.dot", "providers": ["ramp.dot", "other.dot"] }""")
+    fun `lists the configured names in order on every refresh`() = runTest {
+        remoteConfigEmits(
+            """{ "onrampUrl": "legacy.dot", "providers": ["ramp.dot", "other.dot"] }""",
+            """{ "providers": ["ramp.dot"] }""",
+        )
 
-        assertEquals(ids("ramp.dot", "other.dot"), config.getFundingProviderIds().getOrThrow())
+        assertEquals(listOf(listOf("ramp.dot", "other.dot"), listOf("ramp.dot")), config.publishedNames().toList())
     }
 
     @Test
-    fun `drops repeated providers, keeping the first position`() = runTest {
-        remoteConfigReturns("""{ "providers": ["ramp.dot", "other.dot", "ramp.dot"] }""")
+    fun `leaves out null names and lists none without providers`() = runTest {
+        remoteConfigEmits("""{ "providers": [null, "ramp.dot"] }""", """{ "onrampUrl": "legacy.dot" }""")
 
-        assertEquals(ids("ramp.dot", "other.dot"), config.getFundingProviderIds().getOrThrow())
+        assertEquals(listOf(listOf("ramp.dot"), emptyList()), config.publishedNames().toList())
     }
 
     @Test
-    fun `skips names that are not product ids and keeps the rest`() = runTest {
-        remoteConfigReturns("""{ "providers": ["not a product!", null, "ramp.dot"] }""")
+    fun `skips a value that does not parse`() = runTest {
+        remoteConfigEmits("not json", """{ "providers": ["ramp.dot"] }""")
 
-        assertEquals(ids("ramp.dot"), config.getFundingProviderIds().getOrThrow())
+        assertEquals(listOf(listOf("ramp.dot")), config.publishedNames().toList())
     }
 
-    @Test
-    fun `lists none when the config carries no providers`() = runTest {
-        remoteConfigReturns("""{ "onrampUrl": "legacy.dot", "offrampUrl": "https://legacy.dot/offramp" }""")
-
-        assertEquals(emptyList<ProductId>(), config.getFundingProviderIds().getOrThrow())
+    private fun remoteConfigEmits(vararg values: String) {
+        every { remoteConfig.observeString("funding_config") } returns flowOf(*values)
     }
-
-    @Test
-    fun `fails when remote config cannot be read`() = runTest {
-        coEvery { remoteConfig.getSyncedJsonObject(any(), any<Class<*>>()) } returns
-            Result.failure(IllegalStateException("offline"))
-
-        assertTrue(config.getFundingProviderIds().isFailure)
-    }
-
-    // Parses with Gson as the real service does, so the remote model's nullability is exercised.
-    private fun remoteConfigReturns(json: String) {
-        coEvery { remoteConfig.getSyncedJsonObject("funding_config", any<Class<Any>>()) } answers {
-            Result.success(Gson().fromJson(json, secondArg<Class<Any>>()))
-        }
-    }
-
-    private fun ids(vararg names: String) = names.map { ProductId.parse(it).getOrThrow() }
 }

@@ -1,11 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
@@ -18,8 +18,9 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.U128
 
 /**
- * The part of the TrUAPI core the funding screens drive. The core owns every session and pushes what the screens
- * draw; the screens report what the user picked, price the session and hand it to a provider.
+ * The part of the TrUAPI core the funding screens drive. The core owns every session, says when one changes and
+ * answers what the screens draw; the screens report what the user picked, price the session and hand it to a
+ * provider.
  */
 interface FundingRuntime {
     /**
@@ -31,14 +32,14 @@ interface FundingRuntime {
     /** Starts the core, which then pushes every session in flight and every ended one the host has not acknowledged. */
     suspend fun start(): Result<Unit>
 
-    /** Every session the core pushed and still holds, with its latest progress, by intent. */
-    val sessions: StateFlow<Map<String, FundingSessionEntry>>
+    /** Every session the core holds in full, with its progress, by intent, as the core last answered. */
+    val sessions: StateFlow<Map<String, FundingBookEntry>>
 
-    /** Ended sessions the core handed over as their summary only and the host has not acknowledged, by intent. */
-    val endedSummaries: StateFlow<Set<String>>
+    /** Ended sessions the host has not acknowledged, as the core last answered. */
+    val unacknowledged: StateFlow<Set<String>>
 
     /**
-     * Whether a provider still works on any session, as the core last pushed it: `null` until funding resumed, which
+     * Whether a provider still works on any session, as the core last answered: `null` until funding resumed, which
      * is also when the core has loaded the sessions [history] reads.
      */
     val inProgress: StateFlow<Boolean?>
@@ -46,7 +47,7 @@ interface FundingRuntime {
     /** Every ended session the core holds, in full or compacted, as summaries newest first. Read it each time history shows. */
     suspend fun history(): Result<List<FundingSessionSummary>>
 
-    /** What session [intent]'s overlay offers, as the core last pushed it; `null` until it has. */
+    /** What session [intent]'s overlay offers, as the core last answered; `null` until it has. */
     fun options(intent: String): Flow<FundingOptions?>
 
     /** The user's rail, asset, network and country in session [intent]'s overlay; the options for it follow. */
@@ -67,12 +68,12 @@ interface FundingRuntime {
     /** The user's answer to the provider's cancel offer: the terms shown to accept them, `null` to decline. */
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
 
-    /** Records that the user was shown how ended session [intent] went; until then the core pushes it again on each resume. */
+    /** Records that the user was shown how ended session [intent] went; until then it stays [unacknowledged]. */
     suspend fun acknowledge(intent: String): Result<Boolean>
 
     /**
-     * Each quote list the core pushes for session [intent] from when it is collected on; a list pushed before is not
-     * replayed. Never completes: the collector stops it.
+     * Each quote list the core has for session [intent] once it changed, from when this is collected on; an earlier
+     * one is not replayed. Never completes: the collector stops it.
      */
     fun quoteLists(intent: String): Flow<FundingQuoteList>
 
@@ -83,8 +84,8 @@ interface FundingRuntime {
     fun sessionChanges(): Flow<String>
 }
 
-/** Session [intent] as the core last pushed it. */
+/** Session [intent] as the core last answered. */
 fun FundingRuntime.session(intent: String): FundingSession? = sessions.value[intent]?.session
 
-/** The progress the core last pushed with session [intent]. */
+/** Session [intent]'s progress, as the core last answered. */
 fun FundingRuntime.progress(intent: String): FundingProgress? = sessions.value[intent]?.progress

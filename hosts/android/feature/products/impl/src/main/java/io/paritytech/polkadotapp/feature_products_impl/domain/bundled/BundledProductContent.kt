@@ -1,10 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
-import android.webkit.MimeTypeMap
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import uniffi.truapi.mimeFor
 import java.io.ByteArrayInputStream
-import java.util.Locale
 
 /**
  * Serves one bundled product's files to a WebView under [host], the way dotNS serves a published archive,
@@ -23,18 +22,6 @@ class BundledProductContent(
 
         fun app(product: BundledProduct, products: BundledProducts, mainDocumentResponseHeaders: Map<String, String>) =
             BundledProductContent(product.appHost, product.appRoot, products, mainDocumentResponseHeaders)
-
-        // The platform table misses some of these on older releases, and a module script or wasm
-        // served as octet-stream does not run.
-        private val KNOWN_TYPES = mapOf(
-            "js" to "text/javascript",
-            "mjs" to "text/javascript",
-            "css" to "text/css",
-            "html" to "text/html",
-            "json" to "application/json",
-            "wasm" to "application/wasm",
-            "svg" to "image/svg+xml",
-        )
     }
 
     fun serves(host: String?): Boolean = host.equals(this.host, ignoreCase = true)
@@ -65,14 +52,7 @@ class BundledProductContent(
 
         val path = products.assetPath(root, requestPath, isMainFrame) ?: return Answer.NotFound
         val headers = if (isMainFrame) mainDocumentResponseHeaders else emptyMap()
-        return Answer.File(path, mimeType(path), headers)
-    }
-
-    private fun mimeType(path: String): String {
-        val extension = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return KNOWN_TYPES[extension]
-            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-            ?: "application/octet-stream"
+        return Answer.File(path, mimeFor(path), headers)
     }
 
     private fun notFound() = WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream("Not Found".toByteArray())).apply {

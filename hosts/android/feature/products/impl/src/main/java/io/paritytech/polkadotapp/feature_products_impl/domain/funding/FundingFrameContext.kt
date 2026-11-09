@@ -25,11 +25,7 @@ class FundingFrameContext(
     val url: String
         get() = when (target) {
             is ProviderFrameTarget.Page -> target.url
-            is ProviderFrameTarget.App -> {
-                val base = providerId.toUrl().trimEnd('/')
-                val route = target.route
-                if (route.startsWith("/") || route.startsWith("#")) base + route else "$base/$route"
-            }
+            is ProviderFrameTarget.App -> providerId.toUrl().trimEnd('/') + target.path
         }
 
     /** Once answered nothing waits on the screen, so one still up closes itself when back on top. */

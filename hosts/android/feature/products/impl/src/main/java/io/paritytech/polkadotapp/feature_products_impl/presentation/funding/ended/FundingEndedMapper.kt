@@ -1,31 +1,40 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
-import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingNetwork
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline.milestone
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import kotlinx.collections.immutable.toImmutableList
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingEndedOutcome
+import uniffi.truapi.FundingPayoutState
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.FundingStage
+import uniffi.truapi.U128
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Builds an ended session's detail screen from the host's record of it, the same way iOS draws it. */
-private const val MIDDLE_MILESTONE = 1
-private const val LAST_MILESTONE = 2
+/** The dot a released payout still on its way sits on: between Received and Sent, once sending. */
 private const val SENDING_DOT = 5
-private const val LAST_MILESTONE_DOT = 6
 
+/**
+ * Builds an ended session's detail screen from the core's summary of it. The core says how it went, what it moved and
+ * where it stopped; the wording, the figures and the dots are the app's.
+ */
 class FundingEndedMapper(private val cash: FundingCash) {
-    fun map(record: FundingRecord): FundingEndedUiState {
-        val outcome = outcome(record)
-        val succeeded = outcome is Outcome.Succeeded
-        val inbound = record.direction == FundingDirection.IN
-        val amount = (record.settledAmount ?: record.requestedAmount)?.let(::decimal)
+    /** `null` for a session that has not ended. */
+    fun map(summary: FundingSessionSummary): FundingEndedUiState? {
+        val ended = summary.ended
+        val outcome = ended.outcome
+        if (outcome is FundingEndedOutcome.Open) return null
+        val succeeded = outcome is FundingEndedOutcome.Succeeded
+        val inbound = summary.direction == FundingDirection.IN
+        val amount = ended.cashAmount?.let(cash::decimal)
 
         return FundingEndedUiState(
             succeeded = succeeded,
@@ -36,84 +45,73 @@ class FundingEndedMapper(private val cash: FundingCash) {
                 inbound -> FundingEndedTone.SUCCESS
                 else -> FundingEndedTone.PRIMARY
             },
-            settledAt = record.settledAt.takeIf { succeeded },
-            timeline = timeline(record, outcome),
-            note = note(record, outcome),
-            rows = rows(record, succeeded).toImmutableList(),
+            settledAt = summary.settledAt().takeIf { succeeded },
+            timeline = timeline(summary, outcome),
+            note = note(summary, outcome),
+            rows = rows(summary, succeeded).toImmutableList(),
             action = if (succeeded) FundingEndedAction.CLOSE else FundingEndedAction.START_OVER,
         )
     }
 
-    private sealed interface Outcome {
-        data object Succeeded : Outcome
-
-        data class Failed(val reason: FundingFailureReason) : Outcome
-
-        data class PayoutFailed(val reason: String) : Outcome
-    }
-
-    private fun outcome(record: FundingRecord): Outcome = when (val outcome = record.outcome) {
-        FundingRecordOutcome.Delivered -> Outcome.Succeeded
-        FundingRecordOutcome.Released -> (record.payout as? FundingRecordPayout.Failed)?.let { Outcome.PayoutFailed(it.reason) } ?: Outcome.Succeeded
-        FundingRecordOutcome.Refunded -> Outcome.Failed(FundingFailureReason.Refunded)
-        FundingRecordOutcome.Cancelled -> Outcome.Failed(FundingFailureReason.Cancelled)
-        is FundingRecordOutcome.Failed -> Outcome.Failed(outcome.reason)
-    }
-
     /** Every milestone done once it succeeded; a released payout still on its way sits on Sending; a failure is red where it stopped. */
-    private fun timeline(record: FundingRecord, outcome: Outcome): FundingTimelineUi {
-        val labels = FundingTimeline.labels(record.direction)
-        val pendingPayout = record.direction == FundingDirection.OUT &&
-            record.outcome == FundingRecordOutcome.Released && record.payout == null
+    private fun timeline(summary: FundingSessionSummary, outcome: FundingEndedOutcome): FundingTimelineUi {
+        val labels = FundingTimeline.labels(summary.direction)
+        val stopped = summary.ended.stoppedAt?.milestone()
         return when {
-            pendingPayout -> FundingTimeline.at(SENDING_DOT, failed = false, labels = labels)
-            outcome is Outcome.Succeeded -> FundingTimeline.at(FundingTimeline.DOTS, failed = false, labels = labels)
-            outcome is Outcome.PayoutFailed -> FundingTimeline.at(
-                position = LAST_MILESTONE_DOT,
-                failed = true,
-                labels = labels.replacing(LAST_MILESTONE, RCommon.string.funding_activity_payout_failed),
-            )
+            summary.ended.payoutState == FundingPayoutState.PENDING -> FundingTimeline.at(SENDING_DOT, failed = false, labels = labels)
+            stopped == null -> FundingTimeline.at(FundingTimeline.DOTS, failed = false, labels = labels)
             else -> FundingTimeline.at(
-                position = FundingTimeline.MILESTONE_GAP,
+                position = stopped * FundingTimeline.MILESTONE_GAP,
                 failed = true,
-                labels = labels.replacing(MIDDLE_MILESTONE, failedTitle(record, (outcome as Outcome.Failed).reason)),
+                labels = labels.replacing(stopped, failedTitle(summary, outcome)),
             )
         }
     }
 
-    private fun failedTitle(record: FundingRecord, reason: FundingFailureReason): Int = when {
-        reason == FundingFailureReason.Refunded -> RCommon.string.funding_activity_refunded
-        record.direction == FundingDirection.OUT -> RCommon.string.funding_ended_step_sending_failed
-        reason == FundingFailureReason.Declined -> RCommon.string.funding_ended_step_payment_declined
-        else -> RCommon.string.funding_ended_step_payment_failed
+    private fun failedTitle(summary: FundingSessionSummary, outcome: FundingEndedOutcome): Int {
+        val reason = (outcome as? FundingEndedOutcome.Failed)?.reason?.toReason()
+        return when {
+            outcome is FundingEndedOutcome.PayoutFailed -> RCommon.string.funding_activity_payout_failed
+            reason == FundingFailureReason.Refunded -> RCommon.string.funding_activity_refunded
+            summary.direction == FundingDirection.OUT -> RCommon.string.funding_ended_step_sending_failed
+            reason == FundingFailureReason.Declined -> RCommon.string.funding_ended_step_payment_declined
+            else -> RCommon.string.funding_ended_step_payment_failed
+        }
     }
 
     private fun List<Int>.replacing(index: Int, label: Int): List<Int> = mapIndexed { i, it -> if (i == index) label else it }
 
-    private fun note(record: FundingRecord, outcome: Outcome): FundingEndedText? = when (outcome) {
-        Outcome.Succeeded -> null
-        is Outcome.PayoutFailed -> when {
-            record.refunded != null -> res(RCommon.string.funding_ended_withdraw_refunded, label(record.refunded))
-            record.rail == FundingRail.CRYPTO -> res(RCommon.string.funding_ended_payout_failed_reason, outcome.reason)
-            else -> res(RCommon.string.funding_ended_payout_failed)
+    private fun note(summary: FundingSessionSummary, outcome: FundingEndedOutcome): FundingEndedText? = when (outcome) {
+        FundingEndedOutcome.Open, FundingEndedOutcome.Succeeded -> null
+        is FundingEndedOutcome.PayoutFailed -> when (val refunded = summary.refunded) {
+            null -> if (summary.choice?.rail == FundingRail.CRYPTO) {
+                res(RCommon.string.funding_ended_payout_failed_reason, outcome.reason)
+            } else {
+                res(RCommon.string.funding_ended_payout_failed)
+            }
+            else -> res(RCommon.string.funding_ended_withdraw_refunded, label(refunded))
         }
-        is Outcome.Failed -> when {
-            outcome.reason == FundingFailureReason.Cancelled && record.refunded != null ->
-                res(RCommon.string.funding_activity_refunded_amount, label(record.refunded))
-            record.direction == FundingDirection.IN -> topUpNote(record, outcome.reason)
-            else -> withdrawNote(record, outcome.reason)
+        is FundingEndedOutcome.Failed -> {
+            val reason = outcome.reason.toReason()
+            val refunded = summary.refunded
+            when {
+                reason == FundingFailureReason.Cancelled && refunded != null ->
+                    res(RCommon.string.funding_activity_refunded_amount, label(refunded))
+                summary.direction == FundingDirection.IN -> topUpNote(summary, reason)
+                else -> withdrawNote(summary, reason)
+            }
         }
     }
 
-    private fun topUpNote(record: FundingRecord, reason: FundingFailureReason): FundingEndedText = when (reason) {
-        FundingFailureReason.Declined -> when (record.rail) {
+    private fun topUpNote(summary: FundingSessionSummary, reason: FundingFailureReason): FundingEndedText = when (reason) {
+        FundingFailureReason.Declined -> when (summary.choice?.rail) {
             FundingRail.BANK -> res(RCommon.string.funding_ended_bank_declined)
             FundingRail.CARD -> res(RCommon.string.funding_ended_card_declined)
             else -> res(RCommon.string.funding_ended_top_up_failed)
         }
         FundingFailureReason.Refunded -> {
-            val paid = record.quotedAmount
-            when (record.rail) {
+            val paid = summary.quotedAmount()
+            when (summary.choice?.rail) {
                 FundingRail.BANK -> paid?.let { res(RCommon.string.funding_ended_refunded_bank, it) }
                     ?: res(RCommon.string.funding_ended_refunded_bank_unknown)
                 FundingRail.CRYPTO -> res(RCommon.string.funding_ended_refunded_crypto)
@@ -126,8 +124,8 @@ class FundingEndedMapper(private val cash: FundingCash) {
         else -> FundingEndedText.Reason(reason)
     }
 
-    private fun withdrawNote(record: FundingRecord, reason: FundingFailureReason): FundingEndedText {
-        val amount = (record.settledAmount ?: record.requestedAmount)?.let(::label) ?: "$${cash.symbol}"
+    private fun withdrawNote(summary: FundingSessionSummary, reason: FundingFailureReason): FundingEndedText {
+        val amount = summary.ended.cashAmount?.let(::label) ?: "$${cash.symbol}"
         return when (reason) {
             FundingFailureReason.Refunded -> res(RCommon.string.funding_ended_withdraw_refunded, amount)
             FundingFailureReason.Cancelled, FundingFailureReason.Expired, is FundingFailureReason.Other ->
@@ -136,51 +134,68 @@ class FundingEndedMapper(private val cash: FundingCash) {
         }
     }
 
-    private fun rows(record: FundingRecord, succeeded: Boolean): List<FundingEndedRow> = buildList {
-        record.quotedAmount?.let { add(FundingEndedRow.Value(paidCaption(record, succeeded), FundingEndedText.Plain(it))) }
-        record.settledAmount?.let { settled ->
-            val requested = record.requestedAmount?.takeIf { it != settled }?.let(::label)
-            val caption = if (record.direction == FundingDirection.IN) RCommon.string.funding_ended_credited else RCommon.string.funding_ended_debited
-            add(FundingEndedRow.Settled(caption, label(settled), requested))
+    private fun rows(summary: FundingSessionSummary, succeeded: Boolean): List<FundingEndedRow> = buildList {
+        val ended = summary.ended
+        summary.quotedAmount()?.let { add(FundingEndedRow.Value(paidCaption(summary, succeeded), FundingEndedText.Plain(it))) }
+        if (summary.settled()) {
+            ended.cashAmount?.let { settled ->
+                val caption = if (summary.direction == FundingDirection.IN) RCommon.string.funding_ended_credited else RCommon.string.funding_ended_debited
+                add(FundingEndedRow.Settled(caption, label(settled), ended.differingRequested?.let(::label)))
+            }
         }
-        record.rail?.let { rail ->
+        summary.choice?.rail?.let { rail ->
             val method = when (rail) {
                 FundingRail.CARD -> res(RCommon.string.funding_rail_card)
                 FundingRail.BANK -> res(RCommon.string.funding_ended_method_bank)
-                FundingRail.CRYPTO -> record.choice?.network?.takeIf { it.isNotEmpty() }
-                    ?.let { res(RCommon.string.funding_ended_method_crypto_network, FundingNetwork(it).name) }
+                FundingRail.CRYPTO -> summary.choice?.network?.takeIf { it.isNotEmpty() }
+                    ?.let { res(RCommon.string.funding_ended_method_crypto_network, FundingNetwork.of(it).name) }
                     ?: res(RCommon.string.funding_rail_crypto)
             }
             add(FundingEndedRow.Value(RCommon.string.funding_ended_method, method))
         }
-        record.providerId?.let { add(FundingEndedRow.Provider(it)) }
-        payout(record)?.let { add(FundingEndedRow.Value(RCommon.string.funding_ended_payout, res(it))) }
-        record.transactionId?.takeIf { it.isNotEmpty() }?.let { add(FundingEndedRow.Copy(RCommon.string.funding_ended_transaction_id, it)) }
-        record.reference?.takeIf { it.isNotEmpty() }?.let { add(FundingEndedRow.Copy(RCommon.string.funding_deposit_reference, it)) }
-        add(FundingEndedRow.Moment(RCommon.string.funding_ended_started, record.openedAt))
-        add(FundingEndedRow.Moment(if (succeeded) RCommon.string.funding_ended_completed else RCommon.string.funding_ended_ended, record.settledAt))
+        summary.providerId?.let { add(FundingEndedRow.Provider(it)) }
+        payout(ended.payoutState)?.let { add(FundingEndedRow.Value(RCommon.string.funding_ended_payout, res(it))) }
+        summary.transactionId?.takeIf { it.isNotEmpty() }?.let { add(FundingEndedRow.Copy(RCommon.string.funding_ended_transaction_id, it)) }
+        summary.reference?.takeIf { it.isNotEmpty() }?.let { add(FundingEndedRow.Copy(RCommon.string.funding_deposit_reference, it)) }
+        add(FundingEndedRow.Moment(RCommon.string.funding_ended_started, Instant.fromEpochMilliseconds(summary.openedAtMs.toLong())))
+        summary.settledAt()?.let {
+            add(FundingEndedRow.Moment(if (succeeded) RCommon.string.funding_ended_completed else RCommon.string.funding_ended_ended, it))
+        }
     }
 
     /** What the quoted amount was: paid or sent in, received out, or the amount of a withdrawal that failed. */
-    private fun paidCaption(record: FundingRecord, succeeded: Boolean): Int = when {
-        record.direction == FundingDirection.IN && record.rail == FundingRail.CARD -> RCommon.string.funding_ended_paid
-        record.direction == FundingDirection.IN -> RCommon.string.funding_ended_sent
+    private fun paidCaption(summary: FundingSessionSummary, succeeded: Boolean): Int = when {
+        summary.direction == FundingDirection.IN && summary.choice?.rail == FundingRail.CARD -> RCommon.string.funding_ended_paid
+        summary.direction == FundingDirection.IN -> RCommon.string.funding_ended_sent
         succeeded -> RCommon.string.funding_ended_received
         else -> RCommon.string.funding_ended_withdrawal_amount
     }
 
-    private fun payout(record: FundingRecord): Int? {
-        if (record.direction != FundingDirection.OUT || record.outcome != FundingRecordOutcome.Released) return null
-        return when (record.payout) {
-            FundingRecordPayout.PaidOut -> RCommon.string.funding_ended_payout_paid_out
-            is FundingRecordPayout.Failed -> RCommon.string.funding_ended_payout_failed_status
-            null -> RCommon.string.funding_ended_payout_pending
-        }
+    private fun payout(state: FundingPayoutState?): Int? = when (state) {
+        FundingPayoutState.PAID_OUT -> RCommon.string.funding_ended_payout_paid_out
+        FundingPayoutState.FAILED -> RCommon.string.funding_ended_payout_failed_status
+        FundingPayoutState.PENDING -> RCommon.string.funding_ended_payout_pending
+        null -> null
     }
 
-    private fun decimal(balance: Balance) = cash.decimal(balance.value.toString())
-
-    private fun label(balance: Balance): String = cash.label(decimal(balance))
+    private fun label(units: U128): String = cash.label(cash.decimal(units))
 
     private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList())
+}
+
+/** Whether the balance moved: credited in, or debited out. */
+private fun FundingSessionSummary.settled(): Boolean = stage is FundingStage.Delivered || stage is FundingStage.Released
+
+/** When it ended. */
+private fun FundingSessionSummary.settledAt(): Instant? = when (val stage = stage) {
+    FundingStage.Open -> null
+    is FundingStage.Delivered -> stage.settledAtMs
+    is FundingStage.Released -> stage.settledAtMs
+    is FundingStage.Failed -> stage.settledAtMs
+}?.let { Instant.fromEpochMilliseconds(it.toLong()) }
+
+/** What the user paid for value in, or received for value out, in the quote's asset at the decimals it states. */
+private fun FundingSessionSummary.quotedAmount(): String? = choice?.let { choice ->
+    val units = if (direction == FundingDirection.IN) choice.quote.sendAmount else choice.quote.receiveAmount
+    FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units)
 }

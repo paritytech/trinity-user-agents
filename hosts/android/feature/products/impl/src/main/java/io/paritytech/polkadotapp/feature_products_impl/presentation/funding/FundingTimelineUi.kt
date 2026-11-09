@@ -61,7 +61,8 @@ object FundingTimeline {
         return at(position, failed, labels(direction))
     }
 
-    private fun FundingStep.milestone(): Int = when (this) {
+    /** The milestone [this] step is: first, middle or last. */
+    fun FundingStep.milestone(): Int = when (this) {
         FundingStep.STARTED -> 0
         FundingStep.RECEIVED -> 1
         FundingStep.ADDED, FundingStep.SENT -> 2

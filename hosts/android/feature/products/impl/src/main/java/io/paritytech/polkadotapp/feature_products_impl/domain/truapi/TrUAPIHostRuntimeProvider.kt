@@ -47,7 +47,6 @@ import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.FundingProviderEntry
-import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -155,20 +154,18 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeWalletAccount(runtime)
     }
 
-    // The core offers only the providers listed here. The bundled ones go in at once; the
-    // configured ones wait for the Remote Config sync, then the whole list is set again.
+    // The core offers only the providers listed here: the bundled ones at once, then the configured ones after each
+    // Remote Config sync, which the core merges and ignores when nothing changed.
     private fun listFundingProviders(runtime: TrUAPIHostRuntime) {
         val bundled = bundledProducts.fundingProviders()
-        if (bundled.isNotEmpty()) setFundingProviders(runtime, bundled)
+        if (bundled.isNotEmpty()) setFundingProviderConfig(runtime, emptyList(), bundled)
         scope.launch {
-            fundingProvidersConfig.getFundingProviderIds()
-                .logFailure("Funding providers unavailable from Remote Config")
-                .onSuccess { ids -> setFundingProviders(runtime, fundingProviderEntries(ids, bundled)) }
+            fundingProvidersConfig.publishedNames().collect { names -> setFundingProviderConfig(runtime, names, bundled) }
         }
     }
 
-    private fun setFundingProviders(runtime: TrUAPIHostRuntime, providers: List<FundingProviderEntry>) {
-        runCatching { runtime.setFundingProviders(providers) }
+    private fun setFundingProviderConfig(runtime: TrUAPIHostRuntime, names: List<String>, bundled: List<FundingProviderEntry>) {
+        runCatching { runtime.setFundingProviderConfig(names, bundled) }
             .logFailure("TrUAPI refused the funding providers")
     }
 
@@ -358,18 +355,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          */
         const val DATABASE_DIRECTORY = "truapi"
     }
-}
-
-/** [published] as dotNS providers, then each of [bundled] not already among them. */
-internal fun fundingProviderEntries(
-    published: List<ProductId>,
-    bundled: List<FundingProviderEntry>,
-): List<FundingProviderEntry> {
-    val listed = published.map { id ->
-        FundingProviderEntry(productId = id, workerManifest = null, origin = FundingProviderOrigin.PUBLISHED)
-    }
-    val publishedIds = published.toSet()
-    return listed + bundled.filterNot { it.productId in publishedIds }
 }
 
 private object HostLevelStorage : HostStorage {

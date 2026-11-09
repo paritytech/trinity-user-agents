@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAmountIssue
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
@@ -14,8 +13,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingCancelAvailability
 import uniffi.truapi.FundingDeposit
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
@@ -23,10 +24,11 @@ import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingQuoteUnavailable
+import uniffi.truapi.FundingQuotesRefusal
 import uniffi.truapi.FundingRail
 import uniffi.truapi.ProductId
+import uniffi.truapi.fundingFeeBreakdown
 import java.math.BigDecimal
-import java.math.BigInteger
 import java.math.RoundingMode
 import kotlin.math.ceil
 import kotlin.math.max
@@ -52,8 +54,8 @@ fun FundingFlowState.toAmountUiState(): FundingAmountUiState {
 }
 
 private fun FundingFlowState.amountNote(): FundingAmountNote? = when (val issue = amountIssue) {
-    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(cash.label(issue.minimum))
-    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(cash.label(issue.maximum))
+    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(cash.label(cash.decimal(issue.min)))
+    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(cash.label(cash.decimal(issue.max)))
     FundingAmountIssue.NotEnoughBalance -> FundingAmountNote.NotEnough(cash.symbol)
     null -> amountLimits.minimum?.let {
         FundingAmountNote.Minimum(cash.label(it), withdraw = direction == FundingDirection.OUT)
@@ -94,8 +96,8 @@ private fun FundingFlowState.summaryProblem(start: FundingStartState): FundingSu
     start.failed -> FundingSummaryProblem.StartFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
-        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cash.label(issue.minimum))
-        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(cash.label(issue.maximum))
+        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cash.label(cash.decimal(issue.min)))
+        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(cash.label(cash.decimal(issue.max)))
         FundingAmountIssue.NotEnoughBalance, null -> noProviderProblem()
     }
 }
@@ -103,22 +105,12 @@ private fun FundingFlowState.summaryProblem(start: FundingStartState): FundingSu
 private fun FundingFlowState.noProviderProblem(): FundingSummaryProblem =
     quoteRefusedText()?.let(FundingSummaryProblem::QuoteRefused) ?: FundingSummaryProblem.NoProvider
 
-/** Why no provider quoted, when they all said the same thing: no answer in time, the country, or a reason of their own. */
-private fun FundingFlowState.quoteRefusedText(): FundingReasonText? {
-    val reasons = rows.values.map { state ->
-        when (val reason = (state as? FundingQuoteState.Unavailable)?.reason) {
-            FundingQuoteUnavailable.Timeout -> FundingReasonText.Res(RCommon.string.funding_error_quote_timeout)
-            is FundingQuoteUnavailable.Refused -> when (val refusal = reason.reason) {
-                FundingQuoteRefusal.CountryUnsupported -> FundingReasonText.Res(RCommon.string.funding_providers_country_unsupported)
-                is FundingQuoteRefusal.Other -> refusal.message.takeIf { it.isNotBlank() }?.let(FundingReasonText::Verbatim)
-                else -> null
-            }
-
-            null -> null
-        }
-    }
-    val first = reasons.firstOrNull() ?: return null
-    return first.takeIf { reasons.all { it == first } }
+/** Why no provider quoted, when the core says they all gave the same reason: no answer in time, the country, or their own. */
+private fun FundingFlowState.quoteRefusedText(): FundingReasonText? = when (val refusal = list?.refusal) {
+    FundingQuotesRefusal.Timeout -> FundingReasonText.Res(RCommon.string.funding_error_quote_timeout)
+    FundingQuotesRefusal.CountryUnsupported -> FundingReasonText.Res(RCommon.string.funding_providers_country_unsupported)
+    is FundingQuotesRefusal.Other -> refusal.message.takeIf { it.isNotBlank() }?.let(FundingReasonText::Verbatim)
+    null -> null
 }
 
 fun etaOf(seconds: ULong): FundingEta {
@@ -131,13 +123,13 @@ fun etaOf(seconds: ULong): FundingEta {
     return FundingEta.Days(ceil(hours.toDouble() / HOURS_PER_DAY).toInt())
 }
 
-/** Fees are counted in what the user pays: the ask's asset for value in, the balance for value out. */
+/** Fees are counted in what the user pays: the ask's asset for value in, the balance for value out. The core adds them up. */
 fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
     val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.cost(cash.decimal(units)) }
-    val total = quote.totalFee()
+    val fees = fundingFeeBreakdown(quote, direction)
 
     return FundingFeesUiState(
         payTitle = when {
@@ -145,32 +137,21 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
             rail == FundingRail.CARD -> FundingPayTitle.YOU_PAY
             else -> FundingPayTitle.AMOUNT_TO_SEND
         },
-        amount = feeText(quote.netOfFees().toString()),
+        amount = feeText(fees.net),
         providerFee = feeText(quote.providerFee),
         networkFee = feeText(quote.networkFee),
-        totalFee = feeText(total.toString()),
+        totalFee = feeText(fees.totalFeeRoundedUp),
         pay = if (inbound) quoteUnit.format(quote.sendAmount) else cash.label(cash.decimal(quote.sendAmount)),
-        rate = rateOf(quote),
+        rate = rateOf(quoteUnit, fees.rateNum, fees.rateDen),
     )
 }
 
-private fun FundingQuote.totalFee(): BigInteger =
-    (providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
-
-/** What the user pays before fees, in the unit of `sendAmount`. */
-private fun FundingQuote.netOfFees(): BigInteger =
-    ((sendAmount.toBigIntegerOrNull() ?: BigInteger.ZERO) - totalFee()).max(BigInteger.ZERO)
-
-/** What one unit of the balance is worth in the provider-side asset, net of fees as the amount line. */
-private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
-    val inbound = direction == FundingDirection.IN
-    val quoteUnit = unitOf(quote)
-    val net = quote.netOfFees().toString()
-    val providerSide = quoteUnit.decimal(if (inbound) net else quote.receiveAmount)
-    val cashSide = cash.decimal(if (inbound) quote.receiveAmount else net)
+/** The core's rate, [num] provider-side units per [den] balance units, as one unit of the balance reads. */
+private fun FundingFlowState.rateOf(quoteUnit: FundingAssetUnit, num: String, den: String): FundingRate? {
+    val cashSide = cash.decimal(den)
     if (cashSide.signum() <= 0) return null
 
-    val perCash = providerSide.divide(cashSide, RATE_SCALE, RoundingMode.HALF_EVEN)
+    val perCash = quoteUnit.decimal(num).divide(cashSide, RATE_SCALE, RoundingMode.HALF_EVEN)
     return FundingRate(symbol = cash.symbol, perCash = quoteUnit.format(perCash))
 }
 
@@ -222,6 +203,7 @@ fun FundingFlowState.toProvidersUiState(
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
     val pending = rows.values.any { it.isPending }
+    val refreshAt = refreshAt
 
     return FundingProvidersUiState(
         countdown = when {
@@ -295,7 +277,7 @@ fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = network
 }.toImmutableList()
 
 fun FundingFlowState.toTokensUiState(): FundingTokensUiState {
-    val selected = network?.let(::FundingNetwork)
+    val selected = network?.let { id -> networks.firstOrNull { it.id == id } ?: FundingNetwork.of(id) }
     return FundingTokensUiState(
         networkName = selected?.name,
         networkMonogram = selected?.monogram,
@@ -311,7 +293,7 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
             exact = deposit.exact,
             address = deposit.address,
             shortAddress = shortened(deposit.address),
-            networkName = FundingNetwork(deposit.network).name,
+            networkName = FundingNetwork.of(deposit.network).name,
         )
 
         is FundingDeposit.Bank -> FundingDepositContent.Bank(
@@ -337,6 +319,7 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         isCancelling = start.isCancelling,
         cancel = start.cancel?.toUi(cash),
         moneyMoved = progress?.moneyMoved == true,
+        cancelAvailability = progress?.cancel ?: FundingCancelAvailability.UNAVAILABLE,
         figure = cash.figure(amount),
         progress = progress?.takeIf { start.started }?.let { live ->
             FundingLiveProgressUi(
