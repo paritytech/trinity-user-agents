@@ -79,3 +79,34 @@ fn a_read_still_answers_its_waiters_when_the_caller_that_started_it_gives_up() {
 
 	assert_eq!((answer, reads.load(Ordering::SeqCst)), (Some(7), 1));
 }
+
+/// Sets its flag when dropped, as a read's follow is released when the read is.
+struct Held(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Held {
+	fn drop(&mut self) {
+		self.0.store(true, Ordering::SeqCst);
+	}
+}
+
+#[test]
+fn a_read_every_caller_gave_up_on_is_stopped_and_lets_go_of_what_it_holds() {
+	let flight = SingleFlight::<&str, u32>::new(test_spawner());
+	let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let held = Held(released.clone());
+
+	block_on(async {
+		let mut caller = Box::pin(flight.run("peopl", move || async move {
+			let _held = held;
+			futures::future::pending::<u32>().await
+		}));
+		assert!(futures::poll!(caller.as_mut()).is_pending());
+	});
+
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+	while !released.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+		std::thread::yield_now();
+	}
+	assert!(released.load(Ordering::SeqCst), "the abandoned read still holds what it read with");
+	assert_eq!(block_on(flight.run("peopl", || async { 7 })), Some(7));
+}

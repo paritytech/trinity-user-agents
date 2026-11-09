@@ -8,32 +8,45 @@
 use core::{future::Future, hash::Hash};
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex},
+	sync::{Arc, Mutex, MutexGuard},
 };
 
 use futures::{
 	FutureExt,
 	channel::oneshot,
-	future::{BoxFuture, Shared},
+	future::{AbortHandle, Abortable, BoxFuture, Shared},
 };
-
 use tracing::{Instrument, instrument::WithSubscriber};
 
 use crate::subscription::Spawner;
 
-type Reads<K, V> = Arc<Mutex<HashMap<K, Shared<oneshot::Receiver<V>>>>>;
-
 /// Reads keyed by `K` whose answers, `V`, are shared by every caller that
 /// asked while the read ran.
 ///
-/// A read runs as its own task, so it finishes whatever its callers do: one
-/// that gives up on its own deadline does not cut the read short for the
-/// rest. Nothing is kept once a read settles, so the next caller for that key
-/// reads again, and a failed read is retried by whoever asks next.
+/// A read runs as its own task and keeps going while any caller still waits
+/// on it, so one that gives up on its own deadline does not cut it short for
+/// the rest. Once the last caller has given up the read is stopped, which
+/// releases what it holds. Nothing is kept once a read settles, so the next
+/// caller for that key reads again, and a failed read is retried by whoever
+/// asks next.
 #[derive(Clone)]
 pub struct SingleFlight<K, V> {
 	spawner: Spawner,
-	reads: Reads<K, V>,
+	reads: Arc<Mutex<Reads<K, V>>>,
+}
+
+/// The reads running now, each told apart from a later read of the same key.
+struct Reads<K, V> {
+	next_id: u64,
+	running: HashMap<K, Running<V>>,
+}
+
+/// One read and how many callers still wait on it.
+struct Running<V> {
+	id: u64,
+	answer: Shared<oneshot::Receiver<V>>,
+	waiters: usize,
+	abort: AbortHandle,
 }
 
 impl<K, V> SingleFlight<K, V>
@@ -43,7 +56,8 @@ where
 {
 	/// Reads spawned through `spawner`.
 	pub fn new(spawner: Spawner) -> Self {
-		Self { spawner, reads: Arc::default() }
+		let reads = Reads { next_id: 0, running: HashMap::new() };
+		Self { spawner, reads: Arc::new(Mutex::new(reads)) }
 	}
 
 	/// Answers with the read already running for `key`, or starts `read` when
@@ -53,49 +67,85 @@ where
 	where
 		F: Future<Output = V> + Send + 'static,
 	{
-		let (answer, start) = {
-			let mut reads = self.reads.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-			match reads.get(&key) {
-				Some(answer) => (answer.clone(), None),
+		let (id, answer, start) = {
+			let mut reads = self.lock();
+			match reads.running.get_mut(&key) {
+				Some(running) => {
+					running.waiters += 1;
+					(running.id, running.answer.clone(), None)
+				},
 				None => {
+					let id = reads.next_id;
+					reads.next_id += 1;
 					let (sender, receiver) = oneshot::channel();
 					let answer = receiver.shared();
-					reads.insert(key.clone(), answer.clone());
-					(answer, Some(sender))
+					let (abort, registration) = AbortHandle::new_pair();
+					let running = Running { id, answer: answer.clone(), waiters: 1, abort };
+					reads.running.insert(key.clone(), running);
+					(id, answer, Some((sender, registration)))
 				},
 			}
 		};
-		if let Some(sender) = start {
-			let settled = Settled { reads: self.reads.clone(), key };
+		let _waiting = Release { flight: self.clone(), key: key.clone(), id, waiter: true };
+		if let Some((sender, registration)) = start {
+			let settled = Release { flight: self.clone(), key, id, waiter: false };
 			let read = read();
 			// The read logs as the caller that started it would, under its span
 			// and to its subscriber.
-			let task: BoxFuture<'static, ()> = async move {
+			let task = async move {
 				let value = read.await;
 				drop(settled);
 				let _ = sender.send(value);
 			}
 			.in_current_span()
-			.with_current_subscriber()
-			.boxed();
+			.with_current_subscriber();
+			let task: BoxFuture<'static, ()> =
+				Abortable::new(task, registration).map(|_| ()).boxed();
 			(self.spawner)(task);
 		}
 		answer.await.ok()
 	}
+
+	fn lock(&self) -> MutexGuard<'_, Reads<K, V>> {
+		self.reads.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+	}
 }
 
-/// Frees a read's key once its task ends, however it ends.
-struct Settled<K: Eq + Hash, V> {
-	reads: Reads<K, V>,
+/// Read `id`'s hold on its key. A waiter's is let go when that caller stops
+/// waiting, answered or not, and the last one stops the read if it is still
+/// running. The read's own is let go when its task ends, however it ends.
+struct Release<K, V>
+where
+	K: Eq + Hash + Clone + Send + 'static,
+	V: Clone + Send + Sync + 'static,
+{
+	flight: SingleFlight<K, V>,
 	key: K,
+	id: u64,
+	waiter: bool,
 }
 
-impl<K: Eq + Hash, V> Drop for Settled<K, V> {
+impl<K, V> Drop for Release<K, V>
+where
+	K: Eq + Hash + Clone + Send + 'static,
+	V: Clone + Send + Sync + 'static,
+{
 	fn drop(&mut self) {
-		self.reads
-			.lock()
-			.unwrap_or_else(|poisoned| poisoned.into_inner())
-			.remove(&self.key);
+		let mut reads = self.flight.lock();
+		let Some(running) = reads.running.get_mut(&self.key) else {
+			return;
+		};
+		if running.id != self.id {
+			return;
+		}
+		if self.waiter {
+			running.waiters -= 1;
+			if running.waiters > 0 {
+				return;
+			}
+			running.abort.abort();
+		}
+		reads.running.remove(&self.key);
 	}
 }
 
