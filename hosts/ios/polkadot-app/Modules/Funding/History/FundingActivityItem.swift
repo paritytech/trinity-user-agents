@@ -95,9 +95,11 @@ extension FundingStatus {
         fundingStatusInFlight(status: self)
     }
 
-    /// Slower than it should be, as the core says, which the row draws in
-    /// amber.
+    /// Slower than it should be, which the row draws in amber.
     var isDelayed: Bool {
-        fundingStatusDelayed(status: self)
+        switch self {
+        case .retrying, .retryingPayout, .takingLonger, .cancelOffered, .cancelRefused: true
+        default: false
+        }
     }
 }

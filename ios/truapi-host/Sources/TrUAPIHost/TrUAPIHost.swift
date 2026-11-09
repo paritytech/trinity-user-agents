@@ -1170,6 +1170,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingHistory()
     }
 
+    /// Ended session `intent`'s summary, as ``fundingHistory()`` lists it.
+    public func fundingSummary(intent: String) -> FundingSessionSummary? {
+        inner.fundingSummary(intent: intent)
+    }
+
+    /// Whether session `intent` is still open, so its overlay can be shown
+    /// again.
+    public func fundingSessionOpen(intent: String) -> Bool {
+        inner.fundingSessionOpen(intent: intent)
+    }
+
     /// Record that the host told the user how ended session `intent` went.
     /// Until then the core hands it over again on each resume.
     @discardableResult
@@ -1202,14 +1213,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Every session the core announced, with its progress, newest first.
     public func fundingEntries() -> [FundingBookEntry] {
         inner.fundingEntries()
-    }
-
-    /// Record that the history showing `intents` is on screen, so the core
-    /// stops handing their endings over on each resume. Call it only while
-    /// the history is actually shown. Answers the sessions acknowledged.
-    @discardableResult
-    public func acknowledgeFundingShown(intents: [String]) async throws -> [String] {
-        try await inner.acknowledgeFundingShown(intents: intents)
     }
 
     /// Replace the funding providers this host ships, each with its Worker

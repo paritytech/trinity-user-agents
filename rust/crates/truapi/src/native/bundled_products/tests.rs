@@ -70,37 +70,114 @@ fn bundled_funding_providers_ship_a_funding_worker() {
 	assert_eq!(providers[0].worker_manifest.as_deref(), Some(FUNDING));
 }
 
+const ROOT_MANIFEST_JSON: &str = r#"{"$v":1,"displayName":"Ramp","icon":{"cid":"bafyramp","format":"png"},"trustedProducts":{}}"#;
+
 #[test]
-fn bundled_products_are_named_directories() {
-	let ids: Vec<String> = bundled_products("root".to_string(), Box::new(bundle()))
-		.into_iter()
-		.map(|product| product.product_id.as_str().to_string())
+fn bundled_products_are_named_directories_described_by_their_root_manifest() {
+	let mut files = bundle();
+	files
+		.0
+		.insert("root/ramp.dot/manifest.json".to_string(), ROOT_MANIFEST_JSON.to_string());
+	files.0.insert("root/bank.dot/manifest.json".to_string(), "{".to_string());
+	let products = bundled_products("root".to_string(), Box::new(files));
+	let described: Vec<_> = products
+		.iter()
+		.map(|product| {
+			(
+				product.product_id.as_str(),
+				product.display_name.as_deref(),
+				product.icon_cid.as_deref(),
+			)
+		})
 		.collect();
-	assert_eq!(ids, ["bank.dot", "broken.dot", "chat.dot", "noworker.dot", "ramp.dot"]);
+	assert_eq!(
+		described,
+		[
+			("bank.dot", None, None),
+			("broken.dot", None, None),
+			("chat.dot", None, None),
+			("noworker.dot", None, None),
+			("ramp.dot", Some("Ramp"), Some("bafyramp")),
+		]
+	);
+}
+
+fn entry(id: &str) -> BundleEntry {
+	BundleEntry {
+		product_id: ProductId::for_test(id),
+		path: format!("root/{id}"),
+		has_worker: true,
+		has_app: true,
+		display_name: None,
+		icon_cid: None,
+	}
+}
+
+fn source(input: &str, dev_servers: bool) -> Option<ProductSource> {
+	product_source(input.to_string(), "paseo".to_string(), dev_servers, vec![entry("ramp.dot")])
 }
 
 #[test]
-fn an_asset_path_falls_back_to_the_index_for_app_routes() {
+fn a_product_runs_from_the_bundle_then_a_dev_server_then_dotns() {
+	let bundled = Some(ProductSource::Bundled { entry: entry("ramp.dot") });
+	assert_eq!(source("ramp.dot", false), bundled);
+	assert_eq!(source("https://app.ramp.dot/settings", false), bundled);
+	assert_eq!(source("worker.ramp.dot", false), bundled);
+
+	let dev = "http://10.0.2.2:5173/?product_id=ramp.dot";
+	assert_eq!(
+		source(dev, true),
+		Some(ProductSource::DevServer { product: dev.parse().expect("a dev server") })
+	);
+	assert_eq!(source(dev, false), None);
+
+	let Some(ProductSource::Published { link }) = source("https://shop.paseo/cart", true) else {
+		panic!("a published product");
+	};
+	assert_eq!(link.canonical_url, "https://shop.paseo/cart");
+	assert_eq!(source("https://shop.dot/", false), None);
+}
+
+#[test]
+fn an_archive_answers_the_file_a_directory_index_or_the_app_for_its_routes() {
 	let files = || {
 		Box::new(Bundle::new(&[
 			("app/index.html", ""),
 			("app/main.js", ""),
 			("app/docs/index.html", ""),
+			("app/v1.2/index.html", ""),
 		]))
 	};
 	let cases = [
-		("/", false, Some("app/index.html")),
-		("/main.js", false, Some("app/main.js")),
-		("/docs", false, Some("app/docs/index.html")),
-		("/settings", true, Some("app/index.html")),
+		("/", false, Some(("app/index.html", "text/html"))),
+		("/main.js", false, Some(("app/main.js", "text/javascript"))),
+		("/docs", false, Some(("app/docs/index.html", "text/html"))),
+		("/v1.2/docs", false, None),
+		("/settings", true, Some(("app/index.html", "text/html"))),
 		("/settings", false, None),
-		("/missing.js", true, Some("app/index.html")),
+		("/missing.js", true, Some(("app/index.html", "text/html"))),
 		("/../secret", true, None),
 	];
 	for (path, main, expected) in cases {
-		let found = bundled_asset_path("app".to_string(), path.to_string(), main, files());
-		assert_eq!(found.as_deref(), expected, "{path}");
+		let found = archive_file("app".to_string(), path.to_string(), main, files());
+		let expected = expected
+			.map(|(path, mime)| ArchiveFile { path: path.to_string(), mime: mime.to_string() });
+		assert_eq!(found, expected, "{path}");
 	}
+}
+
+#[test]
+fn a_single_file_archive_answers_every_path() {
+	let found = archive_file(
+		"cid".to_string(),
+		"/any/route".to_string(),
+		false,
+		Box::new(Bundle::new(&[("cid", "")])),
+	);
+	assert_eq!(
+		found,
+		Some(ArchiveFile { path: "cid".to_string(), mime: "application/octet-stream".to_string() })
+	);
 }
 
 #[test]
@@ -115,6 +192,6 @@ fn mime_types_go_by_extension() {
 		("a.b/file", "application/octet-stream"),
 	];
 	for (path, mime) in cases {
-		assert_eq!(mime_for(path.to_string()), mime, "{path}");
+		assert_eq!(mime_for(path), mime, "{path}");
 	}
 }
