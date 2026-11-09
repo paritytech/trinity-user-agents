@@ -41,14 +41,15 @@ extension Chat.RoomFooter {
         get throws {
             switch self {
             case .textInput:
-                "textInput"
+                return "textInput"
             case .empty:
-                "empty"
+                return "empty"
             case let .card(messageType, payload):
-                try String(
-                    decoding: JSONEncoder().encode(StoredCard(messageType: messageType, payload: payload)),
-                    as: UTF8.self
-                )
+                let card = StoredCard(messageType: messageType, payload: payload)
+                guard let json = try String(bytes: JSONEncoder().encode(card), encoding: .utf8) else {
+                    throw EncodingError.invalidValue(card, .init(codingPath: [], debugDescription: "not UTF-8"))
+                }
+                return json
             }
         }
     }
