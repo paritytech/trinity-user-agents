@@ -37,7 +37,7 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
 
         launchAsyncJob {
             val row = repository.find(productId, notificationId) ?: return@launchAsyncJob
-            notificationPublisher.publishNotification(notificationId.value, row.text, row.deeplink)
+            notificationPublisher.publishNotification(notificationId.value, productId, row.text, row.deeplink)
             repository.delete(productId, notificationId)
         }
     }

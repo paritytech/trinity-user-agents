@@ -58,7 +58,6 @@ pub struct ContactHandles {
 
 impl ContactHandles {
 	/// Derive the handle key from the session's root entropy source.
-	#[cfg(test)]
 	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32]) -> Self {
 		Self::from_handle_key(handle_key_from_root_source(root_entropy_source))
 	}
