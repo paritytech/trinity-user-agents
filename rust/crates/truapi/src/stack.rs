@@ -42,7 +42,8 @@ pub struct StackChains {
 	/// The relay chain.
 	pub relay: Option<[u8; 32]>,
 	/// Asset Hub, where the dotNS contracts are deployed. Without one, product
-	/// manifests and session usernames do not resolve.
+	/// manifests and session usernames do not resolve, and a `trustedProducts`
+	/// grant the core has not cached is refused.
 	pub asset_hub: Option<[u8; 32]>,
 	/// The People chain.
 	pub people: [u8; 32],
