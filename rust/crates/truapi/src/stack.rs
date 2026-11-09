@@ -1,10 +1,9 @@
-//! The Trinity stack a host runs: its network, its dotNS TLD and the genesis
-//! hash of each chain role, resolved from a signed descriptor.
+//! The Trinity stack a host runs, read from the signed descriptor its build
+//! bundles.
 //!
-//! A host build bundles a signed descriptor and hands it to
-//! [`Stack::bundled`] with the stack's pointer. The resolved [`Stack`] answers
-//! `get_chain_info`, names the People, Bulletin and Asset Hub chains the core
-//! talks to, and carries the TLD the signing role derives identities under.
+//! [`Stack::bundled`] checks the descriptor against the key in the stack's
+//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
+//! chain's genesis hash, and answers `get_chain_info`.
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
