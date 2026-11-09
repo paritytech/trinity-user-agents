@@ -109,7 +109,7 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         let options = service.options(intent: context.intent)
         candidates = options?.candidates ?? []
         rails = options?.rails ?? []
-        rail = options?.defaultRail ?? .card
+        rail = options?.rails.first ?? .card
         detectedCountry = (options?.detectedCountry ?? FundingCountries.localeRegion())
             .flatMap { FundingCountries.country(code: $0) }
         country = detectedCountry

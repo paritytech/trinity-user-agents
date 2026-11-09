@@ -26,10 +26,9 @@ extension FundingFlowModel {
         rail == .crypto ? asset : offeredAsset
     }
 
-    /// The typed amount in CASH units, as the core reads it: nil while the
-    /// text is not a number.
+    /// The typed amount in CASH units: nil while the text is not a number.
     var amountUnits: U128? {
-        fundingUnits(text: amountText, decimals: UInt8(clamping: cash.precision))
+        cash.units(text: amountText)
     }
 
     var amount: Decimal {
@@ -187,9 +186,9 @@ extension FundingFlowModel {
     var quoteFailureText: String? {
         switch quotes.list?.refusal {
         case .timeout: String(localized: .Funding.errorQuoteTimeout)
-        case .countryUnsupported: String(localized: .Funding.providersCountryUnsupported)
-        case let .other(message): message
-        case nil: nil
+        case .refused(.countryUnsupported): String(localized: .Funding.providersCountryUnsupported)
+        case let .refused(.other(message)): message
+        case .refused, nil: nil
         }
     }
 }

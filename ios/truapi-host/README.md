@@ -373,15 +373,17 @@ closed it because the payment moved, `.dismissed` when the user closed it and
 `.returned(url:)` when the page navigated to the request's `return_url`.
 
 `fundingEntries()` lists every session the core announced with its progress,
-and `fundingHistory()` the ended ones as summaries, each with how it ended. Ended
-sessions keep being handed over on each resume until the host records them
-with `acknowledgeFundingShown(intents:)`, which it calls only while the
-history is on screen. `setFundingProviderConfig(publishedNames:bundled:)`
-lists the providers the remote configuration names and the ones the host
-ships, on every refresh; amounts cross as decimal strings of CASH units.
-Free functions hold the rules both apps share: `fundingUnits(text:decimals:)`,
-`fundingAssetIsFiat(code:)`, `fundingFeeBreakdown(quote:direction:)`,
-`fundingAmountIssue(...)`, the `fundingPage*` checks for a provider's page and
+`fundingHistory()` the ended ones as summaries, each with how it ended in
+`ended`, and `fundingSummary(intent:)` one of them. `fundingSessionOpen(intent:)`
+says whether a session's overlay can be shown again. Ended sessions keep being
+handed over on each resume until the host records each with
+`acknowledgeFundingSession(intent:)`, which it calls only while the history is
+on screen. `setFundingProviderConfig(publishedNames:bundled:)` lists the
+providers the remote configuration names and the ones the host ships, on every
+refresh; amounts cross as decimal strings of CASH units. Free functions hold
+the rules both apps share: `fundingAmountIssue(...)`, the `fundingPage*` checks
+for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
+product runs from and which file answers a request, and
 `fundingResumePending(databaseDirectory:)` for starting the core at launch.
 
 ## Payments

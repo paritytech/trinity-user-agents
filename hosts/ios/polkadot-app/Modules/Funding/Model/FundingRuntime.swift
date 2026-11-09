@@ -19,7 +19,7 @@ protocol FundingRuntime: AnyObject, Sendable {
     func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
     func fundingHistory() -> [FundingSessionSummary]
     @discardableResult
-    func acknowledgeFundingShown(intents: [String]) async throws -> [String]
+    func acknowledgeFundingSession(intent: String) async throws -> Bool
     func openFunding(direction: FundingDirection, amount: U128?) async throws -> String?
 }
 
@@ -31,7 +31,7 @@ extension FundingRuntime {
     /// logged, and the session comes through again on the next resume.
     func acknowledgeShown(intent: String, logger: LoggerProtocol) async {
         do {
-            try await acknowledgeFundingShown(intents: [intent])
+            try await acknowledgeFundingSession(intent: intent)
         } catch {
             logger.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
         }

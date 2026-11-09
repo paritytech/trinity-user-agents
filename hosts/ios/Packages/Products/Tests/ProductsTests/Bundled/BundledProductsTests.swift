@@ -7,20 +7,21 @@ struct BundledProductsTests {
     @Test func readsEachProductUnderTheRoot() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        try write("{\"kind\":\"worker\"}", to: root, "provider.dot/worker-manifest.json")
+        try write("{\"$v\":1,\"displayName\":\"Provider\"}", to: root, "provider.dot/manifest.json")
         try write("export {}", to: root, "provider.dot/worker/index.js")
         try write("<html></html>", to: root, "provider.dot/app/index.html")
         try write("ignored", to: root, ".staging/worker/index.js")
 
         let id = try ProductId("provider.dot")
         let products = BundledProducts(root: root)
-        let product = try #require(products.product(id))
+        let entry = try #require(products.entries.first)
 
-        #expect(products.all.map(\.id.rawValue) == ["provider.dot"])
-        #expect(product.workerManifest() == "{\"kind\":\"worker\"}")
-        #expect(product.hasWorker())
-        #expect(product.hasApp())
-        #expect(ProductWorkerSource.bundled(product) == ProductWorkerSource(
+        #expect(products.entries.map(\.productId) == [id])
+        #expect(entry.hasWorker)
+        #expect(entry.hasApp)
+        #expect(entry.displayName == "Provider")
+        #expect(products.source(of: id) == .bundled(entry: entry))
+        #expect(ProductWorkerSource.bundled(entry) == ProductWorkerSource(
             contentId: id,
             entryRelativePath: "worker/index.js"
         ))
@@ -29,11 +30,15 @@ struct BundledProductsTests {
     /// The app's network has its own top-level domain, which a bundled id
     /// need not end in, and a provider's screen must still resolve.
     @Test func opensPagesUnderItsOwnIdOnAnyNetwork() throws {
-        let product = try Products.BundledProduct(
-            id: ProductId("provider.dot"),
-            directory: URL(fileURLWithPath: "/bundle/provider.dot")
+        let entry = try BundleEntry(
+            productId: ProductId("provider.dot"),
+            path: "/bundle/provider.dot",
+            hasWorker: true,
+            hasApp: true,
+            displayName: nil,
+            iconCid: nil
         )
-        let page = try #require(product.page(navigationDestination: "provider.dot/card?intent=fs_1"))
+        let page = try #require(entry.page(navigationDestination: "provider.dot/card?intent=fs_1"))
 
         #expect(page.host.toDotDomain().rawValue == "provider.dot")
         #expect(page.page == "/card?intent=fs_1")
@@ -41,8 +46,8 @@ struct BundledProductsTests {
 
     /// A build made without the bundle still runs, with nothing bundled.
     @Test func shipsNothingWithoutARoot() {
-        #expect(BundledProducts(root: nil).all.isEmpty)
-        #expect(BundledProducts(root: URL(fileURLWithPath: "/nonexistent/BundledProducts.bundle")).all.isEmpty)
+        #expect(BundledProducts(root: nil).entries.isEmpty)
+        #expect(BundledProducts(root: URL(fileURLWithPath: "/nonexistent/BundledProducts.bundle")).entries.isEmpty)
     }
 
     private func makeRoot() throws -> URL {
