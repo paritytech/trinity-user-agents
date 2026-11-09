@@ -524,5 +524,5 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// Funding state the host reads back from the runtime changed: `kind`
 	/// says what, `intent` which session, `None` for `InProgress`. The core
 	/// has updated what the runtime answers before it calls.
-	fn funding_changed(&self, intent: Option<String>, kind: super::funding_book::FundingChangeKind);
+	fn funding_changed(&self, intent: Option<String>, kind: super::funding_feed::FundingChangeKind);
 }

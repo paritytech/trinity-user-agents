@@ -41,7 +41,7 @@ use super::{
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
-	funding_book::{FundingChangeKind, FundingSessionBook, write_resume_marker},
+	funding_feed::{FundingChangeKind, write_resume_marker},
 	subscribers::Subscribers,
 };
 
@@ -753,21 +753,12 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 }
 
 /// [`crate::platform::FundingPlatform`] served by host-provided
-/// [`NativeFundingCallbacks`], keeping the funding state the host reads back
-/// in its [`FundingSessionBook`] and telling the host what changed.
+/// [`NativeFundingCallbacks`].
 pub struct FundingCallbackPlatform {
 	/// Host funding overlay.
 	pub funding: Arc<dyn NativeFundingCallbacks>,
-	/// The funding state the host reads back.
-	pub book: Arc<FundingSessionBook>,
 	/// The core database directory, which holds the resume marker.
 	pub database_directory: std::path::PathBuf,
-}
-
-impl FundingCallbackPlatform {
-	fn changed(&self, intent: Option<String>, kind: FundingChangeKind) {
-		self.funding.funding_changed(intent, kind);
-	}
 }
 
 #[async_trait::async_trait]
@@ -777,9 +768,7 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		product: Option<&ProductContext>,
 		session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, v01::GenericError> {
-		let intent = session.intent.clone();
-		let outcome = self
-			.funding
+		self.funding
 			.present_funding(
 				product.map(|product| product.product_id.clone()),
 				session.intent,
@@ -787,9 +776,7 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 				session.amount,
 			)
 			.await
-			.map_err(v01::GenericError::from);
-		self.book.overlay_closed(&intent);
-		outcome
+			.map_err(v01::GenericError::from)
 	}
 
 	async fn present_provider_frame(
@@ -817,9 +804,8 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		self.funding.detected_country().await
 	}
 
-	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
-		self.book.quotes_changed(&intent, quotes);
-		self.changed(Some(intent), FundingChangeKind::Quotes);
+	fn funding_quotes_changed(&self, intent: String, _quotes: crate::platform::FundingQuoteList) {
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
 	}
 }
 
@@ -827,27 +813,24 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 	fn funding_session_changed(
 		&self,
 		intent: String,
-		status: v01::HostFundingStatusSubscribeItem,
-		session: Option<crate::host_logic::funding::FundingSession>,
+		_status: v01::HostFundingStatusSubscribeItem,
+		_session: Option<crate::host_logic::funding::FundingSession>,
 		_progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
-		self.book.session_changed(&intent, &status, session.as_ref());
-		self.changed(Some(intent), FundingChangeKind::Session);
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Session);
 	}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
-		self.book.in_progress_changed(in_progress);
 		write_resume_marker(&self.database_directory, in_progress);
-		self.changed(None, FundingChangeKind::InProgress);
+		self.funding.funding_changed(None, FundingChangeKind::InProgress);
 	}
 
 	fn funding_options_changed(
 		&self,
 		intent: String,
-		options: crate::host_logic::funding_providers::FundingOptions,
+		_options: crate::host_logic::funding_providers::FundingOptions,
 	) {
-		self.book.options_changed(&intent, options);
-		self.changed(Some(intent), FundingChangeKind::Options);
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Options);
 	}
 }
 
