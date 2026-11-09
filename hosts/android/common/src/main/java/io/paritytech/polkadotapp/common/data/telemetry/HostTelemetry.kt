@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.common.data.telemetry
 
 import android.content.Intent
+import io.paritytech.polkadotapp.common.utils.logFailure
+import kotlinx.coroutines.TimeoutCancellationException
+import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 data class HostEventOrigin(
     val appVariant: String,
@@ -15,6 +19,7 @@ data class HostEvent(
     val name: String,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
+    val isFailure: Boolean = false,
 )
 
 const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
@@ -41,6 +46,33 @@ fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     extras = baseExtras(),
 )
 
+enum class HostLoadStage(val tag: String) {
+    /** The page's own session: runtime, execution, WebView, first load. */
+    PAGE("page"),
+    WORKER("worker"),
+    RESOLVE("resolve"),
+    BULLETIN("bulletin"),
+}
+
+fun HostEventOrigin.loadFailed(
+    stage: HostLoadStage,
+    cause: Throwable,
+    productId: String?,
+    sessionId: String?,
+    domain: String?,
+) = HostEvent(
+    name = "host.load.failed",
+    tags = baseTags() + listOfNotNull(
+        "load.stage" to stage.tag,
+        "error.type" to cause.javaClass.simpleName,
+        productId?.let { "product.id" to it },
+        domain?.let { "dotns.domain" to it },
+        sessionId?.let { "host.session_id" to it },
+    ),
+    extras = baseExtras() + ("error.message" to cause.message.orEmpty()),
+    isFailure = true,
+)
+
 /** A tap is recorded once: not again when the activity is restored or relaunched from Recents. */
 fun isFreshNotificationLaunch(isRestored: Boolean, intentFlags: Int): Boolean =
     !isRestored && (intentFlags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0
@@ -55,4 +87,24 @@ fun interface HostEventCapture {
 
 fun interface HostMonotonicTimeProvider {
     fun nowMillis(): Long
+}
+
+/** Reports a product load that failed, as one event, so Sentry can count and group the failures by stage. */
+class HostLoadFailureTelemetry @Inject constructor(
+    private val originProvider: HostEventOriginProvider,
+    private val capture: HostEventCapture,
+) {
+    fun report(
+        stage: HostLoadStage,
+        cause: Throwable,
+        productId: String? = null,
+        sessionId: String? = null,
+        domain: String? = null,
+    ) {
+        // A page or worker closed mid-load is not a failure; a timeout is.
+        if (cause is CancellationException && cause !is TimeoutCancellationException) return
+        runCatching {
+            capture.capture { originProvider.current().loadFailed(stage, cause, productId, sessionId, domain) }
+        }.logFailure("Failed to capture native host load failure")
+    }
 }

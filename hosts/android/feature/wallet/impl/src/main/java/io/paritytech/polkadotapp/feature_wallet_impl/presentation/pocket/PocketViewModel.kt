@@ -259,10 +259,20 @@ class PocketViewModel @Inject constructor(
 
         returnToList()
         removalCandidate.value = null
-        selectCard(card, request.pageQuery)
+        // A link, not a tap: its handler already held when it was asked for.
+        select(card, request.pageQuery)
     }
 
+    /** The user tapped [card]. */
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
+        // First, before anything moves, so the page can time its load from the tap itself.
+        if (card is PocketCardUiModel.ProductCard) interactor.cardTapped(card.key)
+        select(card, pageQuery)
+    }
+
+    private fun select(card: PocketCardUiModel, pageQuery: String) {
         if (collectiblesShown.value) return
 
         selectedCardId.value = card.id

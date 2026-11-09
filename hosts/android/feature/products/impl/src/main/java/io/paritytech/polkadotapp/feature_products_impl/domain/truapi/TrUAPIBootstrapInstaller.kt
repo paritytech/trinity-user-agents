@@ -7,6 +7,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ContainerScriptBundle
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -29,9 +30,13 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>, hostSessionId: String?): (bootstrap: String) -> (WebView) -> Unit {
+    fun installerFor(
+        origins: Set<String>,
+        hostSessionId: String?,
+        open: HostPageOpen? = null,
+    ): (bootstrap: String) -> (WebView) -> Unit {
         val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
-            runCatching { hostTelemetryScript(context, hostSessionId) }
+            runCatching { hostTelemetryScript(context, hostSessionId, open) }
                 .logFailure("Native host telemetry unavailable")
                 .getOrNull()
         } else {
@@ -58,6 +63,7 @@ class TrUAPIBootstrapInstaller @Inject constructor(
 internal fun hostTelemetryScript(
     context: Context,
     hostSessionId: String,
+    open: HostPageOpen? = null,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
     val telemetry = hostTelemetryJson.encodeToString(
@@ -70,6 +76,8 @@ internal fun hostTelemetryScript(
             osVersion = Build.VERSION.RELEASE?.takeIf(String::isNotBlank),
             truapiHostVersion = truapiHostVersion().takeIf(String::isNotBlank),
             schemaVersion = "1",
+            openedAtEpochMs = open?.epochMs,
+            openSource = open?.source?.tag,
         ),
     )
 
@@ -98,4 +106,6 @@ private data class HostTelemetryBootstrap(
     val osVersion: String?,
     val truapiHostVersion: String?,
     val schemaVersion: String,
+    val openedAtEpochMs: Long? = null,
+    val openSource: String? = null,
 )

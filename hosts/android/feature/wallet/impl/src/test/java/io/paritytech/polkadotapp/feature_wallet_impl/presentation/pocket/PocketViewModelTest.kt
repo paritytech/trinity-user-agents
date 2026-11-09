@@ -2,9 +2,11 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
 import android.net.Uri
 import androidx.lifecycle.viewModelScope
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -61,6 +63,7 @@ class PocketViewModelTest {
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
+        every { cardTapped(any()) } just Runs
         coEvery { faceShownOnOpen(any()) } returns true
     }
 
@@ -494,6 +497,25 @@ class PocketViewModelTest {
         val opened = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:loyalty", opened.selectedCard.id)
         assertNull(cardOpenRequests.requested.value)
+    }
+
+    // The page times itself from the tap, so a card a link opens must not be taken for one: its
+    // handler already held the time the link was asked for.
+    @Test
+    fun `a tap holds the open for its product and a link opening the same card does not`() = runTest(testDispatcher) {
+        val tapped = productCard("loyalty")
+        val linked = productCard("coffee")
+        every { interactor.observeProductCards() } returns flowOf(listOf(tapped, linked))
+
+        val viewModel = createViewModel()
+        viewModel.selectCard(settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first { it.key == tapped.key })
+        advanceUntilIdle()
+        viewModel.dismissCard()
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { interactor.cardTapped(tapped.key) }
+        verify(exactly = 0) { interactor.cardTapped(linked.key) }
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist

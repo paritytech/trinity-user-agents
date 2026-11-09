@@ -9,6 +9,8 @@ import android.os.Build
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
@@ -129,6 +131,26 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("writable: false"))
         assertTrue(script.contains("configurable: false"))
         assertTrue(script.endsWith("} catch {}"))
+    }
+
+    @Test
+    fun `host telemetry script carries the tap time and source only for a page a tap opened`() {
+        val packageInfo = mock(PackageInfo::class.java).apply { versionName = "1.2.3" }
+        val packageManager = mock(PackageManager::class.java)
+        whenever(packageInfo.longVersionCode).thenReturn(456L)
+        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
+        whenever(context.packageManager).thenReturn(packageManager)
+        whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
+
+        val tapped = hostTelemetryScript(
+            context = context,
+            hostSessionId = "page-session",
+            open = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_793_880_000_000L),
+        )
+        val untapped = hostTelemetryScript(context = context, hostSessionId = "page-session")
+
+        assertTrue(tapped.contains("\"schemaVersion\":\"1\",\"openedAtEpochMs\":1793880000000,\"openSource\":\"pocket_card\"})"))
+        assertTrue(untapped.contains("\"schemaVersion\":\"1\"})"))
     }
 
     @Test

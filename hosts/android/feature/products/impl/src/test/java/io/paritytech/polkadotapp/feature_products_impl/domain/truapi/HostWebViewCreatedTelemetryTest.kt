@@ -5,6 +5,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.test_shared.any
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,11 +33,26 @@ class HostWebViewCreatedTelemetryTest {
         reporter.report("bootstrap-session-42")
 
         assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.name)
-        assertEquals("bootstrap-session-42", captured?.extras?.get("host.session_id"))
+        assertEquals("bootstrap-session-42", captured?.tags?.get("host.session_id"))
         assertEquals("nightly", captured?.tags?.get("host.app_variant"))
         assertEquals("gp", captured?.tags?.get("host.app_flavor"))
         assertEquals(123L, captured?.extras?.get("host.app_build"))
         assertEquals(456L, captured?.extras?.get("event.monotonic_ms"))
+    }
+
+    @Test
+    fun `tags the open source and reports the time since the tap when the page was opened by one`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
+
+        reporter.report(
+            "bootstrap-session-42",
+            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L),
+            nowEpochMs = 1_840L,
+        )
+
+        assertEquals("pocket_card", captured?.tags?.get("open.source"))
+        assertEquals(840L, captured?.extras?.get("tap_ms"))
     }
 
     @Test

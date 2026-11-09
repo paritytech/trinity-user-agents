@@ -9,6 +9,7 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -141,6 +142,7 @@ class TrUAPIWorkerSupervisorTest {
         bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
+        loadFailures = HostLoadFailureTelemetry(originProvider = { error("unused") }, capture = { }),
         dispatchers = testDispatchers(),
     )
 

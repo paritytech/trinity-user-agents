@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
 import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.CarFetcher
@@ -71,5 +72,6 @@ class RealDotNsResolverTest {
         contentStorage = contentStorage,
         contentHashOverrides = contentHashOverrides,
         dispatchers = testDispatchers(),
+        loadFailures = HostLoadFailureTelemetry(originProvider = { error("unused") }, capture = { }),
     )
 }

@@ -147,6 +147,19 @@ class HostProcessTelemetryTest {
     }
 
     @Test
+    fun `sends a failure event to Sentry at error level`() {
+        var sentryEvent: SentryEvent? = null
+        val capture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { sentryEvent = it },
+        )
+
+        capture.capture { HostEvent("host.load.failed", emptyMap(), emptyMap(), isFailure = true) }
+
+        assertEquals(SentryLevel.ERROR, sentryEvent?.level)
+    }
+
+    @Test
     fun `captures product notification fields and keeps disabled capture lazy`() {
         val captured = mutableListOf<HostEvent>()
         val capture = HostEventCapture { captured += it() }

@@ -13,13 +13,21 @@ import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.ProductId
@@ -39,7 +47,12 @@ class TrUAPISessionStarterTest {
     private val chainDirectory = mockk<TrUAPIChainDirectory>()
     private val dotNsTldProvider = mockk<DotNsTldProvider>()
     private val installerSessionId = slot<String>()
+    private val installerOpen = slot<HostPageOpen?>()
+    private val installerOpens = mutableListOf<HostPageOpen?>()
     private val reportedSessionId = slot<String>()
+    private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
+    private val events = mutableListOf<HostEvent>()
+    private val pageOpens = HostPageOpens()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
 
     private val starter = TrUAPISessionStarter(
@@ -50,6 +63,8 @@ class TrUAPISessionStarterTest {
         bootstrapInstaller = bootstrapInstaller,
         visibleProducts = visibleProducts,
         hostWebViewCreatedTelemetry = telemetry,
+        pageOpens = pageOpens,
+        loadFailures = HostLoadFailureTelemetry({ origin }, { events += it() }),
     )
 
     @Before
@@ -65,6 +80,42 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the first WebView setup reports the same session id exposed to the product`() = runBlocking<Unit> {
+        startPage()
+        yield()
+
+        invokeTelemetrySetupTwice()
+
+        verify(exactly = 1) { telemetry.report(any(), any(), any()) }
+        assertEquals(installerSessionId.captured, reportedSessionId.captured)
+    }
+
+    @Test
+    fun `the tap that asked for the page is handed to its bootstrap once`() = runBlocking<Unit> {
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        pageOpens.hold(PRODUCT_ID.value, tap)
+
+        repeat(2) {
+            startPage()
+            yield()
+        }
+
+        assertEquals(listOf(tap, null), installerOpens)
+    }
+
+    @Test
+    fun `a page that fails to start reports a page load failure under its session`() = runBlocking<Unit> {
+        coEvery { runtimeProvider.runtime() } returns Result.failure(IllegalStateException("no runtime"))
+
+        startPage()
+        yield()
+
+        val event = events.single()
+        assertEquals("page", event.tags["load.stage"])
+        assertEquals("product.paseo", event.tags["product.id"])
+        assertTrue(event.tags["host.session_id"]?.isNotEmpty() == true)
+    }
+
+    private fun CoroutineScope.startPage() {
         starter.start(
             provider = provider,
             productUrl = PRODUCT_URL,
@@ -72,12 +123,6 @@ class TrUAPISessionStarterTest {
             hostApiNavigation = navigation,
             explicitProductId = PRODUCT_ID,
         )
-        yield()
-
-        invokeTelemetrySetupTwice()
-
-        verify(exactly = 1) { telemetry.report(any()) }
-        assertEquals(installerSessionId.captured, reportedSessionId.captured)
     }
 
     private fun stubProductUrl() {
@@ -94,10 +139,13 @@ class TrUAPISessionStarterTest {
         every { hostBridgeFactory.create(any()) } returns bridge
         coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
         coEvery { chainDirectory.resolve() } returns chains
-        every { bootstrapInstaller.installerFor(any(), capture(installerSessionId)) } returns { { } }
+        every { bootstrapInstaller.installerFor(any(), capture(installerSessionId), captureNullable(installerOpen)) } answers {
+            installerOpens += installerOpen.captured
+            { { } }
+        }
         coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
         coEvery { provider.loadInitialContent() } just Runs
-        every { telemetry.report(capture(reportedSessionId)) } just Runs
+        every { telemetry.report(capture(reportedSessionId), any(), any()) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
             Result.success(execution)

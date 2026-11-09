@@ -4,6 +4,8 @@ import android.net.Uri
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.data.memory.MapCache
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadStage
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -32,7 +34,8 @@ internal class RealDotNsResolver @Inject constructor(
     private val carFetcher: CarFetcher,
     private val contentStorage: DotNsContentStorage,
     private val contentHashOverrides: ContentHashOverrides,
-    private val dispatchers: CoroutineDispatchers
+    private val dispatchers: CoroutineDispatchers,
+    private val loadFailures: HostLoadFailureTelemetry,
 ) : DotNsResolver, CoroutineScope {
     override val coroutineContext = dispatchers.io + SupervisorJob()
 
@@ -48,7 +51,10 @@ internal class RealDotNsResolver @Inject constructor(
             .logFailure("failed to resolve $domainName")
             // A domain with nothing registered behind it never reaches the download that reports its
             // own failures, and a host screen reading progress would wait on it for good.
-            .onFailure { progressRegistry.markFailed(domainName, it) }
+            .onFailure {
+                progressRegistry.markFailed(domainName, it)
+                loadFailures.report(HostLoadStage.BULLETIN, it, domain = domainName)
+            }
     }
 
     // TODO v1: Currently always fetches the latest content hash from chain for session. In the target solution,
