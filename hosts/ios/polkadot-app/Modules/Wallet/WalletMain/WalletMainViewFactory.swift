@@ -16,8 +16,13 @@ enum WalletMainViewFactory {
         else {
             return nil
         }
+        let assetDetailsScene = AssetDetailsViewFactory.createEmbeddedScene(
+            context: context,
+            chainAsset: chainAsset
+        )
         let wireframe = WalletMainWireframe(
-            flowState: context.flowState
+            flowState: context.flowState,
+            assetDetailsScene: assetDetailsScene
         )
 
         let interactor = WalletMainInteractor(
@@ -39,11 +44,7 @@ enum WalletMainViewFactory {
 
         let view = WalletMainViewController(
             presenter: presenter,
-            assetDetailsScene:
-            AssetDetailsViewFactory.createEmbeddedScene(
-                context: context,
-                chainAsset: chainAsset
-            )
+            assetDetailsScene: assetDetailsScene
         )
         presenter.view = view
 

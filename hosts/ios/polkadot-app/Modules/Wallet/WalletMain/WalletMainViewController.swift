@@ -1,22 +1,13 @@
 import SwiftUI
-import ExternalAccessibility
-import PolkadotUI
 
 final class WalletMainViewController: UIHostingController<WalletView>, RootScreen, NavigationDependable,
     NavigationBarHiding {
     let presenter: WalletMainPresenterProtocol
     weak var navigationControlling: NavigationControlling?
 
-    var hidesNavigationBar: Bool {
-        rootView.viewModel.expandedSection == .none
-    }
+    var hidesNavigationBar: Bool { true }
 
     private var assetDetailsScene: AssetDetailsScene
-
-    private let titleLabel: PolkadotUI.Label = .create { view in
-        view.typography = .headlineSmall
-        view.textColor = .fgPrimary
-    }
 
     init(presenter: WalletMainPresenterProtocol, assetDetailsScene: AssetDetailsScene) {
         self.presenter = presenter
@@ -42,26 +33,19 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceMain
-        setMainTitle()
+        navigationItem.style = .browser
+        navigationControlling?.setNavigationBarHidden(hidesNavigationBar, animated: true)
 
         assetDetailsScene.attachNavigationHost(self)
         setupHandlers()
         presenter.setup()
     }
 
-    private func updateNavigationBarVisibility(animated: Bool) {
-        navigationControlling?.setNavigationBarHidden(hidesNavigationBar, animated: animated)
-    }
-
     private func setupHandlers() {
         rootView.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
 
-        rootView.viewModel.onBalance = { [weak self] in
-            self?.showAssetDetailsOverlay()
-        }
-
-        rootView.viewModel.onCollapse = { [weak self] in
-            self?.collapseExpandedSection()
+        rootView.viewModel.onBalance = { [weak presenter] in
+            presenter?.showBalanceCard()
         }
 
         rootView.viewModel.onCollectibles = { [weak self] in
@@ -75,25 +59,6 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
             presenter?.removePocketCard(card)
         }
-    }
-
-    private func resetRightButton() {
-        navigationItem.setRightBarButton(nil, animated: true)
-    }
-
-    private func resetOverlayCloseButton() {
-        navigationItem.setLeftBarButton(nil, animated: true)
-    }
-
-    private func setOverlayCloseButton() {
-        let item = UIBarButtonItem(
-            image: .buttonClose.withRenderingMode(.alwaysTemplate),
-            style: .plain,
-            target: self,
-            action: #selector(collapseExpandedSection)
-        )
-        item.accessibilityId(AccessibilityID.Wallet.detailCloseButton)
-        navigationItem.setLeftBarButton(item, animated: true)
     }
 }
 
@@ -111,13 +76,13 @@ extension WalletMainViewController: WalletMainViewProtocol {
     func frame(of item: PocketItem) -> CGRect? {
         guard
             UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
-            navigationController?.viewControllers.suffix(2).first === self,
-            rootView.viewModel.expandedSection == .none
+            navigationController?.viewControllers.suffix(2).first === self
         else { return nil }
 
         switch item {
         case .balance:
-            return nil
+            let frame = rootView.viewModel.balanceCardFrame
+            return frame.isEmpty ? nil : frame
         case .collectibles:
             let frame = rootView.viewModel.collectiblesFrame
             return frame.isEmpty ? nil : frame
@@ -151,26 +116,8 @@ extension WalletMainViewController: WalletMainViewProtocol {
         }
     }
 
-    @objc
-    func collapseExpandedSection() {
-        rootView.viewModel.expandedSection = .none
-        resetOverlayCloseButton()
-        resetRightButton()
-        setMainTitle()
-    }
-
-    private func showAssetDetailsOverlay() {
-        rootView.viewModel.expandedSection = .assetDetails
-        setOverlayCloseButton()
-        resetRightButton()
-        setTitleCenter(String(localized: .walletMainPurse))
-    }
-
     private func openCollectibles() {
-        guard
-            rootView.viewModel.expandedSection == .none,
-            rootView.viewModel.collectiblesPeek == .resting
-        else { return }
+        guard rootView.viewModel.collectiblesPeek == .resting else { return }
 
         withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
             rootView.viewModel.collectiblesPeek = .colouring
@@ -180,29 +127,6 @@ extension WalletMainViewController: WalletMainViewProtocol {
             try? await Task.sleep(for: .seconds(CollectiblesBookTiming.colourDuration))
             self?.presenter.showCollectibles()
         }
-    }
-
-    func setMainTitle() {
-        navigationItem.style = .browser
-        navigationItem.title = nil
-        navigationItem.titleView = nil
-        updateNavigationBarVisibility(animated: true)
-    }
-
-    func setTitleCenter(_ title: String?) {
-        navigationItem.style = .navigator
-        updateNavigationBarVisibility(animated: true)
-        guard #available(iOS 26, *) else {
-            navigationItem.title = title
-            return
-        }
-        titleLabel.typography = .titleLarge
-        titleLabel.attributedText = title.map {
-            CashLogo.styled($0, symbol: PaymentAssetBranding.shared.current.symbol, font: UIFont.app(.titleLarge))
-        }
-        titleLabel.accessibilityLabel = title
-        titleLabel.sizeToFit()
-        navigationItem.titleView = titleLabel
     }
 }
 

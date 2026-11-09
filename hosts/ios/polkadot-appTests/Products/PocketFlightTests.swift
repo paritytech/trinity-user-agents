@@ -30,6 +30,27 @@ struct PocketFlightTests {
         withExtendedLifetime(origin) {}
     }
 
+    /// The Balance card's screen flies like a card's, with or without a Pocket to fly from.
+    @Test
+    func animatesTheBalanceScreenWithAFlight() {
+        let navigation = AppNavigationController(rootViewController: UIViewController())
+        let origin = FakePocketOrigin(slot: pocketSlot)
+        let flying = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: origin)
+        let pocketless = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: nil)
+        let screens = [flying, pocketless]
+
+        let pushes = screens.map { screen in
+            navigation.navigationController(navigation, animationControllerFor: .push, from: navigation, to: screen)
+        }
+        let pops = screens.map { screen in
+            navigation.navigationController(navigation, animationControllerFor: .pop, from: screen, to: navigation)
+        }
+
+        #expect(pushes.map { $0 is PocketFlight } == [true, true])
+        #expect(pops.map { $0 is PocketFlight } == [true, true])
+        withExtendedLifetime(origin) {}
+    }
+
     /// A card the Pocket shows flies to its slot, which is the path the user
     /// sees the card take.
     @Test

@@ -42,6 +42,17 @@ struct TabBarRootStandInTests {
         #expect(TabBarHiddenPolicy.isTabRoot(in: [root, collectibles], showing: collectibles))
         #expect(TabBarReselectionPolicy.action(for: navigation) == .popToRoot(navigation))
     }
+
+    @Test
+    func balanceIsTheTabRootAndPopsWhenItsTabIsTappedAgain() {
+        let root = UIViewController()
+        let balance = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: nil)
+        let navigation = UINavigationController(rootViewController: root)
+        navigation.setViewControllers([root, balance], animated: false)
+
+        #expect(TabBarHiddenPolicy.isTabRoot(in: [root, balance], showing: balance))
+        #expect(TabBarReselectionPolicy.action(for: navigation) == .popToRoot(navigation))
+    }
 }
 
 private final class StandInScreen: UIViewController, TabBarRootStandIn {}

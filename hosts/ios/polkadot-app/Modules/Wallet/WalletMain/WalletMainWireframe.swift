@@ -5,13 +5,25 @@ import UIKitExt
 final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
     private let moduleNavigator: ModuleNavigating
     private let flowState: SPAFlowState
+    private let assetDetailsScene: AssetDetailsScene
 
     init(
         flowState: SPAFlowState,
+        assetDetailsScene: AssetDetailsScene,
         moduleNavigator: ModuleNavigating = ModuleNavigator()
     ) {
         self.flowState = flowState
+        self.assetDetailsScene = assetDetailsScene
         self.moduleNavigator = moduleNavigator
+    }
+
+    func showBalanceCard() {
+        let viewModel = assetDetailsScene.viewModel
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = AssetDetailsScreenViewController(viewModel: viewModel, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
+        }
     }
 
     func showCollectibles(page: ProductPage) {

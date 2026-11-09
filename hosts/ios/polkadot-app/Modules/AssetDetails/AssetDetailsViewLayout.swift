@@ -9,6 +9,7 @@ struct AssetDetailsView: View {
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
     var onCollapse: (() -> Void)?
+    var isCardHidden: Bool = false
 
     #if DEBUG
         /// Which holdings the coins draw, for reviewing the depiction. Debug builds only.
@@ -26,13 +27,15 @@ struct AssetDetailsView: View {
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        onCollapse: (() -> Void)? = nil,
+        isCardHidden: Bool = false
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
         self.onCollapse = onCollapse
+        self.isCardHidden = isCardHidden
     }
 
     var body: some View {
@@ -50,6 +53,7 @@ struct AssetDetailsView: View {
         if let balanceCardModel = viewModel.balanceCardModel {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
+                .opacity(isCardHidden ? 0 : 1)
         }
     }
 

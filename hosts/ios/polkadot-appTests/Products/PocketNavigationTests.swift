@@ -77,6 +77,22 @@ struct PocketNavigationTests {
         PocketNavigation.show(card, on: navigation, animated: true) {}
         #expect(navigation.viewControllers == [pocket, card])
     }
+
+    /// The Balance card's screen and a card share the place above the Pocket, so each replaces the other there.
+    @Test
+    func replacesTheBalanceScreenWithACardAndBack() {
+        let pocket = UIViewController()
+        let navigation = UINavigationController(rootViewController: pocket)
+        let balance = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: nil)
+        let card = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
+        PocketNavigation.show(balance, on: navigation, animated: false) {}
+
+        PocketNavigation.show(card, on: navigation, animated: true) {}
+        #expect(navigation.viewControllers == [pocket, card])
+
+        PocketNavigation.show(balance, on: navigation, animated: true) {}
+        #expect(navigation.viewControllers == [pocket, balance])
+    }
 }
 
 private let trophyCard = PocketCardViewModel(
