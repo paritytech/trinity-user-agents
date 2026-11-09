@@ -110,3 +110,31 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 		]
 	);
 }
+
+/// Lookups for one product that start while none has finished share one
+/// lookup, so a burst of them holds one Asset Hub follow, not one each.
+#[test]
+fn concurrent_lookups_for_one_product_open_one_follow() {
+	let platform = std::sync::Arc::new(crate::test_support::StubPlatform::default());
+	let services = RuntimeServices::new(
+		platform.clone(),
+		crate::platform::HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		crate::test_support::paseo_test_stack(),
+		crate::test_support::test_spawner(),
+	);
+	let product = ProductId::for_test("peopl.dot");
+
+	futures::executor::block_on(futures::future::join_all(
+		(0..4).map(|_| root_manifest(&services, platform.as_ref(), &product)),
+	));
+
+	assert_eq!(
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow"),
+		1
+	);
+}

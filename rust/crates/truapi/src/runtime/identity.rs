@@ -22,7 +22,10 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
+	runtime::{
+		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		services::DotnsReads,
+	},
 	session_usernames::SessionUsernames,
 };
 
@@ -40,6 +43,7 @@ const LOOKUP_BUDGET: Duration = Duration::from_secs(45);
 /// stack that names no Asset Hub.
 #[instrument(skip_all, fields(runtime.method = "session.identity.resolve_with_chain"))]
 pub async fn resolve_session_identity_with_chain(
+	reads: &DotnsReads,
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 	session: SessionInfo,
@@ -47,7 +51,7 @@ pub async fn resolve_session_identity_with_chain(
 	if session.has_username() {
 		return session;
 	}
-	match lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await {
+	match lookup_session_identity(reads, chain, asset_hub_chain_genesis_hash, &session).await {
 		Some(identity) => {
 			let (lite_username, full_username) = identity.into_usernames();
 			SessionInfo { lite_username, full_username, ..session }
@@ -62,7 +66,7 @@ pub async fn resolve_session_identity_with_chain(
 /// `asset_hub_chain_genesis_hash` is `None`, neither account holds a username,
 /// or the lookup fails.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
-pub async fn lookup_session_identity(
+async fn read_session_identity(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 	session: &SessionInfo,
@@ -109,6 +113,40 @@ pub async fn lookup_session_identity(
 			None
 		}
 	}
+}
+
+/// The accounts a username lookup reads, which together decide its answer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SessionAccounts {
+	/// The session's root key.
+	root: [u8; 32],
+	/// The session's identity account, when it has one.
+	identity: Option<[u8; 32]>,
+}
+
+impl SessionAccounts {
+	fn of(session: &SessionInfo) -> Self {
+		Self { root: session.public_key, identity: session.identity_account_id }
+	}
+}
+
+/// [`read_session_identity`] shared through `reads`, so lookups of one session
+/// that overlap, such as a host activating the same session twice in a row or
+/// products asking for a username together, read dotNS once between them.
+pub async fn lookup_session_identity(
+	reads: &DotnsReads,
+	chain: &ChainRuntime,
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
+	session: &SessionInfo,
+) -> Option<DotnsIdentity> {
+	let (chain, owned) = (chain.clone(), session.clone());
+	reads
+		.identities
+		.run(SessionAccounts::of(session), move || async move {
+			read_session_identity(&chain, asset_hub_chain_genesis_hash, &owned).await
+		})
+		.await
+		.flatten()
 }
 
 /// Maximum lookup attempts per account on transient failure. The first attempt
