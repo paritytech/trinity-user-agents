@@ -44,7 +44,7 @@ class DockletHideState internal constructor(
     private var aim: DockletAim? by mutableStateOf(null)
     private var dragProgress by mutableFloatStateOf(0f)
     private var target by mutableFloatStateOf(0f)
-    private var landedTarget = 0f
+    private var landingPending = false
     private var quiet by mutableStateOf(false)
     private var settling by mutableStateOf(false)
     private var residualPose by mutableStateOf(DockletPose.Zero)
@@ -62,6 +62,8 @@ class DockletHideState internal constructor(
     val isMoving: Boolean get() = hold != null || aim != null || settling
 
     val isHeld: Boolean get() = hold != null || aim != null
+
+    val isOffScreen: Boolean get() = target == 1f && !isMoving && peek.value == 0f
 
     val alpha: Float get() = barAlpha.value
 
@@ -154,6 +156,7 @@ class DockletHideState internal constructor(
     fun quietHide() {
         if (!isShownAtRest || drawbridge == null) return
         quiet = true
+        landingPending = true
         target = 1f
         settling = true
         settleJob = scope.launch {
@@ -180,6 +183,7 @@ class DockletHideState internal constructor(
     }
 
     private fun settle(from: Float, to: Float, velocity: Float, spec: SpringSpec<Float>) {
+        if (to != target) landingPending = true
         target = to
         settleJob?.cancel()
         settling = true
@@ -202,8 +206,8 @@ class DockletHideState internal constructor(
         }
         residualPose = DockletPose.Zero
         settling = false
-        if (to != landedTarget) {
-            landedTarget = to
+        if (landingPending) {
+            landingPending = false
             land(to)
         }
     }

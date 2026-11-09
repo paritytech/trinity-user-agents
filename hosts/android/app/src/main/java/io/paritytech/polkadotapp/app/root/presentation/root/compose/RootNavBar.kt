@@ -194,7 +194,8 @@ fun RootNavBar(
         val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
         SideEffect { hideState.drawbridge = drawbridge }
         val excludeFromBack = forceShown && !hideState.countsAsHidden && !cardState.isOpen
-        val poseBackdrop = backdrop.takeUnless { hideState.countsAsHidden && !hideState.isMoving }
+        val offScreen by remember(hideState) { derivedStateOf { hideState.isOffScreen } }
+        val poseBackdrop = backdrop.takeUnless { offScreen }
         val dockMarginPx = with(density) { DockExclusionMargin.toPx() }
         val screenWidth = maxWidth
         val dockBottomGap = maxHeight - dock.bottom

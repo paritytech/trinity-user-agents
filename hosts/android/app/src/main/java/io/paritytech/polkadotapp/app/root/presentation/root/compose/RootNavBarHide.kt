@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.app.root.presentation.root.compose
 import android.os.Build
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityManager
-import androidx.activity.BackEventCompat
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.foundation.layout.Box
@@ -29,6 +28,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.components.DockletTipPopup
 import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
@@ -63,6 +65,8 @@ fun RootNavBarHide(
 ) {
     val density = LocalDensity.current
     val talkBack = rememberTouchExplorationEnabled()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val ime = WindowInsets.ime
     val imeUp by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
     val shownAtRest by remember(hideState) { derivedStateOf { hideState.isShownAtRest } }
@@ -78,6 +82,7 @@ fun RootNavBarHide(
         tipShown = shownTip != null || scannerTooltipVisible,
         panelExpanded = panelExpanded,
         touchExploration = talkBack,
+        resumed = resumed,
     )
     SideEffect { autoHide.blocked = blockers.blocked }
 
@@ -130,7 +135,7 @@ private fun HiddenDockBack(hideState: DockletHideState, onPlainBack: () -> Unit)
                 val point = density.dockletPoint(Offset(event.touchX, event.touchY))
                 if (action == null) {
                     val band = hideState.drawbridge?.backBand() ?: return@collect
-                    val edge = dockletBackEdge(event.swipeEdge, BackEventCompat.EDGE_LEFT, BackEventCompat.EDGE_RIGHT, Build.VERSION.SDK_INT)
+                    val edge = dockletBackEdge(event.swipeEdge, Build.VERSION.SDK_INT)
                     action = dockletBackAction(edge, point.y, band)
                     if (action == DockletBackAction.Claim) hideState.startRestore(point, SystemClock.uptimeMillis().milliseconds)
                 }

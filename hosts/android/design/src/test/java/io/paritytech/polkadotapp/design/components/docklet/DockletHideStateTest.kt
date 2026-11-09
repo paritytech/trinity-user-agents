@@ -292,6 +292,58 @@ class DockletHideStateTest {
         assertEquals(1, moments.count { it == DockletMoment.Restored })
     }
 
+    @Test
+    fun `a restore before a hide lands still reports the dock shown`() = runTest {
+        val state = hideState()
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        advanceTimeBy(FrameMillis * 3)
+        runCurrent()
+
+        state.restore()
+        advanceUntilIdle()
+
+        assertTrue(state.isShownAtRest)
+        assertEquals(listOf(DockletLanding.Shown), landings)
+        assertEquals(1, moments.count { it == DockletMoment.Restored })
+    }
+
+    @Test
+    fun `a restore caught before it lands and pushed back past half reports the dock hidden`() = runTest {
+        val state = hiddenState()
+        state.restore()
+        advanceTimeBy(FrameMillis * 3)
+        runCurrent()
+
+        val caught = bridge.map(DockletPoint(200f, 816f), state.pose())
+        state.startHide(caught, time = 1_000.milliseconds)
+        state.moveHide(DockletPoint(caught.x + 120f, caught.y), time = 1_016.milliseconds)
+        state.releaseHide()
+        advanceUntilIdle()
+
+        assertTrue(state.countsAsHidden)
+        assertEquals(listOf(DockletLanding.HiddenBySwipe), landings)
+    }
+
+    @Test
+    fun `the dock is off screen only while hidden at rest and not peeking`() = runTest {
+        val state = hideState()
+        assertFalse(state.isOffScreen)
+
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        assertFalse(state.isOffScreen)
+        advanceUntilIdle()
+        assertTrue(state.isOffScreen)
+
+        state.peek()
+        advanceTimeBy(700L + 200L)
+        runCurrent()
+        assertFalse(state.isOffScreen)
+        advanceUntilIdle()
+        assertTrue(state.isOffScreen)
+    }
+
     private fun TestScope.hideState(animations: Boolean = true) = DockletHideState(
         scope = CoroutineScope(coroutineContext + TestMonotonicFrameClock(this) + Job()),
         haptics = { moments += it },

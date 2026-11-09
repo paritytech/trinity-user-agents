@@ -7,6 +7,7 @@ data class DockletAutoHideBlockers(
     val tipShown: Boolean,
     val panelExpanded: Boolean,
     val touchExploration: Boolean,
+    val resumed: Boolean,
 ) {
-    val blocked: Boolean get() = !shownAtRest || searchOpen || keyboardUp || tipShown || panelExpanded || touchExploration
+    val blocked: Boolean get() = !shownAtRest || !resumed || searchOpen || keyboardUp || tipShown || panelExpanded || touchExploration
 }

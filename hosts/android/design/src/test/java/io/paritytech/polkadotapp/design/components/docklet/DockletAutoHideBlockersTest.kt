@@ -12,6 +12,7 @@ class DockletAutoHideBlockersTest {
         tipShown = false,
         panelExpanded = false,
         touchExploration = false,
+        resumed = true,
     )
 
     @Test
@@ -47,5 +48,10 @@ class DockletAutoHideBlockersTest {
     @Test
     fun `TalkBack touch exploration blocks auto-hide`() {
         assertTrue(clear.copy(touchExploration = true).blocked)
+    }
+
+    @Test
+    fun `an app that is not resumed blocks auto-hide`() {
+        assertTrue(clear.copy(resumed = false).blocked)
     }
 }
