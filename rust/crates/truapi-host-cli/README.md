@@ -789,8 +789,9 @@ Scripts under `js/scripts/` include:
   `fundtest.dot` with `funding-worker.ts` as its worker, which serves
   sessions through `onQuote`, `onAssign`, `onCancel` and `onSettleCancel` by
   their direction and amount and records what it did in
-  `TRUAPI_FUNDING_WORKER_LOG`. The overlay lists the providers serving a
-  session and their quotes. The cases check that no worker runs until the
+  `TRUAPI_FUNDING_WORKER_LOG`. The overlay takes the core's default rail,
+  and for crypto its first token and network, and lists the providers serving
+  the session and the quotes of those routing that rail. The cases check that no worker runs until the
   overlay asks the provider for a quote, and that once its sessions end the
   host stops it and a new worker process is started for the next session.
   The auto-accepting user picks the first quote and accepts cancel offers,

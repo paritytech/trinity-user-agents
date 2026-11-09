@@ -2,16 +2,17 @@
 //! the user's answers, as a host app serves them.
 //!
 //! The host offers the providers named in `TRUAPI_FUNDING_PROVIDERS`, each
-//! shipped with the manifest in [`SHIPPED_PROVIDER_MANIFEST`], as an app
-//! ships its providers' manifests. Each entry is a product id, optionally
+//! bundled with the manifest in [`SHIPPED_PROVIDER_MANIFEST`], as an app
+//! bundles its providers. Each entry is a product id, optionally
 //! followed by `=` and the path of the script its worker runs
 //! (`ramp.dot=./worker.ts,other.dot`). The host launches that script as the
 //! provider's worker when the core asks for it, and stops it when the core
 //! lets it go; a provider without a script has no worker here.
 //!
-//! A product's funding request shows the overlay: the core lists the
-//! providers that serve the session and asks each for a quote, and the user
-//! picks a quote or closes the overlay. Every question goes through the
+//! A product's funding request shows the overlay: the user takes the core's
+//! default rail and, for crypto, its first token and network, the core asks
+//! each provider routing that rail for a quote, and the user picks a quote or
+//! closes the overlay. Every question goes through the
 //! host's approval policy, as its other confirmations do: a prompt on a
 //! terminal, the first quote and every offer accepted under `--auto-accept`,
 //! and a refusal when a prompt has no terminal to ask on. The user cancels a session with
@@ -46,7 +47,10 @@ use truapi::{
 	FundingFeed, SigningHostRuntime,
 	host_logic::{
 		funding::{CancelTerms, FundingCancel, FundingProgress, FundingSession},
-		funding_providers::{FundingOptions, FundingProviderEntry, FundingProviderOrigin},
+		funding_providers::{
+			FUNDING_MIN_AMOUNT, FundingOptions, FundingProviderEntry, FundingProviderOrigin,
+			FundingSelection,
+		},
 	},
 	latest::{
 		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk, FundingRail,
@@ -56,9 +60,9 @@ use truapi::{
 		HostPaymentTopUpStatusSubscribeItem,
 	},
 	platform::{
-		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
-		FundingQuoteRow, FundingQuoteState, PaymentPlatform, ProductContext, ProductId,
-		TopUpPlatform,
+		CoreStorage, FundingFrameContext, FundingPlatform, FundingPresentOutcome,
+		FundingPresentation, FundingQuoteList, FundingQuoteRow, FundingQuoteState, PaymentPlatform,
+		ProductContext, ProductId, TopUpPlatform,
 	},
 };
 
@@ -74,9 +78,9 @@ use crate::{
 const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"],"networks":["polkadot"]}]}}}"#;
 
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` as a funding
-/// provider with [`SHIPPED_PROVIDER_MANIFEST`], also kept as its cached dotNS
-/// manifest, so the core neither reads the chain for it nor drops it for
-/// publishing nothing there.
+/// provider bundled with [`SHIPPED_PROVIDER_MANIFEST`], so the core never
+/// reads dotNS for what it serves. The manifest is also kept as its cached
+/// dotNS manifest, which its worker execution is read from.
 pub async fn offer_providers(
 	runtime: &SigningHostRuntime,
 	platform: &dyn CoreStorage,
@@ -101,7 +105,7 @@ pub async fn offer_providers(
 		providers.push(FundingProviderEntry {
 			product_id,
 			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
-			origin: FundingProviderOrigin::Published,
+			origin: FundingProviderOrigin::Bundled,
 			has_app: None,
 		});
 	}
@@ -127,20 +131,6 @@ fn provider_entries() -> Vec<(String, Option<PathBuf>)> {
 		.collect()
 }
 
-/// What the overlay asks to be quoted when the user takes its defaults: USDT
-/// on Polkadot either way, so a provider's deposit instructions have an
-/// address to name.
-fn default_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
-	FundingQuoteAsk {
-		direction,
-		rail: FundingRail::Crypto,
-		asset: "USDT".to_string(),
-		network: Some("polkadot".to_string()),
-		amount: amount.unwrap_or(1_000),
-		country: None,
-	}
-}
-
 /// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
 	/// Where the user's answers come from.
@@ -149,8 +139,8 @@ pub struct CliFundingHost {
 	runtime: Weak<SigningHostRuntime>,
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
-	/// The providers the core last offered each session.
-	candidates: Mutex<HashMap<String, Vec<ProductId>>>,
+	/// What the core last offered each open overlay.
+	options: Mutex<HashMap<String, FundingOptions>>,
 	/// Where each open overlay takes the quote lists the core pushes.
 	quote_lists: Mutex<HashMap<String, mpsc::UnboundedSender<FundingQuoteList>>>,
 }
@@ -185,7 +175,7 @@ impl CliFundingHost {
 			transcript,
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
-			candidates: Mutex::new(HashMap::new()),
+			options: Mutex::new(HashMap::new()),
 			quote_lists: Mutex::new(HashMap::new()),
 		});
 		runtime.set_funding_feed(host.clone());
@@ -243,8 +233,30 @@ impl CliFundingHost {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 
-	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<ProductId>>> {
-		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+	fn lock_options(&self) -> std::sync::MutexGuard<'_, HashMap<String, FundingOptions>> {
+		self.options.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+	}
+
+	/// What session `intent`'s overlay offers once the user takes its
+	/// defaults: the core's default rail and, for crypto, the first token it
+	/// lists. The core answers a selection with the options it leads to
+	/// before `select_funding_options` returns.
+	fn select_defaults(
+		&self,
+		runtime: &SigningHostRuntime,
+		intent: &str,
+	) -> Option<FundingOptions> {
+		let offered = self.lock_options().get(intent).cloned()?;
+		let rail = offered.default_rail;
+		let token = match rail {
+			FundingRail::Crypto => offered.tokens.first().cloned(),
+			FundingRail::Card | FundingRail::Bank => None,
+		};
+		runtime.select_funding_options(
+			intent,
+			FundingSelection { rail, asset: token, network: None, country: None, currency: None },
+		);
+		self.lock_options().get(intent).cloned()
 	}
 
 	fn lock_quote_lists(
@@ -277,6 +289,27 @@ impl CliFundingHost {
 		self.lock_quote_lists().remove(intent);
 		rows
 	}
+}
+
+/// What `session`'s overlay asks to be quoted on `options`, the defaults the
+/// user took: the selected rail and the asset the core names for it, on the
+/// first network it lists for crypto, for the amount the product asked or
+/// else the smallest one the selection takes. `None` when a crypto selection
+/// has no network to ask on.
+fn default_ask(options: &FundingOptions, session: &FundingPresentation) -> Option<FundingQuoteAsk> {
+	let rail = options.default_rail;
+	let network = match rail {
+		FundingRail::Crypto => Some(options.networks.first()?.network.clone()),
+		FundingRail::Card | FundingRail::Bank => None,
+	};
+	Some(FundingQuoteAsk {
+		direction: session.direction,
+		rail,
+		asset: options.asset.clone()?,
+		network,
+		amount: session.amount.or(options.limits.min).unwrap_or(FUNDING_MIN_AMOUNT),
+		country: None,
+	})
 }
 
 /// Where a provider's App is opened: the web host that serves dotNS
@@ -352,14 +385,17 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let candidates = self.lock_candidates().remove(&session.intent).unwrap_or_default();
-		let rows = self
-			.answered_quotes(
-				&runtime,
-				&session.intent,
-				default_ask(session.direction, session.amount),
-			)
-			.await;
+		let options = self.select_defaults(&runtime, &session.intent);
+		let candidates: Vec<ProductId> = options
+			.iter()
+			.flat_map(|options| &options.candidates)
+			.map(|candidate| candidate.provider_id.clone())
+			.collect();
+		let rows = match options.and_then(|options| default_ask(&options, &session)) {
+			Some(ask) => self.answered_quotes(&runtime, &session.intent, ask).await,
+			None => Vec::new(),
+		};
+		self.lock_options().remove(&session.intent);
 		let mut chosen = None;
 		for row in &rows {
 			let FundingQuoteState::Quoted { quote } = &row.state else {
@@ -413,20 +449,18 @@ impl FundingPlatform for CliFundingHost {
 		provider: &ProductContext,
 		intent: String,
 		target: FundingFrameTarget,
-		_context: truapi::platform::FundingFrameContext,
+		context: FundingFrameContext,
 	) -> Result<FundingFrameOutcome, GenericError> {
 		let (link, finished) = match target {
-			FundingFrameTarget::App { route } => {
-				let route = if route.starts_with('/') || route.starts_with('#') {
-					route
-				} else {
-					format!("/{route}")
-				};
-				(
-					format!("{APP_GATEWAY}/{}{route}", provider.product_id),
-					FundingFrameOutcome::Closed,
-				)
-			},
+			// The core sets `app_path` for every App route.
+			FundingFrameTarget::App { route } => (
+				format!(
+					"{APP_GATEWAY}/{}{}",
+					provider.product_id,
+					context.app_path.unwrap_or(route)
+				),
+				FundingFrameOutcome::Closed,
+			),
 			FundingFrameTarget::Page { url, return_url } => {
 				let finished = match return_url {
 					Some(url) => FundingFrameOutcome::Returned { url },
@@ -447,6 +481,7 @@ impl FundingPlatform for CliFundingHost {
 			"intent": intent,
 			"provider": provider.product_id.as_str(),
 			"link": link,
+			"awaits_user_transfer": context.awaits_user_transfer,
 		}));
 		let outcome = if self.user.approval_policy() == ApprovalPolicy::AutoAccept {
 			finished
@@ -522,9 +557,7 @@ impl FundingFeed for CliFundingHost {
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
 	fn funding_options_changed(&self, intent: String, options: FundingOptions) {
-		let candidates =
-			options.candidates.into_iter().map(|candidate| candidate.provider_id).collect();
-		self.lock_candidates().insert(intent, candidates);
+		self.lock_options().insert(intent, options);
 	}
 }
 
