@@ -17,13 +17,14 @@ use crate::store::{Db, DbError};
 use crate::{
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
-	host_logic::worker::WorkerLedger,
+	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
 		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
+		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
@@ -48,24 +49,26 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 /// dotNS reads running now. A read opens its own Asset Hub follow and holds it
 /// until it settles, so callers asking for the same thing while one runs wait
 /// for its answer, and a burst of them holds one follow slot, not one each.
-#[derive(Default)]
-pub(crate) struct DotnsReads {
+#[derive(Clone)]
+pub struct DotnsReads {
 	/// Root manifest reads, by product label.
-	pub(crate) root_manifests: crate::runtime::single_flight::SingleFlight<
-		String,
-		(Option<String>, crate::runtime::product_manifest::ManifestSource),
-	>,
+	pub root_manifests: SingleFlight<String, Result<Option<String>, ManifestSource>>,
 	/// Worker manifest reads, by product label.
-	pub(crate) worker_manifests: crate::runtime::single_flight::SingleFlight<
-		String,
-		crate::runtime::product_manifest::WorkerManifestRead,
-	>,
+	pub worker_manifests: SingleFlight<String, Result<Option<String>, String>>,
 	/// Username lookups, by the accounts they read. The keys are never
 	/// written to storage or to a log.
-	pub(crate) identities: crate::runtime::single_flight::SingleFlight<
-		crate::runtime::identity::SessionAccounts,
-		Option<crate::host_logic::dotns_gateway::DotnsIdentity>,
-	>,
+	pub identities: SingleFlight<SessionAccounts, Option<DotnsIdentity>>,
+}
+
+impl DotnsReads {
+	/// Reads spawned through `spawner`.
+	pub fn new(spawner: Spawner) -> Self {
+		Self {
+			root_manifests: SingleFlight::new(spawner.clone()),
+			worker_manifests: SingleFlight::new(spawner.clone()),
+			identities: SingleFlight::new(spawner),
+		}
+	}
 }
 
 /// Infrastructure shared by all product runtimes created from one host role.
@@ -104,7 +107,7 @@ pub struct RuntimeServices {
 	/// this host and emptied when the host says its contacts changed.
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
-	pub(crate) dotns_reads: DotnsReads,
+	pub dotns_reads: DotnsReads,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -265,7 +268,7 @@ impl RuntimeServices {
 			balance_platform: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
-			dotns_reads: Default::default(),
+			dotns_reads: DotnsReads::new(spawner.clone()),
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),

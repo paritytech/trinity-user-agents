@@ -268,7 +268,7 @@ impl RefusedBecause {
 /// for that long, so two devices can judge one grant differently by where each
 /// got its manifest.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-pub(crate) enum ManifestSource {
+pub enum ManifestSource {
 	/// Read from the cache on this device, written `age_secs` ago.
 	#[display("cache, {age_secs} s old")]
 	Cached { age_secs: u64 },
@@ -662,25 +662,12 @@ async fn key_access(
 /// chain's answer that there is no manifest, which is authoritative for the same
 /// TTL.
 ///
-/// Lookups of one product that overlap share one read, through
-/// [`DotnsReads::root_manifests`](crate::runtime::services::DotnsReads::root_manifests), so a
-/// burst of them holds one Asset Hub follow rather than one each. A caller that
-/// gives up on its own ceiling while running the read ends it, and a caller
-/// waiting on it starts the read again within whatever is left of its ceiling.
+/// Lookups of one product that miss the cache together share one dotNS read,
+/// through [`DotnsReads::root_manifests`](crate::runtime::services::DotnsReads::root_manifests), so
+/// a burst of them holds one Asset Hub follow rather than one each. The read runs to the end
+/// whatever its callers do, so one that gives up on its ceiling does not cut it short for
+/// the rest.
 async fn root_manifest(
-	services: &RuntimeServices,
-	platform: &dyn Platform,
-	target: &ProductId,
-) -> (Option<String>, ManifestSource) {
-	services
-		.dotns_reads
-		.root_manifests
-		.run(target.bare_label().to_string(), || read_root_manifest(services, platform, target))
-		.await
-}
-
-/// [`root_manifest`] for one caller, from the cache or dotNS.
-async fn read_root_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	target: &ProductId,
@@ -688,12 +675,20 @@ async fn read_root_manifest(
 	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
 		let genesis_hash =
 			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
-		fetch_root_manifest(&services.chain, genesis_hash, target)
+		let (chain, target) = (services.chain.clone(), target.clone());
+		services
+			.dotns_reads
+			.root_manifests
+			.run(target.bare_label().to_string(), move || async move {
+				fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
+					let reason = error.reason();
+					warn!(%target, %reason, "root manifest lookup failed");
+					ManifestSource::LookupFailed { reason }
+				})
+			})
 			.await
-			.map_err(|error| {
-				let reason = error.reason();
-				warn!(%target, %reason, "root manifest lookup failed");
-				ManifestSource::LookupFailed { reason }
+			.unwrap_or_else(|| {
+				Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
 			})
 	})
 	.await;
@@ -704,37 +699,31 @@ async fn read_root_manifest(
 	}
 }
 
-/// A Worker manifest read: the usable manifest, `None` when there is none to
-/// use, or why the chain could not be read.
-pub(crate) type WorkerManifestRead = Result<Option<WorkerManifest>, String>;
+/// Why a shared dotNS read gave no answer: its task ended first.
+const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
-/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is. `Ok(None)` when it
-/// publishes none or what it publishes cannot be used, which the RFC treats alike; `Err` when the
-/// chain could not be read, which says nothing about the product.
+/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
+/// `Ok(None)` when it publishes none or what it publishes cannot be used, which
+/// the RFC treats alike; `Err` when the chain could not be read, which says
+/// nothing about the product.
 pub async fn worker_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	product_id: &ProductId,
-) -> WorkerManifestRead {
-	services
-		.dotns_reads
-		.worker_manifests
-		.run(product_id.bare_label().to_string(), || {
-			read_worker_manifest(services, platform, product_id)
-		})
-		.await
-}
-
-/// [`worker_manifest`] for one caller, from the cache or dotNS.
-async fn read_worker_manifest(
-	services: &RuntimeServices,
-	platform: &dyn Platform,
-	product_id: &ProductId,
-) -> WorkerManifestRead {
+) -> Result<Option<WorkerManifest>, String> {
 	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
-		fetch_worker_manifest(&services.chain, asset_hub(services)?, product_id)
+		let genesis_hash = asset_hub(services)?;
+		let (chain, product) = (services.chain.clone(), product_id.clone());
+		services
+			.dotns_reads
+			.worker_manifests
+			.run(product_id.bare_label().to_string(), move || async move {
+				fetch_worker_manifest(&chain, genesis_hash, &product)
+					.await
+					.map_err(|error| error.reason())
+			})
 			.await
-			.map_err(|error| error.reason())
+			.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
 	})
 	.await
 	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;

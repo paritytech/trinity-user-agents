@@ -6,94 +6,96 @@
 //! connection one follow slot.
 
 use core::{future::Future, hash::Hash};
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
 
-use futures::channel::oneshot;
+use futures::{
+	FutureExt,
+	channel::oneshot,
+	future::{BoxFuture, Shared},
+};
+
+use tracing::{Instrument, instrument::WithSubscriber};
+
+use crate::subscription::Spawner;
+
+type Reads<K, V> = Arc<Mutex<HashMap<K, Shared<oneshot::Receiver<V>>>>>;
 
 /// Reads keyed by `K` whose answers, `V`, are shared by every caller that
 /// asked while the read ran.
 ///
-/// Nothing is kept once a read settles: the next caller for that key reads
-/// again, so a failed read is retried by whoever asks next.
+/// A read runs as its own task, so it finishes whatever its callers do: one
+/// that gives up on its own deadline does not cut the read short for the
+/// rest. Nothing is kept once a read settles, so the next caller for that key
+/// reads again, and a failed read is retried by whoever asks next.
+#[derive(Clone)]
 pub struct SingleFlight<K, V> {
-	waiting: Mutex<HashMap<K, Vec<oneshot::Sender<V>>>>,
+	spawner: Spawner,
+	reads: Reads<K, V>,
 }
 
-impl<K, V> Default for SingleFlight<K, V> {
-	fn default() -> Self {
-		Self { waiting: Mutex::new(HashMap::new()) }
+impl<K, V> SingleFlight<K, V>
+where
+	K: Eq + Hash + Clone + Send + 'static,
+	V: Clone + Send + Sync + 'static,
+{
+	/// Reads spawned through `spawner`.
+	pub fn new(spawner: Spawner) -> Self {
+		Self { spawner, reads: Arc::default() }
 	}
-}
 
-impl<K: Eq + Hash + Clone, V: Clone> SingleFlight<K, V> {
-	/// Answers with the read already running for `key`, or runs `read` when
-	/// none is. A caller whose read is dropped before it settles leaves the
-	/// key free, and one of the callers waiting on it runs its own read.
-	pub async fn run<F>(&self, key: K, read: impl FnOnce() -> F) -> V
+	/// Answers with the read already running for `key`, or starts `read` when
+	/// none is. `None` when the read ended without answering, which happens
+	/// only if its task was dropped or panicked.
+	pub async fn run<F>(&self, key: K, read: impl FnOnce() -> F) -> Option<V>
 	where
-		F: Future<Output = V>,
+		F: Future<Output = V> + Send + 'static,
 	{
-		loop {
-			let waiter = {
-				let mut waiting =
-					self.waiting.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-				match waiting.get_mut(&key) {
-					Some(waiters) => {
-						let (sender, receiver) = oneshot::channel();
-						waiters.push(sender);
-						Some(receiver)
-					},
-					None => {
-						waiting.insert(key.clone(), Vec::new());
-						None
-					},
-				}
-			};
-			match waiter {
-				Some(receiver) => match receiver.await {
-					Ok(value) => return value,
-					Err(oneshot::Canceled) => continue,
-				},
+		let (answer, start) = {
+			let mut reads = self.reads.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+			match reads.get(&key) {
+				Some(answer) => (answer.clone(), None),
 				None => {
-					let running = Running { flight: self, key: Some(key) };
-					let value = read().await;
-					for waiter in running.settle() {
-						let _ = waiter.send(value.clone());
-					}
-					return value;
+					let (sender, receiver) = oneshot::channel();
+					let answer = receiver.shared();
+					reads.insert(key.clone(), answer.clone());
+					(answer, Some(sender))
 				},
 			}
+		};
+		if let Some(sender) = start {
+			let settled = Settled { reads: self.reads.clone(), key };
+			let read = read();
+			// The read logs as the caller that started it would, under its span
+			// and to its subscriber.
+			let task: BoxFuture<'static, ()> = async move {
+				let value = read.await;
+				drop(settled);
+				let _ = sender.send(value);
+			}
+			.in_current_span()
+			.with_current_subscriber()
+			.boxed();
+			(self.spawner)(task);
 		}
+		answer.await.ok()
 	}
+}
 
-	fn take(&self, key: &K) -> Vec<oneshot::Sender<V>> {
-		self.waiting
+/// Frees a read's key once its task ends, however it ends.
+struct Settled<K: Eq + Hash, V> {
+	reads: Reads<K, V>,
+	key: K,
+}
+
+impl<K: Eq + Hash, V> Drop for Settled<K, V> {
+	fn drop(&mut self) {
+		self.reads
 			.lock()
 			.unwrap_or_else(|poisoned| poisoned.into_inner())
-			.remove(key)
-			.unwrap_or_default()
-	}
-}
-
-/// The key a caller is reading. Dropped before it settles, it frees the key
-/// and drops every waiter's sender, which wakes them to read for themselves.
-struct Running<'a, K: Eq + Hash + Clone, V: Clone> {
-	flight: &'a SingleFlight<K, V>,
-	key: Option<K>,
-}
-
-impl<K: Eq + Hash + Clone, V: Clone> Running<'_, K, V> {
-	/// Frees the key and hands back the callers waiting on it.
-	fn settle(mut self) -> Vec<oneshot::Sender<V>> {
-		self.key.take().map(|key| self.flight.take(&key)).unwrap_or_default()
-	}
-}
-
-impl<K: Eq + Hash + Clone, V: Clone> Drop for Running<'_, K, V> {
-	fn drop(&mut self) {
-		if let Some(key) = self.key.take() {
-			drop(self.flight.take(&key));
-		}
+			.remove(&self.key);
 	}
 }
 

@@ -281,7 +281,10 @@ fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 	let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&DotnsReads::new(thread_per_subscription_spawner()),
+		&chain,
+		[0xcc; 32],
+		session,
 	));
 
 	// The pending claim yields the lite name; the settled store yields the
@@ -320,7 +323,10 @@ fn root_key_resolves_when_identity_account_labels_are_unissued() {
 	let session = session_without_usernames(ACCOUNT, SQUATTER);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&DotnsReads::new(thread_per_subscription_spawner()),
+		&chain,
+		[0xcc; 32],
+		session,
 	));
 
 	assert_eq!(
@@ -335,7 +341,7 @@ fn root_key_resolves_when_identity_account_labels_are_unissued() {
 fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
 	let follows_for = |lookups: usize| {
 		let platform = Arc::new(crate::test_support::StubPlatform::default());
-		let services = RuntimeServices::new(
+		let services = crate::runtime::services::RuntimeServices::new(
 			platform.clone(),
 			crate::platform::HostInfo {
 				name: "Polkadot Mobile".to_string(),
@@ -349,9 +355,9 @@ fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
 			crate::test_support::test_spawner(),
 		);
 		let session = session_without_usernames([0x11; 32], ACCOUNT);
-		futures::executor::block_on(futures::future::join_all(
-			(0..lookups).map(|_| lookup_session_identity_shared(&services, &session)),
-		));
+		futures::executor::block_on(futures::future::join_all((0..lookups).map(|_| {
+			lookup_session_identity(&services.dotns_reads, &services.chain, [0xcc; 32], &session)
+		})));
 		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow")
 	};
 
