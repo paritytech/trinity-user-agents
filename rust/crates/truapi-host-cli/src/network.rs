@@ -120,7 +120,7 @@ impl Stack {
 
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
-	/// derives ends in it (`uid.<tld>`, `peopl.<tld>`), so a person the CLI
+	/// derives ends in it (`peopl.<tld>` account and keys), so a person the CLI
 	/// creates here is the same person a phone derives from that seed on this
 	/// network.
 	pub fn tld(&self) -> &str {

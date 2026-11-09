@@ -22,11 +22,11 @@ One binary, `truapi-host`:
 | `pairing-host` | Seedless host: serves product frames, emits pairing deeplinks, and can run product scripts. |
 | `signing-host` | Wallet-local host: owns signer identity, can run product scripts, decodes copied pairing QR images or accepts deeplinks, registers statement allowance on-chain, signs. |
 | `dev` | Run a local development product with the shared container loaded by a script tag. |
-| `identity-check` | Probe the root and the network's `uid.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
+| `identity-check` | Probe the root and the network's `peopl.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
 | `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
-| `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
@@ -104,9 +104,8 @@ updates it. Nothing contacts GitHub.
 
 ### State directory
 
-Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
-`uid.dot` / `peopl.dot` on `pcf-devnet`.
+Reserved identities derive under `peopl.paseo` on `paseo-next-v2`,
+`peopl.testnet` on `previewnet`, and `peopl.dot` on `pcf-devnet`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -412,7 +411,7 @@ device saved for the target session. Reload browser dev pages to connect to the
 new runtime.
 
 `/session --mnemonic "<phrase>"` brings an already-onboarded account into the
-session catalog. The host derives its `uid.<tld>` identity, reads any existing
+session catalog. The host derives its `peopl.<tld>` identity, reads any existing
 full or Lite username from dotNS, falls back to the identity backend's assigned
 username records when no dotNS mirror exists, and confirms its People or
 LitePeople ring membership. This lookup is read-only and never registers a new
@@ -987,7 +986,7 @@ The real statement store enforces per-account allowance. Before pairing, the
 signing host grants it on-chain exactly as a real client does: it proves its
 personhood ring membership with a bandersnatch ring-VRF and submits an unsigned
 General (v5) `Resources.set_statement_store_account` extrinsic for each account
-that submits statements — its RFC-0022 `uid.<tld>` identity account and the
+that submits statements — its RFC-0028 `peopl.<tld>` identity account and the
 pairing host's per-pairing device key. The shared native implementation lives in
 `truapi/src/runtime/statement_allowance/` (metadata-driven
 signed-extension encoding, ring fetch, slot scan, ring-VRF proof, extrinsic
@@ -1126,7 +1125,7 @@ without contacting a chain, so a harness can check it before starting a session:
 
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
 instead of the CLI minting one. For username registration, an injected token's
-subject must match the session's `uid.<tld>` candidate account; the
+subject must match the session's `peopl.<tld>` candidate account; the
 automatically minted token uses that identity. Both hosts also accept
 `--frame-listen <address>` to opt into a TCP product-frame WebSocket; without it,
 the CLI creates and cleans up a unique temporary Unix socket.

@@ -225,7 +225,7 @@ Polkadot's reserved values. A Rust host that resolves its chains itself, such as
 the CLI, uses `Stack::new`, and a test-host browser bundle passes
 `runtimeConfig.testStack`. Each constructor documents what it refuses.
 
-Reserved identities derive under `uid.<tld>` and `peopl.<tld>`, and the People
+Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
 derivation working offline. The core does not check it against the chain, does
@@ -312,8 +312,8 @@ that can't mean it:
   `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
-  from host-held secret material. Its public identity is the RFC-0022
-  `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
+  from host-held secret material. Its public identity is the RFC-0028
+  `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
   product-owned registry entries; aliases, proofs, direct signatures, and
   internal personhood flows use the requested or user-selected registered key
   without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values
