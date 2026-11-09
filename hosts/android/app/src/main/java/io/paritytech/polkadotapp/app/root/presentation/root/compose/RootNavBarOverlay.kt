@@ -314,7 +314,7 @@ fun RootNavBarOverlay(
             RootNavBarHide(
                 hideState = hideState,
                 searchOpen = pull.scanExpanded,
-                restoresOnBack = !onTuckedScreen,
+                tuckedPin = tuckedPin,
                 panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                 scannerTooltipVisible = tooltipVisible,
                 dockletTip = dockletTip,

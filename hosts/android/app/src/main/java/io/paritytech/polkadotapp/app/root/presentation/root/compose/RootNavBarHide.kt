@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,6 +35,7 @@ import androidx.lifecycle.compose.currentStateAsState
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.components.DockletTipPopup
 import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarTuckedPin
 import io.paritytech.polkadotapp.design.components.docklet.DockletAutoHide
 import io.paritytech.polkadotapp.design.components.docklet.DockletAutoHideBlockers
 import io.paritytech.polkadotapp.design.components.docklet.DockletBackAction
@@ -57,7 +59,7 @@ private val TipAnchorWidth = 1.dp
 fun RootNavBarHide(
     hideState: DockletHideState,
     searchOpen: Boolean,
-    restoresOnBack: Boolean,
+    tuckedPin: TabBarTuckedPin?,
     panelExpanded: Boolean,
     scannerTooltipVisible: Boolean,
     dockletTip: DockletTip?,
@@ -102,7 +104,10 @@ fun RootNavBarHide(
 
     var plainBackRequested by remember { mutableStateOf(false) }
     if (hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
-        HiddenDockBack(hideState = hideState, restoresOnBack = restoresOnBack, onPlainBack = { plainBackRequested = true })
+        // A screen's own Back callback registers when it starts; re-registering on each tucked screen keeps this one on top.
+        key(tuckedPin) {
+            HiddenDockBack(hideState = hideState, restoresOnBack = tuckedPin == null, onPlainBack = { plainBackRequested = true })
+        }
     }
     val dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     LaunchedEffect(plainBackRequested) {
