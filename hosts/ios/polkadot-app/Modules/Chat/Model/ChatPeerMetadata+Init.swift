@@ -56,7 +56,7 @@ extension Chat.LocalModel {
         case .empty:
             .empty
         case let .card(messageType, payload):
-            roomId.map { .productCard(roomId: $0, messageType: messageType, payload: payload) } ?? .empty
+            roomId == nil ? .empty : .productCard(messageType: messageType, payload: payload)
         }
     }
 }

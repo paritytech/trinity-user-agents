@@ -11,7 +11,7 @@ extension Chat {
         case incomingRequest
         case outgoingRequest
         case blockedUser
-        case productCard(roomId: String, messageType: String, payload: Data)
+        case productCard(messageType: String, payload: Data)
         case empty
 
         var isInputField: Bool {

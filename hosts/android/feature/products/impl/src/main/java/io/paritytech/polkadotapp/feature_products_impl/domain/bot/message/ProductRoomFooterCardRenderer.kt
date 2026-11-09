@@ -38,7 +38,7 @@ class ProductRoomFooterCardRenderer(
 ) : CustomChatFooterRenderer {
     @Composable
     override fun drawFooter() {
-        var widget by remember(room) { mutableStateOf<JsWidget?>(null) }
+        var widget by remember(card) { mutableStateOf<JsWidget?>(null) }
         LaunchedEffect(card) {
             worker.renderRoomFooter(room, card.messageType, card.payload.toDataByteArray())
                 .collect { result ->

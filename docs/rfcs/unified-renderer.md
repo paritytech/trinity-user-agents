@@ -43,7 +43,7 @@ The design has three parts:
 ### Service
 
 `Renderer` is a worker service beside `Chat` in the canonical `truapi` crate, at `api/renderer.rs`. Its types live in
-`v01::renderer` and are re-exported through `truapi::latest`.
+`v02::renderer` and are re-exported through `truapi::latest`.
 
 ```rust
 /// Where a product-rendered body lives, and the id that names it there.
@@ -66,6 +66,13 @@ pub enum RenderContext {
     PocketCard {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
+    },
+    /// The card a product docked under the messages of a room it created.
+    ChatRoomFooter {
+        /// Room the card is docked in.
+        room_id: String,
+        /// The `message_type` of the `ChatCustomMessage` the product set through `Chat::set_room_footer`.
+        message_type: String,
     },
 }
 
@@ -113,8 +120,9 @@ pub trait Renderer: Send + Sync {
 ```
 
 `RenderContext` has one variant per surface, holding the ids that surface uses to name a body. The host scopes an id to
-the product that minted it, and for `InputWidget` also to the query the candidate answered. A render request and the
-actions inside it carry the same context verbatim, so a product correlates by equality. A new surface is a new variant.
+the product that minted it, and for `InputWidget` also to the query the candidate answered. For `ChatRoomFooter` the
+host scopes `room_id` to the product that created the room. A render request and the actions inside it carry the same
+context verbatim, so a product correlates by equality. A new surface is a new variant.
 
 A product registers one `render` handler, and the host calls it for every context of a surface the product's manifest
 `includes`. A product that draws on more than one surface matches on `context`. Contexts for surfaces the product does

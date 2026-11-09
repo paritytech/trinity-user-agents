@@ -17,7 +17,8 @@ extension ChatViewModelFactory {
             return makeOutgoingPendingRequestInputConfiguration(for: metadata)
         case .blockedUser:
             return makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
-        case let .productCard(roomId, messageType, payload):
+        case let .productCard(messageType, payload):
+            guard case let .chatExtension(_, roomId?) = metadata.chatId else { return nil }
             return productMessageDecoder?
                 .makeRoomFooterCard(roomId: roomId, messageType: messageType, payload: payload)
         case .empty:

@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -32,10 +33,13 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -212,6 +216,32 @@ class ProductChatExtensionTest {
             listOf(card, null, null),
             listOf((slotWithCard as? ProductRoomFooterCardRenderer)?.card, otherRoomSlot, extension.observeRoomFooterCard(room).first()),
         )
+    }
+
+    @Test
+    fun `a card replaced in the same room reaches the input slot as a new renderer`() = runTest {
+        // Given
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+        val first = ProductRoomFooter.Card("register", byteArrayOf(1))
+        val second = ProductRoomFooter.Card("confirm", byteArrayOf(2))
+
+        val slots = mutableListOf<CustomChatFooterRenderer?>()
+        val collector = launch { extension.observeRoomFooterCard(room).toList(slots) }
+        runCurrent()
+
+        // When
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), first)
+        runCurrent()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), second)
+        runCurrent()
+        collector.cancel()
+
+        // Then
+        assertEquals(listOf(null, first, second), slots.map { (it as? ProductRoomFooterCardRenderer)?.card })
     }
 
     @Test

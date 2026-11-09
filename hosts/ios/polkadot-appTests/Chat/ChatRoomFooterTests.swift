@@ -9,9 +9,9 @@ struct ChatRoomFooterTests {
     private let bot = ChatSampleExtension(logger: StubLogger())
     private let facade = UserDataStorageTestFacade()
 
-    private func room(footer: Chat.RoomFooter?) -> Chat.LocalModel {
+    private func room(footer: Chat.RoomFooter?, roomId: String? = "room") -> Chat.LocalModel {
         Chat.LocalModel(
-            peer: .chatExtension(bot.identifier, roomId: "room"),
+            peer: .chatExtension(bot.identifier, roomId: roomId),
             message: nil,
             unreadDisplayMessageCount: 0,
             hasIncomingReaction: false,
@@ -27,13 +27,21 @@ struct ChatRoomFooterTests {
         #expect(room(footer: .empty).peerMetadata(using: registry).input == .empty)
     }
 
-    /// The input slot holds the docked card, addressed to the room it was docked in.
     @Test func aRoomWithACardFooterHoldsTheProductCardInItsInputSlot() {
         let registry = SingleBotRegistry(bot: bot)
 
         let input = room(footer: .card(messageType: "register", payload: Data([1]))).peerMetadata(using: registry).input
 
-        #expect(input == .productCard(roomId: "room", messageType: "register", payload: Data([1])))
+        #expect(input == .productCard(messageType: "register", payload: Data([1])))
+    }
+
+    /// A card is rendered for the room it was docked in, so a chat with no room has nowhere to draw it.
+    @Test func aCardFooterWithoutARoomShowsNoInput() {
+        let registry = SingleBotRegistry(bot: bot)
+
+        let footer = Chat.RoomFooter.card(messageType: "register", payload: Data([1]))
+
+        #expect(room(footer: footer, roomId: nil).peerMetadata(using: registry).input == .empty)
     }
 
     /// A room the product never set a footer on keeps the text input.
@@ -57,7 +65,11 @@ struct ChatRoomFooterTests {
         let context = makeContext()
         _ = try await context.createRoom(for: bot, roomId: "room", name: nil, icon: nil)
 
-        try await context.setRoomFooter(for: bot, roomId: "room", footer: .card(messageType: "register", payload: Data([1])))
+        try await context.setRoomFooter(
+            for: bot,
+            roomId: "room",
+            footer: .card(messageType: "register", payload: Data([1]))
+        )
 
         #expect(try await storedRoom()?.roomFooter == .card(messageType: "register", payload: Data([1])))
     }

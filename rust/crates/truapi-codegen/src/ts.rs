@@ -1160,10 +1160,11 @@ fn generate_type_bindings(
 		writeln!(out, "export * from './types.js';").unwrap();
 	}
 	writeln!(out).unwrap();
+	let plain_variants = plain_variants_by_type(api);
 	for ty in types {
-		write_type_definition(&mut out, ty, &emit_versions, &aliases)?;
+		write_type_definition(&mut out, ty, &emit_versions, &aliases, &plain_variants)?;
 		writeln!(out).unwrap();
-		write_codec_definition(&mut out, ty, &emit_versions, &aliases)?;
+		write_codec_definition(&mut out, ty, &emit_versions, &aliases, &plain_variants)?;
 		writeln!(out).unwrap();
 	}
 	Ok(out)
@@ -2203,6 +2204,7 @@ fn write_type_definition(
 	ty: &TypeDef,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
+	plain_variants: &BTreeMap<String, Vec<String>>,
 ) -> Result<()> {
 	let generated_names = NameMode::Generated { aliases };
 	let generic_decl = generic_param_declaration(&ty.generic_params);
@@ -2276,6 +2278,9 @@ fn write_type_definition(
 					writeln!(out, "  | {}", enum_variant_ts_type_mode(variant, generated_names)?)
 						.unwrap();
 				}
+				for variant in plain_variants.get(&ty.name).into_iter().flatten() {
+					writeln!(out, "  | {}", ts_string_literal(variant)).unwrap();
+				}
 				writeln!(out, ";").unwrap();
 			}
 		},
@@ -2289,6 +2294,7 @@ fn write_codec_definition(
 	ty: &TypeDef,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
+	plain_variants: &BTreeMap<String, Vec<String>>,
 ) -> Result<()> {
 	let generated_names = NameMode::Generated { aliases };
 	if ty.generic_params.is_empty() {
@@ -2332,8 +2338,13 @@ fn write_codec_definition(
 		}
 		let emitted_name = aliases.get(&ty.name).map(String::as_str).unwrap_or(&ty.name);
 		let type_name = top_level_type_name(emitted_name, &ty.generic_params);
-		let codec_expr =
+		let mut codec_expr =
 			type_codec_expr_mode_qualified(ty, &type_name, &ctx, generated_names, false)?;
+		if let Some(variants) = plain_variants.get(&ty.name) {
+			let variants =
+				variants.iter().map(|variant| ts_string_literal(variant)).collect::<Vec<_>>();
+			codec_expr = format!("S.withPlainVariants({codec_expr}, [{}])", variants.join(", "));
+		}
 		writeln!(
             out,
             "export const {emitted_name}: S.Codec<{type_name}> = S.lazy((): S.Codec<{type_name}> => {codec_expr});",
@@ -2440,6 +2451,54 @@ fn type_codec_expr_mode_qualified(
 			}
 		},
 	}
+}
+
+/// The unit variants each tagged enum also accepts as plain strings, by type
+/// name.
+///
+/// A unit-only enum is a string union in TS, so a version of it that gains a
+/// payload variant turns into a tagged union. Its callers keep passing the
+/// strings of the older version, which still name the same variants.
+fn plain_variants_by_type(api: &ApiDefinition) -> BTreeMap<String, Vec<String>> {
+	let mut plain_variants = BTreeMap::new();
+	for ty in &api.types {
+		let (Some((version, base)), TypeDefKind::Enum(variants)) =
+			(version_prefixed_type(&ty.name), &ty.kind)
+		else {
+			continue;
+		};
+		if is_unit_only_enum(ty) {
+			continue;
+		}
+		let older_strings: BTreeSet<&str> = api
+			.types
+			.iter()
+			.filter(|older| {
+				is_unit_only_enum(older) &&
+					version_prefixed_type(&older.name).is_some_and(
+						|(older_version, older_base)| older_base == base && older_version < version,
+					)
+			})
+			.filter_map(|older| match &older.kind {
+				TypeDefKind::Enum(older_variants) => Some(older_variants),
+				_ => None,
+			})
+			.flatten()
+			.map(|variant| variant.name.as_str())
+			.collect();
+		let plain: Vec<String> = variants
+			.iter()
+			.filter(|variant| {
+				matches!(variant.fields, VariantFields::Unit) &&
+					older_strings.contains(variant.name.as_str())
+			})
+			.map(|variant| variant.name.clone())
+			.collect();
+		if !plain.is_empty() {
+			plain_variants.insert(ty.name.clone(), plain);
+		}
+	}
+	plain_variants
 }
 
 fn is_unit_only_enum(ty: &TypeDef) -> bool {
@@ -3184,6 +3243,71 @@ mod tests {
 		);
 	}
 
+	/// Products built against the unit-only version pass plain strings, so the
+	/// tagged version has to take them as well. A variant the older version
+	/// never named stays tagged, and an enum with no unit-only ancestor is left
+	/// alone.
+	#[test]
+	fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
+		let unit = |name: &str| VariantDef {
+			name: name.to_string(),
+			fields: VariantFields::Unit,
+			docs: None,
+			codec_index: None,
+		};
+		let payload = |name: &str| VariantDef {
+			name: name.to_string(),
+			fields: VariantFields::Unnamed(vec![TypeRef::Primitive("bool".to_string())]),
+			docs: None,
+			codec_index: None,
+		};
+		let enum_type = |name: &str, variants: Vec<VariantDef>| TypeDef {
+			name: name.to_string(),
+			module_path: Vec::new(),
+			generic_params: Vec::new(),
+			kind: TypeDefKind::Enum(variants),
+			docs: None,
+		};
+		let mut method = request_method_with_wrappers(
+			"set_footer",
+			Some(0),
+			"FooterRequest",
+			"FooterResponse",
+			"FooterError",
+		);
+		method.docs = None;
+		let mut api = api(vec![method]);
+		api.public_trait_order = vec!["Example".to_string()];
+		api.types.push(versioned_tuple_wrapper_variants(
+			"FooterRequest",
+			&[(1, "V01FooterRequest"), (2, "V02FooterRequest")],
+		));
+		api.types.push(single_field_struct_of("V01FooterRequest", "V01Footer"));
+		api.types.push(single_field_struct_of("V02FooterRequest", "V02Footer"));
+		api.types.push(enum_type("V01Footer", vec![unit("Text"), unit("Empty")]));
+		api.types.push(enum_type(
+			"V02Footer",
+			vec![unit("Text"), unit("Empty"), unit("Hidden"), payload("Card")],
+		));
+		api.types.push(enum_type("V02Other", vec![unit("Text"), payload("Card")]));
+		api.types
+			.push(versioned_tuple_wrapper_variants("FooterResponse", &[(2, "V02Other")]));
+		api.types
+			.push(versioned_tuple_wrapper_variants("FooterError", &[(2, "V02Other")]));
+
+		let types = generate_types(&api, 2).unwrap();
+
+		assert!(
+			types.contains(
+				"S.withPlainVariants(S.TaggedUnion({Text: S._void, Empty: S._void, Hidden: S._void, Card: S.bool}), [\"Text\", \"Empty\"])"
+			),
+			"{types}"
+		);
+		assert!(types.contains("  | \"Text\"\n  | \"Empty\"\n;"), "{types}");
+		assert!(!types.contains("  | \"Hidden\""), "{types}");
+		assert_eq!(types.matches("S.withPlainVariants").count(), 1, "{types}");
+	}
+
 	#[test]
 	fn internal_visibility_preserves_wire_addresses_hash_and_decoding() {
 		let mut api = internal_api_fixture();
@@ -3689,6 +3813,20 @@ mod tests {
 			},
 			single_field_struct("GenericError", "reason", "String"),
 		]
+	}
+
+	fn single_field_struct_of(name: &str, field_type: &str) -> TypeDef {
+		TypeDef {
+			name: name.to_string(),
+			module_path: Vec::new(),
+			generic_params: Vec::new(),
+			kind: TypeDefKind::Struct(vec![FieldDef {
+				name: "footer".to_string(),
+				type_ref: named_type(field_type),
+				docs: None,
+			}]),
+			docs: None,
+		}
 	}
 
 	fn single_field_struct(name: &str, field_name: &str, field_type: &str) -> TypeDef {
