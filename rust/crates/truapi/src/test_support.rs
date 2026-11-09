@@ -368,7 +368,8 @@ pub fn paseo_test_stack() -> crate::platform::Stack {
 const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
 
 /// A descriptor for a stack on `tld` over a relay and these chains, ready for
-/// [`sign_test_descriptor`].
+/// [`sign_test_descriptor`]. Its `network` is always `paseo`; none of the TLD
+/// or reserved-value checks read it.
 pub fn test_descriptor(
 	tld: &str,
 	people: [u8; 32],
