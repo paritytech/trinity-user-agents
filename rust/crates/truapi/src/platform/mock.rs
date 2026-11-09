@@ -241,7 +241,8 @@ pub struct MockConfig {
 	/// Whether `confirm_user_action` confirms reviewed actions.
 	/// [`MockPlatform::set_confirm_user_actions`] changes it for one test.
 	pub confirm_user_actions: bool,
-	/// Genesis hashes of the chains the mock serves RPC for.
+	/// The genesis hashes `feature_supported` reports as supported when
+	/// [`Self::only_served_chains`] is set.
 	///
 	/// Defaults to the three [`mock_genesis`] chains, the ones
 	/// [`mock_genesis::stack`] names and the TypeScript mock serves, so a suite
