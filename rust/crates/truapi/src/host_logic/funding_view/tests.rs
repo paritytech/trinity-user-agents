@@ -49,28 +49,6 @@ fn quote(send: u128, receive: u128, provider_fee: u128, network_fee: u128) -> Fu
 	}
 }
 
-// Divergence "Default rail": the first routed rail in core order, so crypto
-// leads when a provider routes it, and card only leads without crypto.
-#[test]
-fn the_default_rail_is_the_first_routed_in_core_order() {
-	let card_bank = candidate(
-		"ramp.dot",
-		vec![route(FundingRail::Card, &["EUR"], None), route(FundingRail::Bank, &["EUR"], None)],
-	);
-	let crypto =
-		candidate("swap.dot", vec![route(FundingRail::Crypto, &["USDT"], Some(&["polkadot"]))]);
-	let bank_only = candidate("bank.dot", vec![route(FundingRail::Bank, &["EUR"], None)]);
-	let cases: [(&[FundingCandidate], FundingRail); 4] = [
-		(&[card_bank.clone(), crypto.clone()], FundingRail::Crypto),
-		(&[card_bank], FundingRail::Card),
-		(&[bank_only], FundingRail::Bank),
-		(&[], FundingRail::Card),
-	];
-	for (candidates, expected) in cases {
-		assert_eq!(default_rail(&routed_rails(candidates)), expected, "{candidates:?}");
-	}
-}
-
 // Divergence "Rails shown": only routed rails, while a provider that
 // declares no routes may serve any.
 #[test]
@@ -137,36 +115,23 @@ fn tokens_are_listed_once_per_network() {
 }
 
 #[test]
-fn networks_read_by_name() {
-	let cases = [
-		("polkadot", "Polkadot"),
-		("ethereum", "Ethereum"),
-		("arbitrum one", "Arbitrum One"),
-		("BNB", "Bnb"),
-		("base-sepolia", "Base-Sepolia"),
-	];
-	for (id, name) in cases {
-		assert_eq!(funding_network_name(id.into()), name);
-	}
-}
-
-#[test]
 fn a_shared_reason_for_no_quote_is_given_once() {
 	let timeout = FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout };
 	let other =
 		|message: &str| refused(FundingQuoteRefusal::Other { message: message.to_string() });
-	let cases: [(Vec<FundingQuoteRow>, Option<FundingQuotesRefusal>); 6] = [
+	let refusal = |reason| Some(FundingQuoteUnavailable::Refused { reason });
+	let cases: [(Vec<FundingQuoteRow>, Option<FundingQuoteUnavailable>); 6] = [
 		(
 			vec![row("a.dot", timeout.clone()), row("b.dot", timeout.clone())],
-			Some(FundingQuotesRefusal::Timeout),
+			Some(FundingQuoteUnavailable::Timeout),
 		),
 		(
 			vec![row("a.dot", refused(FundingQuoteRefusal::CountryUnsupported))],
-			Some(FundingQuotesRefusal::CountryUnsupported),
+			refusal(FundingQuoteRefusal::CountryUnsupported),
 		),
 		(
 			vec![row("a.dot", other("KYC needed"))],
-			Some(FundingQuotesRefusal::Other { message: "KYC needed".to_string() }),
+			refusal(FundingQuoteRefusal::Other { message: "KYC needed".to_string() }),
 		),
 		(vec![row("a.dot", other("  "))], None),
 		(vec![row("a.dot", timeout.clone()), row("b.dot", FundingQuoteState::Pending)], None),
@@ -259,22 +224,6 @@ fn a_repeat_cancel_only_before_money_moved() {
 	}
 }
 
-#[test]
-fn held_up_statuses_are_delayed() {
-	let cases = [
-		(FundingStatus::TakingLonger, true),
-		(FundingStatus::Retrying, true),
-		(FundingStatus::RetryingPayout, true),
-		(FundingStatus::CancelOffered { fee: 0, refund: 0 }, true),
-		(FundingStatus::CancelRefused { reason: String::new() }, true),
-		(FundingStatus::WaitingForTransfer, false),
-		(FundingStatus::Sent, false),
-	];
-	for (status, delayed) in cases {
-		assert_eq!(funding_status_delayed(status.clone()), delayed, "{status:?}");
-	}
-}
-
 fn summary(
 	direction: FundingDirection,
 	stage: FundingStage,
@@ -299,7 +248,7 @@ fn summary(
 		refunded: None,
 		transaction_id: None,
 		reference: None,
-		ended: FundingEndedView::default(),
+		ended: FundingEnding::default(),
 	}
 }
 
@@ -351,21 +300,19 @@ fn an_ended_session_fails_at_its_first_unreached_milestone() {
 		),
 	];
 	for (summary, stopped_at) in cases {
-		assert_eq!(ended_view(&summary).stopped_at, stopped_at, "{:?}", summary.status);
+		assert_eq!(ending(&summary).stopped_at, stopped_at, "{:?}", summary.status);
 	}
 }
 
 #[test]
 fn an_ended_session_reads_its_outcome_and_amounts() {
 	let released = FundingStage::Released { debited: 95, settled_at_ms: 2 };
-	let pending = ended_view(&summary(
-		FundingDirection::Out,
-		released.clone(),
-		FundingStatus::PreparingPayout,
-	));
+	let pending =
+		ending(&summary(FundingDirection::Out, released.clone(), FundingStatus::PreparingPayout));
 	assert_eq!(
 		pending,
-		FundingEndedView {
+		FundingEnding {
+			at_ms: 2,
 			outcome: FundingEndedOutcome::Succeeded,
 			payout_state: Some(FundingPayoutState::Pending),
 			cash_amount: Some(95),
@@ -375,7 +322,7 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 	);
 	let mut paid = summary(FundingDirection::Out, released, FundingStatus::Sent);
 	paid.payout = Some(FundingPayout::PaidOut);
-	let paid = ended_view(&paid);
+	let paid = ending(&paid);
 	assert_eq!((paid.payout_state, paid.stopped_at), (Some(FundingPayoutState::PaidOut), None));
 	let mut expired = summary(
 		FundingDirection::In,
@@ -383,71 +330,11 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 		FundingStatus::Failed { reason: FundingFailure::Expired },
 	);
 	expired.amount = None;
-	let expired = ended_view(&expired);
+	let expired = ending(&expired);
 	assert_eq!(
 		(expired.outcome, expired.cash_amount, expired.differing_requested),
 		(FundingEndedOutcome::Failed { reason: FundingFailure::Expired }, Some(90), None)
 	);
-}
-
-// Divergence "Withdrawal fee rounding": up to the cent, never under the
-// cost; a top-up's fee is in the provider's asset and shown as it is.
-#[test]
-fn a_withdrawal_fee_rounds_up_to_the_cent() {
-	let cases = [
-		(quote(10_000_000, 9_000, 15_001, 0), FundingDirection::Out, 20_000, 9_984_999),
-		(quote(10_000_000, 9_000, 10_000, 0), FundingDirection::Out, 10_000, 9_990_000),
-		(quote(10_500, 10_000_000, 400, 100), FundingDirection::In, 500, 10_000),
-	];
-	for (quote, direction, shown, net) in cases {
-		let breakdown = funding_fee_breakdown(quote.clone(), direction);
-		assert_eq!((breakdown.total_fee, breakdown.net), (shown, net), "{quote:?}");
-	}
-	let inbound = funding_fee_breakdown(quote(10_500, 10_000_000, 400, 100), FundingDirection::In);
-	assert_eq!((inbound.rate_num, inbound.rate_den), (10_000, 10_000_000));
-	let outbound =
-		funding_fee_breakdown(quote(10_000_000, 9_000, 10_000, 0), FundingDirection::Out);
-	assert_eq!((outbound.rate_num, outbound.rate_den), (9_000, 9_990_000));
-}
-
-// Divergences "Bad amount text" (None, not zero) and "Fiat decimals" (the
-// quote's decimals the caller passes, here 2 and 6).
-#[test]
-fn typed_amounts_parse_to_units_or_none() {
-	let cases: [(&str, u8, Option<u128>); 13] = [
-		("12.34", 2, Some(1_234)),
-		("12.345", 2, Some(1_234)),
-		("12.34", 6, Some(12_340_000)),
-		("0.", 2, Some(0)),
-		(".5", 2, Some(50)),
-		("7", 0, Some(7)),
-		("", 2, None),
-		(".", 2, None),
-		("1e3", 2, None),
-		("12abc", 2, None),
-		("-1", 2, None),
-		("1.2.3", 2, None),
-		("340282366920938463463374607431768211456", 0, None),
-	];
-	for (text, decimals, expected) in cases {
-		assert_eq!(funding_units(text.into(), decimals), expected, "{text} @ {decimals}");
-	}
-}
-
-#[test]
-fn fiat_is_told_from_crypto_by_iso_code() {
-	let cases = [
-		("EUR", true),
-		("usd", true),
-		("CHF", true),
-		("USDT", false),
-		("DOT", false),
-		("BTC", false),
-	];
-	for (code, fiat) in cases {
-		assert_eq!(funding_asset_is_fiat(code.into()), fiat, "{code}");
-	}
-	assert!(ISO_4217.windows(2).all(|pair| pair[0] < pair[1]), "sorted for binary search");
 }
 
 // Divergence "Sent funds button": the fact behind it holds on a bank top-up

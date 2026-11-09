@@ -15,7 +15,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.needsTrUAPI
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.debugServedUrl
@@ -30,8 +32,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.DevServerProduct
 import uniffi.truapi.ExecutableKind
-import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,17 +48,20 @@ class TrUAPISpaHost @Inject constructor(
     private val deepLinkHandler: DeepLinkHandler,
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val bundledProducts: BundledProducts,
+    private val productSources: ProductSources,
     private val debugPocketCards: DebugPocketCards,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
-        lateinit var webViewProvider: BrowserWebViewProvider
-        // A product the app ships opens from its own files, under its own id.
-        val bundled = bundledProducts.appFor(initialUrl)
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
+        createSession(initialUrl, underCard, productSources.of(initialUrl))
 
-        val servedPage = debugServedPage(initialUrl)
-        val pageUrl = servedPage?.url ?: initialUrl
+    context(scope: ComputationalScope, messageDisplay: MessageDisplay)
+    fun createSession(initialUrl: String, underCard: Boolean, opened: ProductSource?): SpaHostSession {
+        lateinit var webViewProvider: BrowserWebViewProvider
+
+        val source = opened.takeIf { it.needsTrUAPI } ?: debugServedPage(initialUrl) ?: opened
+        val pageUrl = (source as? ProductSource.DevServer)?.product?.url ?: initialUrl
+        val fixedProductId = source?.fixedProductId
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
             onDeeplinkNavigation = { launchDeeplinkNavigation(it) }
@@ -66,9 +72,7 @@ class TrUAPISpaHost @Inject constructor(
             navigationPolicy = webViewNavigation,
             allowIframes = true,
             scope = scope,
-            bundledProduct = bundled,
-            fixedProductId = servedPage?.productId,
-            firstPartyOrigin = servedPage?.origin,
+            source = source,
             servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
             waitForInitialTheme = true,
         )
@@ -86,14 +90,14 @@ class TrUAPISpaHost @Inject constructor(
             scope,
             hostApiNavigation,
             card = cardFaceRequests,
-            explicitProductId = bundled?.id ?: servedPage?.productId,
+            explicitProductId = fixedProductId,
         )
 
         val currentUrlFlow = MutableStateFlow(pageUrl)
         webViewProvider.addOnPageStartedListener { url ->
             currentUrlFlow.value = url
             scope.launch {
-                val productId = bundled?.id ?: servedPage?.productId ?: dotNsTldProvider.getTld().getOrNull()
+                val productId = fixedProductId ?: dotNsTldProvider.getTld().getOrNull()
                     ?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
                 productId?.let { productRegistrar.ensureRegistered(it) }
             }
@@ -123,14 +127,14 @@ class TrUAPISpaHost @Inject constructor(
 
     // A product with no published app is served from the developer's machine, so its page's host
     // says nothing about which product it is.
-    private fun debugServedPage(launchUrl: String): DebugServedPage? {
+    private fun debugServedPage(launchUrl: String): ProductSource.DevServer? {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return null
         val productId = productIdFromUrl(launchUrl.toUri(), tld).getOrNull() ?: return null
         val appUrl = debugPocketCards.appUrl(productId) ?: return null
         val servedUrl = debugServedUrl(appUrl, launchUrl)
         val served = URI(servedUrl)
 
-        return DebugServedPage(productId, servedUrl, origin = "${served.scheme}://${served.authority}")
+        return ProductSource.DevServer(DevServerProduct(productId, origin = "${served.scheme}://${served.authority}", url = servedUrl))
     }
 
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
@@ -142,8 +146,6 @@ class TrUAPISpaHost @Inject constructor(
         }
     }
 }
-
-private class DebugServedPage(val productId: ProductId, val url: String, val origin: String)
 
 private class TrUAPISpaHostSession(
     override val webView: StateFlow<WebView?>,

@@ -33,9 +33,13 @@ pub fn funding_page_matches_return(url: String, return_url: String) -> bool {
 
 /// Whether a provider page's web view may load `url`.
 ///
-/// Any https page may load, and in a sub-frame also the `about:`, `blob:`
-/// and `data:` documents pages build themselves. Nothing else, so a page
-/// cannot leave https.
+/// Any https page may load in the main frame, whatever its host, since card
+/// 3-D Secure and bank redirects leave the provider's origin and a provider
+/// manifest declares no hosts to hold it to. A sub-frame may also load the
+/// `about:`, `blob:` and `data:` documents pages build themselves. Nothing
+/// else, so a page cannot leave https. Because the page can move, the host
+/// shows [`funding_page_origin`] of the page's current URL, not the one it
+/// opened.
 #[uniffi::export]
 pub fn funding_page_allows_navigation(url: String, is_main_frame: bool) -> bool {
 	match Url::parse(&url).as_ref().map(Url::scheme) {
@@ -47,6 +51,9 @@ pub fn funding_page_allows_navigation(url: String, is_main_frame: bool) -> bool 
 
 /// The origin of `url`, normalised: lower-case scheme and host, and the
 /// port only when it is not the scheme's default. `None` without a host.
+///
+/// Asked with the main frame's current URL after each navigation, it names
+/// the site the user is on.
 #[uniffi::export]
 pub fn funding_page_origin(url: String) -> Option<FundingPageOrigin> {
 	let parsed = Url::parse(&url).ok()?;
