@@ -11,16 +11,20 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRun
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onStart
-import uniffi.truapi.FundingActivityRow
+import uniffi.truapi.FundingBookEntry
+import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.FundingStage
+import uniffi.truapi.FundingStatus
+import uniffi.truapi.fundingStatusInFlight
 import javax.inject.Inject
 import kotlin.time.Instant
-import uniffi.truapi.FundingActivity as CoreFundingActivity
+import uniffi.truapi.FundingDirection as CoreFundingDirection
 
-/** The host's funding entry points over the core, which merges, sorts and hides the activity rows. */
+/** The host's funding entry points over the core, which holds the sessions and their history. */
 class TrUAPIHostFunding @Inject constructor(
     private val runtime: FundingRuntime,
     private val sessionPresenter: FundingSessionPresenter,
@@ -28,31 +32,52 @@ class TrUAPIHostFunding @Inject constructor(
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
         runtime.openFunding(direction.toCore(), amount?.toU128())
 
-    override fun observeActivity(): Flow<FundingActivity> = runtime.activity
-        .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-        .filterNotNull()
-        .map { it.toDomain() }
+    override fun observeActivity(): Flow<FundingActivity> =
+        combine(runtime.sessions, runtime.history) { sessions, history -> activityOf(sessions.values, history) }
+            .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
 
     override suspend fun acknowledgeShown(intents: List<String>) {
-        if (intents.isEmpty()) return
-        runtime.acknowledgeShown(intents).logFailure("Funding acknowledgement failed")
+        intents.forEach { runtime.acknowledge(it).logFailure("Funding acknowledgement failed") }
     }
 
     override suspend fun showSession(intent: String) = sessionPresenter.show(intent)
 }
 
-private fun CoreFundingActivity.toDomain() = FundingActivity(
-    inFlight = inFlight.map { it.toItem() },
-    history = history.map { it.toItem() },
-)
+/** In flight while its status says so, newest opened first; history leaves those out, newest ended first. */
+private fun activityOf(entries: Collection<FundingBookEntry>, history: List<FundingSessionSummary>): FundingActivity {
+    val inFlight = entries.filter { fundingStatusInFlight(it.progress.status) }.sortedByDescending { it.session.openedAtMs }
+    val flying = inFlight.mapTo(mutableSetOf()) { it.session.intent }
+    return FundingActivity(
+        inFlight = inFlight.map { it.toItem() },
+        history = history.filter { it.intent !in flying }.sortedByDescending { it.ended.atMs }.map { it.toItem() },
+    )
+}
 
-private fun FundingActivityRow.toItem() = FundingActivityItem(
+private fun FundingBookEntry.toItem(): FundingActivityItem {
+    val quoted = session.choice?.quote?.let { if (session.direction == CoreFundingDirection.IN) it.receiveAmount else it.sendAmount }
+    return FundingActivityItem(
+        id = session.intent,
+        direction = session.direction.toDomain(),
+        rail = session.choice?.rail?.toType(),
+        // In flight, only a released withdrawal has settled an amount.
+        amount = ((session.stage as? FundingStage.Released)?.debited ?: session.amount ?: quoted)?.toBalance(),
+        date = Instant.fromEpochMilliseconds(session.openedAtMs.toLong()),
+        status = progress.status.toActivityStatus(),
+    )
+}
+
+private fun FundingSessionSummary.toItem() = FundingActivityItem(
     id = intent,
     direction = direction.toDomain(),
-    rail = rail?.toType(),
-    amount = amount?.toBalance(),
-    date = Instant.fromEpochMilliseconds(atMs.toLong()),
-    status = status.toActivityStatus(),
+    rail = choice?.rail?.toType(),
+    amount = ended.cashAmount?.toBalance(),
+    date = Instant.fromEpochMilliseconds(ended.atMs.toLong()),
+    // A cancel that still settled or refunded something reads as cancelled.
+    status = if (status == FundingStatus.Failed(FundingFailure.Cancelled)) {
+        FundingStatus.Cancelled(refunded)
+    } else {
+        status
+    }.toActivityStatus(),
 )
 
 private fun FundingRail.toType(): FundingRailType = when (this) {
