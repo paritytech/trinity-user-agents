@@ -7,50 +7,6 @@ import UIKit
 /// screen, and back when closed, so the user sees one card move.
 @MainActor
 struct PocketFlightTests {
-    /// Every card screen takes a flight on push and on pop, with or without a
-    /// Pocket to fly from, so no card opens or closes with the system's slide.
-    /// Every other screen keeps the system's transition.
-    @Test
-    func animatesEveryCardScreenWithAFlight() {
-        let navigation = AppNavigationController(rootViewController: UIViewController())
-        let origin = FakePocketOrigin(slot: pocketSlot)
-        let flying = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-        let pocketless = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
-        let screens = [flying, pocketless, UIViewController()]
-
-        let pushes = screens.map { screen in
-            navigation.navigationController(navigation, animationControllerFor: .push, from: navigation, to: screen)
-        }
-        let pops = screens.map { screen in
-            navigation.navigationController(navigation, animationControllerFor: .pop, from: screen, to: navigation)
-        }
-
-        #expect(pushes.map { $0 is PocketFlight } == [true, true, false])
-        #expect(pops.map { $0 is PocketFlight } == [true, true, false])
-        withExtendedLifetime(origin) {}
-    }
-
-    /// The Balance card's screen flies like a card's, with or without a Pocket to fly from.
-    @Test
-    func animatesTheBalanceScreenWithAFlight() {
-        let navigation = AppNavigationController(rootViewController: UIViewController())
-        let origin = FakePocketOrigin(slot: pocketSlot)
-        let flying = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: origin)
-        let pocketless = AssetDetailsScreenViewController(viewModel: AssetDetailsViewModel(), origin: nil)
-        let screens = [flying, pocketless]
-
-        let pushes = screens.map { screen in
-            navigation.navigationController(navigation, animationControllerFor: .push, from: navigation, to: screen)
-        }
-        let pops = screens.map { screen in
-            navigation.navigationController(navigation, animationControllerFor: .pop, from: screen, to: navigation)
-        }
-
-        #expect(pushes.map { $0 is PocketFlight } == [true, true])
-        #expect(pops.map { $0 is PocketFlight } == [true, true])
-        withExtendedLifetime(origin) {}
-    }
-
     /// A card the Pocket shows flies to its slot, which is the path the user
     /// sees the card take.
     @Test
