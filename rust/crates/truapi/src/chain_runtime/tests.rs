@@ -2618,16 +2618,17 @@ fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_u
 	drop(receiver);
 	assert_eq!(
 		follow.describe_activity(at(600)),
-		"open 600s, event 6s, calls 3, call 540s, receiver dropped"
+		"open 600s, event 6s, calls 3, call 540s, dropped"
 	);
 }
 
 /// The host sink cuts a detail at [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`]
-/// before a host sees it, so the line has to name four follows and their
-/// activity inside that. A dotNS follow is named by its label, which carries a
-/// product id and is the longest name any follow brings.
+/// before a host sees it, so the line has to carry four follows inside that. A
+/// leaked follow is one whose receiver went without an unfollow, so that is the
+/// shape the line is sized for, and a dotNS follow is named by a label carrying
+/// a product id, which is the longest name a follow brings.
 #[test]
-fn a_budget_line_naming_four_dotns_follows_fits_the_detail_a_host_receives() {
+fn a_budget_line_names_four_dropped_dotns_follows_inside_the_detail_a_host_receives() {
 	let opened = SystemTime::now();
 	let products = [
 		"notes-worker-demo.paseo",
@@ -2636,10 +2637,11 @@ fn a_budget_line_naming_four_dotns_follows_fits_the_detail_a_host_receives() {
 		"a.dot",
 	];
 	let mut follows = HashMap::new();
-	let mut receivers = Vec::new();
 	for (index, product) in products.into_iter().enumerate() {
 		let (sender, receiver) = mpsc::unbounded();
-		receivers.push(receiver);
+		// The receiver goes, which is what a leaked follow looks like and what
+		// adds the widest activity text beside the name.
+		drop(receiver);
 		follows.insert(
 			format!("truapi:dotns:{}:manifest:{product}", index + 10),
 			FollowState {
@@ -2668,18 +2670,16 @@ fn a_budget_line_naming_four_dotns_follows_fits_the_detail_a_host_receives() {
 	);
 
 	assert_eq!(holding.len(), FOLLOWS_A_NODE_BUDGETS);
-	let length = line.chars().count();
+	assert_eq!(
+		line,
+		"this connection to chain 0xabababababababababababababababababababababababababababababababab holds 4 of 4 follows, the next is refused: dotns:10:manifest:notes-worker-demo.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:11:manifest:some.longish.product.identifier.paseo open 600s, event 588s, calls 7, cal\u{2026}, dotns:12:manifest:peopl.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:13:manifest:a.dot open 600s, event 588s, calls 7, call 570s, dropped"
+	);
 	assert!(
-		length <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
-		"the host receives {length} of {} chars: {line}",
+		line.chars().count() <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
+		"the host receives {} of {} chars",
+		line.chars().count(),
 		crate::logging::HOST_SINK_DETAIL_MAX_CHARS
 	);
-	// Every follow reaches the host with its activity, the last one included,
-	// which is the one a line that ran out of room used to lose.
-	assert_eq!(line.matches("open 600s, event 588s, calls 7, call 570s").count(), 4);
-	for product in ["notes-worker-demo.paseo", "peopl.paseo", "a.dot"] {
-		assert!(line.contains(product), "{product} is not named in {line}");
-	}
 }
 
 /// A node that cannot be reached may be reachable later, so the read waits on
