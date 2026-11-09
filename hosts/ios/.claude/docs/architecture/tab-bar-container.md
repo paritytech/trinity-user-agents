@@ -390,7 +390,17 @@ Opening a product with Browse:
 
 `presentProduct(page:)` is the one-shot path for funding products. In both builds it presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
 
-Without Browse, `openProduct(page:)` presents a Presented product instead of mounting one. `SPAViewFactory.createView(page:flowState:presentation:)` builds an `SPASimplifiedViewController` with `.fullScreen` presentation. It is presented full screen on `UIWindow.keyWindow?.topmostViewController` without dismissing anything first, so a second product stacks on top. It never enters the tab store, so there is no Mounted product, no chip and no Selection pill move. Its strip's Close app item dismisses it through `SPAWireframe.dismiss(view:)`.
+Without Browse, `openProduct(page:)` never mounts a product. It looks for a Presented product over the container first. `presentedProduct(_:)` walks the presentation chain with `firstPresentedProduct(where:)` and returns the first `SPASimplifiedViewController` for that product. Three cases follow.
+
+- Same product already presented: `uncover(_:)` dismisses whatever covers it, then `navigate(to:)` moves it to the requested page. `SPASimplifiedViewController.navigate(to:)` skips the load when the target URL is the current one, so a repeated link does not reload the product.
+- Another full-screen Presented product is open: an alert asks `Open <B>?` with `<A> will close.` and offers Cancel and Open. Open dismisses A and everything above it, then presents B when that dismissal completes. So at most one full-screen Presented product is open.
+- Nothing presented: `presentFullScreenProduct(page:)` builds the product with `SPAViewFactory.createView(page:flowState:presentation:)` as `.fullScreen` and presents it on `UIWindow.keyWindow?.topmostViewController`.
+
+Product sheets from `presentProduct(page:)` are not `.fullScreen`, so the alert rule ignores them. The same-product case still reuses one.
+
+`ProductOpener.open(productId:)`, used by the game alarm and reminder auto-open, treats a Presented product like a Mounted product. It calls `uncover(_:)` and returns true only when something covered it. An auto-open therefore does not present a second copy or reload the product. If nothing covers it, `open(productId:)` returns false and does nothing else.
+
+It never enters the tab store, so there is no Mounted product, no chip and no Selection pill move. Its strip's Close app item dismisses it through `SPAWireframe.dismiss(view:)`.
 
 **Chips.** `MainTabBarInteractor` sends the open tabs to the presenter (`didReceiveSPATabs`). The presenter maps them through `SPATabChipViewModelFactory`, and the view passes them to the chrome as `TabBarShelfChip`. `applyChips()` runs on every mount and unmount, so the selected chip follows the mounted product.
 

@@ -249,7 +249,12 @@ extension SPASimplifiedViewController: SPAViewProtocol {
             return
         }
 
-        navigate(to: page.applied(to: currentURL))
+        let target = page.applied(to: currentURL)
+        guard target != currentURL else {
+            return
+        }
+
+        navigate(to: target)
     }
 
     func updateTitle(_ title: String) {
