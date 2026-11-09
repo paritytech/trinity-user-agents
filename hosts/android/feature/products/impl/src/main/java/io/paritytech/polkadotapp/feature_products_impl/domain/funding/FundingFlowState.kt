@@ -52,10 +52,14 @@ data class FundingFlowState(
     /** The core's latest list for [ask]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
     /**
-     * The earliest quote request whose lists still belong on screen; a list for an earlier one is dropped. The core
-     * numbers requests in order, so a new ask moves this past every request made so far.
+     * The id the core returned for [ask]; only lists for it are shown. `null` while no ask is current or its id is
+     * still on its way.
      */
     val requestId: ULong?,
+    /** Counts the asks and drops, so the id of an ask replaced while on its way is not taken; see [requested]. */
+    val askNumber: Int,
+    /** The newest list that arrived while [ask]'s id was on its way; shown if the id turns out to be its. */
+    val earlyList: FundingQuoteList?,
 ) {
     companion object {
         fun initial(
@@ -82,6 +86,8 @@ data class FundingFlowState(
             staleQuotes = emptyMap(),
             list = null,
             requestId = null,
+            askNumber = 0,
+            earlyList = null,
         )
 
         fun textFor(value: BigDecimal): String =
@@ -205,7 +211,7 @@ data class FundingFlowState(
         if (newRail == rail) {
             copy(railChosen = true)
         } else {
-            copy(rail = newRail, railChosen = true, network = null, asset = null, rows = emptyMap(), ask = null, list = null)
+            dropped().copy(rail = newRail, railChosen = true, network = null, asset = null)
         }
 
     fun withAmountText(text: String): FundingFlowState = copy(amountText = text)
@@ -218,25 +224,44 @@ data class FundingFlowState(
 
     fun withChosenProvider(providerId: ProductId): FundingFlowState = copy(chosenProviderId = providerId)
 
-    /** A new ask goes out: its rows read pending until the core's first list for it names who is asked. */
+    /**
+     * A new ask goes out: its rows read pending until the core's first list for it names who is asked. No list shows
+     * until the core returns the ask's id to [requested] with the returned [askNumber].
+     */
     fun asking(newAsk: FundingQuoteAsk): FundingFlowState = copy(
-        requestId = requestId?.plus(1u),
+        requestId = null,
+        askNumber = askNumber + 1,
+        earlyList = null,
         ask = newAsk,
         rows = rows.mapValues { FundingQuoteState.Pending },
         staleQuotes = if (newAsk == ask) quotedProviders.toMap() else emptyMap(),
         list = null,
     )
 
-    /** Request [id] went out, so lists for any earlier request are no longer this screen's. */
-    fun requested(id: ULong): FundingFlowState = copy(requestId = maxOf(requestId ?: id, id))
+    /**
+     * The core returned [id] for ask [number]: its lists show from now on, starting with one that arrived first.
+     * Ignored when a later ask or a drop replaced that ask.
+     */
+    fun requested(id: ULong, number: Int): FundingFlowState {
+        if (number != askNumber || ask == null) return this
+
+        val early = earlyList
+        val taken = copy(requestId = id, earlyList = null)
+        return if (early?.requestId == id) taken.receiving(early) else taken
+    }
 
     /**
-     * The core's latest list, unless it answers an earlier request than the one on screen. A row still pending after
-     * the same ask went out again keeps its last quote greyed until it answers.
+     * The core's latest list, if it answers the current ask; while the ask's id is on its way, the newest list is
+     * kept for [requested] instead. A row still pending after the same ask went out again keeps its last quote
+     * greyed until it answers.
      */
     fun receiving(list: FundingQuoteList): FundingFlowState {
-        val latest = requestId
-        if (latest != null && list.requestId < latest) return this
+        val current = requestId
+        if (current == null) {
+            val awaitsId = ask != null
+            return if (awaitsId && list.requestId >= (earlyList?.requestId ?: 0u)) copy(earlyList = list) else this
+        }
+        if (list.requestId != current) return this
 
         val newRows = list.rows.associate { it.providerId to it.state }
         val stale = newRows
@@ -244,7 +269,7 @@ data class FundingFlowState(
             .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
             .toMap()
 
-        return copy(requestId = list.requestId, rows = newRows, staleQuotes = stale, list = list)
+        return copy(rows = newRows, staleQuotes = stale, list = list)
     }
 
     /**
@@ -266,9 +291,19 @@ data class FundingFlowState(
         return if (railChosen || newOptions.defaultRail == rail) {
             updated
         } else {
-            updated.copy(rail = newOptions.defaultRail, network = null, asset = null, rows = emptyMap(), ask = null, list = null)
+            updated.dropped().copy(rail = newOptions.defaultRail, network = null, asset = null)
         }
     }
+
+    /** No quotes, and no list for any ask made so far, including one whose id is still on its way. */
+    private fun dropped(): FundingFlowState = copy(
+        rows = emptyMap(),
+        ask = null,
+        list = null,
+        requestId = null,
+        askNumber = askNumber + 1,
+        earlyList = null,
+    )
 
     private fun unitsOf(value: BigDecimal): U128 = cash.units(value)
 
