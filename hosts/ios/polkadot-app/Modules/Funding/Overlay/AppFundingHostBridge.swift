@@ -1,5 +1,4 @@
 import Foundation
-@preconcurrency import Keystore_iOS
 import TrUAPIHost
 
 /// What the funding overlay UI implements: the screen a session is started
@@ -17,8 +16,12 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
         amount: U128?
     ) async -> FundingPresentOutcome
 
-    func presentProviderFrame(providerId: ProductId, intent: String, target: FundingFrameTarget) async
-        -> FundingFrameOutcome
+    func presentProviderFrame(
+        providerId: ProductId,
+        intent: String,
+        target: FundingFrameTarget,
+        context: FundingFrameContext
+    ) async -> FundingFrameOutcome
 
     /// The provider closed its frame for session `intent`: answer it
     /// `.closed` and show the session sheet in its place.
@@ -27,12 +30,14 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     /// Whether provider `providerId` ships an App its frame can show.
     func providerHasApp(providerId: ProductId) async -> Bool
 
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
+    /// Session `intent` changed in the core: read it back from the runtime.
+    func fundingSessionChanged(intent: String)
 
-    /// What session `intent`'s overlay offers changed in the session book.
+    /// What session `intent`'s overlay offers changed in the core.
     func fundingOptionsChanged(intent: String)
 
-    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
+    /// Session `intent`'s quote list changed in the core.
+    func fundingQuotesChanged(intent: String)
 
     /// Product `productId`'s worker keeps crashing while the core restarts it.
     func workerCrashing(productId: ProductId)
@@ -53,21 +58,13 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 }
 
 /// The runtime's funding overlay. Installed once, before any product
-/// execution opens. Keeps what the core pushes in the session book and
-/// forwards to whatever draws the overlay.
+/// execution opens. Forwards the core's calls and change notices to whatever
+/// draws the overlay, which reads what changed back from the runtime.
 final class AppFundingHostBridge: FundingHostBridge, Sendable {
     private let overlay: FundingOverlayPresenting
-    private let book: FundingSessionBook
-    private let settingsManager: SettingsManagerProtocol
 
-    init(
-        overlay: FundingOverlayPresenting,
-        book: FundingSessionBook = .shared,
-        settingsManager: SettingsManagerProtocol = SettingsManager.shared
-    ) {
+    init(overlay: FundingOverlayPresenting) {
         self.overlay = overlay
-        self.book = book
-        self.settingsManager = settingsManager
     }
 
     func presentFunding(
@@ -76,22 +73,21 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
         direction: FundingDirection,
         amount: U128?
     ) async throws -> FundingPresentOutcome {
-        let outcome = await overlay.presentFunding(
+        await overlay.presentFunding(
             productId: productId,
             intent: intent,
             direction: direction,
             amount: amount
         )
-        book.forgetOptions(intent: intent)
-        return outcome
     }
 
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget
+        target: FundingFrameTarget,
+        context: FundingFrameContext
     ) async throws -> FundingFrameOutcome {
-        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
+        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target, context: context)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
@@ -102,28 +98,18 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
         await overlay.providerHasApp(providerId: providerId)
     }
 
-    func fundingSessionChanged(
-        intent: String,
-        status: HostFundingStatusSubscribeItem,
-        session: FundingSession?,
-        progress: FundingProgress?
-    ) {
-        let ended = if case .inProgress = status { false } else { true }
-        book.record(intent: intent, session: session, progress: progress, ended: ended)
-        overlay.fundingSessionChanged(intent: intent, status: status)
-    }
+    /// Whether a provider still works on a session is kept by the core, which
+    /// answers `fundingResumePending` at the next launch, so `.inProgress`
+    /// needs nothing here.
+    func fundingChanged(intent: String?, kind: FundingChangeKind) {
+        guard let intent else { return }
 
-    func fundingInProgressChanged(_ inProgress: Bool) {
-        settingsManager.setFundingInProgress(inProgress)
-    }
-
-    func fundingOptionsChanged(intent: String, options: FundingOptions) {
-        book.record(intent: intent, options: options)
-        overlay.fundingOptionsChanged(intent: intent)
-    }
-
-    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
-        overlay.fundingQuotesChanged(intent: intent, quotes: quotes)
+        switch kind {
+        case .session: overlay.fundingSessionChanged(intent: intent)
+        case .options: overlay.fundingOptionsChanged(intent: intent)
+        case .quotes: overlay.fundingQuotesChanged(intent: intent)
+        case .inProgress: break
+        }
     }
 
     /// The device's region. The app holds no location permission, and iOS no

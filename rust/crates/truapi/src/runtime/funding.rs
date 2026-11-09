@@ -14,6 +14,7 @@
 //! hand-overs and timers must exist, and brings them in line one pass at a
 //! time.
 
+mod book;
 #[cfg(not(target_arch = "wasm32"))]
 mod store;
 #[cfg(test)]
@@ -70,6 +71,8 @@ use truapi::latest::{
 	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
 	HostPaymentTopUpStatusSubscribeItem,
 };
+
+pub use book::{FundingBookEntry, FundingSessionBook};
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
@@ -425,6 +428,11 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
+	/// The provider frames open, by session, with the provider showing each.
+	frames: Mutex<HashMap<String, ProductContext>>,
+	/// The funding state the host reads back, filled as the host is told
+	/// what changed.
+	book: FundingSessionBook,
 }
 
 impl FundingRegistry {
@@ -451,6 +459,41 @@ impl FundingRegistry {
 		self.feed.get().cloned()
 	}
 
+	/// The funding state the host reads back.
+	pub fn book(&self) -> &FundingSessionBook {
+		&self.book
+	}
+
+	/// Every session the host has heard of that the registry holds in full,
+	/// with its progress at `now_ms`, newest opened first.
+	pub fn entries(&self, now_ms: u64) -> Vec<FundingBookEntry> {
+		let mut entries: Vec<FundingBookEntry> = self
+			.announced()
+			.into_iter()
+			.map(|session| FundingBookEntry { progress: session.progress(now_ms), session })
+			.collect();
+		entries.sort_by_key(|entry| core::cmp::Reverse(entry.session.opened_at_ms));
+		entries
+	}
+
+	/// The activity with the sessions history leaves out, worked out again
+	/// only once a session changed.
+	pub fn activity_view(&self) -> crate::host_logic::funding_activity::ActivityView {
+		let now_ms = current_unix_millis();
+		self.book.activity(
+			|| {
+				self.announced()
+					.into_iter()
+					.map(|session| {
+						let progress = session.progress(now_ms);
+						(session, progress)
+					})
+					.collect()
+			},
+			|| self.history(),
+		)
+	}
+
 	/// Install the core database the sessions are stored in. Set-once;
 	/// returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -468,6 +511,11 @@ impl FundingRegistry {
 	/// A registry belonging to `services`.
 	pub fn new(services: Weak<RuntimeServices>) -> Self {
 		Self { services, ..Self::default() }
+	}
+
+	/// The services the registry belongs to, while they are alive.
+	pub fn services(&self) -> Option<Arc<RuntimeServices>> {
+		self.services.upgrade()
 	}
 
 	/// Assign open session `intent` to the provider the user chose, and hand
@@ -740,6 +788,48 @@ impl FundingRegistry {
 			Some(session) => session.is_terminal().then(|| session.wire_item()),
 			None => held.pack.get(intent).map(|packed| packed.summary.wire_item()),
 		}
+	}
+
+	/// Every session held in full whose overlay is no longer up: those the
+	/// host has heard of.
+	pub fn announced(&self) -> Vec<FundingSession> {
+		let held = self.lock_held();
+		held.sessions
+			.values()
+			.filter(|session| !held.presenting.contains_key(&session.intent))
+			.cloned()
+			.collect()
+	}
+
+	/// Whether session `intent`'s payment moved, so its provider's frame is
+	/// done: it ended, held in full or compacted, or reached a milestone past
+	/// Started. `false` for a session the core does not hold.
+	pub fn payment_moved(&self, intent: &str) -> bool {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
+			Some(session) => session.payment_moved(),
+			None => held.pack.contains_key(intent),
+		}
+	}
+
+	/// Track the frame `provider` shows for session `intent` until the
+	/// returned guard drops, so the core can close it once the payment moved.
+	/// One that already moved is closed as soon as the session next changes.
+	pub fn track_frame(&self, intent: &str, provider: ProductContext) -> FrameTrack<'_> {
+		lock(&self.frames).insert(intent.to_string(), provider);
+		FrameTrack { registry: self, intent: intent.to_string() }
+	}
+
+	/// Close session `intent`'s provider frame through `platform` if one is
+	/// open and its payment moved, once.
+	fn close_moved_frame(&self, platform: &dyn FundingPlatform, intent: &str) {
+		if !self.payment_moved(intent) {
+			return;
+		}
+		let Some(provider) = lock(&self.frames).remove(intent) else {
+			return;
+		};
+		platform.close_provider_frame(&provider, intent.to_string());
 	}
 
 	/// The sessions whose overlay is up.
@@ -1598,17 +1688,20 @@ impl FundingRegistry {
 			let feed = self.feed();
 			match next {
 				Some(Announcement::Session(intent, item, queued)) => {
+					self.close_moved_frame(platform.as_ref(), &intent);
 					platform.funding_session_changed(intent.clone(), item.clone());
+					// The record the session has now, or the one it was queued
+					// with once it is compacted.
+					let session = self.get(&intent).or(queued.map(|queued| *queued));
+					self.book.session_changed(&intent, &item, session.as_ref());
 					if let Some(feed) = feed {
-						// The record the session has now, or the one it was
-						// queued with once it is compacted.
-						let session = self.get(&intent).or(queued.map(|queued| *queued));
 						let progress =
 							session.as_ref().map(|session| session.progress(current_unix_millis()));
 						feed.funding_session_changed(intent, item, session, progress);
 					}
 				},
 				Some(Announcement::InProgress(in_progress)) => {
+					self.book.in_progress_changed(in_progress);
 					if let Some(feed) = feed {
 						feed.funding_in_progress_changed(in_progress);
 					}
@@ -1644,6 +1737,18 @@ impl FundingRegistry {
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
+	}
+}
+
+/// A provider frame the registry tracks, until it drops.
+pub struct FrameTrack<'a> {
+	registry: &'a FundingRegistry,
+	intent: String,
+}
+
+impl Drop for FrameTrack<'_> {
+	fn drop(&mut self) {
+		lock(&self.registry.frames).remove(&self.intent);
 	}
 }
 
@@ -1978,6 +2083,33 @@ impl RuntimeServices {
 		self.funding().acknowledge(current_unix_millis(), intent).await
 	}
 
+	/// Acknowledge that the user saw how the ended sessions `intents` went,
+	/// and with them the ended sessions history leaves out, so none is owed
+	/// to the host again. Returns the sessions acknowledged.
+	pub async fn acknowledge_funding_shown(
+		&self,
+		intents: Vec<String>,
+	) -> Result<Vec<String>, FundingSessionError> {
+		let funding = self.funding();
+		let unacknowledged = funding.book().unacknowledged();
+		let hidden = funding
+			.activity_view()
+			.hidden
+			.into_iter()
+			.filter(|intent| unacknowledged.contains(intent));
+		let mut acknowledged = Vec::new();
+		for intent in intents.into_iter().chain(hidden) {
+			if acknowledged.contains(&intent) {
+				continue;
+			}
+			if self.acknowledge_funding_session(&intent).await? {
+				acknowledged.push(intent.clone());
+			}
+			funding.book().acknowledged(&intent);
+		}
+		Ok(acknowledged)
+	}
+
 	/// Cancel session `intent` at the user's request, and say what that did.
 	pub async fn cancel_funding(&self, intent: &str) -> Result<CancelOutcome, FundingSessionError> {
 		self.funding().cancel(current_unix_millis(), intent).await
@@ -2305,6 +2437,7 @@ impl RuntimeServices {
 			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
 			.collect();
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		registry.book().overlay_closed(&session.intent);
 		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.

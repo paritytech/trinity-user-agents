@@ -75,6 +75,7 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 				product_id: ProductId::for_test(product_id),
 				worker_manifest: worker_manifest.clone(),
 				origin: FundingProviderOrigin::Published,
+				has_app: None,
 			})
 			.collect(),
 	)
@@ -126,6 +127,7 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 			product_id: ProductId::for_test("bundled.dot"),
 			worker_manifest: Some(manifest(CARD_IN)),
 			origin: FundingProviderOrigin::Bundled,
+			has_app: None,
 		}])
 		.expect("offered"),
 	);
@@ -147,6 +149,7 @@ fn an_unreadable_snapshot_is_refused_when_offered() {
 			product_id: ProductId::for_test("card.dot"),
 			worker_manifest: Some(worker_manifest.to_string()),
 			origin: FundingProviderOrigin::Published,
+			has_app: None,
 		}])
 		.map(|offered| offered.len())
 		.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
@@ -191,6 +194,7 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(manifest(CARD_IN)),
 					origin: FundingProviderOrigin::Published,
+					has_app: None,
 				})
 				.collect(),
 		)

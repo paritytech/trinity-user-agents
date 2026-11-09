@@ -278,10 +278,10 @@ A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHidde
 
 **Auto-hide.** A shown bar tucks itself without a drag, in two cases:
 
-- The first touch outside the Docklet tucks it at once.
+- Any touch that begins outside the Docklet tucks it at once: a tap, the start of a scroll or swipe, or a long press. The touch still reaches the screen beneath it.
 - Otherwise it tucks 3 s after the last touch or hardware key press.
 
-The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
+The Docklet is the bar, the open panel and the Grab zone. A touch counts as the bar only when it hit-tests into the bar host's views. The host's frame is sized for the centre panel and covers most of the screen, so its frame is never the test. The Edge glow strip does not count while the bar is shown. A tap that closes an open panel or a tip does not tuck the bar, because both are blockers. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
 
 Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, any TipKit tip on screen, R1 or Docklet (`tipShown`), and VoiceOver (`voiceOver`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
 

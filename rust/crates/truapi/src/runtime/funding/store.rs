@@ -72,7 +72,15 @@ pub(super) async fn load(
 		if let Some(format) = sessions.newer.max(summaries.newer) {
 			return Ok(Err(FundingSessionError::NewerFormat { format }));
 		}
-		Ok(Ok((sessions.records, summaries.records)))
+		let summaries = summaries
+			.records
+			.into_iter()
+			.map(|packed: PackedSession| PackedSession {
+				summary: packed.summary.with_ended(),
+				..packed
+			})
+			.collect();
+		Ok(Ok((sessions.records, summaries)))
 	})
 	.await?
 }
