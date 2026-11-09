@@ -159,6 +159,8 @@ impl FundingPlatform for CliFundingHost {
 		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}
 
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),

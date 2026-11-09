@@ -22,6 +22,7 @@ mod dotns_lookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -63,7 +64,7 @@ use std::{
 
 pub use actions::ActionChannel;
 use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
@@ -83,7 +84,8 @@ pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -91,7 +93,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
@@ -123,9 +125,10 @@ use truapi::{
 			HostFundingStatusSubscribeRequest,
 		},
 		funding_provider::{
-			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
-			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse,
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -197,8 +200,17 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product,
+	Product(latest::ProductAccountId),
 	Identity([u8; 32]),
+}
+
+impl LegacySigner {
+	fn review_account(&self) -> LegacySigningAccount {
+		match self {
+			Self::Product(account) => LegacySigningAccount::Product(account.clone()),
+			Self::Identity(_) => LegacySigningAccount::Identity,
+		}
+	}
 }
 
 #[derive(derive_more::From)]
@@ -376,7 +388,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 
@@ -580,6 +592,11 @@ impl ProductConnection {
 	/// Release one core-held reference on this connection's product worker.
 	pub fn release_worker_reference(&self) {
 		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
@@ -982,7 +999,10 @@ impl ProductRuntimeHost {
 		}
 		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product);
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
 		}
 		Err(LegacySignerError::Unavailable)
 	}
@@ -1267,6 +1287,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
@@ -1355,6 +1376,7 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
 	})
@@ -1376,10 +1398,21 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		AuthorityError::NotSupported { reason } => {
 			latest::HostCreateTransactionError::NotSupported { reason }
 		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
 			latest::HostCreateTransactionError::Unknown { reason }
 		},
 	})
+}
+
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
 }
 
 #[async_trait::async_trait]
@@ -1665,21 +1698,39 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
+					!platform.provider_has_app(&self.connection.product).await
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				}
 				let outcome = platform
 					.present_provider_frame(&self.connection.product, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				platform.close_provider_frame(&self.connection.product, intent);
+				Ok(())
 			})
 			.await
 	}
@@ -1856,6 +1907,14 @@ impl ProductRuntimeHost {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 

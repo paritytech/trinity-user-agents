@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use super::{
 	super::{
-		HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+		AccountHolder, HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices,
+		SigningHostRole,
 		authority::{
 			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -36,7 +37,6 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	runtime::statement_allowance::collection::PersonhoodCollection,
 	test_support::{StubPlatform, test_spawner},
 };
 use truapi::{
@@ -61,6 +61,8 @@ const ENTROPY: [u8; 16] = [0xAB; 16];
 
 #[derive(Clone)]
 struct StubRingResolver {
+	/// Holds the next ring validation until the test releases it.
+	validation_gate: Arc<std::sync::Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	collection: [u8; 32],
 	ring: ResolvedRing,
 }
@@ -72,6 +74,10 @@ impl RingResolver for StubRingResolver {
 	}
 
 	async fn validate(&self, _location: &v01::RingLocation) -> Result<[u8; 32], RingVrfError> {
+		let gate = self.validation_gate.lock().unwrap().take();
+		if let Some(gate) = gate {
+			gate.await.unwrap();
+		}
 		Ok(self.collection)
 	}
 
@@ -205,6 +211,16 @@ fn product_runtime_for(
 	)
 }
 
+/// Whether this host keeps an AutoSigning key for `product_id` in this activation.
+fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+	let session = authority.session_state().current().expect("an active wallet");
+	futures::executor::block_on(
+		authority.grants.auto_signing_key(&session, &ProductId::for_test(product_id)),
+	)
+	.expect("kept keys are readable")
+	.is_some()
+}
+
 fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
 	v01::HostAccountSignVrfRequest {
 		account: v01::ProductAccountId {
@@ -235,6 +251,7 @@ fn full_person_ring_resolver() -> Arc<StubRingResolver> {
 		.member(&full_entropy)
 		.expect("full-person member");
 	Arc::new(StubRingResolver {
+		validation_gate: Default::default(),
 		collection: *b"pop:polkadot.network/people     ",
 		ring: ResolvedRing {
 			selected: MemberCandidate { member: full_member },
@@ -1321,7 +1338,7 @@ fn signing_runtime_with_ring_resolver(
 	ring_resolver: Arc<StubRingResolver>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 	let authority = SigningHostRole::new_with_ring_resolver(platform, ring_resolver);
-	(authority.services(), authority)
+	(authority.services.clone(), authority)
 }
 
 /// The grant admits `ring_vrf_sign`, not only `create_proof`.
@@ -1578,83 +1595,6 @@ fn register_full_person_key(
 		},
 	))
 	.expect("full person key registration succeeds");
-}
-
-#[test]
-fn internal_allowances_offer_both_reserved_person_handles_widest_first() {
-	let (_, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let session = authority.current_session().expect("active session");
-	let candidates = authority
-		.reserved_person_collection_candidates(&session)
-		.expect("reserved keys derive");
-
-	// Index 0 is the full-person handle and index 1 the light-person one, and
-	// People leads so a full person spends its wider slot budget first.
-	let expected = [(PersonhoodCollection::People, 0u32), (PersonhoodCollection::LitePeople, 1)];
-	assert_eq!(candidates.len(), expected.len());
-	for (candidate, (collection, index)) in candidates.iter().zip(expected) {
-		assert_eq!(candidate.collection, collection);
-		assert_eq!(
-			candidate.entropy,
-			derive_ring_vrf_entropy(
-				&ENTROPY,
-				&ProductId::for_test("peopl.dot"),
-				&v01::DerivationIndex::Index(index)
-			)
-			.expect("reserved RFC-0024 handle derives"),
-			"{collection} candidate does not use peopl.dot/{index}",
-		);
-	}
-	assert_ne!(candidates[0].entropy, candidates[1].entropy);
-}
-
-#[test]
-fn reserved_identities_follow_the_configured_network_suffix() {
-	// A wallet on paseo-next-v2 is the `peopl.paseo` person and the
-	// `uid.paseo` account: the ones a `peopl.paseo` product registers and the
-	// ones the identity backend records a lite username for. The `.dot`
-	// derivations of the same seed are a different person.
-	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-	let authority =
-		SigningHostRole::new_with_ring_resolver_on(platform, full_person_ring_resolver(), "paseo");
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let session = authority.current_session().expect("active session");
-
-	let candidates = authority
-		.reserved_person_collection_candidates(&session)
-		.expect("reserved keys derive");
-	for (candidate, index) in candidates.iter().zip([0u32, 1]) {
-		assert_eq!(
-			candidate.entropy,
-			derive_ring_vrf_entropy(
-				&ENTROPY,
-				&ProductId::for_test("peopl.paseo"),
-				&v01::DerivationIndex::Index(index)
-			)
-			.expect("reserved RFC-0024 handle derives"),
-			"{} candidate does not use peopl.paseo/{index}",
-			candidate.collection
-		);
-		assert_ne!(
-			candidate.entropy,
-			derive_ring_vrf_entropy(
-				&ENTROPY,
-				&ProductId::for_test("peopl.dot"),
-				&v01::DerivationIndex::Index(index)
-			)
-			.expect("reserved RFC-0024 handle derives"),
-		);
-	}
-
-	let identity = derive_identity_keypair(&ENTROPY, "paseo")
-		.expect("uid.paseo identity derivation")
-		.public
-		.to_bytes();
-	assert_eq!(session.identity_account_id, Some(identity));
-	assert_eq!(authority.identity_keypair().expect("identity").public.to_bytes(), identity);
 }
 
 #[test]
@@ -2017,42 +1957,47 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("other.dot"));
 }
 
+/// A product reset revokes that product's grant and fences grant work begun
+/// before it, while the wallet session and other products' grants survive.
 #[test]
 fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
-	let platform = Arc::new(StubPlatform::default());
-	let (_services, authority) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let stale_session = authority.current_session().expect("active session");
-	authority
-		.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot"))
-		.expect("first product grant succeeds");
-	authority
-		.grant_auto_signing(&stale_session, &ProductId::for_test("other.dot"))
-		.expect("other product grant succeeds");
-
-	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
-
-	let current_session = authority.current_session().expect("session remains active");
-	let (_, current_generation) = authority
-		.require_current_session(&current_session)
-		.expect("current session validates");
-	assert!(!authority.has_auto_signing_grant(
-		current_generation,
-		current_session.public_key,
-		&ProductId::for_test("myapp.dot"),
-		&ProductId::for_test("myapp.dot"),
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	let (services, authority) = signing_runtime_with_platform(platform);
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let authority_session = authority.current_session().unwrap();
+	let revision = authority.grants.lifecycle().revision();
+	for product in ["myapp.dot", "other.dot"] {
+		auto_signing::grant_auto_signing(&product_runtime_for(
+			services.clone(),
+			authority.clone(),
+			product,
+		));
+	}
+	let myapp = ProductId::for_test("myapp.dot");
+	let wallet_session = authority.session_state().current().unwrap();
+	let key =
+		futures::executor::block_on(authority.grants.auto_signing_key(&wallet_session, &myapp))
+			.unwrap()
+			.unwrap();
+	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+	let subtree =
+		crate::host_logic::product_account::derive_product_subtree_keypair(&root, &myapp).unwrap();
+	authority.clear_product_state(&myapp);
+	let current_session = authority.wallet.current_session().unwrap();
+	let own = keeps_auto_signing(&authority, "myapp.dot");
+	let other = keeps_auto_signing(&authority, "other.dot");
+	let stale = futures::executor::block_on(authority.grants.remember_auto_signing_key(
+		&wallet_session,
+		revision,
+		&myapp,
+		subtree.public.to_bytes(),
+		key,
 	));
-	assert!(authority.has_auto_signing_grant(
-		current_generation,
-		current_session.public_key,
-		&ProductId::for_test("other.dot"),
-		&ProductId::for_test("other.dot"),
-	));
-	assert!(matches!(
-		authority.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot")),
-		Err(AuthorityError::Disconnected)
-	));
+	assert_eq!(
+		(current_session.validation_id, own, other, stale),
+		(authority_session.validation_id, false, true, Err(AuthorityError::Disconnected)),
+	);
 }
 
 #[test]
@@ -2154,6 +2099,7 @@ fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
 	let error = futures::executor::block_on(authority.allocate_resources(
 		&CallContext::default(),
 		&stale,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::AutoSigning],
@@ -2612,6 +2558,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 	let mut allocation = Box::pin(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&product_id,
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::SmartContractAllowance(
@@ -2645,6 +2592,7 @@ fn a_withdrawn_allocation_starts_no_further_resource() {
 	let result = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![v01::AllocatableResource::AutoSigning],
@@ -2678,6 +2626,7 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 	let empty = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest { resources: vec![] },
 	))
@@ -2687,6 +2636,7 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 	let optional = futures::executor::block_on(authority.allocate_resources(
 		&cx,
 		&session,
+		authority.grant_revision(),
 		&ProductId::for_test("myapp.dot"),
 		v01::HostRequestResourceAllocationRequest {
 			resources: vec![

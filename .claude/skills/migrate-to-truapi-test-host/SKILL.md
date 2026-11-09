@@ -61,13 +61,19 @@ failing, which is the single most expensive failure mode in this migration.
 **5. No spec depends on a refused capability.** Grep first:
 
 ```bash
-grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus|setLoginBehavior" e2e/
+grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus" e2e/
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-`setLoginBehavior` is the sharpest: suites pass `"success"`/`"reject"` to drive
-an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
-because this is a signing host and that flow belongs to a pairing host.
+`setLoginBehavior("success" | "reject")` is served: it answers a product's
+login request while the host is signed out, so a suite booting with
+`loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
+the first account, or the one named as a second argument. The old custom
+function form has no equivalent, because the answer is given in the page.
+The default differs: the old host approved login requests unless told
+otherwise, and this one answers `Rejected`, as a real signing host does, until
+a suite calls `setLoginBehavior("success")`. A suite that relied on the old
+default adds that call.
 
 The statement-store controls and `injectChatAction` are served, so they are not
 in this grep. `injectStatement` takes `{topics, data}` the way the old package
@@ -87,8 +93,10 @@ working.
 
 Network constants and the log-entry types come from the same subpath, so a file
 importing `PASEO_ASSET_HUB`, `SigningLogEntry`, `PermissionLogEntry`,
-`ChatMessageLogEntry`, `LoginBehavior` or `DevAccountName` needs no second
-import path.
+`ChatMessageLogEntry` or `DevAccountName` needs no second import path.
+`LoginBehavior` here is the `"auto" | "manual"` boot option. The type
+`setLoginBehavior` takes, which the old package called `LoginBehavior`, is
+`LoginRequestBehavior`.
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
 `HexString` is on that subpath as well, for a file annotating a `genesisHash`.
@@ -423,7 +431,7 @@ for its resources on connect, so a later call would land after that.
 
 ## 4. What refuses, and why
 
-Six of `TestHostAPI`'s members throw with an explanation rather than returning
+Five of `TestHostAPI`'s members, the payment ones, throw with an explanation rather than returning
 something plausible. The rest, including the statement-store controls and
 `injectChatAction`, are served.
 
@@ -433,8 +441,6 @@ something plausible. The rest, including the statement-store controls and
   payment platforms yet. This host answers every payment call `Unsupported`,
   so there is no payment engine to drive. A suite with payment specs cannot
   migrate them; it can only drop or rewrite them.
-- `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
-  to the fixture instead, which is where this host takes it.
 
 A test reaching one of these gets a reason, not `is not a function`.
 

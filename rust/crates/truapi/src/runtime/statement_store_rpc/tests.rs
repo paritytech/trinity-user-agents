@@ -11,12 +11,12 @@ use serde_json::json;
 
 use futures::executor::{block_on, block_on_stream};
 
-use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection};
+use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementSubmitError};
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
 	host_logic::statement_store::{
-		MAX_MATCH_ALL_TOPICS, NewStatements, StatementStoreApi, StatementWatchError, TopicFilter,
-		hex_topic,
+		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
+		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
 	test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
@@ -31,6 +31,8 @@ enum Upstream {
 	Drops,
 	/// Answers every submission with this status.
 	Answers(&'static str),
+	/// Answers every submission with a JSON-RPC error carrying this message.
+	Fails(&'static str),
 }
 
 /// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
@@ -84,19 +86,23 @@ impl JsonRpcConnection for PeopleChainConnection {
 	fn send(&self, request: String) {
 		self.requests.fetch_add(1, Ordering::SeqCst);
 		let mut sender = self.sender.lock().unwrap();
-		let status = match self.upstream {
+		let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+		let response = match self.upstream {
 			Upstream::Drops => {
 				sender.take();
 				return;
 			},
-			Upstream::Answers(status) => status,
+			Upstream::Answers(status) => json!({
+				"jsonrpc": "2.0",
+				"id": request["id"],
+				"result": { "status": status, "reason": "noAllowance" },
+			}),
+			Upstream::Fails(message) => json!({
+				"jsonrpc": "2.0",
+				"id": request["id"],
+				"error": { "code": -32602, "message": message },
+			}),
 		};
-		let request: serde_json::Value = serde_json::from_str(&request).unwrap();
-		let response = json!({
-			"jsonrpc": "2.0",
-			"id": request["id"],
-			"result": { "status": status, "reason": "noAllowance" },
-		});
 		if let Some(sender) = sender.as_ref() {
 			let _ = sender.unbounded_send(response.to_string());
 		}
@@ -128,8 +134,8 @@ fn consecutive_submits_share_one_connection() {
 	let statement_store = statement_store(&chain);
 
 	futures::executor::block_on(async {
-		statement_store.submit(vec![1], "first").await.unwrap();
-		statement_store.submit(vec![2], "second").await.unwrap();
+		statement_store.submit(&[1], "first").await.unwrap();
+		statement_store.submit(&[2], "second").await.unwrap();
 	});
 
 	assert_eq!(chain.connects(), 1);
@@ -141,8 +147,8 @@ fn a_later_submit_reconnects_after_a_dropped_connection() {
 	let statement_store = statement_store(&chain);
 
 	let (first, second) = futures::executor::block_on(async {
-		let first = statement_store.submit(vec![1], "first").await;
-		let second = statement_store.submit(vec![2], "second").await;
+		let first = statement_store.submit(&[1], "first").await;
+		let second = statement_store.submit(&[2], "second").await;
 		(first, second)
 	});
 
@@ -156,7 +162,7 @@ fn a_rejected_submit_is_not_resent() {
 	let chain = PeopleChain::new(vec![Upstream::Answers("rejected")]);
 	let statement_store = statement_store(&chain);
 
-	let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+	let result = futures::executor::block_on(statement_store.submit(&[1], "submit"));
 
 	assert_eq!((result.is_err(), chain.requests()), (true, 1));
 }
@@ -166,19 +172,72 @@ fn an_sso_submit_reports_a_dropped_connection() {
 	let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
 	let statement_store = statement_store(&chain);
 
-	let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+	let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
-	assert_eq!((result.is_err(), chain.connects(), chain.requests()), (true, 1, 1));
+	assert_eq!(
+		(result.is_err_and(|error| error.is_unreachable()), chain.connects(), chain.requests()),
+		(true, 1, 1)
+	);
+}
+
+/// A JSON-RPC error is an answer, so it must not read as an unreachable chain.
+#[test]
+fn a_node_error_is_not_reported_as_unreachable() {
+	let chain = PeopleChain::new(vec![Upstream::Fails("invalid statement encoding")]);
+	let statement_store = statement_store(&chain);
+
+	let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
+
+	assert!(matches!(
+		result,
+		Err(StatementSubmitError::Chain(failure))
+			if failure.kind() == RuntimeFailureKind::HostFailure
+	));
+}
+
+/// A light client reports a statement that reached no peer as a node error.
+/// Nothing reached the chain, so a signing host has to send it again.
+#[test]
+fn a_statement_that_reached_no_peer_is_reported_as_unreachable() {
+	let chain = PeopleChain::new(vec![Upstream::Fails(NO_PEERS)]);
+	let statement_store = statement_store(&chain);
+
+	let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
+
+	assert!(result.is_err_and(|error| error.is_unreachable()));
 }
 
 #[test]
 fn identifies_no_allowance_submit_rejections() {
-	assert!(is_no_allowance_rejection(
-		r#"statement_submit not accepted: {"reason":"noAllowance","status":"rejected"}"#
-	));
-	assert!(!is_no_allowance_rejection(
-		r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
-	));
+	let rejected =
+		|reason| StatementSubmitError::Rejected(json!({ "status": "rejected", "reason": reason }));
+	assert_eq!(
+		(rejected("noAllowance").is_no_allowance(), rejected("badProof").is_no_allowance()),
+		(true, false)
+	);
+}
+
+/// smoldot's two messages for a statement that reached no peer.
+const NO_PEERS: &str = "Statement store error: No connected peers to broadcast the statement to";
+const NO_PEER_ACCEPTED: &str =
+	"Statement store error: none of the 3 connected peers accepted the statement";
+
+/// Only a statement that reached no peer is resent. Other rejections,
+/// such as a bad proof, would fail again.
+#[test]
+fn only_a_statement_that_reached_no_peer_is_unsent() {
+	let node_error = |reason: &str| {
+		StatementSubmitError::Chain(RuntimeFailure::host_failure(SUBMIT_STATEMENT_METHOD, reason))
+	};
+	let failures = [
+		node_error(NO_PEERS),
+		node_error(NO_PEER_ACCEPTED),
+		StatementSubmitError::Rejected(json!({ "status": "rejected", "reason": "badProof" })),
+	];
+
+	let unsent: Vec<bool> = failures.iter().map(StatementSubmitError::reached_no_peer).collect();
+
+	assert_eq!(unsent, vec![true, true, false]);
 }
 
 /// A statement store whose subscription connection answers with `frames`.

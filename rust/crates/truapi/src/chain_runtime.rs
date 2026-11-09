@@ -22,18 +22,18 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
-		Arc, Mutex, OnceLock,
+		Arc, Mutex, OnceLock, Weak,
 		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use web_time::{Duration, SystemTime};
 
-use crate::platform::{ChainProvider, JsonRpcConnection};
+use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -72,7 +72,19 @@ use truapi::v01::{
 	RuntimeSpec, RuntimeType, StorageQueryItem, StorageQueryType, StorageResultItem,
 };
 
-use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
+use crate::{
+	host_rpc_client::HostRpcClient,
+	subscription::Spawner,
+	time::{RealTimer, Timer},
+};
+
+mod chain_halt;
+mod current_block;
+mod follow_retry;
+
+pub use chain_halt::{retry_while_halted, says_chain_halted};
+pub use current_block::CurrentBlockError;
+use follow_retry::{FollowReport, FollowRetryingRpcClient};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -149,6 +161,18 @@ type SubxtConnectionSetup = Shared<BoxFuture<'static, Result<SubxtConnection, Ru
 pub struct SubxtConnection {
 	/// Client whose chain config pins the host-configured genesis hash.
 	pub client: OnlineClient<SubstrateConfig>,
+	/// What the backend's RPC client has learned about its follow.
+	follow: Arc<FollowReport>,
+	/// The connection the client reads over. Weak, since that connection
+	/// caches this bundle.
+	connection: Weak<ChainConnection>,
+}
+
+impl SubxtConnection {
+	/// Whether the connection under this client has closed, or is gone.
+	fn connection_closed(&self) -> bool {
+		self.connection.upgrade().is_none_or(|connection| connection.is_closed())
+	}
 }
 
 /// Cached Subxt client over the legacy JSON-RPC methods, which reach any
@@ -173,7 +197,9 @@ pub struct LegacyConnection {
 /// `ProductRuntimeHost` boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeFailureKind {
-	/// Backend is not wired or refused the request for plumbing reasons.
+	/// The chain could not be reached: the backend is not wired, the node
+	/// could not be dialled, or the connection is gone. A later attempt can
+	/// succeed.
 	Unavailable,
 	/// Backend responded but the payload was malformed or the call failed.
 	HostFailure,
@@ -311,9 +337,23 @@ impl RuntimeChainProvider for HostChainProvider {
 				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
 			)
 		})?;
-		self.provider.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
+		self.provider
+			.connect(genesis_hash)
+			.await
+			.map(Arc::from)
+			.map_err(|err| match err {
+				// The node could not be reached, which a later attempt can outlast.
+				ProviderError::Handshake { .. } | ProviderError::Transport { .. } => {
+					RuntimeFailure::unavailable_with_reason(
+						"remote_chain_connect",
+						format!("{err:?}"),
+					)
+				},
+				// The provider refused: it does not serve the chain, is not set
+				// up to connect, or holds all the connections it allows. Asking
+				// again straight away gets the same answer.
+				_ => RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}")),
+			})
 	}
 }
 
@@ -380,6 +420,8 @@ pub struct ChainRuntime {
 	/// Mints the sequence above. One counter for every scope, so no two
 	/// callers can be handed the same operation id.
 	next_transaction_operation_id: Arc<AtomicU64>,
+	/// Paces follow retries and bounds reads, so tests can control the waits.
+	timer: Arc<dyn Timer>,
 	/// Runtime call outputs every connection shares, so the products and the
 	/// core download the runtime metadata of a chain once between them.
 	runtime_calls: RuntimeCallCache,
@@ -466,12 +508,21 @@ impl ChainRuntime {
 			follow_intents: Arc::new(Mutex::new(HashMap::new())),
 			transaction_operations: Arc::new(Mutex::new(HashMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
+			timer: Arc::new(RealTimer),
 			runtime_calls: RuntimeCallCache::default(),
 			ended_follows: Arc::new(Mutex::new(HashMap::from([(
 				ConnectionScope::Core,
 				VecDeque::new(),
 			)]))),
 		}
+	}
+
+	/// This runtime on `timer` instead of wall-clock time. Set it before the
+	/// first connection, which keeps the timer it opened with.
+	#[cfg(test)]
+	pub fn with_timer(mut self, timer: Arc<dyn Timer>) -> Self {
+		self.timer = timer;
+		self
 	}
 
 	/// This runtime seen as `scope`. Shares every map with the original, so a
@@ -965,10 +1016,6 @@ impl ChainRuntime {
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClient<SubstrateConfig>, RuntimeFailure> {
-		debug_assert!(
-			matches!(self.scope, ConnectionScope::Core),
-			"the Subxt backend's driver task defeats release_scope on a product scope",
-		);
 		Ok(self.subxt_connection(genesis_hash).await?.client)
 	}
 
@@ -1000,6 +1047,10 @@ impl ChainRuntime {
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<SubxtConnection, RuntimeFailure> {
+		debug_assert!(
+			matches!(self.scope, ConnectionScope::Core),
+			"the Subxt backend's driver task defeats release_scope on a product scope",
+		);
 		let connection = self.connection_for("subxt_connection", genesis_hash).await?;
 		connection.subxt_connection().await
 	}
@@ -1022,6 +1073,7 @@ impl ChainRuntime {
 				_ => {
 					let provider = self.provider.clone();
 					let spawner = self.spawner.clone();
+					let timer = self.timer.clone();
 					let registry = Arc::downgrade(&self.connections);
 					let scope = self.scope;
 					let ended_follows = self.ended_follows.clone();
@@ -1035,6 +1087,7 @@ impl ChainRuntime {
 							ChainConnection::new(
 								rpc,
 								spawner,
+								timer,
 								genesis_hash,
 								runtime_calls,
 								scope,
@@ -1147,6 +1200,7 @@ impl ChainRuntime {
 		};
 		let remote_follow_id =
 			connection.require_remote_follow(method, local_follow_id.clone()).await?;
+		connection.note_follow_call(&local_follow_id);
 		if with_runtime && !connection.follow_with_runtime(&local_follow_id) {
 			return Err(RuntimeFailure::host_failure(
 				method,
@@ -1275,6 +1329,8 @@ struct ChainConnection {
 	/// Typed `chainHead_v1` calls over `runtime_call_client`.
 	methods: ChainHeadRpcMethods<TruapiRpcConfig>,
 	spawner: Spawner,
+	/// Paces the Subxt backend's follow retries.
+	timer: Arc<dyn Timer>,
 	/// Host-configured genesis hash this connection was opened for; pins the
 	/// cached Subxt bundle's chain config.
 	genesis_hash: Vec<u8>,
@@ -1311,6 +1367,7 @@ impl ChainConnection {
 	fn new(
 		rpc: Arc<dyn JsonRpcConnection>,
 		spawner: Spawner,
+		timer: Arc<dyn Timer>,
 		genesis_hash: Vec<u8>,
 		runtime_calls: RuntimeCallCache,
 		scope: ConnectionScope,
@@ -1325,6 +1382,7 @@ impl ChainConnection {
 			runtime_call_client,
 			methods,
 			spawner,
+			timer,
 			genesis_hash,
 			follows: Mutex::new(HashMap::new()),
 			follow_setups: Mutex::new(HashMap::new()),
@@ -1392,8 +1450,13 @@ impl ChainConnection {
 		let config = self.chain_config(METHOD)?;
 		// Subxt waits only for a call to finish, never retrying an inaccessible
 		// one, so it must not wait on a download another caller may give up.
-		let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
-			.build(RpcClient::new(self.runtime_call_client.without_waiting()));
+		let rpc = FollowRetryingRpcClient::new(
+			self.runtime_call_client.without_waiting(),
+			self.timer.clone(),
+		);
+		let follow = rpc.report();
+		let (backend, mut driver) =
+			ChainHeadBackend::<SubstrateConfig>::builder().build(RpcClient::new(rpc));
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
@@ -1401,7 +1464,7 @@ impl ChainConnection {
 			async move {
 				while let Some(result) = driver.next().await {
 					if let Err(error) = result {
-						tracing::debug!(target: "subxt", "chainHead backend error={error}");
+						warn!(target: "subxt", "chainHead backend error={error}");
 					}
 				}
 				// The backend can make no further progress; drop the cached
@@ -1417,7 +1480,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client })
+		Ok(SubxtConnection { client, follow, connection: Arc::downgrade(&self) })
 	}
 
 	/// The config every Subxt client on this connection is built with. It
@@ -1516,6 +1579,13 @@ impl ChainConnection {
 		Some(local_follow_id.clone())
 	}
 
+	/// Record a chainHead call made on `local_follow_id`, for the budget line.
+	fn note_follow_call(&self, local_follow_id: &str) {
+		if let Some(follow) = self.follows.lock().unwrap().get_mut(local_follow_id) {
+			follow.activity.saw_call();
+		}
+	}
+
 	fn remote_follow_id(&self, local_follow_id: &str) -> Option<String> {
 		self.follows
 			.lock()
@@ -1550,6 +1620,7 @@ impl ChainConnection {
 						abort: None,
 						sender,
 						cancelled,
+						activity: FollowActivity::new(),
 					},
 				);
 			},
@@ -1723,24 +1794,31 @@ impl ChainConnection {
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
 		let holding = Self::follows_holding_a_slot(&follows);
-		drop(follows);
 		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
 		// Reported on the way into the budget and again only after the
 		// connection has come back out of it, so a connection that sits there
 		// says so once rather than on every follow that renews the condition.
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
-		if at_budget && !already_reported {
+		let report = at_budget && !already_reported;
+		let occupants = report.then(|| {
+			let now = SystemTime::now();
+			holding
+				.iter()
+				.map(|held| {
+					let activity = follows.get(held).map(|follow| follow.describe_activity(now));
+					format!("{} ({})", Self::occupant_name(held), activity.unwrap_or_default())
+				})
+				.collect::<Vec<_>>()
+				.join(", ")
+		});
+		drop(follows);
+		if let Some(occupants) = occupants {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it
 			// arrives whatever the level is, and hosts run at `ERROR`.
 			let genesis = encode_hex(&self.genesis_hash);
 			let held = holding.len();
-			let occupants = holding
-				.iter()
-				.map(|held| Self::occupant_name(held))
-				.collect::<Vec<_>>()
-				.join(", ");
 			warn!(
 				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
 				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
@@ -1817,7 +1895,10 @@ impl ChainConnection {
 	/// Cleanup never aborts: the only caller is the pump itself, which the
 	/// stored abort handle targets.
 	fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
-		let sender = self.follow_sender(local_follow_id);
+		let sender = self.follows.lock().unwrap().get_mut(local_follow_id).map(|follow| {
+			follow.activity.saw_event();
+			follow.sender.clone()
+		});
 		let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
 		// Recorded before the subscriber sees the stop, so a caller that reacts
 		// to it by calling again already finds the reason.
@@ -1891,6 +1972,59 @@ struct FollowState {
 	/// local follow stream.
 	sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
 	cancelled: Arc<AtomicBool>,
+	activity: FollowActivity,
+}
+
+impl FollowState {
+	/// What this follow has been doing, for the budget line.
+	///
+	/// The node sends new blocks to every live follow, so a recent event only
+	/// says the follow is alive. The calls made on it say whether anyone still
+	/// uses it, so a follow open for minutes with no recent call is the one to
+	/// suspect, though a reader that only watches blocks makes no calls
+	/// either. A dropped receiver on a follow still here means the cleanup
+	/// that should have ended it missed this connection.
+	fn describe_activity(&self, now: SystemTime) -> String {
+		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
+		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
+		let since = |at: &Option<SystemTime>| match at {
+			Some(at) => format!("{} s ago", elapsed(at)),
+			None => "never".to_string(),
+		};
+		let open = elapsed(opened_at);
+		let last_event = since(last_event_at);
+		let last_call = since(last_call_at);
+		let receiver = if self.sender.is_closed() { "dropped" } else { "open" };
+		format!(
+			"open {open} s, last event {last_event}, {calls} calls, last call {last_call}, receiver {receiver}"
+		)
+	}
+}
+
+/// When a follow was opened, when it last delivered an event, and how often
+/// and how recently a chainHead call, an unpin included, was made on it.
+/// Wall-clock times, since a phone's monotonic clock stops while it sleeps and
+/// a follow left open across a screen-off would read as fresh.
+struct FollowActivity {
+	opened_at: SystemTime,
+	last_event_at: Option<SystemTime>,
+	calls: u64,
+	last_call_at: Option<SystemTime>,
+}
+
+impl FollowActivity {
+	fn new() -> Self {
+		Self { opened_at: SystemTime::now(), last_event_at: None, calls: 0, last_call_at: None }
+	}
+
+	fn saw_event(&mut self) {
+		self.last_event_at = Some(SystemTime::now());
+	}
+
+	fn saw_call(&mut self) {
+		self.calls += 1;
+		self.last_call_at = Some(SystemTime::now());
+	}
 }
 
 /// Subscription wrapper that runs an `on_drop` cleanup when the stream is
@@ -2157,7 +2291,9 @@ fn is_transport_loss(error: &SubxtRpcError) -> bool {
 	matches!(error, SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_))
 }
 
-fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
+/// A failed or closed transport is `Unavailable`; any other error is a
+/// `HostFailure`.
+pub fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
 			RuntimeFailure::unavailable_with_reason(method, error.to_string())

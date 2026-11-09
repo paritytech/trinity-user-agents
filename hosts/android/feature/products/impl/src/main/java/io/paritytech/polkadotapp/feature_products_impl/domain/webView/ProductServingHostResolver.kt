@@ -15,7 +15,7 @@ class ProductServingHostResolver @Inject constructor(
 ) : DotNsServingHostResolver {
     override suspend fun servingHostFor(requestHost: String): Result<String> = servingHostFor(requestHost, ExecutableKind.APP)
 
-    /** A page under a Pocket card uses the product's [ExecutableKind.WIDGET]. */
+    /** A page under a Pocket card uses the product's [ExecutableKind.WIDGET], or its app when it publishes no widget. */
     suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): Result<String> = runCancellableCatching {
         val tld = dotNsTldProvider.getTld().getOrThrow()
         val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@runCancellableCatching requestHost
@@ -25,7 +25,7 @@ class ProductServingHostResolver @Inject constructor(
         val resolved = resolveProductUseCase.resolve(productId).getOrThrow()
         val served = when (executable) {
             ExecutableKind.APP -> resolved.executables.app?.host
-            ExecutableKind.WIDGET -> resolved.executables.widget?.host
+            ExecutableKind.WIDGET -> resolved.executables.widget?.host ?: resolved.executables.app?.host
             ExecutableKind.WORKER -> null
         }
         checkNotNull(served) { "Product $productId has no $executable page" }.value

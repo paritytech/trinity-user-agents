@@ -9,6 +9,7 @@ extension PolkadotHostRemoteMessage {
     /// is named explicitly because the host acts on a product's behalf here.
     struct AliasRequest {
         let callingProductId: ProductId
+        let keyHandle: RingVrfKeyHandle
         let context: ProductProofContext
         let ring: RingLocation
     }
@@ -17,12 +18,14 @@ extension PolkadotHostRemoteMessage {
 extension PolkadotHostRemoteMessage.AliasRequest: MessageExchange.CodableMessage {
     init(scaleDecoder: any ScaleDecoding) throws {
         callingProductId = try ProductId(String(scaleDecoder: scaleDecoder))
+        keyHandle = try RingVrfKeyHandle(scaleDecoder: scaleDecoder)
         context = try ProductProofContext(scaleDecoder: scaleDecoder)
         ring = try RingLocation(scaleDecoder: scaleDecoder)
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try callingProductId.rawValue.encode(scaleEncoder: scaleEncoder)
+        try keyHandle.encode(scaleEncoder: scaleEncoder)
         try context.encode(scaleEncoder: scaleEncoder)
         try ring.encode(scaleEncoder: scaleEncoder)
     }
