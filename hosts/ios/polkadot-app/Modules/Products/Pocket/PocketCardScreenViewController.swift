@@ -249,8 +249,8 @@ private extension PocketCardScreenViewController {
     func setupScrollView() {
         view.addSubview(scrollView)
         scrollView.snp.makeConstraints { make in
-            make.top.bottom.equalTo(view.safeAreaLayoutGuide)
-            make.leading.trailing.equalToSuperview()
+            make.top.equalTo(view.safeAreaLayoutGuide)
+            make.bottom.leading.trailing.equalToSuperview()
         }
 
         scrollView.delegate = self
