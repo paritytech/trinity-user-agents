@@ -4,6 +4,8 @@ import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
@@ -12,7 +14,7 @@ import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequest
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
@@ -36,10 +38,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -57,7 +61,8 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
-    private val cardRequests: PocketCardRequests,
+    private val cardOpenRequests: PocketCardOpenRequests,
+    private val tabSelection: BottomTabSelection,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -221,7 +226,7 @@ class PocketViewModel @Inject constructor(
 
     init {
         // A tab shown for the first time has no product cards until the collection loads.
-        combine(cards, cardRequests.requested) { held, request ->
+        combine(cards, cardOpenRequests.requested) { held, request ->
             request?.let {
                 held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == request.key }?.to(request)
             }
@@ -230,8 +235,11 @@ class PocketViewModel @Inject constructor(
             .onEach { (card, request) -> openRequestedCard(card, request) }
             .launchIn(this)
 
-        cardRequests.closes
-            .onEach { returnToList() }
+        merge(
+            tabSelection.reselectedTab.filter { it == BottomTab.WALLET },
+            tabSelection.currentTab.filter { it != BottomTab.WALLET },
+        )
+            .onEach { resetToList() }
             .launchIn(this)
     }
 
@@ -242,7 +250,7 @@ class PocketViewModel @Inject constructor(
      * the card already open loads its page with the link's params, or leaves them for it to settle with.
      */
     private fun openRequestedCard(card: PocketCardUiModel.ProductCard, request: PocketCardOpenRequest) {
-        cardRequests.consume(request)
+        cardOpenRequests.consume(request)
         if (selectedCardId.value == card.id) {
             selectedPageQuery = request.pageQuery
             if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
@@ -377,6 +385,11 @@ class PocketViewModel @Inject constructor(
         expandedProduct.release()
         forgetOpeningFace()
         selectedCardId.value = null
+    }
+
+    private fun resetToList() {
+        cardOpenRequests.clear()
+        returnToList()
     }
 
     private fun returnToList() {

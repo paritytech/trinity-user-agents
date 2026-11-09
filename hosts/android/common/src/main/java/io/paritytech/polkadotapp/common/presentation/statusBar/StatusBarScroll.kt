@@ -4,7 +4,11 @@ import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -12,8 +16,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,21 +27,21 @@ private const val SHOW_AFTER_SCROLL_DP = 10f
 data class StatusBarScrollState(
     val idBarHidden: Boolean,
     val contentUnderBar: Boolean,
-) {
-    companion object {
-        val AtRest = StatusBarScrollState(idBarHidden = false, contentUnderBar = false)
-    }
-}
+)
 
 @Singleton
 class StatusBarScrollHolder @Inject constructor() {
-    val state: StateFlow<StatusBarScrollState>
-        field = MutableStateFlow(StatusBarScrollState.AtRest)
-
+    private val shownLists = mutableStateListOf<ScrollableState>()
+    private var idBarHidden by mutableStateOf(false)
     private var offsetDp = 0f
     private var runDp = 0f
 
-    @Synchronized
+    val state: StatusBarScrollState
+        get() = StatusBarScrollState(
+            idBarHidden = idBarHidden,
+            contentUnderBar = shownLists.lastOrNull()?.canScrollBackward == true,
+        )
+
     fun onScroll(downwardDp: Float, atTop: Boolean) {
         if (atTop) {
             reset()
@@ -47,22 +49,26 @@ class StatusBarScrollHolder @Inject constructor() {
             offsetDp = (offsetDp + downwardDp).coerceAtLeast(0f)
             runDp = if (runDp * downwardDp > 0f) runDp + downwardDp else downwardDp
 
-            val hidden = state.value.idBarHidden
-            state.value = StatusBarScrollState(
-                idBarHidden = when {
-                    !hidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
-                    else -> -runDp < SHOW_AFTER_SCROLL_DP
-                },
-                contentUnderBar = true,
-            )
+            idBarHidden = when {
+                !idBarHidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
+                else -> -runDp < SHOW_AFTER_SCROLL_DP
+            }
         }
     }
 
-    @Synchronized
     fun reset() {
         offsetDp = 0f
         runDp = 0f
-        state.value = StatusBarScrollState.AtRest
+        idBarHidden = false
+    }
+
+    fun onListShown(list: ScrollableState) {
+        shownLists += list
+    }
+
+    fun onListGone(list: ScrollableState) {
+        if (shownLists.lastOrNull() == list) reset()
+        shownLists.remove(list)
     }
 }
 
@@ -84,7 +90,8 @@ fun Modifier.reportsScrollToStatusBar(state: ScrollableState): Modifier {
     }
 
     DisposableEffect(holder, state) {
-        onDispose { holder?.reset() }
+        holder?.onListShown(state)
+        onDispose { holder?.onListGone(state) }
     }
 
     return nestedScroll(connection)

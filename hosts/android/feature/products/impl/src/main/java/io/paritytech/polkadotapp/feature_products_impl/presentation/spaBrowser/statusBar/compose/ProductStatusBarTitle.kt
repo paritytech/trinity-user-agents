@@ -29,8 +29,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.statusBar.IdBarPlate
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
 import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
@@ -41,10 +39,8 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.PolkadotMark
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductChat
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.ChatBubbleOvalLeft
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.ExternalLink
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.RotateCw
@@ -58,23 +54,7 @@ private val MenuIconSize = 20.dp
 private val MenuItemHeight = 40.dp
 
 @Composable
-fun ProductStatusBarTitle() {
-    val viewModel = hiltViewModel<ProductStatusBarViewModel>()
-    val state by viewModel.state.collectAsStateWithLifecycle()
-
-    state?.let { shown ->
-        ProductStatusBarTitleInternal(
-            state = shown,
-            onProceedInChatClick = viewModel::onProceedInChatClick,
-            onReloadClick = viewModel::onReloadClick,
-            onShareClick = viewModel::onShareClick,
-            onCloseAppClick = viewModel::onCloseAppClick,
-        )
-    }
-}
-
-@Composable
-private fun ProductStatusBarTitleInternal(
+fun ProductStatusBarTitle(
     state: ProductStatusBarUiState,
     onProceedInChatClick: () -> Unit,
     onReloadClick: () -> Unit,
@@ -138,7 +118,7 @@ private fun ProductStatusBarTitleInternal(
                 Column(modifier = Modifier.padding(PolkadotTheme.spacings.small)) {
                     val menu = state.menu
 
-                    if (menu is ProductMenu.Product && menu.chat == ProductChat.Served) {
+                    if (menu is ProductMenu.Product && menu.servesChat) {
                         ProductMenuOption(
                             text = stringResource(RCommon.string.spa_browser_menu_proceed_in_chat),
                             icon = ChatBubbleOvalLeft,
@@ -217,7 +197,7 @@ private fun ProductMenuOption(
 @Composable
 private fun ProductStatusBarTitlePreview() {
     PolkadotTheme {
-        ProductStatusBarTitleInternal(
+        ProductStatusBarTitle(
             state = ProductStatusBarUiState(title = "Coin Flip", menu = ProductMenu.WebPage),
             onProceedInChatClick = {},
             onReloadClick = {},

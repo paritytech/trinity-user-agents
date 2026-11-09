@@ -22,7 +22,9 @@ import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScroll
+import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarTitle
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitleHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarOffset
 import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarVisibility
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
@@ -42,6 +44,9 @@ abstract class BaseComposeFragment<T : BaseViewModel> : Fragment() {
 
     @Inject
     lateinit var statusBarScrollHolder: StatusBarScrollHolder
+
+    @Inject
+    lateinit var statusBarTitleHolder: StatusBarTitleHolder
 
     @Inject
     lateinit var appNotifier: AppNotifier
@@ -66,6 +71,7 @@ abstract class BaseComposeFragment<T : BaseViewModel> : Fragment() {
                 LocalTabBarOffset provides tabBarOffsetHolder.offset,
                 LocalTabBarVisibility provides tabBarVisibilityHolder,
                 LocalStatusBarScroll provides statusBarScrollHolder,
+                LocalStatusBarTitle provides statusBarTitleHolder,
                 LocalPaymentAssetBrand provides paymentAssetBrand,
             ) {
                 PolkadotTheme {

@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_connection_status_api.presentation
+package io.paritytech.polkadotapp.app.root.presentation.root.compose
 
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthIndicatorsWithTooltip
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
@@ -34,7 +35,7 @@ private const val PIXEL_TOLERANCE = 0.5f
 private val LONG_TITLE = "A product whose title runs far past the indicators ".repeat(4)
 
 @RunWith(AndroidJUnit4::class)
-class ChainHealthBarTitleTest {
+class StatusBarRowTest {
     @get:Rule
     val compose = createComposeRule()
 
@@ -91,10 +92,7 @@ class ChainHealthBarTitleTest {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 PolkadotTheme {
                     barGap = PolkadotTheme.spacings.small
-                    ChainHealthBar(
-                        model = model,
-                        tooltipVisible = tooltipVisible,
-                        onTooltipDismiss = {},
+                    StatusBarRow(
                         title = {
                             title?.let {
                                 BasicText(
@@ -104,6 +102,13 @@ class ChainHealthBarTitleTest {
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
+                        },
+                        indicators = {
+                            ChainHealthIndicatorsWithTooltip(
+                                model = model,
+                                tooltipVisible = tooltipVisible,
+                                onTooltipDismiss = {},
+                            )
                         },
                     )
                 }

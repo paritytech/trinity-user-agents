@@ -14,7 +14,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccoun
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
@@ -40,7 +40,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private val parser: PocketDeeplinkParser,
     private val publishedCards: PublishedPocketCards,
     private val collection: PocketCollection,
-    private val cardRequests: PocketCardRequests,
+    private val cardOpenRequests: PocketCardOpenRequests,
     private val gate: ProductDeepLinkGate,
     private val accountRepository: AccountRepository,
     private val router: ProductsRouter,
@@ -94,7 +94,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         return if (present) {
             Result.success(
                 DeeplinkProcessingOutcome.Navigate {
-                    cardRequests.requestOpen(key, pageQuery)
+                    cardOpenRequests.request(key, pageQuery)
                     router.openWalletTab()
                 },
             )

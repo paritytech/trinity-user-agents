@@ -12,14 +12,14 @@ class StatusBarScrollHolderTest {
         holder.onScroll(downwardDp = 30f, atTop = false)
         holder.onScroll(downwardDp = -1f, atTop = false)
         holder.onScroll(downwardDp = 15f, atTop = false)
-        val pastTheOffsetWithAShortRun = holder.state.value
+        val pastTheOffsetWithAShortRun = holder.state.idBarHidden
 
         // When
         holder.onScroll(downwardDp = 1f, atTop = false)
 
         // Then
-        assertEquals(StatusBarScrollState(idBarHidden = false, contentUnderBar = true), pastTheOffsetWithAShortRun)
-        assertEquals(StatusBarScrollState(idBarHidden = true, contentUnderBar = true), holder.state.value)
+        assertEquals(false, pastTheOffsetWithAShortRun)
+        assertEquals(true, holder.state.idBarHidden)
     }
 
     @Test
@@ -27,21 +27,21 @@ class StatusBarScrollHolderTest {
         // Given
         holder.onScroll(downwardDp = 100f, atTop = false)
         holder.onScroll(downwardDp = -9f, atTop = false)
-        val beforeTheThreshold = holder.state.value
+        val beforeTheThreshold = holder.state.idBarHidden
 
         // When
         holder.onScroll(downwardDp = -1f, atTop = false)
-        val backAfterTheScrollUp = holder.state.value
+        val backAfterTheScrollUp = holder.state.idBarHidden
         holder.onScroll(downwardDp = 16f, atTop = false)
 
         // Then
-        assertEquals(StatusBarScrollState(idBarHidden = true, contentUnderBar = true), beforeTheThreshold)
-        assertEquals(StatusBarScrollState(idBarHidden = false, contentUnderBar = true), backAfterTheScrollUp)
-        assertEquals(StatusBarScrollState(idBarHidden = true, contentUnderBar = true), holder.state.value)
+        assertEquals(true, beforeTheThreshold)
+        assertEquals(false, backAfterTheScrollUp)
+        assertEquals(true, holder.state.idBarHidden)
     }
 
     @Test
-    fun `reaching the top shows the bar without a plate`() {
+    fun `reaching the top shows the bar`() {
         // Given
         holder.onScroll(downwardDp = 100f, atTop = false)
 
@@ -49,6 +49,6 @@ class StatusBarScrollHolderTest {
         holder.onScroll(downwardDp = -100f, atTop = true)
 
         // Then
-        assertEquals(StatusBarScrollState.AtRest, holder.state.value)
+        assertEquals(false, holder.state.idBarHidden)
     }
 }

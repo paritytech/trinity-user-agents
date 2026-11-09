@@ -24,8 +24,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.navigation.NavController
+import androidx.navigation.fragment.DialogFragmentNavigator
 import androidx.navigation.fragment.NavHostFragment
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.app.BuildConfig
@@ -36,7 +36,7 @@ import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOver
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
-import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarTitle
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
@@ -55,6 +55,7 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBr
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitleHolder
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -62,8 +63,8 @@ import io.paritytech.polkadotapp.common.utils.observe
 import io.paritytech.polkadotapp.common.utils.observeWhenCreated
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBar
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthIndicatorsWithTooltip
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -91,6 +92,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
     @Inject
     lateinit var statusBarScrollHolder: StatusBarScrollHolder
+
+    @Inject
+    lateinit var statusBarTitleHolder: StatusBarTitleHolder
 
     @Inject
     lateinit var hostEventOriginProvider: HostEventOriginProvider
@@ -221,8 +225,8 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
                 val tooltipVisible by viewModel.isNetworkStatusTooltipVisible.collectAsStateWithLifecycle()
                 val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
                 val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
-                val scroll by statusBarScrollHolder.state.collectAsStateWithLifecycle()
-                val titleModel = currentEntry?.let { statusBarTitleOf(it.destination.id, currentTab) } ?: StatusBarTitleModel.None
+                val scroll = statusBarScrollHolder.state
+                val titleShown = statusBarTitleHolder.isShown && currentEntry?.destination !is DialogFragmentNavigator.Destination
 
                 LaunchedEffect(currentEntry?.id, currentTab) { statusBarScrollHolder.reset() }
 
@@ -230,20 +234,17 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
                     IdBar(
                         scroll = scroll,
                         backdropSource = navHost,
-                        showsScrim = titleModel != StatusBarTitleModel.None,
+                        showsScrim = titleShown,
                         pinned = tooltipVisible,
                     ) {
-                        ChainHealthBar(
-                            model = model,
-                            tooltipVisible = tooltipVisible,
-                            onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
-                            title = {
-                                currentEntry?.let { entry ->
-                                    // Scoped to the shown entry, so a pending Proceed in Chat is dropped once the browser is popped.
-                                    CompositionLocalProvider(LocalViewModelStoreOwner provides entry) {
-                                        StatusBarTitle(model = titleModel)
-                                    }
-                                }
+                        StatusBarRow(
+                            title = { if (titleShown) statusBarTitleHolder.Title() },
+                            indicators = {
+                                ChainHealthIndicatorsWithTooltip(
+                                    model = model,
+                                    tooltipVisible = tooltipVisible,
+                                    onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
+                                )
                             },
                         )
                     }

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitle
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -32,6 +33,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.Produ
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserPageState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserViewModel
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.ProductStatusBarTitle
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,6 +44,18 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 
     BackHandler {
         viewModel.onBackPressed()
+    }
+
+    StatusBarTitle {
+        state.statusBar?.let { statusBar ->
+            ProductStatusBarTitle(
+                state = statusBar,
+                onProceedInChatClick = viewModel::onProceedInChatClick,
+                onReloadClick = viewModel::onRefresh,
+                onShareClick = viewModel::onShareClick,
+                onCloseAppClick = viewModel::onCloseAppClick,
+            )
+        }
     }
 
     SpaBrowserScreenInternal(
@@ -172,8 +186,6 @@ private fun SpaBrowserScreenPreview() {
     PolkadotTheme {
         SpaBrowserScreenInternal(
             state = SpaBrowserUiState(
-                title = "Web3 Summit App",
-                subtitle = "web3summit.dot",
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
