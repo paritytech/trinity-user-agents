@@ -41,8 +41,9 @@ use crate::{
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
 		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
-		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, ResumePairingError,
+		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
+		sso_service::Dispatch,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -1426,12 +1427,15 @@ impl SigningHostRuntime {
 	///
 	/// Only [`ResponderExit::PeerDisconnected`] authorizes removing the durable
 	/// pairing. Retain it after [`ResponderExit::SubscriptionEnded`] or an error.
+	/// After [`ResumePairingError::Interrupted`] the call can be made again;
+	/// after [`ResumePairingError::CannotServe`] it fails the same way until
+	/// the local session changes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.resume_pairing"))]
 	pub async fn resume_pairing(
 		&self,
 		peer: PairedSsoPeer,
-	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
+	) -> Result<ResponderExit, ResumePairingError> {
+		self.sso_responder.resume_pairing(peer).await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.

@@ -705,7 +705,10 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, NativePairingError> {
-		self.runtime.resume_pairing(peer).await.map_err(NativePairingError::from)
+		self.runtime
+			.resume_pairing(peer)
+			.await
+			.map_err(|error| NativePairingError::Rejected { reason: error.to_string() })
 	}
 
 	/// Tell a paired host this signing host is ending their SSO session.

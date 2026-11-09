@@ -97,7 +97,7 @@ use crate::{
 		product_manifest::test_manifest_json,
 		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
-	host_logic::product_account::index_bytes,
+	host_logic::{product_account::index_bytes, statement_store::SUBMIT_STATEMENT_METHOD},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -149,27 +149,6 @@ fn preimage_reports_bulletin_allocation_rejection_with_context() {
 		bulletin_allowance_error_reason(AuthorityError::Rejected),
 		"Bulletin allowance allocation was rejected by the signing host"
 	);
-}
-
-fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
-	sent_rpc
-		.lock()
-		.expect("rpc list mutex poisoned")
-		.iter()
-		.map(|request| {
-			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
-				.as_str()
-				.unwrap()
-				.to_string()
-		})
-		.collect()
-}
-
-fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
-	recorded_rpc_methods(sent_rpc)
-		.iter()
-		.filter(|candidate| candidate.as_str() == method)
-		.count()
 }
 
 #[test]
@@ -1475,7 +1454,7 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	// Long enough for a spawned `Cancel` to have been submitted.
 	std::thread::sleep(std::time::Duration::from_millis(200));
 
-	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.

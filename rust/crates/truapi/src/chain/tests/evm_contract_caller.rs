@@ -10,7 +10,7 @@ use subxt::{
 	events::Phase,
 	ext::{
 		frame_decode::extrinsics::decode_extrinsic,
-		scale_encode::{EncodeAsFields, Field},
+		scale_encode::{EncodeAsFields, EncodeAsType, Field},
 	},
 	tx::Signer,
 	utils::{AccountId32, Era, MultiSignature},
@@ -539,4 +539,49 @@ fn only_a_contract_revert_reads_as_reverted() {
 
 		assert_eq!(result.map_err(|error| error.to_string()), Err(expected.to_string()));
 	}
+}
+
+/// A caller reacts to one pallet error, such as an unfunded storage deposit,
+/// by the indices the runtime metadata gives it. The error is encoded here as
+/// the runtime's own `DispatchError` type, so the match follows the dry-run
+/// output a node returns.
+#[test]
+fn a_simulated_module_error_matches_its_metadata_indices() {
+	let metadata = Metadata::decode_from(ASSET_HUB_METADATA).unwrap();
+	let revive = metadata.pallet_by_name("Revive").unwrap();
+	let error_index = |name: &str| {
+		let variant = revive.error_variants().unwrap().iter().find(|error| error.name == name);
+		[revive.error_index(), variant.unwrap().index]
+	};
+	let unfunded = error_index("StorageDepositNotEnoughFunds");
+	let failed = metadata
+		.pallet_by_name("System")
+		.unwrap()
+		.event_variants()
+		.unwrap()
+		.iter()
+		.find(|event| event.name == "ExtrinsicFailed")
+		.unwrap();
+	let dispatch_error_type = failed.fields[0].ty.id;
+	let module_error = ScaleValue::unnamed_variant(
+		"Module",
+		[ScaleValue::unnamed_composite([
+			ScaleValue::u128(unfunded[0].into()),
+			ScaleValue::unnamed_composite(
+				[unfunded[1], 0, 0, 0].map(|byte| ScaleValue::u128(byte.into())),
+			),
+		])],
+	);
+	let encoded = module_error.encode_as_type(dispatch_error_type, metadata.types()).unwrap();
+
+	let error = block_on(EvmContractCaller::read(
+		&mut ScriptedRuntimeApi(Some(Ok(simulation_result(Err(RawDispatchError(encoded)))))),
+		&CONTRACT,
+		INPUT,
+	))
+	.unwrap_err();
+
+	assert!(error.is_module_error(unfunded));
+	assert!(!error.is_module_error(error_index("ContractReverted")));
+	assert!(!EvmContractError::Reverted { detail: String::new() }.is_module_error(unfunded));
 }

@@ -994,7 +994,7 @@ pub use runtime::statement_allowance;
 pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, FundingBookEntry, FundingFeed,
 	MAX_PAIRING_METADATA_CHARS, PairedSsoPeer, PairingProposal, PairingProposalMetadata,
-	ResponderExit,
+	ResponderExit, ResumePairingError,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;
