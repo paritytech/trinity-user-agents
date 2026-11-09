@@ -535,7 +535,7 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     empty.append(
       "No conversation reported. ",
       more(
-        "A product worker that sends diagnostics reports (Contact Chat does) shows each of its conversations here. Requests the host's request service handles show too.",
+        "A product worker that sends diagnostics reports (Contact, Kettle and Nova Chat do) shows each of its conversations here. Requests the host's request service handles show too.",
       ),
     );
     empty.dataset.key = "empty";

@@ -10,7 +10,9 @@
  * The host builds it into an app archive it serves itself
  * (`contact-chat-plugin.ts`) and runs it through the ordinary worker loader.
  * The Chat screen shows its conversations over the Chat Extension v2 draft
- * bridge. It says where it stands on its console (`../worker/probe.ts`); with
+ * bridge. It says where it stands on its console (`../worker/probe.ts`), and
+ * reports its conversations to the host's developer tools
+ * (`../../products/diagnostics.ts`); with
  * its test probe, what it keeps is on `window.__novaChatWorker`, for a test
  * to read.
  */
@@ -20,6 +22,7 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import { connectChatV2 } from "../draft/product.js";
 import { serveConversations, type ReadMarks } from "../draft/conversations.js";
 import { ProductStorage } from "../worker/product-storage.js";
+import { postDiagnostics } from "../../products/diagnostics.js";
 import { blake2b256, keyedBlake2b256 } from "../../platform/crypto.js";
 import { utf8 } from "../../platform/codec.js";
 import { NOVA_HELLO, NOVA_PROTOCOL, type NovaHello } from "./contract.js";
@@ -105,6 +108,16 @@ async function run(): Promise<void> {
         encodeMessage({ id, timestamp, content: { kind: "Text", text } }),
       ),
     report,
+    account: async (index) => {
+      const result = await client.account.getAccount({
+        productAccountId: {
+          dotNsIdentifier: context.value.productId,
+          derivationIndex: { tag: "Raw", value: index as HexString },
+        },
+      });
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      return result.value.account.publicKey;
+    },
   });
   const marks = (): Record<string, string> => {
     try {
@@ -128,7 +141,21 @@ async function run(): Promise<void> {
     reads,
     onError: (what, reason) => report(`${what}: ${reason}`),
   });
+  // What the developer tools may see of each conversation, at most twice a second.
+  let diagnosticsTimer: ReturnType<typeof setTimeout> | undefined;
+  const postReport = () => {
+    diagnosticsTimer = undefined;
+    postDiagnostics({ conversations: session.diagnostics() });
+  };
+  const unsubscribe = session.onDiagnostics(() => {
+    diagnosticsTimer ??= setTimeout(postReport, 500);
+  });
+  addEventListener("pagehide", () => {
+    unsubscribe();
+    clearTimeout(diagnosticsTimer);
+  });
   await session.run();
+  postReport();
   await served.ready;
   status.running();
 }

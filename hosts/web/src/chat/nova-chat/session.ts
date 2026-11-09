@@ -16,6 +16,11 @@ import type {
   ContactState,
   StartTarget,
 } from "../draft/conversations.js";
+import {
+  DIAGNOSTICS_LIMITS,
+  type ConversationDiagnostics,
+  type DiagnosticFact,
+} from "../../products/diagnostics.js";
 
 /**
  * PROTOTYPE. Nova Chat's conversations in its worker: the session part of
@@ -79,6 +84,37 @@ export interface NovaSessionDeps {
   /** Encode a `ChatMessageStatement` (id, timestamp, Text) as `0x` hex. */
   encodeText(id: string, timestamp: bigint, text: string): string;
   report(reason: string): void;
+  /**
+   * The public key of the product's account at raw index `index`, `0x` hex,
+   * for the developer tools only. Without it, diagnostics name no own account.
+   */
+  account?(index: string): Promise<string>;
+}
+
+/** The protocol Nova Chat's diagnostics name: the session part of the official apps' chat. */
+export const NOVA_SESSION_PROTOCOL = "nova-apps/chat-session";
+
+/** What one worker run saw of a conversation, for the developer tools. Never stored. */
+interface RunFacts {
+  sentIds: Set<string>;
+  /** This side's messages a post first carried, peer messages first kept, peer messages read again, sends that failed, statements submitted. */
+  counts: {
+    sent: number;
+    received: number;
+    duplicates: number;
+    failed: number;
+    posts: number;
+  };
+  /** Our messages the peer acknowledged. */
+  acknowledged: number;
+  /** The topics the host's routes gave: ours to post on, the peer's devices' to read. */
+  routes?: { outgoing: string; incoming: string[] };
+  /** The channel our last request frame went on, as the host sealed it. */
+  requestChannel?: string;
+  /** Signers of statements the host opened as this peer's. */
+  peers: string[];
+  /** The last problem posting or following. */
+  problem?: string;
 }
 
 interface Entry {
@@ -122,6 +158,14 @@ const refused = (result: { reason: string; final?: true }) =>
 export const RETRY_FIRST_MS = 30_000;
 /** The longest wait between tries. */
 export const RETRY_MAX_MS = 30 * 60_000;
+
+const NO_COUNTS: RunFacts["counts"] = {
+  sent: 0,
+  received: 0,
+  duplicates: 0,
+  failed: 0,
+  posts: 0,
+};
 
 const NEVER = 0xffff_ffffn << 32n;
 const PROTOCOL_EPOCH_SECONDS = 1_763_164_800;
@@ -168,6 +212,10 @@ export class NovaSession implements ConversationEngine {
   private records: { [handle: string]: Kept } = {};
   private readonly follows = new Map<string, () => void>();
   private readonly listeners = new Set<() => void>();
+  private readonly runFacts = new Map<string, RunFacts>();
+  /** Own conversation accounts by raw index, this run; null while asked. */
+  private readonly accounts = new Map<string, string | null>();
+  private readonly diagnosticsListeners = new Set<() => void>();
 
   constructor(private readonly deps: NovaSessionDeps) {
     try {
@@ -193,6 +241,49 @@ export class NovaSession implements ConversationEngine {
       JSON.stringify(this.records),
     );
     for (const listener of [...this.listeners]) listener();
+    this.diagnosticsChanged();
+  }
+
+  private diagnosticsChanged(): void {
+    for (const listener of [...this.diagnosticsListeners]) listener();
+  }
+
+  private thisRun(handle: string): RunFacts {
+    let facts = this.runFacts.get(handle);
+    if (facts === undefined) {
+      facts = {
+        sentIds: new Set(),
+        counts: { ...NO_COUNTS },
+        acknowledged: 0,
+        peers: [],
+      };
+      this.runFacts.set(handle, facts);
+    }
+    return facts;
+  }
+
+  private problem(handle: string, reason: string): void {
+    this.thisRun(handle).problem = reason;
+    this.diagnosticsChanged();
+  }
+
+  /** Look up the conversation account of `record` once this run, for {@link diagnostics}. */
+  private learnAccount(record: Kept): void {
+    const lookup = this.deps.account;
+    if (lookup === undefined || this.accounts.has(record.index)) return;
+    this.accounts.set(record.index, null);
+    lookup(record.index).then(
+      (account) => {
+        this.accounts.set(record.index, account.toLowerCase());
+        this.diagnosticsChanged();
+      },
+      (error: unknown) => {
+        this.accounts.delete(record.index);
+        this.deps.report(
+          `account: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    );
   }
 
   private record(handle: string): Kept {
@@ -235,19 +326,26 @@ export class NovaSession implements ConversationEngine {
     });
     if (!routes.ok) {
       this.follows.delete(record.handle);
+      this.problem(record.handle, `routes: ${routes.reason}`);
       return this.deps.report(`routes: ${routes.reason}`);
     }
-    const { incoming } = routes.value as {
+    const { outgoing, incoming } = routes.value as {
       outgoing: string;
       incoming: string[];
     };
+    this.thisRun(record.handle).routes = { outgoing, incoming };
+    this.learnAccount(record);
+    this.diagnosticsChanged();
     const stop = this.deps.statements.follow(
       incoming,
       (statements) => {
         for (const statement of statements)
           void this.heard(record.handle, statement);
       },
-      (reason) => this.deps.report(`follow: ${reason}`),
+      (reason) => {
+        this.problem(record.handle, `follow: ${reason}`);
+        this.deps.report(`follow: ${reason}`);
+      },
     );
     if (this.follows.has(record.handle)) this.follows.set(record.handle, stop);
     else stop();
@@ -265,6 +363,15 @@ export class NovaSession implements ConversationEngine {
     });
     if (!opened.ok) return;
     const record = this.record(handle);
+    const facts = this.thisRun(handle);
+    const signer = statement.signer.toLowerCase();
+    if (
+      !facts.peers.includes(signer) &&
+      facts.peers.length < DIAGNOSTICS_LIMITS.accounts
+    ) {
+      facts.peers.push(signer);
+      this.diagnosticsChanged();
+    }
     const frame = opened.value as OpenedFrame;
     if (frame.kind === "Response") {
       const ids = record.outstanding[frame.requestId];
@@ -274,35 +381,41 @@ export class NovaSession implements ConversationEngine {
       for (const entry of record.history)
         if (entry.from === "me" && ids.includes(entry.id))
           entry.status = "acked";
+      facts.acknowledged += ids.length;
       return this.save();
     }
     // Kinds this prototype does not show (the peer's push token, which both
     // apps send once the chat is set up, Seen, calls, files) are acknowledged
     // with the rest, and not listed.
-    for (const message of frame.messages)
+    for (const message of frame.messages) {
+      if (message.content.kind === "Unsupported") continue;
       if (
-        message.content.kind !== "Unsupported" &&
-        !record.history.some(
+        record.history.some(
           (entry) => entry.from === "peer" && entry.id === message.id,
         )
-      )
-        record.history.push({
-          id: message.id,
-          from: "peer",
-          at: Number(message.timestamp),
-          content: message.content,
-          status: "received",
-        });
+      ) {
+        facts.counts.duplicates += 1;
+        continue;
+      }
+      record.history.push({
+        id: message.id,
+        from: "peer",
+        at: Number(message.timestamp),
+        content: message.content,
+        status: "received",
+      });
+      facts.counts.received += 1;
+    }
     this.save();
     await this.post(record, "response", {
       kind: "Response",
       requestId: frame.requestId,
       code: 0,
-    }).catch((error: unknown) =>
-      this.deps.report(
-        `ack: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-    );
+    }).catch((error: unknown) => {
+      const reason = `ack: ${error instanceof Error ? error.message : String(error)}`;
+      this.problem(handle, reason);
+      this.deps.report(reason);
+    });
   }
 
   /** Each conversation's posts, one at a time, so claims and expiries never race. */
@@ -358,11 +471,13 @@ export class NovaSession implements ConversationEngine {
       expiry,
     });
     if (!sealed.ok) throw refused(sealed);
-    await this.deps.statements.post(
-      record.index,
-      sealed.value as WireStatement,
-    );
+    const statement = sealed.value as WireStatement;
+    await this.deps.statements.post(record.index, statement);
     record.lastExpiry[channel] = expiry;
+    const facts = this.thisRun(record.handle);
+    facts.counts.posts += 1;
+    if (channel === "request" && statement.channel !== null)
+      facts.requestChannel = statement.channel.toLowerCase();
     this.save();
   }
 
@@ -404,6 +519,7 @@ export class NovaSession implements ConversationEngine {
     const requestId = this.deps.newId();
     const ids = record.pending.map((each) => each.id);
     record.outstanding = { [requestId]: ids };
+    const { counts, sentIds } = this.thisRun(record.handle);
     try {
       await this.post(record, "request", {
         kind: "Request",
@@ -411,13 +527,24 @@ export class NovaSession implements ConversationEngine {
         messages: record.pending.map((each) => each.encoded),
       });
       for (const entry of record.history)
-        if (ids.includes(entry.id) && entry.status !== "acked")
-          entry.status = "sent";
+        if (entry.from === "me" && ids.includes(entry.id)) {
+          if (entry.status !== "acked") entry.status = "sent";
+          if (!sentIds.has(entry.id)) {
+            sentIds.add(entry.id);
+            counts.sent += 1;
+          }
+        }
       this.failures.delete(record.handle);
     } catch (error) {
       for (const entry of record.history)
-        if (ids.includes(entry.id) && entry.status !== "acked")
+        if (
+          ids.includes(entry.id) &&
+          entry.status !== "acked" &&
+          entry.status !== "failed"
+        ) {
           entry.status = "failed";
+          counts.failed += 1;
+        }
       if (error instanceof HostRefusal && error.final)
         this.halted.add(record.handle);
       else
@@ -425,9 +552,9 @@ export class NovaSession implements ConversationEngine {
           record.handle,
           (this.failures.get(record.handle) ?? 0) + 1,
         );
-      this.deps.report(
-        `send: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const reason = `send: ${error instanceof Error ? error.message : String(error)}`;
+      this.thisRun(record.handle).problem = reason;
+      this.deps.report(reason);
     }
     this.save();
     this.renewLater(record);
@@ -471,37 +598,35 @@ export class NovaSession implements ConversationEngine {
   // ---- ConversationEngine --------------------------------------------------------------
 
   conversations(): Conversation[] {
-    return Object.values(this.records)
-      .filter((record) => record.state !== "gone" || record.history.length > 0)
-      .map((record) => ({
-        id: record.handle,
-        title: "Nova chat",
-        participants: [
-          {
-            id: "peer",
-            name: "Contact",
-            handle: { bytes: record.handle as `0x${string}` },
-          },
-        ],
-        contact: {
+    return this.shown().map((record) => ({
+      id: record.handle,
+      title: "Nova chat",
+      participants: [
+        {
+          id: "peer",
+          name: "Contact",
           handle: { bytes: record.handle as `0x${string}` },
-          state: CONTACT_STATE[record.state],
         },
-        composer:
-          record.state === "established"
-            ? { allowed: true as const }
-            : {
-                allowed: false as const,
-                reason:
-                  record.state === "outgoing"
-                    ? "Waiting for them to accept your request."
-                    : record.state === "incoming"
-                      ? "Accept their request in your Inbox first."
-                      : record.state === "blocked"
-                        ? "You blocked this person."
-                        : "There is no chat with this person.",
-              },
-      }));
+      ],
+      contact: {
+        handle: { bytes: record.handle as `0x${string}` },
+        state: CONTACT_STATE[record.state],
+      },
+      composer:
+        record.state === "established"
+          ? { allowed: true as const }
+          : {
+              allowed: false as const,
+              reason:
+                record.state === "outgoing"
+                  ? "Waiting for them to accept your request."
+                  : record.state === "incoming"
+                    ? "Accept their request in your Inbox first."
+                    : record.state === "blocked"
+                      ? "You blocked this person."
+                      : "There is no chat with this person.",
+            },
+    }));
   }
 
   messages(conversationId: string): ConversationMessage[] {
@@ -582,6 +707,89 @@ export class NovaSession implements ConversationEngine {
   /** The whole record, as JSON, for a test to read. */
   snapshot(): string {
     return JSON.stringify(this.records);
+  }
+
+  /** The conversations the Chat screen lists: every one but a gone one with no history. */
+  private shown(): Kept[] {
+    return Object.values(this.records).filter(
+      (record) => record.state !== "gone" || record.history.length > 0,
+    );
+  }
+
+  /**
+   * What the developer tools may see of each listed conversation, by contact
+   * handle: its state, the accounts, topics and channel it uses, and counts.
+   * `logical` and facts marked "this run" start at zero with each worker
+   * run; facts marked "stored" come from the kept record. Topics are named
+   * only while the conversation is followed. An account, peer, topic or
+   * channel this run has not learned yet is left out, not guessed.
+   * Nothing anyone wrote, and nothing secret.
+   */
+  diagnostics(): ConversationDiagnostics[] {
+    const now = this.deps.now();
+    return this.shown().map((record) => {
+      const run = this.runFacts.get(record.handle);
+      const account = this.accounts.get(record.index) ?? undefined;
+      const mine = record.history.filter((entry) => entry.from === "me");
+      const delivery = [
+        this.follows.has(record.handle) ? "following" : "not following",
+        ...(this.halted.has(record.handle)
+          ? ["stopped until a retry: the host refused"]
+          : (this.failures.get(record.handle) ?? 0) > 0
+            ? [`${this.failures.get(record.handle)} failed tries in a row`]
+            : []),
+        ...(this.renewals.has(record.handle) ? ["next post scheduled"] : []),
+      ];
+      const facts: DiagnosticFact[] = [
+        {
+          label: "Stored history",
+          value: `${mine.length} yours · ${record.history.length - mine.length} theirs · ${record.pending.length} awaiting ack`,
+        },
+        {
+          label: "Acknowledged (this run)",
+          value: `${run?.acknowledged ?? 0} of yours`,
+        },
+        { label: "Delivery (this run)", value: delivery.join(" · ") },
+        {
+          label: "Allowance (stored)",
+          value:
+            record.allowedUntil === 0
+              ? "not asked yet"
+              : `${record.allowedUntil > now ? "until" : "ended"} ${new Date(record.allowedUntil).toISOString().slice(0, 16).replace("T", " ")} UTC`,
+        },
+        ...(run?.problem === undefined
+          ? []
+          : [{ label: "Last problem (this run)", value: run.problem }]),
+      ];
+      return {
+        id: record.handle,
+        protocol: NOVA_SESSION_PROTOCOL,
+        state: record.state,
+        ...(account === undefined ? {} : { account }),
+        ...(run === undefined || run.peers.length === 0
+          ? {}
+          : { peers: [...run.peers] }),
+        ...(run?.routes === undefined || !this.follows.has(record.handle)
+          ? {}
+          : {
+              listen: [...run.routes.incoming],
+              post: {
+                topics: [run.routes.outgoing],
+                ...(run.requestChannel === undefined
+                  ? {}
+                  : { channel: run.requestChannel }),
+              },
+            }),
+        logical: { ...(run?.counts ?? NO_COUNTS) },
+        facts,
+      };
+    });
+  }
+
+  /** Calls back whenever {@link diagnostics} may answer differently. */
+  onDiagnostics(listener: () => void): () => void {
+    this.diagnosticsListeners.add(listener);
+    return () => this.diagnosticsListeners.delete(listener);
   }
 
   stop(): void {

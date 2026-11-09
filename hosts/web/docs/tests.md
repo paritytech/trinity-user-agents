@@ -56,7 +56,7 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 - [`kettle-build.spec.ts`](../browser/kettle-build.spec.ts): a build with `WEB_SIGNING_KETTLE_CHAT=1`: Kettle Chat's
   archive, no dev demos, and a wallet running Kettle Chat alone from it. Skipped until `npm run build:kettle` has run.
 - [`nova-chat.spec.ts`](../browser/nova-chat.spec.ts): Nova Chat between three demo users, over the simulated Statement
-  Store, both directions and a reload.
+  Store, both directions and a reload, and its conversation in the inspector's Chat view with no test probe.
 - [`kettle-chat.spec.ts`](../browser/kettle-chat.spec.ts): Kettle Chat between two demo users, over the simulated
   Statement Store, alone and beside Contact Chat. Skipped until `npm run build:kettle` has run.
 - [`kettle-iroh.spec.ts`](../browser/kettle-iroh.spec.ts): Kettle Chat's log recovery over iroh, between two demo users,

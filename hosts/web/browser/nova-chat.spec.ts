@@ -22,10 +22,17 @@
  * browser; it does not show that a Nova app on a phone reads it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Browser, BrowserContext, Frame, Page } from "playwright-core";
+import type {
+  Browser,
+  BrowserContext,
+  Frame,
+  Locator,
+  Page,
+} from "playwright-core";
 import {
   type RunningHost,
   closeTools,
+  openTools,
   startHost,
   testBrowser,
   useChatProducts,
@@ -50,7 +57,7 @@ afterAll(async () => {
   await host?.close();
 });
 
-async function offline(): Promise<{
+async function offline(probe = true): Promise<{
   context: BrowserContext;
   outside: string[];
   errors: string[];
@@ -60,7 +67,7 @@ async function offline(): Promise<{
     viewport: { width: 1280, height: 860 },
   });
   context.setDefaultTimeout(STEP_MS);
-  await probeChatWorkers(context);
+  if (probe) await probeChatWorkers(context);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   const outside: string[] = [];
   await context.route(/.*/, (route) => {
@@ -244,6 +251,96 @@ async function storedText(page: Page): Promise<string> {
 
 const utf8Hex = (text: string) => Buffer.from(text, "utf8").toString("hex");
 
+/** Reload `page` and wait for Nova Chat's worker to say, on its console, that it runs. */
+async function reloadRunning(page: Page): Promise<void> {
+  const running = page.waitForEvent("console", {
+    predicate: (message) => message.text() === "Nova Chat is running.",
+    timeout: STEP_MS,
+  });
+  await page.reload();
+  await ready(page);
+  await running;
+}
+
+/** Keep every diagnostics report a worker frame posts to the host page, for the test to read. */
+async function keepReports(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (window !== window.top) return;
+    const kept: unknown[] = [];
+    (window as unknown as { __reportsSeen: unknown[] }).__reportsSeen = kept;
+    addEventListener("message", (event: MessageEvent) => {
+      const data = event.data as { type?: unknown } | null;
+      if (data?.type === "truapi-product-diagnostics") kept.push(data);
+    });
+  });
+}
+
+const reportsSeen = (page: Page) =>
+  page.evaluate(() =>
+    JSON.stringify(
+      (window as unknown as { __reportsSeen?: unknown[] }).__reportsSeen ?? [],
+    ),
+  );
+
+/** Whether the worker frames of `page` were asked for, or hold, a test probe. */
+async function testHooks(page: Page): Promise<boolean[]> {
+  const frames = page
+    .frames()
+    .filter((frame) => frame.url().includes("__truapi-worker.html"));
+  expect(frames.length).toBeGreaterThan(0);
+  return Promise.all(
+    frames.map(
+      async (frame) =>
+        new URL(frame.url()).searchParams.get("probe") === "1" ||
+        (await frame.evaluate(
+          () =>
+            "__novaChatWorker" in window ||
+            "__contactChatWorker" in window ||
+            "__kettleChatWorker" in window,
+        )),
+    ),
+  );
+}
+
+/** Open the inspector's Chat view; answer Nova Chat's conversation card. */
+async function novaCard(page: Page) {
+  await openTools(page, "inspector");
+  await page.click('[data-inspector-view="chat"]');
+  return page.locator(
+    `#chat-inspector .si-card[data-key^="conversation:${PRODUCT}:0x"]`,
+  );
+}
+
+/** A card's facts, label to text, the first of each label. */
+async function factsOf(card: Locator): Promise<Record<string, string>> {
+  return card.evaluate((node) => {
+    const out: Record<string, string> = {};
+    for (const term of node.querySelectorAll("dt")) {
+      const label = term.textContent ?? "";
+      const value = (term.nextElementSibling as HTMLElement | null)?.innerText;
+      if (!(label in out) && value !== undefined)
+        out[label] = value.replace(/\s+/g, " ").trim();
+    }
+    return out;
+  });
+}
+
+/** Wait until `check` holds of the card's facts; answer them. */
+async function factsUntil(
+  card: Locator,
+  check: (facts: Record<string, string>) => boolean,
+): Promise<Record<string, string>> {
+  const until = Date.now() + STEP_MS;
+  let facts = await factsOf(card);
+  while (!check(facts)) {
+    if (Date.now() > until)
+      throw new Error(`The card never matched: ${JSON.stringify(facts)}`);
+    await card.page().waitForTimeout(200);
+    facts = await factsOf(card);
+  }
+  return facts;
+}
+
 describe("Nova Chat between test users", () => {
   test(
     "Alice asks Bob, Bob accepts, both write, Bob reloads and the chat goes on; then Carol asks Alice and Alice accepts",
@@ -376,6 +473,144 @@ describe("Nova Chat between test users", () => {
         await toList(alice);
         await alice.click('#chat-tabs [data-chat-tab="inbox"]');
         await sent.waitFor({ state: "detached" });
+
+        expect(outside).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        for (const stop of stops) stop();
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "the Chat inspector shows each Nova conversation as Nova Chat reports it: updated, linked to Statements, back after a reload, with no message text and no test hook",
+    async () => {
+      const { context, outside, errors, open } = await offline(false);
+      await keepReports(context);
+      const stops: (() => void)[] = [];
+      try {
+        const alice = await open();
+        await actAs(alice, "alice");
+        await reloadRunning(alice);
+        const bob = await open();
+        await actAs(bob, "bob");
+        await reloadRunning(bob);
+        for (const page of [alice, bob])
+          expect(await testHooks(page)).not.toContain(true);
+        stops.push(allowStatements(alice), allowStatements(bob));
+
+        await request(alice, "Bob", "Hi Bob, from the web");
+        const card = await novaCard(alice);
+        await card.locator(".si-badge", { hasText: "outgoing" }).waitFor();
+        expect(await card.count()).toBe(1);
+        const asked = await factsOf(card);
+        expect(asked.Protocol).toContain("reported nova-apps/chat-session");
+        // Not followed yet: no account, topics or peers, rather than empty ones.
+        for (const label of ["Account", "Peers", "Listens on", "Publishes on"])
+          expect(asked[label]).toBeUndefined();
+        expect(asked["Delivery (this run)"]).toBe("reported not following");
+        await closeTools(alice);
+
+        await accept(bob, "Alice", "Hi Bob, from the web");
+        await say(alice, "Bob", "Hello Bob");
+        await reads(bob, "Alice", "Hello Bob");
+        await say(bob, "Alice", "Hello Alice");
+        await reads(alice, "Bob", "Hello Alice");
+
+        await novaCard(alice);
+        await card.locator(".si-badge", { hasText: "established" }).waitFor();
+        const facts = await factsUntil(
+          card,
+          (each) =>
+            /\b1 sent\b/.test(each.Messages ?? "") &&
+            /\b1 received\b/.test(each.Messages ?? "") &&
+            (each["Stored history"] ?? "").includes("0 awaiting ack") &&
+            each.Peers !== undefined,
+        );
+        const { Account: account, Tie: tie } = facts;
+        expect(facts).toMatchObject({
+          Account: expect.stringMatching(/^reported 0x[0-9a-f]{6}…[0-9a-f]{4}/),
+          Peers: expect.stringMatching(/^reported 0x[0-9a-f]{6}…/),
+          "Listens on": expect.stringMatching(/^reported 0x[0-9a-f]{6}…/),
+          "Publishes on": expect.stringMatching(/^reported 0x[0-9a-f]{6}…/),
+          Messages: expect.stringContaining("0 failed"),
+          "Stored history": "reported 1 yours · 1 theirs · 0 awaiting ack",
+          "Delivery (this run)": expect.stringMatching(/^reported following/),
+          "Allowance (stored)": expect.stringMatching(
+            /^reported until \d{4}-\d\d-\d\d \d\d:\d\d UTC$/,
+          ),
+        });
+        // Here each conversation account's allowance is simulated, so the
+        // host holds nothing tying it to the product; with a real one it does.
+        expect(tie).toMatch(
+          /^(host tied to nova-chat\.paseo|inspector none · reported only)/,
+        );
+
+        // Each link opens Statements on exactly what it names.
+        const own = (await card
+          .locator('button[title^="Show account "]')
+          .first()
+          .getAttribute("title"))!.split(" ")[2]!;
+        await card.locator('button[title^="Show account "]').first().click();
+        await alice
+          .locator(
+            `#statements-inspector .si-detail[data-key="account:${own}"]`,
+          )
+          .waitFor();
+        await alice.click('[data-inspector-view="chat"]');
+        const listened = card.locator('button[title^="Show topic "]').first();
+        const topic = (await listened.getAttribute("title"))!.split(" ")[2]!;
+        await listened.click();
+        await alice
+          .locator(
+            `#statements-inspector .si-detail[data-key="topic:${topic}"]`,
+          )
+          .waitFor();
+        await alice.click('[data-inspector-view="chat"]');
+        // The account the product names posts on the channel it names.
+        await card.locator("details.si-columns-about > summary").click();
+        expect(await card.locator(".si-columns-about").innerText()).toContain(
+          "posts here",
+        );
+
+        // No message text, plain or hex, in what the tools show or were sent.
+        const shown = [
+          await alice.locator("#chat-inspector").innerText(),
+          await alice.locator("#statements-inspector").innerText(),
+          await reportsSeen(alice),
+        ].join("\n");
+        for (const text of [
+          "Hello Bob",
+          "Hello Alice",
+          "Hi Bob, from the web",
+        ]) {
+          expect(shown.includes(text)).toBe(false);
+          expect(shown.includes(utf8Hex(text))).toBe(false);
+        }
+        // Reports are debounced: far fewer than the steps that changed them.
+        const posted = JSON.parse(await reportsSeen(alice)) as unknown[];
+        expect(posted.length).toBeGreaterThan(0);
+        expect(posted.length).toBeLessThan(40);
+
+        // A new worker run reports the same conversation again: what it
+        // counts starts over, what it stored stays.
+        await closeTools(alice);
+        await reloadRunning(alice);
+        expect(await testHooks(alice)).not.toContain(true);
+        await novaCard(alice);
+        await card.locator(".si-badge", { hasText: "established" }).waitFor();
+        const again = await factsUntil(
+          card,
+          (each) => each.Account !== undefined && each.Messages !== undefined,
+        );
+        expect(again).toMatchObject({
+          Messages: expect.stringMatching(/^reported 0 sent · 0 received/),
+          "Stored history": "reported 1 yours · 1 theirs · 0 awaiting ack",
+        });
+        expect(again.Account).toBe(account);
+        expect(await card.count()).toBe(1);
 
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);

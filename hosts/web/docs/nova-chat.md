@@ -73,14 +73,36 @@ or acceptance again on a later day. A request or acceptance takes one notificati
 that has no push token sends nothing on the device route after it accepts, so it keeps posting its acceptance until the
 user writes.
 
+## Diagnostics (draft)
+
+The worker reports each listed conversation for the [Chat view](inspector.md#chat), over the same
+`product-diagnostics/draft-1` message as Contact Chat (`src/products/diagnostics.ts`), at most twice a second
+(`NovaSession.diagnostics`).
+
+- Id: the contact handle. Protocol `nova-apps/chat-session`. State: the host's `outgoing`, `incoming`, `established`,
+  `blocked` or `gone`. No request handle: Nova requests do not go through the host request service.
+- Account: the conversation account, which the worker reads with `account.getAccount` at its raw index once it follows
+  the chat. Peers: signers of statements the host opened as this peer's, at most 8. A peer that signs with its identity
+  account shows that account here too, as it does in Statements.
+- Topics, while the chat is followed: the incoming routes it reads and the outgoing one it posts on. The channel is the
+  one its last request frame went on, as the host sealed it.
+- Counts (`logical`) start at zero with each worker run: messages a post first carried, peer messages first kept, peer
+  messages read again, sends that failed, and statements submitted. Facts say which values come from the stored record
+  (history counts, messages awaiting acknowledgement, the allowance end) and which from this run (acknowledgements,
+  following and retries, the last problem).
+- A message counts as sent once per run, even after a failed retransmission and successful retry. Delivery status and
+  consecutive failed tries change independently of that first-send count.
+- What the run has not learned is left out, not shown as empty. No report carries message text, encoded messages, keys
+  or secrets.
+
 ## Tests
 
 - `tests/unit/chat/nova-chat/`: the key boundary's checks, both directions against the independent
   `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), the host side with the worker session over
   an in-memory store, and a New chat through the draft bridge whose finality wait outlasts the start's 30 s.
 - [`browser/nova-chat.spec.ts`](../browser/nova-chat.spec.ts): three demo users over the simulated store, both
-  directions, with a reload; and, on Playwright's clock, a Send prompt left open past the start's 30 s, cancelled once
-  and then sent.
+  directions, with a reload; on Playwright's clock, a Send prompt left open past the start's 30 s, cancelled once and
+  then sent; and, with no worker test probe, the Chat view's card through a request, a chat and a reload.
 
 Neither shows that a Nova app reads us. That needs a phone: the app's build and network, and an identity registered on
 that network's People chain for the browser, never a phrase the phone also uses.
