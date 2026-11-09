@@ -160,7 +160,7 @@ data class FundingFlowState(
 
     /** The crypto networks a provider routes, with the name the core gives each. */
     val networks: List<FundingNetwork>
-        get() = options?.networks.orEmpty().map { FundingNetwork(it.network, it.displayName) }
+        get() = options?.networks.orEmpty().map { FundingNetwork.of(it.network) }
 
     /** The least [networkId] takes, as the core says. */
     fun minimum(networkId: String): BigDecimal? =
@@ -250,13 +250,12 @@ data class FundingFlowState(
 
     /**
      * The rail, asset, network and country on screen, as the core is told of them, with the country's currency from
-     * the platform's locale data. A card or bank selection names the asset the core resolved, so the countries and
-     * limits it answers are for that asset.
+     * the platform's locale data.
      */
     val selection: FundingSelection
         get() = FundingSelection(
             rail = rail,
-            asset = if (rail == FundingRail.CRYPTO) asset else fiatAsset,
+            asset = asset,
             network = network,
             country = country?.code,
             currency = country?.currencyCode,
