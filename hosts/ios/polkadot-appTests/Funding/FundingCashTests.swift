@@ -18,7 +18,7 @@ struct FundingCashTests {
     func neverAsksForMoreThanTheUserTyped() {
         #expect(cash.units(Decimal(string: "50.2")!) == "50200000")
         #expect(cash.units(Decimal(string: "0.0000019")!) == "1")
-        #expect(cash.units(-5) == "0")
+        #expect(cash.units(-5) == nil)
     }
 
     @Test

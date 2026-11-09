@@ -15,6 +15,7 @@ use truapi::latest::{FundingDirection, FundingRail};
 
 use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
+use tracing::warn;
 
 use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
 use crate::{
@@ -23,8 +24,9 @@ use crate::{
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
 			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
-			LearnedSupport, LimitScope, amount_limits, country_support,
+			LearnedSupport, LimitScope, amount_limits, country_support, provider_config,
 		},
+		funding_view,
 		worker_manifest::WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductId},
@@ -39,6 +41,8 @@ struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
 	origin: FundingProviderOrigin,
+	/// Whether it ships an App, when the host said.
+	has_app: Option<bool>,
 	/// What dotNS last said the provider publishes: its Worker manifest, or
 	/// `None` for nothing usable. `None` until dotNS has answered.
 	live: Option<Option<WorkerManifest>>,
@@ -73,6 +77,9 @@ pub struct FundingProviders {
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
 	changed: WakeSignal,
+	/// The providers the host's configuration last listed, so a refresh
+	/// that lists the same ones changes nothing.
+	configured: Mutex<Option<Vec<FundingProviderEntry>>>,
 }
 
 impl FundingProviders {
@@ -113,6 +120,26 @@ impl FundingProviders {
 				manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
 			})
 			.map(|(provider_id, _)| provider_id)
+			.collect()
+	}
+
+	/// The quote targets asked to price an ask in `direction` on `rail`: those
+	/// whose routes, as declared and as their answers confirmed, carry the
+	/// rail, or that declare none, in the host's order.
+	pub fn quote_targets_for(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+	) -> Vec<ProductId> {
+		let candidates = self.candidates(direction);
+		self.quote_targets()
+			.into_iter()
+			.filter(|provider_id| {
+				candidates.iter().any(|candidate| {
+					candidate.provider_id == *provider_id &&
+						funding_view::routes_rail(candidate, rail)
+				})
+			})
 			.collect()
 	}
 
@@ -196,6 +223,14 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
+	/// Whether `provider_id` ships an App, when the host said so.
+	pub fn has_app(&self, provider_id: &ProductId) -> Option<bool> {
+		lock(&self.entries)
+			.iter()
+			.find(|entry| entry.product_id == *provider_id)
+			.and_then(|entry| entry.has_app)
+	}
+
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)
@@ -242,6 +277,28 @@ impl RuntimeServices {
 		Ok(())
 	}
 
+	/// Offer the providers the host's remote configuration lists by name,
+	/// then the `bundled` ones it does not name. A name that is not a
+	/// product id is skipped and logged. A call listing what the last one
+	/// did changes nothing, so the host can call it on every refresh.
+	pub fn set_funding_provider_config(
+		self: &Arc<Self>,
+		published_names: Vec<String>,
+		bundled: Vec<FundingProviderEntry>,
+	) -> Result<(), FundingSessionError> {
+		let (entries, invalid) = provider_config(&published_names, bundled);
+		for name in invalid {
+			warn!(%name, "funding provider configuration names no product");
+		}
+		let mut configured = lock(&self.funding_providers().configured);
+		if configured.as_ref() == Some(&entries) {
+			return Ok(());
+		}
+		self.set_funding_providers(entries.clone())?;
+		*configured = Some(entries);
+		Ok(())
+	}
+
 	/// Record what the user picked in session `intent`'s overlay, and send
 	/// the host the options it leads to. A session whose overlay is not up
 	/// offers nothing to pick, so its selection is ignored.
@@ -271,40 +328,86 @@ impl RuntimeServices {
 				country: selection.country.as_deref(),
 			})
 		};
+		// The asset the overlay works in: the one the user picked, else the
+		// one the core resolves for the rail, so a selection without an asset
+		// already gets that asset's countries and limits.
+		let asset = selection.as_ref().and_then(|selection| match selection.rail {
+			FundingRail::Crypto => selection.asset.clone(),
+			rail => Some(selection.asset.clone().unwrap_or_else(|| {
+				funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref())
+			})),
+		});
 		let (countries, limits, networks) = match &selection {
 			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
-				let countries = selection
-					.asset
+				let countries = asset
 					.as_deref()
 					.map(|asset| providers.countries(session.direction, selection.rail, asset))
 					.unwrap_or_default();
 				let networks = match selection.rail {
-					FundingRail::Crypto => declared_networks(
-						&candidates,
-						session.direction,
-						selection.asset.as_deref(),
-					)
-					.into_iter()
-					.map(|(network, assets)| {
-						let limits = assets
-							.iter()
-							.map(|asset| limits_on(selection, asset, Some(&network)))
-							.reduce(FundingAmountLimits::widest)
-							.unwrap_or(FundingAmountLimits::ANY);
-						FundingNetworkLimits { network, limits }
-					})
-					.collect(),
+					FundingRail::Crypto => {
+						declared_networks(&candidates, session.direction, asset.as_deref())
+							.into_iter()
+							.map(|(network, assets)| {
+								let limits = assets
+									.iter()
+									.map(|asset| limits_on(selection, asset, Some(&network)))
+									.reduce(FundingAmountLimits::widest)
+									.unwrap_or(FundingAmountLimits::ANY);
+								FundingNetworkLimits {
+									display_name: funding_view::network_name(&network),
+									network,
+									limits,
+								}
+							})
+							.collect()
+					},
 					_ => Vec::new(),
 				};
-				let asset = selection.asset.as_deref().unwrap_or_default();
-				(countries, limits_on(selection, asset, selection.network.as_deref()), networks)
+				let limits = limits_on(
+					selection,
+					asset.as_deref().unwrap_or_default(),
+					selection.network.as_deref(),
+				);
+				(countries, limits, networks)
 			},
 		};
-		feed.funding_options_changed(
-			intent.to_string(),
-			FundingOptions { candidates, countries, limits, networks },
+		let rails = funding_view::routed_rails(&candidates);
+		let default_rail = funding_view::default_rail(&rails);
+		let tokens = funding_view::crypto_tokens(
+			&candidates,
+			selection.as_ref().and_then(|selection| selection.network.as_deref()),
 		);
+		if self.funding_country_due() {
+			self.detect_country_for_options(intent);
+		}
+		let options = FundingOptions {
+			candidates,
+			countries,
+			limits,
+			networks,
+			rails,
+			default_rail,
+			asset,
+			tokens,
+			detected_country: self.recent_funding_country(),
+		};
+		self.funding().book().options_changed(intent, options.clone());
+		feed.funding_options_changed(intent.to_string(), options);
+	}
+
+	/// Ask the host for the user's country in the background, and send
+	/// session `intent` its options again once it answered one.
+	fn detect_country_for_options(&self, intent: &str) {
+		let Some(services) = self.funding().services() else {
+			return;
+		};
+		let intent = intent.to_string();
+		(self.spawner)(Box::pin(async move {
+			if services.detected_funding_country().await.is_some() {
+				services.send_funding_options(&intent);
+			}
+		}));
 	}
 
 	/// Read every host provider's manifest that is not already being read. A
@@ -428,6 +531,7 @@ fn offered_providers(
 				product_id,
 				snapshot,
 				origin: entry.origin,
+				has_app: entry.has_app,
 				live: None,
 				reading: false,
 			});

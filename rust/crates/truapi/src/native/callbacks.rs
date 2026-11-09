@@ -494,23 +494,25 @@ pub trait NativeFundingCallbacks: Send + Sync {
 
 	/// Show `target` for provider `provider_id`'s session `intent` in a frame
 	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: show its origin, and answer `Returned` when it reaches its return
-	/// URL.
+	/// URL: answer `Returned` when it reaches its return URL. `context`
+	/// carries facts about the session the frame is for. The core closes the
+	/// frame through `close_provider_frame` once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider_id: ProductId,
 		intent: String,
 		target: latest::FundingFrameTarget,
+		context: crate::platform::FundingFrameContext,
 	) -> Result<latest::FundingFrameOutcome, HostRejection>;
 
 	/// Close the frame `present_provider_frame` shows for provider
-	/// `provider_id`'s session `intent`, answering that call `Closed`, and
-	/// show the session sheet in its place. Does nothing when no frame is
-	/// open for it.
+	/// `provider_id`'s session `intent`, answering that call `Closed`. Does
+	/// nothing when no frame is open for it.
 	fn close_provider_frame(&self, provider_id: ProductId, intent: String);
 
 	/// Whether provider `provider_id` ships an App, so an App route of its
-	/// can be shown. A provider without one shows only external pages.
+	/// can be shown. Asked only for a provider whose entry left `has_app`
+	/// unset. A provider without one shows only external pages.
 	async fn provider_has_app(&self, provider_id: ProductId) -> bool;
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
@@ -519,36 +521,8 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// permission. `None` when nothing says.
 	async fn detected_country(&self) -> Option<String>;
 
-	/// A session changed: its status, the session as the core now holds it
-	/// (its choice, cancel offer and amounts) and the progress the host
-	/// draws, so the host keeps the latest of each and never reads them back.
-	/// Every session in flight, and every ended one the host has not
-	/// recorded, comes through here once more when funding resumes.
-	/// `session` and `progress` are `None` once the core keeps only the
-	/// session's summary.
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		status: latest::HostFundingStatusSubscribeItem,
-		session: Option<crate::host_logic::funding::FundingSession>,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	);
-
-	/// Whether a provider still works on any session: once funding resumes,
-	/// and again whenever it changes. The host keeps it to start funding at
-	/// its next launch.
-	fn funding_in_progress_changed(&self, in_progress: bool);
-
-	/// What session `intent`'s overlay offers: before the overlay is shown,
-	/// after each `select_funding_options`, and after each quote list.
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		options: crate::host_logic::funding_providers::FundingOptions,
-	);
-
-	/// The quote list the host requested with `get_funding_quote`: again
-	/// whenever a provider answers, and each time the core asks every
-	/// provider again at `refresh_at_ms`.
-	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList);
+	/// Funding state the host reads back from the runtime changed: `kind`
+	/// says what, `intent` which session, `None` for `InProgress`. The core
+	/// has updated what the runtime answers before it calls.
+	fn funding_changed(&self, intent: Option<String>, kind: super::funding_feed::FundingChangeKind);
 }

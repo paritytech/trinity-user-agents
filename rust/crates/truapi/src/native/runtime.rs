@@ -80,6 +80,8 @@ pub struct NativeTrUApiHostRuntime {
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
+	/// The core database directory, which holds the funding resume marker.
+	database_directory: std::path::PathBuf,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
 	_host_sink: crate::logging::HostSinkRegistration,
 }
@@ -191,6 +193,7 @@ impl NativeTrUApiHostRuntime {
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
 			pocket,
+			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
 		}))
 	}
@@ -313,7 +316,10 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		let platform = Arc::new(FundingCallbackPlatform {
+			funding: callbacks,
+			database_directory: self.database_directory.clone(),
+		});
 		self.runtime.set_funding_feed(platform.clone()) &&
 			self.runtime.set_funding_platform(platform)
 	}
@@ -327,6 +333,90 @@ impl NativeTrUApiHostRuntime {
 		amount: Option<u128>,
 	) -> Result<Option<String>, HostRejection> {
 		Ok(self.runtime.open_funding(direction, amount).await?)
+	}
+
+	/// Funding session `intent` as the core holds it in full, `None` once
+	/// only its summary is kept or for no such session.
+	pub fn funding_session(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_session(&intent)
+	}
+
+	/// Funding session `intent`'s progress now, while the core holds it in
+	/// full.
+	pub fn funding_progress(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingProgress> {
+		self.runtime.funding_progress(&intent)
+	}
+
+	/// What funding session `intent`'s overlay offers, while it is up.
+	pub fn funding_options(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
+		self.runtime.funding_options(&intent)
+	}
+
+	/// Funding session `intent`'s latest quote list, while its overlay is up.
+	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
+		self.runtime.funding_quotes(&intent)
+	}
+
+	/// Every funding session the host has heard of that the core holds in
+	/// full, with its progress now, newest opened first.
+	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+		self.runtime.funding_entries()
+	}
+
+	/// The ended funding sessions the host has not acknowledged.
+	pub fn funding_unacknowledged(&self) -> Vec<String> {
+		self.runtime.funding_unacknowledged()
+	}
+
+	/// Whether a provider still works on any funding session; `None` until
+	/// funding resumed.
+	pub fn funding_in_progress(&self) -> Option<bool> {
+		self.runtime.funding_in_progress()
+	}
+
+	/// Whether funding session `intent`'s payment moved: it ended, or it
+	/// reached a step past Started. `false` for a session the core does not
+	/// hold.
+	pub fn funding_payment_moved(&self, intent: String) -> bool {
+		self.runtime.funding_payment_moved(&intent)
+	}
+
+	/// The user's funding activity: sessions in flight and the history of
+	/// ended ones, worked out again only once a session changed.
+	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
+		self.runtime.funding_activity()
+	}
+
+	/// Acknowledge that the user saw how the ended funding sessions
+	/// `intents` went, and with them the ended sessions history leaves out,
+	/// so none is owed to the host again. Answers the sessions acknowledged.
+	pub async fn acknowledge_funding_shown(
+		&self,
+		intents: Vec<String>,
+	) -> Result<Vec<String>, HostRejection> {
+		Ok(self.runtime.acknowledge_funding_shown(intents).await?)
+	}
+
+	/// Offer the funding providers the host's remote configuration lists by
+	/// product name, then the `bundled` ones it does not name. Names that are
+	/// not product ids are skipped and logged, and a call listing what the
+	/// last one listed changes nothing, so the host calls it on every
+	/// configuration refresh.
+	pub fn set_funding_provider_config(
+		&self,
+		published_names: Vec<String>,
+		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host

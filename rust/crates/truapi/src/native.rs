@@ -21,6 +21,8 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod funding;
+mod funding_feed;
 mod platform;
 mod pocket;
 mod renderer;
@@ -46,6 +48,14 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use funding::{
+	BundleReader, bundled_asset_path, bundled_funding_providers, bundled_products,
+	funding_amount_issue, funding_asset_is_fiat, funding_fee_breakdown, funding_network_name,
+	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
+	funding_page_origin, funding_resume_pending, funding_status_delayed, funding_status_in_flight,
+	funding_units, mime_for,
+};
+pub use funding_feed::FundingChangeKind;
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{

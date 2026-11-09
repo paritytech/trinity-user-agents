@@ -22,7 +22,7 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
@@ -31,7 +31,7 @@ use std::{
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use web_time::{Duration, SystemTime};
 
 use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
@@ -1200,6 +1200,7 @@ impl ChainRuntime {
 		};
 		let remote_follow_id =
 			connection.require_remote_follow(method, local_follow_id.clone()).await?;
+		connection.note_follow_call(&local_follow_id);
 		if with_runtime && !connection.follow_with_runtime(&local_follow_id) {
 			return Err(RuntimeFailure::host_failure(
 				method,
@@ -1578,6 +1579,13 @@ impl ChainConnection {
 		Some(local_follow_id.clone())
 	}
 
+	/// Record a chainHead call made on `local_follow_id`, for the budget line.
+	fn note_follow_call(&self, local_follow_id: &str) {
+		if let Some(follow) = self.follows.lock().unwrap().get_mut(local_follow_id) {
+			follow.activity.saw_call();
+		}
+	}
+
 	fn remote_follow_id(&self, local_follow_id: &str) -> Option<String> {
 		self.follows
 			.lock()
@@ -1612,6 +1620,7 @@ impl ChainConnection {
 						abort: None,
 						sender,
 						cancelled,
+						activity: FollowActivity::new(),
 					},
 				);
 			},
@@ -1785,24 +1794,31 @@ impl ChainConnection {
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
 		let holding = Self::follows_holding_a_slot(&follows);
-		drop(follows);
 		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
 		// Reported on the way into the budget and again only after the
 		// connection has come back out of it, so a connection that sits there
 		// says so once rather than on every follow that renews the condition.
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
-		if at_budget && !already_reported {
+		let report = at_budget && !already_reported;
+		let occupants = report.then(|| {
+			let now = SystemTime::now();
+			holding
+				.iter()
+				.map(|held| {
+					let activity = follows.get(held).map(|follow| follow.describe_activity(now));
+					format!("{} ({})", Self::occupant_name(held), activity.unwrap_or_default())
+				})
+				.collect::<Vec<_>>()
+				.join(", ")
+		});
+		drop(follows);
+		if let Some(occupants) = occupants {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it
 			// arrives whatever the level is, and hosts run at `ERROR`.
 			let genesis = encode_hex(&self.genesis_hash);
 			let held = holding.len();
-			let occupants = holding
-				.iter()
-				.map(|held| Self::occupant_name(held))
-				.collect::<Vec<_>>()
-				.join(", ");
 			warn!(
 				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
 				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
@@ -1879,7 +1895,10 @@ impl ChainConnection {
 	/// Cleanup never aborts: the only caller is the pump itself, which the
 	/// stored abort handle targets.
 	fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
-		let sender = self.follow_sender(local_follow_id);
+		let sender = self.follows.lock().unwrap().get_mut(local_follow_id).map(|follow| {
+			follow.activity.saw_event();
+			follow.sender.clone()
+		});
 		let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
 		// Recorded before the subscriber sees the stop, so a caller that reacts
 		// to it by calling again already finds the reason.
@@ -1953,6 +1972,59 @@ struct FollowState {
 	/// local follow stream.
 	sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
 	cancelled: Arc<AtomicBool>,
+	activity: FollowActivity,
+}
+
+impl FollowState {
+	/// What this follow has been doing, for the budget line.
+	///
+	/// The node sends new blocks to every live follow, so a recent event only
+	/// says the follow is alive. The calls made on it say whether anyone still
+	/// uses it, so a follow open for minutes with no recent call is the one to
+	/// suspect, though a reader that only watches blocks makes no calls
+	/// either. A dropped receiver on a follow still here means the cleanup
+	/// that should have ended it missed this connection.
+	fn describe_activity(&self, now: SystemTime) -> String {
+		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
+		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
+		let since = |at: &Option<SystemTime>| match at {
+			Some(at) => format!("{} s ago", elapsed(at)),
+			None => "never".to_string(),
+		};
+		let open = elapsed(opened_at);
+		let last_event = since(last_event_at);
+		let last_call = since(last_call_at);
+		let receiver = if self.sender.is_closed() { "dropped" } else { "open" };
+		format!(
+			"open {open} s, last event {last_event}, {calls} calls, last call {last_call}, receiver {receiver}"
+		)
+	}
+}
+
+/// When a follow was opened, when it last delivered an event, and how often
+/// and how recently a chainHead call, an unpin included, was made on it.
+/// Wall-clock times, since a phone's monotonic clock stops while it sleeps and
+/// a follow left open across a screen-off would read as fresh.
+struct FollowActivity {
+	opened_at: SystemTime,
+	last_event_at: Option<SystemTime>,
+	calls: u64,
+	last_call_at: Option<SystemTime>,
+}
+
+impl FollowActivity {
+	fn new() -> Self {
+		Self { opened_at: SystemTime::now(), last_event_at: None, calls: 0, last_call_at: None }
+	}
+
+	fn saw_event(&mut self) {
+		self.last_event_at = Some(SystemTime::now());
+	}
+
+	fn saw_call(&mut self) {
+		self.calls += 1;
+		self.last_call_at = Some(SystemTime::now());
+	}
 }
 
 /// Subscription wrapper that runs an `on_drop` cleanup when the stream is

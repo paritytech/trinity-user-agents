@@ -660,7 +660,7 @@ impl SigningHostRuntime {
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
-			.derive_subtree_public_key(product_id)
+			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
@@ -805,6 +805,93 @@ impl SigningHostRuntime {
 	/// host reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.services.funding().history()
+	}
+
+	/// Funding session `intent` as the core holds it in full, `None` once
+	/// only its summary is kept or for no such session.
+	pub fn funding_session(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.services.funding().get(intent)
+	}
+
+	/// Funding session `intent`'s progress now, while the core holds it in
+	/// full.
+	pub fn funding_progress(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingProgress> {
+		self.funding_session(intent)
+			.map(|session| session.progress(crate::current_unix_millis()))
+	}
+
+	/// What funding session `intent`'s overlay offers, while it is up.
+	pub fn funding_options(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
+		self.services.funding().book().options(intent)
+	}
+
+	/// Funding session `intent`'s latest quote list, while its overlay is up.
+	pub fn funding_quotes(&self, intent: &str) -> Option<crate::platform::FundingQuoteList> {
+		self.services.funding().book().quotes(intent)
+	}
+
+	/// Every funding session the host has heard of that the core holds in
+	/// full, with its progress now, newest opened first.
+	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+		self.services.funding().entries(crate::current_unix_millis())
+	}
+
+	/// The ended funding sessions the host has not acknowledged.
+	pub fn funding_unacknowledged(&self) -> Vec<String> {
+		self.services.funding().book().unacknowledged()
+	}
+
+	/// Whether a provider still works on any funding session; `None` until
+	/// funding resumed.
+	pub fn funding_in_progress(&self) -> Option<bool> {
+		self.services.funding().book().in_progress()
+	}
+
+	/// Whether funding session `intent`'s payment moved: it ended, or it
+	/// reached a step past Started. `false` for a session the core does not
+	/// hold.
+	pub fn funding_payment_moved(&self, intent: &str) -> bool {
+		self.services.funding().payment_moved(intent)
+	}
+
+	/// The user's funding activity: sessions in flight and the history of
+	/// ended ones, worked out again only once a session changed.
+	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
+		self.services.funding().activity_view().activity
+	}
+
+	/// Acknowledge that the user saw how the ended funding sessions
+	/// `intents` went, and with them the ended sessions history leaves out,
+	/// so none is owed to the host again. Returns the sessions acknowledged.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_shown"))]
+	pub async fn acknowledge_funding_shown(
+		&self,
+		intents: Vec<String>,
+	) -> Result<Vec<String>, v01::GenericError> {
+		Ok(self.services.acknowledge_funding_shown(intents).await?)
+	}
+
+	/// Offer the funding providers the host's remote configuration lists by
+	/// product name, then the `bundled` ones it does not name. Names that are
+	/// not product ids are skipped and logged, and a call listing what the
+	/// last one listed changes nothing, so the host calls it on every
+	/// configuration refresh.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
+	pub fn set_funding_provider_config(
+		&self,
+		published_names: Vec<String>,
+		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
 	}
 
 	/// Record that the host told the user how ended session `intent` went.

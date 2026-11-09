@@ -17,9 +17,11 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
+	network::ensure_built_in_runnable,
 	platform,
 	stack_descriptor::{
-		FETCH_TIMEOUT, StackProjection, fetch, pointer_of, read_stack, refused, unix_now,
+		FETCH_TIMEOUT, describe_pin_change, fetch, pointer_of, read_stack, reads_same, refused,
+		unix_now,
 	},
 	terminal_ui::qr_rows,
 };
@@ -263,6 +265,8 @@ async fn bundle(
 		eprintln!("warning: {} is past validUntil; its operator should republish", pointer.url());
 	}
 	let descriptor = &accepted.stack.descriptor;
+	ensure_built_in_runnable(&pointer, descriptor)
+		.map_err(|error| anyhow!("not bundled: {error}"))?;
 	if let Some(bytes) = previous.as_deref() {
 		let stored_document = Document::parse(bytes).map_err(|error| {
 			anyhow!(
@@ -273,19 +277,16 @@ async fn bundle(
 			)
 		})?;
 		let stored_descriptor = stored_document.descriptor();
-		if stored_descriptor.tld != descriptor.tld {
+		if let Some(reason) = describe_pin_change(stored_descriptor, descriptor) {
 			bail!(
-				"not bundled: {} changes the tld from {} to {}, which changes every account derived \
-				 under it; remove {} to bundle the new tld on purpose",
+				"not bundled: {} {reason}; remove {} to bundle it on purpose",
 				pointer.url(),
-				stored_descriptor.tld,
-				descriptor.tld,
 				out.display()
 			);
 		}
 		let is_current = skip_same_projection &&
 			open(bytes, &pointer).is_ok() &&
-			StackProjection::of(stored_descriptor) == StackProjection::of(descriptor) &&
+			reads_same(stored_descriptor, descriptor) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
 			stored_descriptor.valid_until == descriptor.valid_until;
 		if is_current {

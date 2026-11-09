@@ -142,7 +142,8 @@ private extension FundingActivityStatusTests {
             refunded: refunded,
             status: status,
             longerAtMs: nil,
-            moneyMoved: false
+            moneyMoved: false,
+            cancel: .unavailable
         )
     }
 }
