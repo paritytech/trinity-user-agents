@@ -379,6 +379,13 @@ answers `Unsupported`, and a call made while the user is moving the face answers
   dialog, so adding one needs the worker to start and answer, and tells the product that a link to the instance was
   opened. The preview stays a static file; only the label comes from the worker, and like the live face it is the
   product's claim, which the host screens but does not check.
+- **Page parameters and slot cards fall short.** An `open` link's page parameters reach only the expanded card, and only
+  when that link opens it. A tap on the face opens the page with `card=` alone, and the face is drawn on
+  `PocketCard { card_id }` without them, so one card still stands for every object. A product can instead declare a
+  fixed set of slot cards and keep which object each stands for. Its worker can then draw the object on the live face,
+  but the title and preview, which the dialog and host chrome show, cannot name it. The number of slots caps the objects
+  that get a card and spends manifest budget. The product also tracks slots across adds, removals and reuse, and a link
+  made for a slot opens whatever object the slot stands for by then.
 - **Expanded cards need a Widget.** A product with cards but no `widget` executable has faces that do not open. Products
   that want interaction without a WebView use face actions. `Pocket` is reachable only from the worker, so an expanded
   card that wants to offer "Remove from Pocket" has to reach its own worker to do it.
