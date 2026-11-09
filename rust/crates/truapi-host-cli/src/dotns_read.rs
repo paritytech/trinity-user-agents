@@ -13,8 +13,8 @@ use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
-		DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, classify_labels,
-		label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,
+		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, claim_blocker,
+		classify_labels, label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,
 	},
 };
 
@@ -79,6 +79,25 @@ impl AssetHubReader {
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
 		let controller = self.pop_controller;
 		Ok(label_available(self, &controller, label).await?)
+	}
+
+	/// Why a gateway claim of `label` by `claimant` would revert on the name's
+	/// reservation queue, or `None` when it can go through.
+	pub async fn claim_blocker(
+		&mut self,
+		label: &str,
+		claimant: &[u8; 20],
+	) -> Result<Option<ClaimBlocker>> {
+		let controller = self.pop_controller;
+		let now = self.timestamp_secs().await?;
+		claim_blocker(self, &controller, label, claimant, now)
+			.await
+			.with_context(|| format!("read the reservation queue of {label:?}"))
+	}
+
+	/// The stack's `DotnsPopController`.
+	pub fn pop_controller(&self) -> [u8; 20] {
+		self.pop_controller
 	}
 
 	/// One `state_getStorage` read at the best block.

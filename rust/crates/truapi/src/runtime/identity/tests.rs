@@ -88,6 +88,7 @@ fn view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
 			ControllerCall::protocolRegistry(_) => {
 				DotnsPopController::protocolRegistryCall::abi_encode_returns(&REGISTRY.into())
 			},
+			_ => panic!("unscripted controller view {}", hex::encode(input)),
 		},
 		REGISTRY => match RegistryCall::abi_decode(input).expect("registry view") {
 			RegistryCall::get(_) => ProtocolRegistry::getCall::abi_encode_returns(&FACTORY.into()),
