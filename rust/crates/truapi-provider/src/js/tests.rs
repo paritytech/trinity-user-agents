@@ -68,6 +68,7 @@ fn the_exported_names_match_the_documented_ones() {
 		"setConnectionTypes",
 		"addRpcChain",
 		"setStack",
+		"lightSpecs",
 		"addLightSpec",
 	];
 	if cfg!(feature = "networks") {
@@ -128,10 +129,7 @@ async fn the_host_client_is_called_with_the_genesis_hash() {
 	let mut builder = ChainProviderBuilder::new();
 	builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 	builder
-		.set_storage(recording_client(
-			std::rc::Rc::clone(&calls),
-			crate::storage::seal(None, "stored-blob"),
-		))
+		.set_storage(recording_client(std::rc::Rc::clone(&calls), "stored-blob".to_owned()))
 		.expect("the client has load and save");
 	let provider = builder.build().expect("builds");
 
@@ -162,6 +160,9 @@ async fn a_stack_provider_names_its_stack_to_the_client() {
 	builder
 		.set_stack(link, &descriptor)
 		.expect("an unsigned link opens a plain descriptor");
+	assert!(builder.set_stack(link, &descriptor).is_err(), "a second stack would drop the specs");
+	let listed: Vec<String> = builder.light_specs().iter().map(|spec| spec.url()).collect();
+	assert_eq!(listed, ["https://stack.example/spec.json"; 3]);
 	assert!(
 		builder.add_light_spec(&relay, PEOPLE_SPEC.as_bytes()).is_err(),
 		"People's spec is not the relay's"
@@ -172,10 +173,11 @@ async fn a_stack_provider_names_its_stack_to_the_client() {
 	builder
 		.set_storage(recording_client(
 			std::rc::Rc::clone(&calls),
-			crate::storage::seal(Some("one"), "stored-blob"),
+			crate::storage::seal(STACK_ID, "one", "stored-blob"),
 		))
 		.expect("the client has load and save");
 	let provider = builder.build().expect("builds");
+	assert!(builder.set_stack(link, &descriptor).is_err(), "the builder was consumed");
 
 	assert!(
 		provider.load_database(&people).await.is_err(),
@@ -241,10 +243,7 @@ async fn a_seeded_blob_beats_the_client() {
 	let mut builder = ChainProviderBuilder::new();
 	builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 	builder
-		.set_storage(recording_client(
-			std::rc::Rc::clone(&calls),
-			crate::storage::seal(None, "stored-blob"),
-		))
+		.set_storage(recording_client(std::rc::Rc::clone(&calls), "stored-blob".to_owned()))
 		.expect("the client has load and save");
 	builder
 		.set_database_content(&genesis, "seeded-blob".to_owned())

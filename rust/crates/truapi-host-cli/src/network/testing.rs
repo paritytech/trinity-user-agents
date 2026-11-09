@@ -1,17 +1,19 @@
 //! Stack descriptors and stacks for tests, edited from the bundled
 //! paseo-next-v2 copy, and loopback RPC nodes.
 
-use std::sync::{
-	Arc,
-	atomic::{AtomicUsize, Ordering},
+use std::{
+	path::Path,
+	sync::{
+		Arc,
+		atomic::{AtomicUsize, Ordering},
+	},
 };
 
 use sha2::{Digest, Sha256};
-use trinity_stack::{Descriptor, Document};
+use trinity_stack::{Descriptor, Document, Pointer};
 use truapi::latest::ChainIdentifier;
 
-use super::{ChainEndpoint, Stack};
-use crate::chain::ChainBackend;
+use super::{ChainEndpoint, Stack, stack::light_client};
 
 /// Paseo's light spec, answered from without network access.
 pub const RELAY_LIGHT_SPEC: &str =
@@ -49,7 +51,17 @@ pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Desc
 	})
 }
 
+/// The pointer the stacks of this module are read under.
+fn test_pointer() -> Pointer {
+	Pointer::new("https://stack.example/descriptor.json", None).expect("a descriptor URL")
+}
+
 impl Stack {
+	/// The descriptor this stack reads.
+	pub fn descriptor(&self) -> &Descriptor {
+		&self.descriptor
+	}
+
 	/// The endpoint of a served role; `None` for the relay chain, which no
 	/// network routes.
 	pub fn endpoint_for_role(&self, role: ChainIdentifier) -> Option<&ChainEndpoint> {
@@ -66,7 +78,7 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(&self.pointer, descriptor, self.chain_backend).expect("edited stack refused")
+		Self::new(&test_pointer(), descriptor, self.chain_backend()).expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.
@@ -77,24 +89,38 @@ impl Stack {
 		})
 	}
 
-	/// This stack on the light client, with the relay and People replaced by
-	/// the chains of [`RELAY_LIGHT_SPEC`] and [`PEOPLE_LIGHT_SPEC`], their
-	/// light specs named at `relay_url` and `people_url`.
-	pub fn with_light_specs_at(&self, relay_url: &str, people_url: &str) -> Self {
-		let light = Self { chain_backend: ChainBackend::LightClient, ..self.with_edit(|_| {}) };
-		[("Relay", RELAY_LIGHT_SPEC, relay_url), ("People", PEOPLE_LIGHT_SPEC, people_url)]
-			.into_iter()
-			.fold(light, |stack, (role, spec, url)| {
-				let genesis = trinity_stack::light_spec_genesis(spec.as_bytes())
-					.expect("the fixture is a light spec");
-				stack.with_chain_edit(role, |chain| {
-					chain["genesisHash"] = format!("0x{}", hex::encode(genesis)).into();
-					chain["lightSpec"] = serde_json::json!({
-						"url": url,
-						"sha256": format!("0x{}", hex::encode(Sha256::digest(spec.as_bytes()))),
-					});
-				})
-			})
+	/// This stack on a light client that keeps its specs in `spec_directory`,
+	/// with the relay and People replaced by the chains of
+	/// [`RELAY_LIGHT_SPEC`] and [`PEOPLE_LIGHT_SPEC`], their light specs named
+	/// at `relay_url` and `people_url`.
+	pub fn with_light_specs_at(
+		&self,
+		relay_url: &str,
+		people_url: &str,
+		spec_directory: &Path,
+	) -> Self {
+		let edited =
+			[("Relay", RELAY_LIGHT_SPEC, relay_url), ("People", PEOPLE_LIGHT_SPEC, people_url)]
+				.into_iter()
+				.fold(self.with_edit(|_| {}), |stack, (role, spec, url)| {
+					let genesis = trinity_stack::light_spec_genesis(spec.as_bytes())
+						.expect("the fixture is a light spec");
+					stack.with_chain_edit(role, |chain| {
+						chain["genesisHash"] = format!("0x{}", hex::encode(genesis)).into();
+						chain["lightSpec"] = serde_json::json!({
+							"url": url,
+							"sha256": format!("0x{}", hex::encode(Sha256::digest(spec.as_bytes()))),
+						});
+					})
+				});
+		let light = light_client(
+			&test_pointer(),
+			&edited.descriptor,
+			&edited.chains,
+			spec_directory.into(),
+		)
+		.expect("the edited stack names its light specs");
+		Self { light_client: Some(Arc::new(light)), ..edited }
 	}
 
 	/// This stack with its `dub` service at `url`, so its identity backend is

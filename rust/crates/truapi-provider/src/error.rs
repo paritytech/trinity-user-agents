@@ -91,21 +91,28 @@ pub enum ProviderError {
 		known: String,
 	},
 	/// A stack's link or descriptor was refused.
-	#[display("stack refused: {reason}")]
+	#[cfg(feature = "smoldot")]
+	#[display("stack refused: {error}")]
 	Stack {
 		/// The rule the link or the descriptor broke.
-		reason: String,
+		error: trinity_stack::Error,
 	},
 	/// A light spec is not the one the stack's descriptor names for the chain.
-	#[display("light spec of {role} (0x{}) refused: {reason}", hex::encode(genesis))]
+	#[cfg(feature = "smoldot")]
+	#[display("light spec of {role} (0x{}) refused: {error}", hex::encode(genesis))]
 	LightSpec {
 		/// The chain's role in the descriptor.
 		role: String,
 		/// The chain's genesis hash.
 		genesis: [u8; 32],
 		/// How the spec differs from the descriptor.
-		reason: String,
+		error: trinity_stack::Error,
 	},
+	/// A light spec was handed to a provider built without a stack.
+	#[display(
+		"this provider was built without a stack, so it has no descriptor to check a light spec against"
+	)]
+	NoStack,
 	/// A bundled genesis hash does not decode to 32 bytes.
 	#[display("bundled genesis hash {hex} is malformed")]
 	MalformedGenesis {

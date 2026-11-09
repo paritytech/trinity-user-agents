@@ -4,9 +4,9 @@ use crate::test_stack::{
 	synced_stack,
 };
 
-fn statement_protocol(stack: &LightStack, genesis_hash: [u8; 32]) -> Option<bool> {
-	match stack.source(genesis_hash)? {
-		ChainSource::LightClient { statement_protocol, .. } => Some(statement_protocol),
+fn statement_protocol(stack: &LightStack, genesis_hash: [u8; 32]) -> bool {
+	match stack.resolve(genesis_hash).expect("the chain has its spec").source {
+		ChainSource::LightClient { statement_protocol, .. } => statement_protocol,
 		#[cfg(feature = "ws")]
 		ChainSource::RpcNode { .. } => panic!("a stack only has light-client chains"),
 	}
@@ -17,7 +17,7 @@ fn statement_protocol(stack: &LightStack, genesis_hash: [u8; 32]) -> Option<bool
 /// protocol.
 #[test]
 fn wiring_and_statement_store_come_from_the_descriptor() {
-	let mut stack = synced_stack(STACK_ID, "one");
+	let stack = synced_stack(STACK_ID, "one");
 	stack
 		.add_light_spec(genesis(ASSET_HUB_SPEC), ASSET_HUB_SPEC.as_bytes())
 		.expect("the spec matches");
@@ -30,15 +30,36 @@ fn wiring_and_statement_store_come_from_the_descriptor() {
 	assert_eq!(
 		[RELAY_SPEC, PEOPLE_SPEC, ASSET_HUB_SPEC]
 			.map(|spec| statement_protocol(&stack, genesis(spec))),
-		[Some(false), Some(true), Some(false)]
+		[false, true, false]
 	);
+}
+
+/// A host learns what to fetch from the stack rather than from the descriptor,
+/// whose signed form it cannot read without decoding the envelope.
+#[test]
+fn the_stack_lists_where_each_light_spec_is_published() {
+	let mut json = descriptor_json("one");
+	json["chains"][2]
+		.as_object_mut()
+		.expect("a chain is an object")
+		.remove("lightSpec");
+	let descriptor = Descriptor::from_json(json).expect("valid descriptor");
+	let stack = LightStack::new(STACK_ID, &descriptor).expect("distinct genesis hashes");
+
+	let listed = |role: &str, spec: &str| LightSpecSource {
+		genesis_hash: genesis(spec),
+		role: role.to_owned(),
+		url: "https://stack.example/spec.json".to_owned(),
+		sha256: crate::test_stack::sha256(spec),
+	};
+	assert_eq!(stack.light_specs(), [listed("Relay", RELAY_SPEC), listed("People", PEOPLE_SPEC)]);
 }
 
 /// A spec served with other bytes than the descriptor names is refused with
 /// the chain named, so the host can tell which chain to fetch again.
 #[test]
 fn a_spec_with_another_sha256_is_refused_and_names_the_chain() {
-	let mut stack = stack(STACK_ID, "one");
+	let stack = stack(STACK_ID, "one");
 	let people = genesis(PEOPLE_SPEC);
 
 	let error = stack
@@ -50,10 +71,10 @@ fn a_spec_with_another_sha256_is_refused_and_names_the_chain() {
 		ProviderError::LightSpec {
 			role: "People".to_owned(),
 			genesis: people,
-			reason: trinity_stack::Error::SpecDigest.to_string(),
+			error: Error::SpecDigest,
 		}
 	);
-	assert!(stack.source(people).is_none(), "a refused spec is not kept");
+	assert!(!stack.has_light_spec(people), "a refused spec is not kept");
 }
 
 /// The digest alone does not bind a spec to its chain: a descriptor can name
@@ -65,7 +86,7 @@ fn a_spec_of_another_chain_is_refused() {
 	let asset_hub_spec = json["chains"][2]["lightSpec"].clone();
 	json["chains"][1]["lightSpec"] = asset_hub_spec;
 	let descriptor = Descriptor::from_json(json).expect("valid descriptor");
-	let mut stack = LightStack::new(STACK_ID, &descriptor).expect("distinct genesis hashes");
+	let stack = LightStack::new(STACK_ID, &descriptor).expect("distinct genesis hashes");
 	let people = genesis(PEOPLE_SPEC);
 
 	let error = stack
@@ -78,14 +99,14 @@ fn a_spec_of_another_chain_is_refused() {
 		ProviderError::LightSpec {
 			role: "People".to_owned(),
 			genesis: people,
-			reason: trinity_stack::Error::SpecGenesis(implied).to_string(),
+			error: Error::SpecGenesis(implied),
 		}
 	);
 }
 
 #[test]
 fn a_spec_for_a_chain_outside_the_stack_is_refused() {
-	let mut stack = stack(STACK_ID, "one");
+	let stack = stack(STACK_ID, "one");
 
 	assert_eq!(
 		stack.add_light_spec([7; 32], PEOPLE_SPEC.as_bytes()),
@@ -115,6 +136,23 @@ fn a_keyed_link_refuses_an_unsigned_descriptor() {
 
 	assert_eq!(
 		LightStack::open(&link, &descriptor).map(|_| ()),
-		Err(ProviderError::Stack { reason: trinity_stack::Error::Unsigned.to_string() })
+		Err(ProviderError::Stack { error: Error::Unsigned })
 	);
+}
+
+/// `Descriptor`'s fields are public, so one built in code can skip the checks
+/// a parsed one passed. It is refused rather than trusted.
+#[test]
+fn a_descriptor_that_skipped_validation_is_refused() {
+	let valid = Descriptor::from_json(descriptor_json("one")).expect("valid descriptor");
+	let mut bad_hash = valid.clone();
+	bad_hash.chains[1].genesis_hash = "0x1234".to_owned();
+	let mut shared_hash = valid.clone();
+	shared_hash.chains[2].genesis_hash = shared_hash.chains[1].genesis_hash.clone();
+	let mut no_relay = valid;
+	no_relay.chains.remove(0);
+
+	for descriptor in [bad_hash, shared_hash, no_relay] {
+		assert!(matches!(LightStack::new(STACK_ID, &descriptor), Err(ProviderError::Stack { .. })));
+	}
 }

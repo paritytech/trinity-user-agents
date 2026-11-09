@@ -2,37 +2,43 @@
 //!
 //! `truapi-provider` checks and runs the light specs; this module gets them to
 //! it. A spec comes from the copy the CLI kept the last time it passed the
-//! check, or from the `lightSpec.url` the stack's descriptor names. Start at
-//! [`StackLightClient::of`].
+//! check, or from the URL the stack's descriptor names. Start at
+//! [`StackLightClient::new`].
 
 use std::{
 	path::{Path, PathBuf},
-	sync::{Arc, Mutex, PoisonError},
+	time::{Duration, SystemTime},
 };
 
 use trinity_stack::Descriptor;
 use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
-use truapi_provider::{EmbeddedChainProvider, LightStack};
+use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
-use crate::{
-	network::Stack,
-	stack_descriptor::{FETCH_TIMEOUT, fetch},
-};
+use crate::stack_descriptor::{FETCH_TIMEOUT, fetch};
 
-/// Where checked light specs are kept, under the CLI's state directory.
-const SPEC_DIRECTORY: &str = "light-specs";
+/// How long a kept spec outlives its last write. A relay's spec is replaced
+/// whenever its operator publishes a fresher checkpoint, so old ones pile up.
+const KEPT_SPEC_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// One stack's chains on the embedded light client, kept running between
-/// uses.
+/// uses. It stores no database, so every process syncs from the specs'
+/// checkpoints.
 pub struct StackLightClient {
 	provider: EmbeddedChainProvider,
-	stack_id: String,
-	descriptor: Descriptor,
 	/// Checked specs by the `sha256` their descriptor names, so a run does not
 	/// depend on the server a spec came from.
 	spec_directory: PathBuf,
-	/// The chains whose spec the provider holds.
-	loaded: Mutex<Vec<[u8; 32]>>,
+	/// Held while a spec is fetched, so connects that need the same spec
+	/// fetch it once.
+	fetching: tokio::sync::Mutex<()>,
+}
+
+impl core::fmt::Debug for StackLightClient {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		f.debug_struct("StackLightClient")
+			.field("spec_directory", &self.spec_directory)
+			.finish_non_exhaustive()
+	}
 }
 
 /// Why a chain's light spec is not in the provider.
@@ -45,30 +51,8 @@ pub enum MissingSpec {
 }
 
 impl StackLightClient {
-	/// The process's light client for `stack`. Shared, because each
-	/// `EmbeddedChainProvider` runs its own smoldot, and one per stack and
-	/// descriptor: another descriptor of the same stack may name other chains
-	/// or specs.
-	pub fn of(stack: &Stack) -> Result<Arc<Self>, ProviderError> {
-		static CLIENTS: Mutex<Vec<Arc<StackLightClient>>> = Mutex::new(Vec::new());
-
-		let (stack_id, descriptor) = (stack.stack_id(), stack.descriptor());
-		let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
-		let running = clients
-			.iter()
-			.find(|client| client.stack_id == stack_id && client.descriptor == *descriptor);
-		if let Some(client) = running {
-			return Ok(Arc::clone(client));
-		}
-		let directory = crate::default_base_path().join(SPEC_DIRECTORY);
-		let client = Arc::new(Self::new(&stack_id, descriptor, directory)?);
-		clients.push(Arc::clone(&client));
-		Ok(client)
-	}
-
 	/// A light client for the stack `stack_id` names, keeping checked specs in
-	/// `spec_directory`. Fails when two chains of `descriptor` share a genesis
-	/// hash.
+	/// `spec_directory`. Fails as `LightStack::new` does.
 	pub fn new(
 		stack_id: &str,
 		descriptor: &Descriptor,
@@ -77,10 +61,8 @@ impl StackLightClient {
 		let stack = LightStack::new(stack_id, descriptor)?;
 		Ok(Self {
 			provider: EmbeddedChainProvider::builder().stack(stack).keep_chains_running().build(),
-			stack_id: stack_id.to_owned(),
-			descriptor: descriptor.clone(),
 			spec_directory,
-			loaded: Mutex::new(Vec::new()),
+			fetching: tokio::sync::Mutex::new(()),
 		})
 	}
 
@@ -110,58 +92,63 @@ impl StackLightClient {
 	}
 
 	/// Hands the provider the light spec of the chain with `genesis_hash`,
-	/// once. The kept copy is used when it still passes the check, and the
-	/// spec is fetched otherwise and kept.
+	/// once. The kept copy is used while it passes the check. Otherwise the
+	/// spec is fetched, checked and kept.
 	pub async fn load_spec(&self, genesis_hash: [u8; 32]) -> Result<(), MissingSpec> {
-		if self.loaded().contains(&genesis_hash) {
+		let _fetching = self.fetching.lock().await;
+		if self.provider.has_light_spec(genesis_hash) {
 			return Ok(());
 		}
-		let chain = self
-			.descriptor
-			.chains
-			.iter()
-			.find(|chain| chain.genesis() == genesis_hash)
+		let LightSpecSource { role, url, sha256, .. } = self
+			.provider
+			.light_specs()
+			.into_iter()
+			.find(|named| named.genesis_hash == genesis_hash)
 			.ok_or(MissingSpec::Wrong(ProviderError::UnknownGenesis { genesis: genesis_hash }))?;
-		let named = chain.light_spec.as_ref().ok_or_else(|| {
-			MissingSpec::Wrong(ProviderError::LightSpec {
-				role: chain.role.clone(),
-				genesis: genesis_hash,
-				reason: "the descriptor names no lightSpec".to_owned(),
-			})
-		})?;
-		let kept = self.spec_directory.join(format!("{}.json", named.sha256));
-		let from_kept = std::fs::read(&kept)
-			.ok()
-			.filter(|bytes| self.provider.add_light_spec(genesis_hash, bytes).is_ok());
-		if from_kept.is_none() {
-			let bytes = fetch(&named.url, FETCH_TIMEOUT).await.map_err(|cause| {
-				MissingSpec::Unreachable(format!(
-					"the light spec of {} at {} is unreachable: {cause}",
-					chain.role, named.url
-				))
-			})?;
-			self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;
-			if let Err(error) = keep(&kept, &bytes) {
-				tracing::debug!("cannot keep the light spec at {}: {error}", kept.display());
-			}
-		}
-		self.loaded().push(genesis_hash);
-		Ok(())
-	}
+		let kept = self.spec_directory.join(format!("{sha256}.json"));
 
-	fn loaded(&self) -> std::sync::MutexGuard<'_, Vec<[u8; 32]>> {
-		self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
+		let read = kept.clone();
+		let kept_bytes = tokio::task::spawn_blocking(move || std::fs::read(read)).await;
+		if let Ok(Ok(bytes)) = kept_bytes &&
+			self.provider.add_light_spec(genesis_hash, &bytes).is_ok()
+		{
+			return Ok(());
+		}
+
+		let bytes = fetch(&url, FETCH_TIMEOUT).await.map_err(|cause| {
+			MissingSpec::Unreachable(format!(
+				"the light spec of {role} at {url} is unreachable: {cause}"
+			))
+		})?;
+		self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;
+		let kept_at = kept.display().to_string();
+		match tokio::task::spawn_blocking(move || keep(&kept, &bytes)).await {
+			Ok(Ok(())) => {},
+			Ok(Err(error)) => tracing::debug!("cannot keep the light spec at {kept_at}: {error}"),
+			Err(error) => tracing::debug!("cannot keep the light spec at {kept_at}: {error}"),
+		}
+		Ok(())
 	}
 }
 
 /// Writes `bytes` at `path` through a file beside it, so a reader never sees a
-/// spec cut short.
+/// spec cut short, and removes the specs beside it that are older than
+/// [`KEPT_SPEC_LIFETIME`].
 fn keep(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	let directory = path.parent().unwrap_or(Path::new("."));
 	std::fs::create_dir_all(directory)?;
 	let mut file = tempfile::NamedTempFile::new_in(directory)?;
 	std::io::Write::write_all(&mut file, bytes)?;
 	file.persist(path)?;
+
+	let expired = |entry: &std::fs::DirEntry| {
+		let written = entry.metadata().and_then(|metadata| metadata.modified()).ok()?;
+		let age = SystemTime::now().duration_since(written).ok()?;
+		(age > KEPT_SPEC_LIFETIME).then(|| entry.path())
+	};
+	for stale in std::fs::read_dir(directory)?.flatten().filter_map(|entry| expired(&entry)) {
+		let _ = std::fs::remove_file(stale);
+	}
 	Ok(())
 }
 

@@ -91,7 +91,7 @@ pub use networks::{NetworkChains, known_networks};
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 pub use provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder};
 #[cfg(feature = "smoldot")]
-pub use stack::LightStack;
+pub use stack::{LightSpecSource, LightStack};
 #[cfg(feature = "smoldot")]
 pub use storage::{StorageClient, StorageClientError};
 

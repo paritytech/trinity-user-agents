@@ -36,22 +36,23 @@ fn a_blob_without_runtime_code_never_replaces_one_that_has_it() {
 	);
 }
 
-/// A generation is an opaque string, so one holding a line break must not be
-/// able to end the header early and pass its tail off as the blob.
+/// The provider reads back only what it stored for its own stack and
+/// generation, so a store that ignores the stack cannot hand a fork its
+/// source's state. Both are opaque strings, so one holding a line break must
+/// not be able to end the header early.
 #[test]
-fn a_sealed_blob_opens_only_for_its_generation() {
+fn a_sealed_blob_opens_only_for_its_stack_and_generation() {
 	let blob = r#"{"chain":{"a":1}}"#;
-	let sealed = seal(Some("one\ntwo"), blob);
+	let sealed = seal("stack", "one\ntwo", blob);
 
-	let opened =
-		[Some("one\ntwo"), Some("one"), None].map(|generation| unseal(generation, sealed.clone()));
+	let opened = [("stack", "one\ntwo"), ("stack", "one"), ("fork", "one\ntwo")]
+		.map(|(stack, generation)| unseal(stack, generation, sealed.clone()));
 
 	assert_eq!(opened, [Some(blob.to_owned()), None, None]);
 }
 
-/// A blob written without the header is not one this provider stored for any
-/// generation, so it is not handed to the light client.
+/// A blob stored without the header was not stored by a stack's provider.
 #[test]
-fn a_blob_without_a_generation_line_is_not_opened() {
-	assert_eq!(unseal(None, r#"{"chain":{"a":1}}"#.to_owned()), None);
+fn a_blob_without_a_header_is_not_opened() {
+	assert_eq!(unseal("stack", "one", r#"{"chain":{"a":1}}"#.to_owned()), None);
 }

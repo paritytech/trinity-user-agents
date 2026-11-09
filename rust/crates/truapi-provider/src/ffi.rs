@@ -32,7 +32,7 @@ use futures::{
 };
 
 use crate::{
-	ChainLifecycle, EmbeddedChainProvider, LightStack,
+	ChainLifecycle, EmbeddedChainProvider, LightSpecSource, LightStack,
 	storage::{StorageClient, StorageClientError},
 };
 
@@ -78,10 +78,18 @@ pub enum ChainProviderError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
-	/// A stack's link or descriptor was refused, or a light spec is not the
-	/// one the descriptor names. The reason names the chain of a refused spec.
+	/// A stack's link or descriptor was refused, or the provider has no stack.
 	#[error("{reason}")]
 	Stack {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// A light spec is not the one the stack's descriptor names for the chain.
+	/// Fetch the descriptor again before refusing the stack.
+	#[error("{reason}")]
+	LightSpec {
+		/// Genesis hash of the chain the spec was handed over for.
+		genesis_hash: Vec<u8>,
 		/// Human-readable failure reason.
 		reason: String,
 	},
@@ -225,9 +233,41 @@ fn genesis_from(genesis_hash: Vec<u8>) -> Result<[u8; 32], ChainProviderError> {
 	genesis_hash.try_into().map_err(|_| ChainProviderError::BadGenesis)
 }
 
+/// A builder for the stack `link` points to, with `light_specs` checked.
+fn stack_builder(
+	link: &str,
+	descriptor: &[u8],
+	light_specs: Vec<LightSpec>,
+) -> Result<crate::EmbeddedChainProviderBuilder, ChainProviderError> {
+	let stack = LightStack::open(link, descriptor).map_err(stack_error)?;
+	for LightSpec { genesis_hash, spec } in light_specs {
+		stack.add_light_spec(genesis_from(genesis_hash)?, &spec).map_err(stack_error)?;
+	}
+	Ok(EmbeddedChainProvider::builder().stack(stack))
+}
+
 /// A refused stack or light spec, as the foreign caller sees it.
 fn stack_error(error: crate::ProviderError) -> ChainProviderError {
-	ChainProviderError::Stack { reason: error.to_string() }
+	let reason = error.to_string();
+	match error {
+		crate::ProviderError::LightSpec { genesis, .. } |
+		crate::ProviderError::UnknownGenesis { genesis } => {
+			ChainProviderError::LightSpec { genesis_hash: genesis.to_vec(), reason }
+		},
+		_ => ChainProviderError::Stack { reason },
+	}
+}
+
+/// Where the host fetches each light spec of the stack `link` points to, from
+/// its `descriptor` as served, in the descriptor's order. A chain the
+/// descriptor names no light spec for is left out. Fails with `Stack` when the
+/// link or the descriptor is refused.
+#[uniffi::export]
+pub fn stack_light_specs(
+	link: String,
+	descriptor: Vec<u8>,
+) -> Result<Vec<LightSpecSource>, ChainProviderError> {
+	Ok(LightStack::open(&link, &descriptor).map_err(stack_error)?.light_specs())
 }
 
 /// Sink for a connection's inbound JSON-RPC responses and notifications,
@@ -306,49 +346,49 @@ impl ChainProvider {
 		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().storage(client).build() })
 	}
 
-	/// Create a provider for the chains of a Trinity stack.
+	/// Create a provider for the chains of a Trinity stack, with nowhere to
+	/// keep finalized state.
 	///
 	/// `link` is the stack's link and `descriptor` its descriptor as served,
-	/// the pair a host gives the core. Each entry of `light_specs` is checked
-	/// against the descriptor's `sha256` and the chain's genesis hash. The
-	/// relay wiring and the statement-store placement come from the
-	/// descriptor, and the bundled catalog is not consulted. A chain left out
-	/// of `light_specs` is unknown until [`add_light_spec`](Self::add_light_spec)
-	/// supplies it, and the rest of the stack runs.
+	/// the pair a host gives the core. `light_specs` holds the specs the host
+	/// fetched from the URLs `stack_light_specs` lists. A chain left out is
+	/// unknown until [`add_light_spec`](Self::add_light_spec) supplies it, and
+	/// the rest of the stack runs. The bundled catalog is not consulted.
+	/// Create one provider per stack, and a new one when the stack's
+	/// generation changes.
 	///
-	/// `storage` keeps database blobs as [`with_storage`](Self::with_storage)
-	/// does, under the stack and its generation. Create one provider per
-	/// stack, and a new one when the stack's generation changes.
-	///
-	/// Fails with `Stack` when the link or the descriptor is refused, or a spec
-	/// is not the one the descriptor names.
+	/// Fails with `Stack` when the link or the descriptor is refused, and with
+	/// `LightSpec` when a spec is not the one the descriptor names.
 	#[uniffi::constructor(name = "for_stack")]
 	pub fn for_stack(
 		link: String,
 		descriptor: Vec<u8>,
 		light_specs: Vec<LightSpec>,
-		storage: Option<Arc<dyn StorageClient>>,
 	) -> Result<Arc<Self>, ChainProviderError> {
-		let mut stack = LightStack::open(&link, &descriptor).map_err(stack_error)?;
-		for LightSpec { genesis_hash, spec } in light_specs {
-			stack.add_light_spec(genesis_from(genesis_hash)?, &spec).map_err(stack_error)?;
-		}
-		let builder = EmbeddedChainProvider::builder().stack(stack);
-		let builder = match storage {
-			Some(client) => builder.storage(client),
-			None => builder,
-		};
+		let builder = stack_builder(&link, &descriptor, light_specs)?;
 		Ok(Arc::new(Self { inner: builder.build() }))
 	}
 
-	/// Hand over the light spec of the stack's chain with `genesis_hash`, so a
-	/// chain whose spec could not be fetched before the provider was created
-	/// comes up without a new one.
+	/// [`for_stack`](Self::for_stack), keeping database blobs through `client`
+	/// as [`with_storage`](Self::with_storage) does.
+	#[uniffi::constructor(name = "for_stack_with_storage")]
+	pub fn for_stack_with_storage(
+		link: String,
+		descriptor: Vec<u8>,
+		light_specs: Vec<LightSpec>,
+		client: Arc<dyn StorageClient>,
+	) -> Result<Arc<Self>, ChainProviderError> {
+		let builder = stack_builder(&link, &descriptor, light_specs)?;
+		Ok(Arc::new(Self { inner: builder.storage(client).build() }))
+	}
+
+	/// Hand over the light spec of the stack's chain with `genesis_hash` after
+	/// the provider was created, so the chain comes up without a new one. A
+	/// chain that is already running keeps the spec it started with.
 	///
-	/// Fails with `Stack` when the spec is not the one the descriptor names,
-	/// the chain is not in the stack, or the provider was not created with
-	/// [`for_stack`](Self::for_stack). A chain that is already running keeps
-	/// the spec it started with.
+	/// Fails with `LightSpec` when the spec is not the one the descriptor
+	/// names or the chain is not in the stack, and with `Stack` on a provider
+	/// created without one.
 	pub fn add_light_spec(
 		&self,
 		genesis_hash: Vec<u8>,

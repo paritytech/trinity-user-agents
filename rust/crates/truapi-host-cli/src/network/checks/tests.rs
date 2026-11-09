@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use clap::ValueEnum;
+use crate::chain::ChainBackend;
 
 use super::{
 	super::{
@@ -133,43 +133,6 @@ async fn test_polkadot_fork_check_wiring() {
 	});
 	let error = verify_chains(&polkadot_people, None).await.expect_err("fork unproven");
 	assert!(error.to_string().contains("cannot tell ws://127.0.0.1:"));
-
-	let unreachable = "http://127.0.0.1:9/spec.json";
-	let light_client = Network::PaseoNextV2
-		.bundled_stack(ChainBackend::Rpc)
-		.with_light_specs_at(unreachable, unreachable);
-	verify_chains(&light_client, None)
-		.await
-		.expect("light-client checks failed")
-		.expect("an unreachable light spec is not a wrong one");
-}
-
-/// Every built-in network runs on the light client, whether or not
-/// `truapi-provider` bundles its specs: the descriptor names them.
-#[test]
-fn test_built_in_networks_name_their_light_specs() {
-	for network in Network::value_variants() {
-		require_light_specs(&network.bundled_stack(ChainBackend::LightClient))
-			.expect("a built-in descriptor names a light spec for every chain");
-	}
-}
-
-/// A stack with no light spec for a chain the light client runs fails before
-/// the command starts, naming the chain, rather than on every connect.
-#[test]
-fn test_light_client_without_a_light_spec_error() {
-	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).with_chain_edit(
-		"Bulletin",
-		|chain| {
-			chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
-		},
-	);
-
-	let error = require_light_specs(&stack).unwrap_err().to_string();
-
-	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
-	let over_rpc = Stack { chain_backend: ChainBackend::Rpc, ..stack };
-	require_light_specs(&over_rpc).expect("RPC needs no light spec");
 }
 
 /// A spec that is not the one the descriptor names is a wrong answer, which
@@ -181,17 +144,26 @@ async fn test_light_spec_wrong_or_unreachable() {
 	let (relay, people) = (format!("{server}/relay.json"), format!("{server}/people.json"));
 	let bundled = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let directory = tempfile::tempdir().expect("temporary directory");
-	let light = |stack: &Stack| {
-		StackLightClient::new(&stack.stack_id(), stack.descriptor(), directory.path().into())
-			.expect("distinct genesis hashes")
-	};
 
-	let swapped = bundled.with_light_specs_at(&people, &relay);
-	let error = verify_light_specs(&light(&swapped), &swapped).await.unwrap_err().to_string();
-	assert!(error.contains("light spec of"), "{error}");
-
-	let missing = bundled.with_light_specs_at(&relay, &format!("{server}/moved.json"));
-	verify_light_specs(&light(&missing), &missing)
+	let swapped = bundled.with_light_specs_at(&people, &relay, directory.path());
+	let error = verify_chains(&swapped, None)
 		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect_err("each chain is served the other's spec");
+	assert!(error.to_string().contains(&trinity_stack::Error::SpecDigest.to_string()), "{error}");
+
+	let moved = format!("{server}/moved.json");
+	let missing = bundled.with_light_specs_at(&relay, &moved, directory.path());
+	verify_chains(&missing, None)
+		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect("a spec the server does not have is unreachable, not wrong");
+	let light = missing.light_client().expect("the stack runs on the light client");
+	let Roles { people, .. } = missing.genesis();
+	assert_eq!(
+		[light.provider().relay_of(people).expect("People has a relay"), people]
+			.map(|genesis| light.provider().has_light_spec(genesis)),
+		[true, false],
+		"the relay's spec is loaded and People's is still missing"
+	);
 }

@@ -1932,9 +1932,10 @@ chain's genesis hash before it loads it. The descriptor also gives the relay
 each parachain syncs through and the chains that run the statement-store
 protocol. A checked spec is kept in `light-specs/<sha256>.json` under the state
 directory (`$XDG_STATE_HOME/truapi-host`), outside any `--base-path`, and a
-later run reads it from there while it still passes the check. One light client
-per stack and descriptor serves the process and keeps each chain running after
-its last connection closes, so a chain syncs once per process. It stores no
+later run reads it from there while it still passes the check. Keeping a spec
+removes the kept ones written more than 30 days earlier. One light client per
+resolved stack serves the process and keeps each chain running after its last
+connection closes, so a chain syncs once per process. It stores no
 database, so every process syncs from the specs' checkpoints.
 
 CLI commands wait for the chain to sync before their first request, since

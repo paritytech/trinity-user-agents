@@ -1,6 +1,6 @@
-//! What the CLI checks of a resolved network before a command runs: whether
-//! the stack names a light spec for each chain the light client runs and each
-//! spec is the one it names, whether each endpoint reports the genesis it is
+//! What the CLI checks of a resolved network before a command runs: on the
+//! light client whether each light spec is the one the descriptor names, and
+//! over RPC whether each endpoint reports the genesis it is
 //! routed as, whether People reports the network's TLD as its
 //! `NetworkSuffix`, and whether an endpoint with one of Polkadot's genesis
 //! hashes serves a fork rather than Polkadot itself.
@@ -14,13 +14,7 @@ use super::{
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 	within_check_timeout,
 };
-use crate::{
-	chain::{ChainBackend, MissingSpec, StackLightClient},
-	stack_descriptor::ROLE_NAMES,
-};
-
-/// The relay's `role` in a descriptor's `chains`.
-const RELAY_ROLE: &str = "Relay";
+use crate::chain::{MissingSpec, StackLightClient};
 
 /// The checks of `stack`, a built-in from `built_in` or a `--stack` when
 /// `None`: over RPC every endpoint and People's `NetworkSuffix` are checked,
@@ -30,55 +24,40 @@ const RELAY_ROLE: &str = "Relay";
 /// fetch of the published descriptor may resolve.
 pub async fn verify_chains(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<Result<()>> {
 	let polkadot_chains = polkadot_chains(stack);
+	let reachable = async {
+		match stack.light_client() {
+			Some(light) => verify_light_specs(light, stack).await,
+			None => verify_endpoints(stack, built_in).await,
+		}
+	};
 	let (endpoints, polkadot_forks) = futures::join!(
-		verify_endpoints(stack, built_in),
+		reachable,
 		futures::future::try_join_all(polkadot_chains.iter().map(PolkadotChain::ensure_fork)),
 	);
 	polkadot_forks?;
 	Ok(endpoints)
 }
 
-/// The chains the light client runs for `stack`: the relay and each role the
-/// CLI routes.
-fn light_client_chains(stack: &Stack) -> impl Iterator<Item = &trinity_stack::Chain> {
-	let Roles { people, asset_hub, bulletin } = ROLE_NAMES;
-	[RELAY_ROLE, people, asset_hub, bulletin]
-		.into_iter()
-		.filter_map(|role| stack.descriptor().chain(role))
-}
-
-/// Fails when `stack` runs on the light client and its descriptor names no
-/// light spec for one of the chains the light client runs.
-pub fn require_light_specs(stack: &Stack) -> Result<()> {
-	if stack.chain_backend() != ChainBackend::LightClient {
-		return Ok(());
-	}
-	for chain in light_client_chains(stack) {
-		ensure!(
-			chain.light_spec.is_some(),
-			"--chain-backend light-client cannot run {}: its descriptor names no lightSpec for {}; \
-			 use --chain-backend rpc",
-			stack.namespace(),
-			chain.role
-		);
-	}
-	Ok(())
-}
-
-/// Gets every light spec of `stack` into `light`. Fails when one is not the
-/// spec the descriptor names. A spec that cannot be fetched is logged, and
-/// fetched again when a command first connects to its chain.
+/// Gets the light spec of every routed chain of `stack`, and of their relay,
+/// into `light`. Fails when one is not the spec the descriptor names. A spec
+/// that cannot be fetched is logged, and fetched again when a command first
+/// connects to its chain.
 async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<()> {
-	let loads = light_client_chains(stack).map(|chain| async move {
-		match light.load_spec(chain.genesis()).await {
-			Ok(()) => Ok(()),
-			Err(MissingSpec::Unreachable(reason)) => {
-				tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
-				Ok(())
-			},
-			Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
-		}
-	});
+	let Roles { people, asset_hub, bulletin } = stack.genesis();
+	let relay = light.provider().relay_of(people);
+	let loads = relay
+		.into_iter()
+		.chain([people, asset_hub, bulletin])
+		.map(|genesis| async move {
+			match light.load_spec(genesis).await {
+				Ok(()) => Ok(()),
+				Err(MissingSpec::Unreachable(reason)) => {
+					tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
+					Ok(())
+				},
+				Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
+			}
+		});
 	futures::future::try_join_all(loads).await?;
 	Ok(())
 }
@@ -108,12 +87,8 @@ async fn probe_endpoint(stack: &Stack, endpoint: &ChainEndpoint) -> Result<Endpo
 /// is routed as, adding the restart hint of `built_in` to the error, or when
 /// People reports a `NetworkSuffix` other than the stack's TLD. An endpoint
 /// that does not answer within [`super::CHAIN_CHECK_TIMEOUT`], or a People
-/// chain without a readable suffix, is logged. The light client does not use
-/// the endpoints, so it has its light specs checked instead.
+/// chain without a readable suffix, is logged.
 async fn verify_endpoints(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<()> {
-	if stack.chain_backend() == ChainBackend::LightClient {
-		return verify_light_specs(&*StackLightClient::of(stack)?, stack).await;
-	}
 	let checks = stack.chains().iter().map(|endpoint| async move {
 		let report = match within_check_timeout(probe_endpoint(stack, endpoint)).await {
 			Ok(report) => report,

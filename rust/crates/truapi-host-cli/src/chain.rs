@@ -66,17 +66,16 @@ pub struct CliChainProvider {
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the stack, or why it has none; see
-	/// [`StackLightClient::of`].
-	LightClient(Result<Arc<StackLightClient>, String>),
+	/// The stack's light client, shared by every provider built from it.
+	LightClient(Arc<StackLightClient>),
 }
 
 impl CliChainProvider {
 	/// A provider for `network`'s chains over its chain backend.
 	pub fn new(network: &Stack) -> Self {
 		let routed_endpoints: Vec<ChainEndpoint> = network.chains().iter().cloned().collect();
-		let backend = match network.chain_backend() {
-			ChainBackend::Rpc => Backend::Rpc(Box::new(
+		let backend = match network.light_client() {
+			None => Backend::Rpc(Box::new(
 				routed_endpoints
 					.iter()
 					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
@@ -85,9 +84,7 @@ impl CliChainProvider {
 					})
 					.build(),
 			)),
-			ChainBackend::LightClient => Backend::LightClient(
-				StackLightClient::of(network).map_err(|error| error.to_string()),
-			),
+			Some(light) => Backend::LightClient(Arc::clone(light)),
 		};
 		Self { people_genesis: network.genesis().people, routed_endpoints, backend }
 	}
@@ -104,7 +101,7 @@ impl CliChainProvider {
 		if let (Backend::LightClient(light), Some(chain)) =
 			(&self.backend, self.chain_for(genesis_hash))
 		{
-			wait_until_synced(light_client(light)?.provider(), chain.genesis).await?;
+			wait_until_synced(light.provider(), chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -142,18 +139,8 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient(light) => light_client(light)?.connect(chain).await,
+			Backend::LightClient(light) => light.connect(chain).await,
 		}
-	}
-}
-
-/// The stack's light client, or the reason the stack cannot have one.
-fn light_client(
-	light: &Result<Arc<StackLightClient>, String>,
-) -> Result<&StackLightClient, ProviderError> {
-	match light {
-		Ok(light) => Ok(light),
-		Err(reason) => Err(ProviderError::Host { reason: reason.clone() }),
 	}
 }
 

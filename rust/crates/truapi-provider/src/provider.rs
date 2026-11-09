@@ -9,7 +9,10 @@ use std::sync::Mutex;
 
 use crate::platform::{ChainProvider, JsonRpcConnection};
 
-use crate::{config::ChainSource, error::ProviderError};
+use crate::{
+	config::{ChainSource, ResolvedChain},
+	error::ProviderError,
+};
 
 /// Lock a mutex, recovering the guard if a previous holder panicked.
 #[cfg(feature = "smoldot")]
@@ -129,14 +132,11 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
-	/// Serve the chains of `stack` on the light client, each from the light
-	/// spec added to it, with the relay wiring and the statement-store
-	/// placement its descriptor gives.
+	/// Serve the chains of `stack` on the light client; see
+	/// [`LightStack`](crate::LightStack).
 	///
-	/// A chain registered with [`chain`](Self::chain) still wins. Stored
-	/// databases are kept under the stack and its generation, and the bundled
-	/// catalog is not consulted. Build one provider per stack: the light client
-	/// keys a chain by its genesis hash, which two stacks can share.
+	/// A chain registered with [`chain`](Self::chain) still wins, and the
+	/// bundled catalog is not consulted.
 	#[cfg(feature = "smoldot")]
 	pub fn stack(mut self, stack: crate::stack::LightStack) -> Self {
 		self.stack = Some(stack);
@@ -171,21 +171,9 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "networks")]
 			catalog: self.catalog && self.stack.is_none(),
 			#[cfg(feature = "smoldot")]
-			stack_key: self.stack.as_ref().map(|stack| StackKey {
-				id: stack.id().to_owned(),
-				generation: stack.generation().to_owned(),
-			}),
-			#[cfg(feature = "smoldot")]
-			stack: self.stack.map(Mutex::new),
+			stack: self.stack,
 		}
 	}
-}
-
-/// What stored databases of a stack's provider are kept under.
-#[cfg(feature = "smoldot")]
-struct StackKey {
-	id: String,
-	generation: String,
 }
 
 /// In-process [`ChainProvider`] whose per-chain backend is a remote WebSocket
@@ -227,12 +215,8 @@ pub struct EmbeddedChainProvider {
 	light: crate::light::LightState,
 	#[cfg(feature = "networks")]
 	catalog: bool,
-	/// Behind a lock because [`add_light_spec`](Self::add_light_spec) fills it
-	/// after the provider is built.
 	#[cfg(feature = "smoldot")]
-	stack: Option<Mutex<crate::stack::LightStack>>,
-	#[cfg(feature = "smoldot")]
-	stack_key: Option<StackKey>,
+	stack: Option<crate::stack::LightStack>,
 }
 
 impl EmbeddedChainProvider {
@@ -259,51 +243,37 @@ impl EmbeddedChainProvider {
 			return true;
 		}
 		self.chains.contains_key(&genesis_hash) ||
-			self.stack
-				.as_ref()
-				.is_some_and(|stack| lock(stack).source(genesis_hash).is_some())
+			self.stack.as_ref().is_some_and(|stack| stack.has_light_spec(genesis_hash))
 	}
 
-	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
-	/// the light backend the relay to sync it through.
-	///
-	/// The relay's source is resolved and warm-start-seeded here, so a blob
-	/// registered for a relay applies whether it is connected directly or
-	/// brought up implicitly behind one of its parachains.
-	#[cfg_attr(not(feature = "smoldot"), allow(unused_variables))]
-	async fn connect_source(
-		&self,
-		genesis_hash: [u8; 32],
-		source: &ChainSource,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay: Option<[u8; 32]>,
-	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		match source {
-			#[cfg(feature = "ws")]
-			ChainSource::RpcNode { url } => crate::ws::connect(url.clone()).await,
-			#[cfg(feature = "smoldot")]
-			ChainSource::LightClient { .. } => {
-				let relay = match relay {
-					None => None,
-					Some(relay_genesis) => Some(self.resolve_relay(chains, relay_genesis)?),
-				};
-				self.light.connect(genesis_hash, source, relay).await
-			},
+	/// What a connect to `genesis_hash` goes through: the chain registered for
+	/// it, then the provider's stack, then the catalog.
+	fn resolve(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
+		if let Some(source) = self.chains.get(&genesis_hash) {
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				#[cfg(feature = "smoldot")]
+				relay: relay_source(&self.chains, source, self.relays.get(&genesis_hash).copied())?,
+			});
 		}
-	}
-
-	/// Resolve a parachain's relay to the source the light backend should add
-	/// it under, carrying any warm-start blob registered for the relay.
-	#[cfg(feature = "smoldot")]
-	fn resolve_relay(
-		&self,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay_genesis: [u8; 32],
-	) -> Result<([u8; 32], ChainSource), ProviderError> {
-		let source = chains
-			.get(&relay_genesis)
-			.ok_or(ProviderError::UnknownRelay { relay: relay_genesis })?;
-		Ok((relay_genesis, self.with_seeded_database(relay_genesis, source.clone())))
+		#[cfg(feature = "smoldot")]
+		if let Some(stack) = &self.stack {
+			return stack.resolve(genesis_hash);
+		}
+		#[cfg(feature = "networks")]
+		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
+			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
+				tracing::info!(network, service, "connecting via light client");
+			}
+			let source = catalog
+				.get(&genesis_hash)
+				.expect("catalog_network_chains includes the queried genesis");
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				relay: relay_source(&catalog, source, relay)?,
+			});
+		}
+		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 
 	/// Apply a seeded warm-start database blob to `source` if one exists for
@@ -327,6 +297,23 @@ impl EmbeddedChainProvider {
 	#[cfg(not(feature = "smoldot"))]
 	fn with_seeded_database(&self, _genesis_hash: [u8; 32], source: ChainSource) -> ChainSource {
 		source
+	}
+}
+
+/// The relay `source` syncs through, looked up in `chains`. Only a
+/// light-client chain has one.
+#[cfg(feature = "smoldot")]
+fn relay_source(
+	chains: &HashMap<[u8; 32], ChainSource>,
+	source: &ChainSource,
+	relay: Option<[u8; 32]>,
+) -> Result<Option<([u8; 32], ChainSource)>, ProviderError> {
+	match (source, relay) {
+		(ChainSource::LightClient { .. }, Some(relay)) => {
+			let source = chains.get(&relay).ok_or(ProviderError::UnknownRelay { relay })?;
+			Ok(Some((relay, source.clone())))
+		},
+		_ => Ok(None),
 	}
 }
 
@@ -393,7 +380,7 @@ impl EmbeddedChainProvider {
 			return Some(*relay);
 		}
 		if let Some(stack) = &self.stack {
-			return lock(stack).relay_of(genesis_hash);
+			return stack.relay_of(genesis_hash);
 		}
 		#[cfg(feature = "networks")]
 		if let Some((_, relay)) = self.catalog_network(genesis_hash) {
@@ -402,36 +389,44 @@ impl EmbeddedChainProvider {
 		None
 	}
 
-	/// Keep `specification` as the light spec of the stack's chain with
-	/// `genesis_hash`, so a chain whose spec was not at hand when the provider
-	/// was built comes up without rebuilding it.
+	/// Hand over a light spec after the build, so a chain whose spec was not
+	/// at hand then comes up without a new provider; see
+	/// [`LightStack::add_light_spec`](crate::LightStack::add_light_spec).
 	///
-	/// The spec is checked as [`LightStack::add_light_spec`](crate::LightStack::add_light_spec)
-	/// does, and a refused one changes nothing. A chain the light client is
-	/// already running keeps the spec it was added with. Fails with
-	/// [`ProviderError::Stack`] on a provider built without a stack.
+	/// Fails with [`ProviderError::NoStack`] on a provider built without a
+	/// stack.
 	pub fn add_light_spec(
 		&self,
 		genesis_hash: [u8; 32],
 		specification: &[u8],
 	) -> Result<(), ProviderError> {
-		let stack = self.stack.as_ref().ok_or_else(|| ProviderError::Stack {
-			reason: "this provider was built without a stack".to_owned(),
-		})?;
-		lock(stack).add_light_spec(genesis_hash, specification)
+		let stack = self.stack.as_ref().ok_or(ProviderError::NoStack)?;
+		stack.add_light_spec(genesis_hash, specification)
 	}
 
-	/// Read what is stored for `genesis_hash`, when it was written for this
-	/// provider's stack and generation.
+	/// Whether the stack's chain with `genesis_hash` has its light spec.
+	pub fn has_light_spec(&self, genesis_hash: [u8; 32]) -> bool {
+		self.stack.as_ref().is_some_and(|stack| stack.has_light_spec(genesis_hash))
+	}
+
+	/// Where the host fetches each light spec of the provider's stack; see
+	/// [`LightStack::light_specs`](crate::LightStack::light_specs).
+	pub fn light_specs(&self) -> Vec<crate::LightSpecSource> {
+		self.stack.as_ref().map(|stack| stack.light_specs()).unwrap_or_default()
+	}
+
+	/// Read what this provider stored for `genesis_hash`. What another stack
+	/// or generation stored reads as nothing.
 	async fn load_stored(
 		&self,
 		store: &dyn crate::storage::StorageClient,
 		genesis_hash: [u8; 32],
 	) -> Result<Option<String>, ProviderError> {
-		let key = self.stack_key.as_ref();
-		let stored = store.load(genesis_hash, key.map(|key| key.id.clone())).await?;
-		let generation = key.map(|key| key.generation.as_str());
-		Ok(stored.and_then(|stored| crate::storage::unseal(generation, stored)))
+		let Some(stack) = &self.stack else {
+			return Ok(store.load(genesis_hash, None).await?);
+		};
+		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
+		Ok(stored.and_then(|stored| crate::storage::unseal(stack.id(), stack.generation(), stored)))
 	}
 
 	/// Put a seed back after a connect that never reached `add_chain`.
@@ -583,9 +578,13 @@ impl EmbeddedChainProvider {
 		// The blob is not kept in `seeded_databases`: a chain only consumes one
 		// on its first add, and this chain is live, so nothing could read it
 		// back before the process ends.
-		let key = self.stack_key.as_ref();
-		let sealed = crate::storage::seal(key.map(|key| key.generation.as_str()), &blob);
-		store.save(genesis_hash, sealed, key.map(|key| key.id.clone())).await?;
+		match &self.stack {
+			Some(stack) => {
+				let sealed = crate::storage::seal(stack.id(), stack.generation(), &blob);
+				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
+			},
+			None => store.save(genesis_hash, blob, None).await?,
+		}
 		lock(&self.stored_quality).insert(genesis_hash, has_code);
 		Ok(true)
 	}
@@ -672,52 +671,29 @@ impl ChainProvider for EmbeddedChainProvider {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		// Explicit registrations win; otherwise the stack serves the chain, or
-		// the catalog resolves the whole network from the genesis hash alone.
-		if let Some(source) = self.chains.get(&genesis_hash) {
-			let source = self.with_seeded_database(genesis_hash, source.clone());
+		let resolved = self.resolve(genesis_hash)?;
+		match self.with_seeded_database(genesis_hash, resolved.source) {
+			#[cfg(feature = "ws")]
+			ChainSource::RpcNode { url } => crate::ws::connect(url).await,
 			#[cfg(feature = "smoldot")]
-			let relay = self.relays.get(&genesis_hash).copied();
-			#[cfg(not(feature = "smoldot"))]
-			let relay = None;
-			let connected = self.connect_source(genesis_hash, &source, &self.chains, relay).await;
-			#[cfg(feature = "smoldot")]
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
+			source @ ChainSource::LightClient { .. } => {
+				let relay = resolved
+					.relay
+					.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source)));
+				let connected = self.light.connect(genesis_hash, &source, relay.as_ref()).await;
+				if connected.is_err() {
+					self.return_seed(genesis_hash, source);
+					// A relay that is running took its seed on the add that
+					// started it.
+					if let Some((genesis, source)) = relay &&
+						!self.light.is_added(genesis)
+					{
+						self.return_seed(genesis, source);
+					}
+				}
+				connected
+			},
 		}
-		#[cfg(feature = "smoldot")]
-		if let Some(stack) = &self.stack {
-			// Bound before the await so the lock guard is not held across it.
-			let sources = lock(stack).sources(genesis_hash)?;
-			let source = self.with_seeded_database(genesis_hash, sources.chain);
-			let relay = sources.relay.map(|(relay_genesis, relay_source)| {
-				(relay_genesis, self.with_seeded_database(relay_genesis, relay_source))
-			});
-			let connected = self.light.connect(genesis_hash, &source, relay).await;
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
-		}
-		#[cfg(feature = "networks")]
-		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
-			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
-				tracing::info!(network, service, "connecting via light client");
-			}
-			let source = catalog
-				.get(&genesis_hash)
-				.expect("catalog_network_chains includes the queried genesis")
-				.clone();
-			let source = self.with_seeded_database(genesis_hash, source);
-			let connected = self.connect_source(genesis_hash, &source, &catalog, relay).await;
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
-		}
-		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 }
 

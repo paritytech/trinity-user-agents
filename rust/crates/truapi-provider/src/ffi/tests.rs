@@ -642,20 +642,24 @@ fn a_stack_provider_checks_its_specs_and_takes_one_later() {
 		spec: spec.as_bytes().to_vec(),
 	};
 
-	let refused = ChainProvider::for_stack(
-		link.clone(),
-		descriptor.clone(),
-		vec![spec(&relay, PEOPLE_SPEC)],
-		None,
-	)
-	.err()
-	.expect("People's spec is not the relay's");
+	let listed = stack_light_specs(link.clone(), descriptor.clone()).expect("the link opens");
+	assert_eq!(
+		listed.iter().map(|listed| listed.genesis_hash.to_vec()).collect::<Vec<_>>()[..2],
+		[relay.clone(), people.clone()],
+		"a host reads what to fetch from the binding"
+	);
+
+	let refused =
+		ChainProvider::for_stack(link.clone(), descriptor.clone(), vec![spec(&relay, PEOPLE_SPEC)])
+			.err()
+			.expect("People's spec is not the relay's");
 	assert!(
-		matches!(&refused, ChainProviderError::Stack { reason } if reason.contains("Relay")),
+		matches!(&refused, ChainProviderError::LightSpec { genesis_hash, reason }
+			if *genesis_hash == relay && reason.contains("Relay")),
 		"got {refused:?}"
 	);
 
-	let provider = ChainProvider::for_stack(link, descriptor, vec![spec(&relay, RELAY_SPEC)], None)
+	let provider = ChainProvider::for_stack(link, descriptor, vec![spec(&relay, RELAY_SPEC)])
 		.expect("the relay's spec matches the descriptor");
 	let (listener, _messages, _closed) = Collector::new();
 	assert!(

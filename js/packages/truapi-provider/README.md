@@ -45,42 +45,35 @@ connection.close();
 ```
 
 To run a Trinity stack, give the builder the stack's link and its descriptor as
-served, the same pair the host gives the core, then the light spec of each
-chain:
+served, the same pair the host gives the core. The builder then lists where
+each chain's light spec is published:
 
 ```js
 const builder = new ChainProviderBuilder();
 builder.setStack(link, descriptorBytes);
-for (const chain of descriptor.chains) {
-  const response = await fetch(chain.lightSpec.url);
+for (const { genesisHash, url } of builder.lightSpecs()) {
+  const response = await fetch(url);
   if (!response.ok) continue; // the chain stays unknown; add its spec later
-  builder.addLightSpec(
-    chain.genesisHash,
-    new Uint8Array(await response.arrayBuffer()),
-  );
+  builder.addLightSpec(genesisHash, new Uint8Array(await response.arrayBuffer()));
 }
 const provider = builder.build();
 ```
 
-`setStack` throws when the link is malformed or the descriptor is refused under
-it: a link with a key accepts only a descriptor signed with that key.
-`addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
-imply another genesis hash, with the chain's role in the message, and leaves the
-builder as it was. Fetch the descriptor again before refusing the stack, since a
-wrong spec is what a stale descriptor looks like after a wipe. Pass the bytes as
-served, before any decoding, because the digest covers them.
-
-The descriptor decides the rest. The chain without a `paraId` is the relay and
-every other chain syncs through it, and a chain runs the statement-store
-protocol only when the descriptor sets `statementStore` on it. A chain whose
-spec was not added is unknown to the provider (`connect` rejects), and the rest
-of the stack runs. `provider.addLightSpec(genesisHash, bytes)` supplies it
-later without a new provider. A parachain also needs its relay's spec. A stack's
-provider never resolves a chain from the bundled catalog.
-
-Build one provider per stack, and a new one when the stack's `generation`
-changes: the light client keys a chain by its genesis hash, which a fork shares
-with its source.
+- `setStack` throws when the link is malformed or the descriptor is refused
+  under it. A link with a key accepts only a descriptor signed with that key.
+- `addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
+  imply another genesis hash, and names the chain's role. Pass the bytes as
+  served, because the digest covers them. A wrong spec is what a stale
+  descriptor looks like after a wipe, so fetch the descriptor again before
+  refusing the stack.
+- A chain without its spec is unknown to the provider and `connect` rejects.
+  The rest of the stack runs. `provider.addLightSpec(genesisHash, bytes)`
+  supplies the spec later. A parachain also needs its relay's.
+- The descriptor decides the relay every other chain syncs through, and which
+  chains run the statement-store protocol. The bundled catalog is not used.
+- Build one provider per stack, and a new one when the stack's `generation`
+  changes. The light client keys a chain by its genesis hash, which a fork
+  shares with its source.
 
 Warm start is opt-in, because this package stores nothing itself. Hand
 `setStorage` a client to storage you already own:
@@ -99,10 +92,10 @@ builder.setStorage({
 Both are called with a `0x`-prefixed lowercase genesis hash. `stack` identifies
 the stack given to `setStack`: its key in hex when the link has one, otherwise
 its normalised descriptor URL. It is `undefined` on a provider without a stack.
-Keep a blob per stack and genesis hash, because two stacks can share a genesis
-hash. What `save` receives starts with a line naming the stack's `generation`,
-and `load` must return it unchanged. After a wipe the provider ignores what was
-stored for the earlier generation and the next save replaces it. A client that cannot
+Keep a blob per stack and genesis hash, and return it unchanged. A stack's
+provider starts each blob with a line naming the stack and its `generation`,
+and reads back only its own, so a fork never resumes from its source's state
+and a wiped stack starts fresh. A client that cannot
 answer must reject rather than resolve `null`, which means "nothing stored yet"
 and would let the next write replace good state. Without a client every chain
 syncs from the checkpoint in the chain spec on every run.

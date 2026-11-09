@@ -260,8 +260,9 @@ client. Statement subscriptions each open their own connection.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client addressed by genesis hash. A provider built for a
-Trinity stack runs the chains of the stack's descriptor: the host fetches each
-chain's `lightSpec` and hands the bytes over, and the provider checks them
+Trinity stack runs the chains of the stack's descriptor: the provider lists
+where each chain's `lightSpec` is published, the host fetches it and hands the
+bytes over, and the provider checks them
 against the descriptor's `sha256` and the chain's genesis hash, wires each
 parachain to the relay and runs the statement-store protocol where the
 descriptor sets `statementStore`. A chain whose spec has not arrived is unknown
@@ -303,8 +304,9 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted. A blob is
 stored per stack and genesis hash, because a fork shares its source's genesis
-hashes, and carries the stack's `generation`, so a stack that restarted its
-chains reads nothing stored for the earlier ones.
+hashes. A stack's provider starts each blob with a line naming the stack and its
+`generation` and reads back only its own, so a store that ignores the stack
+still cannot mix two stacks, and a stack that restarted its chains starts fresh.
 
 ### Building extrinsics
 

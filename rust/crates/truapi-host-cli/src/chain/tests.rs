@@ -163,7 +163,7 @@ async fn the_light_client_reaches_paseo_next_v2() {
 		.rpc_client(network.genesis().asset_hub)
 		.await
 		.expect("connect to Asset Hub");
-	let light = StackLightClient::of(&network).expect("the stack has distinct genesis hashes");
+	let light = network.light_client().expect("the stack runs on the light client");
 	let state = light
 		.provider()
 		.lifecycle(network.genesis().asset_hub)
@@ -173,6 +173,23 @@ async fn the_light_client_reaches_paseo_next_v2() {
 	assert_eq!(state.map(|state| state.phase), Some(ChainPhase::Ready));
 
 	reach_paseo_next_v2(ChainBackend::LightClient).await;
+}
+
+/// pcf-devnet is in no bundled catalog, so this runs only on the specs its
+/// descriptor names. Its Asset Hub spec lists one bootnode, so allow minutes.
+#[tokio::test]
+#[ignore = "needs network access to pcf-devnet's chains"]
+async fn the_light_client_reaches_a_stack_outside_the_catalog() {
+	let network = Network::PcfDevnet.bundled_stack(ChainBackend::LightClient);
+	let client = CliChainProvider::new(&network)
+		.rpc_client(network.genesis().asset_hub)
+		.await
+		.expect("connect to Asset Hub");
+	let genesis: String = client
+		.request("chainSpec_v1_genesisHash", subxt_rpcs::rpc_params![])
+		.await
+		.expect("Asset Hub answers");
+	assert_eq!(genesis, format!("0x{}", hex::encode(network.genesis().asset_hub)));
 }
 
 /// Every consumer this provider serves reaches its own chain on `backend`, and

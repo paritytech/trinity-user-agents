@@ -12,9 +12,11 @@
 //! A blob is stored per stack and per chain. Two stacks can share genesis
 //! hashes, as a fork and its source do, so [`StorageClient`] is handed what
 //! identifies the stack with the genesis hash, and a store keeps the pair
-//! apart. What is stored is the stack's `generation` on a line of its own,
-//! then the blob: a stack that restarted its chains reads nothing stored for
-//! the earlier ones, and the next save replaces it.
+//! apart. What a stack's provider stores starts with a line naming the stack
+//! and its `generation`, and the provider reads back only what carries its
+//! own. So a store that ignores the stack still cannot hand one stack
+//! another's state, and a stack that restarted its chains reads nothing
+//! stored for the earlier ones. The next save replaces what was not read.
 //!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
@@ -86,20 +88,23 @@ pub trait StorageClient: Send + Sync {
 	) -> Result<(), StorageClientError>;
 }
 
-/// What is stored for a chain: `generation` on a line of its own, then `blob`.
-pub fn seal(generation: Option<&str>, blob: &str) -> String {
-	format!("{}\n{blob}", serde_json::json!({ "generation": generation }))
+/// The first line of what a stack's provider stores.
+fn header(stack: &str, generation: &str) -> serde_json::Value {
+	serde_json::json!({ "stack": stack, "generation": generation })
 }
 
-/// The blob inside `stored`, when [`seal`] wrote it for `generation`.
-///
-/// `None` for anything else, including a blob of another generation: the chain
-/// then syncs from its spec's checkpoint, and the next save replaces what is
-/// stored.
-pub fn unseal(generation: Option<&str>, mut stored: String) -> Option<String> {
+/// What `stack` stores for a chain at `generation`: a line naming both, then
+/// `blob`.
+pub fn seal(stack: &str, generation: &str, blob: &str) -> String {
+	format!("{}\n{blob}", header(stack, generation))
+}
+
+/// The blob inside `stored`, when [`seal`] wrote it for `stack` at
+/// `generation`, and `None` for anything else.
+pub fn unseal(stack: &str, generation: &str, mut stored: String) -> Option<String> {
 	let end = stored.find('\n')?;
-	let header: serde_json::Value = serde_json::from_str(&stored[..end]).ok()?;
-	if header.get("generation")? != &serde_json::json!(generation) {
+	let named: serde_json::Value = serde_json::from_str(&stored[..end]).ok()?;
+	if named != header(stack, generation) {
 		return None;
 	}
 	stored.drain(..=end);

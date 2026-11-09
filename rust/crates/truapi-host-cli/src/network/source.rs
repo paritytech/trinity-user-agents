@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow, bail};
 use super::{
 	Network, NetworkChoice, NetworkSource, Stack, StackArg,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
-	checks::{require_light_specs, verify_chains},
+	checks::verify_chains,
 };
 use crate::{
 	chain::ChainBackend,
@@ -86,7 +86,6 @@ impl NetworkSource {
 				(stack, Some(origin))
 			},
 		};
-		require_light_specs(&stack)?;
 		Ok((stack, built_in))
 	}
 }

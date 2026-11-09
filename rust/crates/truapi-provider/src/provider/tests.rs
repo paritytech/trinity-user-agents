@@ -83,30 +83,49 @@ fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
 	);
 }
 
+/// A parachain over the fixture specs, its relay seeded with a blob.
+#[cfg(feature = "smoldot")]
+fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainProvider {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, genesis};
+
+	EmbeddedChainProvider::builder()
+		.chain(genesis(RELAY_SPEC), ChainSource::light_client(RELAY_SPEC).build())
+		.parachain(
+			genesis(PEOPLE_SPEC),
+			ChainSource::light_client(parachain_spec).build(),
+			genesis(RELAY_SPEC),
+		)
+		.database(genesis(RELAY_SPEC), "relay-blob".to_owned())
+		.build()
+}
+
 /// A blob registered for a relay reaches it even when the relay is never
 /// connected directly, only brought up behind one of its parachains.
 #[cfg(feature = "smoldot")]
 #[test]
-// Without the `ws` backend the enum has a single variant, making the
-// let-else below irrefutable there.
-#[allow(irrefutable_let_patterns)]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
-	use std::collections::HashMap;
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, genesis};
 
-	const RELAY: [u8; 32] = [1; 32];
-	let mut chains = HashMap::new();
-	chains.insert(RELAY, ChainSource::light_client("{}").build());
-	let provider = EmbeddedChainProvider::builder()
-		.database(RELAY, "relay-blob".to_owned())
-		.build();
+	let provider = parachain_with_a_seeded_relay(PEOPLE_SPEC);
 
-	let (genesis, source) =
-		provider.resolve_relay(&chains, RELAY).expect("the relay is registered");
-	assert_eq!(genesis, RELAY);
-	let ChainSource::LightClient { database_content, .. } = source else {
-		panic!("expected a LightClient source");
-	};
-	assert_eq!(database_content.as_deref(), Some("relay-blob"));
+	let _connection = futures::executor::block_on(provider.connect(genesis(PEOPLE_SPEC)))
+		.expect("the parachain syncs through its relay");
+
+	assert!(!provider.has_database(genesis(RELAY_SPEC)), "the relay took its blob");
+}
+
+/// The relay is the chain that warp syncs, so losing its blob to a parachain
+/// that failed to start would make the retry sync cold.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_failed_parachain_connect_keeps_the_relays_blob() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, genesis};
+
+	let provider = parachain_with_a_seeded_relay("not a chain spec");
+
+	assert!(futures::executor::block_on(provider.connect(genesis(PEOPLE_SPEC))).is_err());
+
+	assert!(provider.has_database(genesis(RELAY_SPEC)));
 }
 
 /// The snapshot round trip resolves against a live light client, and the
@@ -160,18 +179,13 @@ impl MemoryStorageClient {
 		self.stored
 			.lock()
 			.expect("test store")
-			.insert(StoredKey { stack: None, genesis_hash }, crate::storage::seal(None, blob));
+			.insert(StoredKey { stack: None, genesis_hash }, blob.to_owned());
 	}
 
 	/// The blob a provider without a stack stored.
 	fn blob(&self, genesis_hash: [u8; 32]) -> Option<String> {
-		let stored = self
-			.stored
-			.lock()
-			.expect("test store")
-			.get(&StoredKey { stack: None, genesis_hash })
-			.cloned();
-		crate::storage::unseal(None, stored?)
+		let key = StoredKey { stack: None, genesis_hash };
+		self.stored.lock().expect("test store").get(&key).cloned()
 	}
 }
 
@@ -469,7 +483,7 @@ fn a_chain_without_its_spec_is_unknown_until_the_spec_is_added() {
 	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
 
 	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
-	let mut stack = stack(STACK_ID, "one");
+	let stack = stack(STACK_ID, "one");
 	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
 	let provider = EmbeddedChainProvider::builder().stack(stack).build();
 
@@ -513,7 +527,7 @@ fn a_wrong_spec_added_after_the_build_is_refused() {
 			EmbeddedChainProvider::builder()
 				.build()
 				.add_light_spec(relay, RELAY_SPEC.as_bytes()),
-			Err(crate::ProviderError::Stack { .. })
+			Err(crate::ProviderError::NoStack)
 		),
 		"a provider without a stack has no descriptor to check a spec against"
 	);
@@ -564,17 +578,21 @@ fn a_database_is_read_only_by_its_own_stack_and_generation() {
 	assert_eq!(loads, [true, false, false]);
 	assert!(store.blob(people).is_none(), "nothing is kept outside a stack");
 
+	// A store that ignores the stack answers the fork with the source's blob.
+	// The blob names its stack, so the fork still reads nothing.
+	let key = |stack: &str| StoredKey { stack: Some(stack.to_owned()), genesis_hash: people };
+	let of_source = store.stored.lock().expect("test store")[&key(STACK_ID)].clone();
+	store.stored.lock().expect("test store").insert(key(FORK_ID), of_source);
+	let fork = stack_provider(synced_stack(FORK_ID, "one"), &store);
+	assert!(!block_on(fork.load_database(people)).expect("the store answers"));
+
 	// The earlier generation's blob has the runtime code, which would keep a
 	// weaker blob of the same generation out. It is not this generation's, so
 	// the new one replaces it.
 	let next = stack_provider(synced_stack(STACK_ID, "two"), &store);
 	assert!(block_on(next.store_blob(people, WITHOUT_CODE.to_owned())).expect("the store answers"));
 	assert_eq!(
-		store
-			.stored
-			.lock()
-			.expect("test store")
-			.get(&StoredKey { stack: Some(STACK_ID.to_owned()), genesis_hash: people }),
-		Some(&crate::storage::seal(Some("two"), WITHOUT_CODE))
+		store.stored.lock().expect("test store").get(&key(STACK_ID)),
+		Some(&crate::storage::seal(STACK_ID, "two", WITHOUT_CODE))
 	);
 }

@@ -18,7 +18,7 @@ pub fn genesis(spec: &str) -> [u8; 32] {
 	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")
 }
 
-fn sha256(spec: &str) -> String {
+pub fn sha256(spec: &str) -> String {
 	format!("0x{}", hex::encode(Sha256::digest(spec.as_bytes())))
 }
 
@@ -59,7 +59,7 @@ pub fn stack(id: &str, generation: &str) -> LightStack {
 
 /// The test stack at `generation` with the relay's and People's specs.
 pub fn synced_stack(id: &str, generation: &str) -> LightStack {
-	let mut stack = stack(id, generation);
+	let stack = stack(id, generation);
 	for spec in [RELAY_SPEC, PEOPLE_SPEC] {
 		stack.add_light_spec(genesis(spec), spec.as_bytes()).expect("the spec matches");
 	}
