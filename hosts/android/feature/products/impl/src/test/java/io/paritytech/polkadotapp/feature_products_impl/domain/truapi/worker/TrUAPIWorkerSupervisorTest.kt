@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
-import com.google.gson.Gson
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -11,9 +10,9 @@ import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -33,9 +32,11 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
@@ -136,16 +137,12 @@ class TrUAPIWorkerSupervisorTest {
     // WebView serves the script from the bundle under the worker's own subname.
     @Test
     fun `a bundled worker boots from its files without resolving its script`() = runTest {
-        val bundled = BundledProducts(
-            InMemoryBundledProductFiles(
-                mapOf(
-                    "bundled-products/worker.paseo/worker-manifest.json" to
-                        """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":true}}""",
-                    "bundled-products/worker.paseo/worker/index.js" to "export {}",
-                ),
+        val bundled = bundledProducts(
+            mapOf(
+                "bundled-products/worker.paseo/worker-manifest.json" to
+                    """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":true}}""",
+                "bundled-products/worker.paseo/worker/index.js" to "export {}",
             ),
-            ManifestParser(Gson()),
-            enabled = true,
         )
         val supervisor = supervisor(bundled)
 
@@ -154,12 +151,12 @@ class TrUAPIWorkerSupervisorTest {
 
         assertEquals(0, resolvedWorkers)
         assertEquals(WorkerScript("https://worker.worker.paseo", "index.js"), configs.single().workerScript)
-        assertEquals("worker.worker.paseo", configs.single().bundledContent?.host)
+        assertTrue(configs.single().source is ProductSource.Bundled)
         assertEquals(1, chatBridges.filterNotNull().size)
     }
 
     private fun TestScope.supervisor(
-        bundledProducts: BundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), ManifestParser(Gson()), enabled = true),
+        bundledProducts: BundledProducts = bundledProducts(emptyMap()),
     ) = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
@@ -184,6 +181,7 @@ class TrUAPIWorkerSupervisorTest {
             }
         },
         bootstrapInstaller = bootstrapInstaller,
+        productSources = productSources(bundledProducts),
         bundledProducts = bundledProducts,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
