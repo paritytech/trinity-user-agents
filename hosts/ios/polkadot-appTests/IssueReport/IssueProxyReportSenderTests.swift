@@ -7,7 +7,8 @@ struct IssueProxyReportSenderTests {
     private let report = IssueReport(
         description: "The screen froze 🐛",
         logs: Data([0x50, 0x4B, 0x03, 0x04]),
-        screenshot: Data([0x89, 0x50, 0x4E, 0x47])
+        screenshot: Data([0x89, 0x50, 0x4E, 0x47]),
+        gitHubUsername: GitHubUsername("octocat")
     )
 
     @Test func postsAuthenticatedProxyMultipart() async throws {
@@ -29,6 +30,7 @@ struct IssueProxyReportSenderTests {
 
         - App ID: `\(Bundle.main.bundleIdentifier ?? "Unknown")`
         - App version: `\(Bundle.main.appVersion ?? "Unknown")`
+        - GitHub username: @octocat
         - Build: `\(Bundle.main.appBuild ?? "Unknown")`
         """
         var body = Data((
@@ -52,6 +54,31 @@ struct IssueProxyReportSenderTests {
         expected.httpBody = body
         #expect(client.recordedRequests == [expected])
         #expect(request.httpBody == body)
+    }
+
+    @Test func leavesTheGitHubUsernameOutWhenTheReporterGivesNone() async throws {
+        let url = try #require(URL(string: endpoint))
+        let client = StubHTTPLoader()
+        client.setStub(.init(statusCode: 201), for: url)
+        let configuration = try IssueProxyConfiguration(endpoint: endpoint, apiKey: "app-key")
+        let sender = IssueProxyReportSender(configuration: { configuration }, client: client)
+
+        try await sender.send(IssueReport(
+            description: report.description,
+            logs: report.logs,
+            screenshot: report.screenshot,
+            gitHubUsername: nil
+        ))
+
+        let body = try #require(client.recordedRequests.first?.httpBody)
+        let appInformation = """
+        ## App information
+
+        - App ID: `\(Bundle.main.bundleIdentifier ?? "Unknown")`
+        - App version: `\(Bundle.main.appVersion ?? "Unknown")`
+        - Build: `\(Bundle.main.appBuild ?? "Unknown")`\r\n
+        """
+        #expect(String(decoding: body, as: UTF8.self).contains(appInformation))
     }
 
     @Test func missingOrUnsafeConfigurationMakesNoRequest() async {
