@@ -2610,10 +2610,7 @@ fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_u
 			last_call_at: None,
 		},
 	};
-	assert_eq!(
-		follow.describe_activity(at(600)),
-		"open 600 s, last event never, 0 calls, last call never, receiver open"
-	);
+	assert_eq!(follow.describe_activity(at(600)), "open 600s, event never, calls 0, call never");
 
 	follow.activity.last_event_at = Some(at(594));
 	follow.activity.calls = 3;
@@ -2621,8 +2618,68 @@ fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_u
 	drop(receiver);
 	assert_eq!(
 		follow.describe_activity(at(600)),
-		"open 600 s, last event 6 s ago, 3 calls, last call 540 s ago, receiver dropped"
+		"open 600s, event 6s, calls 3, call 540s, receiver dropped"
 	);
+}
+
+/// The host sink cuts a detail at [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`]
+/// before a host sees it, so the line has to name four follows and their
+/// activity inside that. A dotNS follow is named by its label, which carries a
+/// product id and is the longest name any follow brings.
+#[test]
+fn a_budget_line_naming_four_dotns_follows_fits_the_detail_a_host_receives() {
+	let opened = SystemTime::now();
+	let products = [
+		"notes-worker-demo.paseo",
+		"some.longish.product.identifier.paseo",
+		"peopl.paseo",
+		"a.dot",
+	];
+	let mut follows = HashMap::new();
+	let mut receivers = Vec::new();
+	for (index, product) in products.into_iter().enumerate() {
+		let (sender, receiver) = mpsc::unbounded();
+		receivers.push(receiver);
+		follows.insert(
+			format!("truapi:dotns:{}:manifest:{product}", index + 10),
+			FollowState {
+				with_runtime: false,
+				client_subscription_id: None,
+				remote_subscription_id: Some("REMOTE".to_string()),
+				abort: None,
+				sender,
+				cancelled: Arc::new(AtomicBool::new(false)),
+				activity: FollowActivity {
+					opened_at: opened,
+					last_event_at: Some(opened + Duration::from_secs(12)),
+					calls: 7,
+					last_call_at: Some(opened + Duration::from_secs(30)),
+				},
+			},
+		);
+	}
+
+	let holding = ChainConnection::follows_holding_a_slot(&follows);
+	let line = ChainConnection::budget_line(
+		&encode_hex(&[0xab; 32]),
+		&holding,
+		&follows,
+		opened + Duration::from_secs(600),
+	);
+
+	assert_eq!(holding.len(), FOLLOWS_A_NODE_BUDGETS);
+	let length = line.chars().count();
+	assert!(
+		length <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
+		"the host receives {length} of {} chars: {line}",
+		crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+	);
+	// Every follow reaches the host with its activity, the last one included,
+	// which is the one a line that ran out of room used to lose.
+	assert_eq!(line.matches("open 600s, event 588s, calls 7, call 570s").count(), 4);
+	for product in ["notes-worker-demo.paseo", "peopl.paseo", "a.dot"] {
+		assert!(line.contains(product), "{product} is not named in {line}");
+	}
 }
 
 /// A node that cannot be reached may be reachable later, so the read waits on

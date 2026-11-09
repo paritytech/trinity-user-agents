@@ -1800,31 +1800,63 @@ impl ChainConnection {
 		// says so once rather than on every follow that renews the condition.
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
 		let report = at_budget && !already_reported;
-		let occupants = report.then(|| {
-			let now = SystemTime::now();
-			holding
-				.iter()
-				.map(|held| {
-					let activity = follows.get(held).map(|follow| follow.describe_activity(now));
-					format!("{} ({})", Self::occupant_name(held), activity.unwrap_or_default())
-				})
-				.collect::<Vec<_>>()
-				.join(", ")
+		let line = report.then(|| {
+			Self::budget_line(
+				&encode_hex(&self.genesis_hash),
+				&holding,
+				&follows,
+				SystemTime::now(),
+			)
 		});
 		drop(follows);
-		if let Some(occupants) = occupants {
+		if let Some(line) = line {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it
 			// arrives whatever the level is, and hosts run at `ERROR`.
-			let genesis = encode_hex(&self.genesis_hash);
-			let held = holding.len();
-			warn!(
-				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
-				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
-			);
+			warn!(target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target, "{line}");
 		}
 		true
+	}
+
+	/// What the budget marker carries: the chain, how many follows hold a slot,
+	/// and each of those follows with its activity.
+	///
+	/// Every follow is named, because the one a line runs out of room for is
+	/// the one that opened last and so the likeliest to be the leak.
+	fn budget_line(
+		genesis: &str,
+		holding: &[String],
+		follows: &HashMap<String, FollowState>,
+		now: SystemTime,
+	) -> String {
+		let held = holding.len();
+		let head = format!(
+			"chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows, the next is refused: "
+		);
+		// Each follow gets an equal share of what the detail has room for, and
+		// a name spends whatever its activity leaves. A dotNS follow is named
+		// by its label, so a long product id shortens that one name rather than
+		// pushing the follows after it out of the line.
+		let separators = held.saturating_sub(1) * 2;
+		let share = crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+			.saturating_sub(head.chars().count() + separators)
+			.checked_div(held)
+			.unwrap_or_default();
+		let occupants = holding
+			.iter()
+			.map(|follow_id| {
+				let activity = follows
+					.get(follow_id)
+					.map(|follow| follow.describe_activity(now))
+					.unwrap_or_default();
+				let name = Self::occupant_name(follow_id);
+				let room = share.saturating_sub(activity.chars().count() + 1);
+				format!("{} {activity}", crate::logging::truncate_to_chars(&name, room))
+			})
+			.collect::<Vec<_>>()
+			.join(", ");
+		format!("{head}{occupants}")
 	}
 
 	/// Local ids of the follows holding a slot in this connection's budget.
@@ -1988,16 +2020,15 @@ impl FollowState {
 		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
 		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
 		let since = |at: &Option<SystemTime>| match at {
-			Some(at) => format!("{} s ago", elapsed(at)),
+			Some(at) => format!("{}s", elapsed(at)),
 			None => "never".to_string(),
 		};
 		let open = elapsed(opened_at);
 		let last_event = since(last_event_at);
 		let last_call = since(last_call_at);
-		let receiver = if self.sender.is_closed() { "dropped" } else { "open" };
-		format!(
-			"open {open} s, last event {last_event}, {calls} calls, last call {last_call}, receiver {receiver}"
-		)
+		// A live receiver is the ordinary case, so only a dropped one is named.
+		let receiver = if self.sender.is_closed() { ", receiver dropped" } else { "" };
+		format!("open {open}s, event {last_event}, calls {calls}, call {last_call}{receiver}")
 	}
 }
 
