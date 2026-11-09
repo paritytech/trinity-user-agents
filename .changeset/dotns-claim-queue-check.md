@@ -6,6 +6,6 @@
 signing. It stops when another account holds the first active reservation, naming that account.
 On dotNS 1.1.0 and later, when more expired or emptied reservations stand in front of the claim
 than one gateway call clears, it first clears them with `DotnsPopController.expireReservation(label)`,
-signed by the account, claiming PGAS into the account when its balance does not cover the fee and the
-storage deposit.
+signed by the account. It claims PGAS into the account first when the account holds none, or when the
+dry-run fails because the account cannot fund the storage deposit.
 Without that, the gateway call reverts and the command ends in an `AccountAlias` timeout.
