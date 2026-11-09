@@ -115,7 +115,8 @@ struct ProductNetworkAccessTests {
 
         for freshDocument in [false, true] {
             if freshDocument {
-                try await product.execution.setPermissionAuthorizationStatus(
+                try await product.runtime.setPermissionAuthorizationStatus(
+                    productId: "network.paseo",
                     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
                     status: .authorized
                 )
@@ -161,8 +162,10 @@ struct ProductNetworkAccessTests {
         for freshDocument in [false, true] {
             if freshDocument {
                 for device in [HostDevicePermissionRequest.camera, .microphone] {
-                    try await product.execution.setPermissionAuthorizationStatus(
-                        request: .device(device), status: .authorized
+                    try await product.runtime.setPermissionAuthorizationStatus(
+                        productId: "network.paseo",
+                        request: .device(device),
+                        status: .authorized
                     )
                 }
                 try await product.navigationDelegate.load(
