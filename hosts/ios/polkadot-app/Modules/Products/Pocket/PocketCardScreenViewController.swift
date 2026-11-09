@@ -20,7 +20,7 @@ final class PocketCardScreenViewController: UIViewController {
     private let card: PocketCardViewModel
     private let product: SPAViewProtocol
     private let face: UIHostingController<PocketOpenedCardView>
-    private weak var origin: PocketCardOrigin?
+    private weak var origin: PocketOrigin?
 
     private let scrollView = FaceScrollView()
     private let backSwipe = UIScreenEdgePanGestureRecognizer()
@@ -38,7 +38,7 @@ final class PocketCardScreenViewController: UIViewController {
     private lazy var closePan = UIPanGestureRecognizer(target: self, action: #selector(followClosePan))
     private var isInFlight = false
 
-    init(card: PocketCardViewModel, product: SPAViewProtocol, origin: PocketCardOrigin? = nil) {
+    init(card: PocketCardViewModel, product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.card = card
         self.product = product
         self.origin = origin
@@ -96,7 +96,7 @@ final class PocketCardScreenViewController: UIViewController {
 
         guard parent != nil else { return }
 
-        origin?.setOpenCard(card.key)
+        origin?.setOpenItem(.card(card.key))
     }
 
     override func didMove(toParent parent: UIViewController?) {
@@ -137,6 +137,8 @@ final class PocketCardScreenViewController: UIViewController {
 
 extension PocketCardScreenViewController: TabBarRootStandIn {}
 
+extension PocketCardScreenViewController: PocketFlightScreen {}
+
 // MARK: - NavigationTransitionAnimating
 
 extension PocketCardScreenViewController: NavigationTransitionAnimating {
@@ -144,27 +146,23 @@ extension PocketCardScreenViewController: NavigationTransitionAnimating {
         flight(opening: operation == .push)
     }
 
-    private func flight(opening: Bool) -> PocketCardFlight? {
-        guard let origin else { return nil }
-
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            // Nothing carries the card back, so the Pocket is whole again before the screen slides off it.
-            origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
-            return nil
-        }
-
+    private func flight(opening: Bool) -> PocketFlight {
         // From here on, not from when the flight starts: a face moved in
         // between would fly in already folded away.
         isInFlight = true
-        return PocketCardFlight(screen: self, origin: origin, key: card.key, opening: opening)
+        return PocketFlight(screen: self, origin: origin, opening: opening)
     }
 }
 
 // MARK: - Card flight
 
 extension PocketCardScreenViewController {
+    var pocketItem: PocketItem {
+        .card(card.key)
+    }
+
     /// Without the margins the screen draws around the card.
-    func cardFrame(in view: UIView) -> CGRect {
+    func itemFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
             dx: PocketCardSize.sideMargin,
             dy: PocketOpenedCardView.verticalInset
@@ -181,13 +179,13 @@ extension PocketCardScreenViewController {
 
     /// Moves the card with its page hanging off it, so the page never covers
     /// the card the Pocket draws in its place.
-    func moveCard(by offset: CGPoint) {
+    func moveItem(by offset: CGPoint) {
         face.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
         product.controller.view.transform = face.view.transform
     }
 
     /// The Pocket draws the card while it flies.
-    func setCardHidden(_ hidden: Bool) {
+    func setItemHidden(_ hidden: Bool) {
         face.view.alpha = hidden ? 0 : 1
     }
 
@@ -201,17 +199,17 @@ extension PocketCardScreenViewController {
         scrollView.clipsToBounds = true
         view.backgroundColor = .bgSurfaceMain
         setPageAlpha(1)
-        moveCard(by: .zero)
-        setCardHidden(false)
+        moveItem(by: .zero)
+        setItemHidden(false)
         applyPendingFace(animated: true)
     }
 
     /// Leaves the Pocket alone once another card's screen has taken it over.
     func showCardInPocket() {
-        guard let origin, origin.openCard == card.key else { return }
+        guard let origin, origin.openItem == .card(card.key) else { return }
 
-        origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
-        origin.setOpenCard(nil)
+        origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
+        origin.setOpenItem(nil)
     }
 }
 

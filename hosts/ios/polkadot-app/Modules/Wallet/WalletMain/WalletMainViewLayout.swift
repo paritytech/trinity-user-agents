@@ -36,8 +36,8 @@ struct WalletView: View {
                     }
                     .id(scrollTopAnchor)
                 }
-                .scrollClipDisabled(viewModel.openPocketCard != nil)
-                .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
+                .scrollClipDisabled(openCardKey != nil)
+                .modifier(TopScrollEdgeEffectHidden(hidden: openCardKey != nil))
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }
@@ -61,7 +61,7 @@ struct WalletView: View {
     @ViewBuilder
     private var pocketCards: some View {
         if viewModel.expandedSection == .none {
-            let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
+            let openIndex = viewModel.pocketCards.firstIndex { $0.key == openCardKey }
             ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                 // A press takes the user into the product the card belongs
                 // to, at the page the card names. The shape is named so the
@@ -129,6 +129,12 @@ struct WalletView: View {
 }
 
 private extension WalletView {
+    var openCardKey: PocketCardKey? {
+        guard case let .card(key) = viewModel.openItem else { return nil }
+
+        return key
+    }
+
     @ViewBuilder
     var collectiblesCard: some View {
         Button {

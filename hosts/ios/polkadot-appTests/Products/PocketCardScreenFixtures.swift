@@ -14,16 +14,17 @@ let loyaltyCard = PocketCardViewModel(
 /// Where the Pocket shows the card, in window coordinates.
 let pocketSlot = CGRect(x: 24, y: 420, width: 345, height: PocketCardSize.height)
 
-/// How the Pocket draws its open card: which card it is, how far it is moved
+/// How the Pocket draws its open item: which item it is, how far it is moved
 /// from its slot, and whether the rest of the Pocket has cleared away for it.
 struct PocketPlacement: Equatable {
-    var openCard: PocketCardKey?
+    var openItem: PocketItem?
     var offset: CGSize = .zero
     var cleared = false
 }
 
+/// A Pocket that shows every item in the same slot, and records its placement.
 @MainActor
-final class FakePocketCardOrigin: PocketCardOrigin {
+final class FakePocketOrigin: PocketOrigin {
     let slot: CGRect?
     private(set) var placement = PocketPlacement()
 
@@ -31,19 +32,19 @@ final class FakePocketCardOrigin: PocketCardOrigin {
         self.slot = slot
     }
 
-    func frame(of _: PocketCardKey) -> CGRect? {
+    func frame(of _: PocketItem) -> CGRect? {
         slot
     }
 
-    var openCard: PocketCardKey? {
-        placement.openCard
+    var openItem: PocketItem? {
+        placement.openItem
     }
 
-    func setOpenCard(_ key: PocketCardKey?) {
-        placement.openCard = key
+    func setOpenItem(_ item: PocketItem?) {
+        placement.openItem = item
     }
 
-    func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated _: Bool) {
+    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated _: Bool) {
         placement.offset = offset
         placement.cleared = clearingPocket
     }

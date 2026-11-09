@@ -34,7 +34,7 @@ struct PocketCardOpening {
                 makeView(for: card, page: page, pageQuery: pageQuery)
             }) else { return }
 
-            let origin = wallet.viewControllers.first as? PocketCardOrigin
+            let origin = wallet.viewControllers.first as? PocketOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
             PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
                 product.surface.claim(screen)

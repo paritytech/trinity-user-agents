@@ -1,29 +1,15 @@
 import DesignSystem
 import UIKit
 
-/// The Wallet a Collectibles screen opens from: where the Pocket's peek sits, and how it draws the peek while the
-/// screen is up.
-@MainActor
-protocol CollectiblesOrigin: AnyObject {
-    /// The peek's frame in window coordinates, or nil when the peek is not on screen to fly from.
-    var collectiblesBookFrame: CGRect? { get }
-
-    /// Hides the peek, since the book stands in its place while the screen is up.
-    func setCollectiblesBookLifted()
-
-    /// Shows the peek again once the book has landed on it, coloured, then fades it back to grey.
-    func setCollectiblesBookLanded()
-}
-
 /// Carries the Collectibles book from the Pocket's peek to the top of its screen. The book lifts out of the peek and
 /// settles on the page. A screen with no peek to fly from fades in instead.
 final class CollectiblesBookFlight: NSObject, UIViewControllerAnimatedTransitioning {
     private static let duration: TimeInterval = 0.5
 
     private let screen: CollectiblesViewController
-    private let origin: CollectiblesOrigin
+    private let origin: PocketOrigin
 
-    init(screen: CollectiblesViewController, origin: CollectiblesOrigin) {
+    init(screen: CollectiblesViewController, origin: PocketOrigin) {
         self.screen = screen
         self.origin = origin
     }
@@ -38,7 +24,7 @@ final class CollectiblesBookFlight: NSObject, UIViewControllerAnimatedTransition
         container.addSubview(screen.view)
         screen.view.layoutIfNeeded()
 
-        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.collectiblesBookFrame else {
+        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.frame(of: .collectibles) else {
             fadeIn(context)
             return
         }
@@ -46,7 +32,6 @@ final class CollectiblesBookFlight: NSObject, UIViewControllerAnimatedTransition
         let landing = screen.bookFrame(in: container)
         let offset = offsetToSlot(container.convert(slot, from: nil), fromLanding: landing)
 
-        origin.setCollectiblesBookLifted()
         screen.beginFlight(from: offset)
 
         let backdrop = backdropFade(of: screen, to: .bgSurfaceMain)
@@ -79,9 +64,9 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
     private static let duration: TimeInterval = 0.5
 
     private let screen: CollectiblesViewController
-    private let origin: CollectiblesOrigin
+    private let origin: PocketOrigin
 
-    init(screen: CollectiblesViewController, origin: CollectiblesOrigin) {
+    init(screen: CollectiblesViewController, origin: PocketOrigin) {
         self.screen = screen
         self.origin = origin
     }
@@ -97,7 +82,7 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
             wallet.view.frame = context.finalFrame(for: wallet)
         }
 
-        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.collectiblesBookFrame else {
+        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.frame(of: .collectibles) else {
             fadeOut(context)
             return
         }
@@ -114,8 +99,7 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
 
         let backdrop = backdropFade(of: screen, to: .clear)
         let flight = flightAnimator(moving: screen, to: offset)
-        flight.addCompletion { [self] _ in
-            origin.setCollectiblesBookLanded()
+        flight.addCompletion { _ in
             context.completeTransition(!context.transitionWasCancelled)
         }
 
@@ -128,8 +112,7 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
         let fade = UIViewPropertyAnimator(duration: CollectiblesBookTiming.backdropFade, curve: .linear) { [self] in
             screen.view.alpha = 0
         }
-        fade.addCompletion { [self] _ in
-            origin.setCollectiblesBookLanded()
+        fade.addCompletion { _ in
             context.completeTransition(!context.transitionWasCancelled)
         }
         fade.startAnimation()

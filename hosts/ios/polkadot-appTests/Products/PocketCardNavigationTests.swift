@@ -33,18 +33,21 @@ struct PocketCardNavigationTests {
     /// draw the new card as closed under its own screen.
     @Test
     func givesThePocketItsCardBackUnlessAnotherCardTookOver() {
-        let closed = FakePocketCardOrigin(slot: nil)
-        closed.setOpenCard(loyaltyCard.key)
-        closed.moveOpenCard(by: CGSize(width: 0, height: -300), clearingPocket: true, animated: false)
-        let swapped = FakePocketCardOrigin(slot: nil)
-        swapped.setOpenCard(trophyCard.key)
+        let closed = FakePocketOrigin(slot: nil)
+        closed.setOpenItem(.card(loyaltyCard.key))
+        closed.moveOpenItem(by: CGSize(width: 0, height: -300), clearingPocket: true, animated: false)
+        let swapped = FakePocketOrigin(slot: nil)
+        swapped.setOpenItem(.card(trophyCard.key))
 
         for origin in [closed, swapped] {
             PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
                 .showCardInPocket()
         }
 
-        #expect([closed.placement, swapped.placement] == [PocketPlacement(), PocketPlacement(openCard: trophyCard.key)])
+        #expect([closed.placement, swapped.placement] == [
+            PocketPlacement(),
+            PocketPlacement(openItem: .card(trophyCard.key))
+        ])
     }
 }
 

@@ -11,7 +11,7 @@ import WebKit
 /// once the load has finished and the frames have settled. A load that does not finish in time fails the page instead.
 final class CollectiblesViewController: UIViewController {
     private let product: SPAViewProtocol
-    private weak var origin: CollectiblesOrigin?
+    private weak var origin: PocketOrigin?
 
     private let pageView = UIView()
     private let skeleton = CollectiblesSkeletonView(frame: .zero)
@@ -27,7 +27,7 @@ final class CollectiblesViewController: UIViewController {
     private let frameWatch = FrameIntervalWatch()
     private var steadyFrames = SteadyFrameRule()
 
-    init(product: SPAViewProtocol, origin: CollectiblesOrigin? = nil) {
+    init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
         self.origin = origin
 
@@ -83,13 +83,23 @@ final class CollectiblesViewController: UIViewController {
         layoutRestingPage()
     }
 
+    override func willMove(toParent parent: UIViewController?) {
+        super.willMove(toParent: parent)
+
+        guard parent != nil else { return }
+
+        origin?.setOpenItem(.collectibles)
+    }
+
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
 
         guard parent == nil else { return }
 
         stopWatchingLoad()
-        origin?.setCollectiblesBookLanded()
+        if origin?.openItem == .collectibles {
+            origin?.setOpenItem(nil)
+        }
     }
 }
 

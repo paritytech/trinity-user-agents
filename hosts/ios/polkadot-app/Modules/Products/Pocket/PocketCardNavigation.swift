@@ -25,7 +25,7 @@ enum PocketCardNavigation {
         } else if animated, wallet.topViewController is PocketCardScreenViewController {
             UIView.transition(
                 with: wallet.view,
-                duration: PocketCardFlightTiming.duration,
+                duration: PocketFlightTiming.duration,
                 options: .transitionCrossDissolve
             ) {
                 wallet.setViewControllers([pocket, screen], animated: false)

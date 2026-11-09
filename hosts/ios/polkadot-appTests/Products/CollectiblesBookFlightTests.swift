@@ -9,7 +9,7 @@ struct CollectiblesBookFlightTests {
     @Test
     func fliesOnlyAScreenWithAnOrigin() {
         let navigation = AppNavigationController(rootViewController: UIViewController())
-        let origin = FakeCollectiblesOrigin()
+        let origin = FakePocketOrigin(slot: CGRect(x: 16, y: 420, width: 361, height: 536))
         let flying = CollectiblesViewController(product: StubSPAView(), origin: origin)
         let originless = CollectiblesViewController(product: StubSPAView())
 

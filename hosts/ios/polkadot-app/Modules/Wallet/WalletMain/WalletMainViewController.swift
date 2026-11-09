@@ -106,30 +106,46 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.pocketCards = pocketCards
     }
 
-    /// Nil once the card is gone or the Wallet is not what closing the card
+    /// Nil once the item is gone or the Wallet is not what closing the item
     /// returns to.
-    func frame(of key: PocketCardKey) -> CGRect? {
+    func frame(of item: PocketItem) -> CGRect? {
         guard
             UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
             navigationController?.viewControllers.suffix(2).first === self,
-            rootView.viewModel.expandedSection == .none,
-            rootView.viewModel.pocketCards.contains(where: { $0.key == key })
+            rootView.viewModel.expandedSection == .none
         else { return nil }
 
-        return rootView.viewModel.pocketCardFrames[key]
+        switch item {
+        case .balance:
+            return nil
+        case .collectibles:
+            let frame = rootView.viewModel.collectiblesFrame
+            return frame.isEmpty ? nil : frame
+        case let .card(key):
+            guard rootView.viewModel.pocketCards.contains(where: { $0.key == key }) else { return nil }
+
+            return rootView.viewModel.pocketCardFrames[key]
+        }
     }
 
-    var openCard: PocketCardKey? {
-        rootView.viewModel.openPocketCard
+    var openItem: PocketItem? {
+        rootView.viewModel.openItem
     }
 
-    func setOpenCard(_ key: PocketCardKey?) {
-        rootView.viewModel.openPocketCard = key
+    func setOpenItem(_ item: PocketItem?) {
+        let previous = rootView.viewModel.openItem
+        rootView.viewModel.openItem = item
+
+        if item == .collectibles {
+            liftCollectiblesPeek()
+        } else if previous == .collectibles {
+            landCollectiblesPeek()
+        }
     }
 
-    func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
         let viewModel = rootView.viewModel
-        withTransaction(Transaction(animation: animated ? PocketCardFlightTiming.animation : nil)) {
+        withTransaction(Transaction(animation: animated ? PocketFlightTiming.animation : nil)) {
             viewModel.openPocketCardOffset = offset
             viewModel.isPocketCleared = clearingPocket
         }
@@ -190,19 +206,14 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 }
 
-extension WalletMainViewController: CollectiblesOrigin {
-    var collectiblesBookFrame: CGRect? {
-        let frame = rootView.viewModel.collectiblesFrame
-        return frame.isEmpty ? nil : frame
-    }
-
-    func setCollectiblesBookLifted() {
+private extension WalletMainViewController {
+    func liftCollectiblesPeek() {
         withTransaction(Transaction(animation: nil)) {
             rootView.viewModel.collectiblesPeek = .lifted
         }
     }
 
-    func setCollectiblesBookLanded() {
+    func landCollectiblesPeek() {
         guard rootView.viewModel.collectiblesPeek == .lifted else { return }
 
         withTransaction(Transaction(animation: nil)) {

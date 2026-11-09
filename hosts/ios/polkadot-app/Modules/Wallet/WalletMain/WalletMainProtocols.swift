@@ -4,7 +4,7 @@ import PolkadotUI
 import ChainRegistry
 import Products
 
-protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketCardOrigin {
+protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketOrigin {
     func didReceive(isCollectiblesAvailable: Bool)
     func didReceive(pocketCards: [PocketCardViewModel])
 }
