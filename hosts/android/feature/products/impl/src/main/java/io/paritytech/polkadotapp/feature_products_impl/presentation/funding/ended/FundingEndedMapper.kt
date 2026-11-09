@@ -3,11 +3,11 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.end
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingNetwork
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline.milestone
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingNetworkName
 import kotlinx.collections.immutable.toImmutableList
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
@@ -148,7 +148,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
                 FundingRail.CARD -> res(RCommon.string.funding_rail_card)
                 FundingRail.BANK -> res(RCommon.string.funding_ended_method_bank)
                 FundingRail.CRYPTO -> summary.choice?.network?.takeIf { it.isNotEmpty() }
-                    ?.let { res(RCommon.string.funding_ended_method_crypto_network, FundingNetwork.of(it).name) }
+                    ?.let { res(RCommon.string.funding_ended_method_crypto_network, fundingNetworkName(it)) }
                     ?: res(RCommon.string.funding_rail_crypto)
             }
             add(FundingEndedRow.Value(RCommon.string.funding_ended_method, method))

@@ -246,7 +246,6 @@ class FundingViewModelTest {
             limits = FundingAmountLimits(min = min, max = null),
             networks = emptyList(),
             rails = listOf(rail),
-            defaultRail = rail,
             asset = "EUR".takeIf { rail == FundingRail.CARD },
             tokens = emptyList(),
             detectedCountry = "DE",

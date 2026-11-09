@@ -48,7 +48,7 @@ class FundingFlowInteractor @Inject constructor(
 
     /** Ended session [intent] as the core summarises it, or `null` when the core holds no session by that id. */
     suspend fun endedSummary(intent: String): FundingSessionSummary? =
-        runtime.history().logFailure("Funding history read failed").getOrNull()?.firstOrNull { it.intent == intent }
+        runtime.summary(intent).logFailure("Funding summary read failed").getOrNull()
 
     suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
 

@@ -21,7 +21,6 @@ import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
-import uniffi.truapi.FundingActivity
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingDirection
@@ -49,7 +48,7 @@ class TrUAPIFundingRuntime @Inject constructor(
     private val notices = Channel<FundingChange>(Channel.UNLIMITED)
 
     private val entries = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
-    private val activityState = MutableStateFlow<FundingActivity?>(null)
+    private val historyState = MutableStateFlow<List<FundingSessionSummary>>(emptyList())
     private val optionsByIntent = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
@@ -74,17 +73,17 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun openFunding(direction: FundingDirection, amount: U128?): Result<String?> =
         runtimeProvider.runtime().mapCatching { it.openFunding(direction, amount) }
 
-    override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
+    override suspend fun start(): Result<Unit> = runtimeProvider.runtime().mapCatching { historyState.value = it.fundingHistory() }
 
     override val sessions: StateFlow<Map<String, FundingBookEntry>> = entries.asStateFlow()
 
-    override val activity: StateFlow<FundingActivity?> = activityState.asStateFlow()
+    override val history: StateFlow<List<FundingSessionSummary>> = historyState.asStateFlow()
 
-    override suspend fun acknowledgeShown(intents: List<String>): Result<List<String>> =
-        runtimeProvider.runtime().mapCatching { it.acknowledgeFundingShown(intents) }
+    override suspend fun sessionOpen(intent: String): Boolean =
+        runtimeProvider.runtime().mapCatching { it.fundingSessionOpen(intent) }.getOrDefault(false)
 
-    override suspend fun history(): Result<List<FundingSessionSummary>> =
-        runtimeProvider.runtime().mapCatching { it.fundingHistory() }
+    override suspend fun summary(intent: String): Result<FundingSessionSummary?> =
+        runtimeProvider.runtime().mapCatching { it.fundingSummary(intent) }
 
     override fun options(intent: String): Flow<FundingOptions?> =
         optionsByIntent.map { it[intent] }.distinctUntilChanged()
@@ -121,7 +120,7 @@ class TrUAPIFundingRuntime @Inject constructor(
         when (notice.kind) {
             FundingChangeKind.SESSION -> {
                 entries.value = runtime.fundingEntries().associateBy { it.session.intent }
-                activityState.value = runtime.fundingActivity()
+                historyState.value = runtime.fundingHistory()
                 intent?.let(changedSessions::tryEmit)
             }
 
@@ -135,7 +134,7 @@ class TrUAPIFundingRuntime @Inject constructor(
             }
 
             // Funding resuming is when the core has loaded the ended sessions the history lists.
-            FundingChangeKind.IN_PROGRESS -> activityState.value = runtime.fundingActivity()
+            FundingChangeKind.IN_PROGRESS -> historyState.value = runtime.fundingHistory()
         }
     }
 

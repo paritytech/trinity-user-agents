@@ -15,7 +15,6 @@ import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
 import uniffi.truapi.U128
 import uniffi.truapi.fundingAmountIssue
-import uniffi.truapi.fundingUnits
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
@@ -71,7 +70,7 @@ data class FundingFlowState(
             cash = cash,
             spendable = spendable,
             options = options,
-            rail = options?.defaultRail ?: FundingRail.CARD,
+            rail = options.defaultRail,
             railChosen = false,
             amountText = amount?.let(::textFor).orEmpty(),
             country = country,
@@ -89,9 +88,9 @@ data class FundingFlowState(
             value.setScale(2, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
     }
 
-    /** The typed amount in balance units, as the core reads it; `null` for text that is not an amount. */
+    /** The typed amount in balance units, rounded down; `null` for text that is not a plain decimal amount. */
     val units: U128?
-        get() = fundingUnits(amountText, cash.precision.toUByte())
+        get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.let(cash::units)
 
     val amount: BigDecimal
         get() = units?.let(cash::decimal) ?: BigDecimal.ZERO
@@ -158,9 +157,9 @@ data class FundingFlowState(
     val unavailableIssue: FundingAmountIssue?
         get() = if (noProviderQuoted) amountIssue else null
 
-    /** The crypto networks a provider routes, with the name the core gives each. */
-    val networks: List<FundingNetwork>
-        get() = options?.networks.orEmpty().map { FundingNetwork.of(it.network) }
+    /** The ids of the crypto networks a provider routes. */
+    val networks: List<String>
+        get() = options?.networks.orEmpty().map { it.network }
 
     /** The least [networkId] takes, as the core says. */
     fun minimum(networkId: String): BigDecimal? =
@@ -271,7 +270,7 @@ data class FundingFlowState(
         }
     }
 
-    private fun unitsOf(value: BigDecimal): U128? = fundingUnits(value.toPlainString(), cash.precision.toUByte())
+    private fun unitsOf(value: BigDecimal): U128 = cash.units(value)
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
         minimum = this?.min?.let(cash::decimal),
@@ -281,3 +280,9 @@ data class FundingFlowState(
 
 // The asset a quote is read in before the core named one.
 private const val DEFAULT_ASSET = "USD"
+
+private val AMOUNT_TEXT = Regex("""\d*\.?\d*""")
+
+/** The first rail the core routes, crypto first, or card when it routes none. */
+private val FundingOptions?.defaultRail: FundingRail
+    get() = this?.rails?.firstOrNull() ?: FundingRail.CARD

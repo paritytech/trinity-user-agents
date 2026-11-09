@@ -103,7 +103,6 @@ import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
-import uniffi.truapi.FundingActivity
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingFrameContext
@@ -1170,6 +1169,12 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Every ended funding session, as summaries newest first. Read it whenever the host shows history. */
     fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
 
+    /** Ended funding session [intent]'s summary, as [fundingHistory] lists it. */
+    fun fundingSummary(intent: String): FundingSessionSummary? = inner.fundingSummary(intent)
+
+    /** Whether funding session [intent] is still open, so its overlay can be shown again. */
+    fun fundingSessionOpen(intent: String): Boolean = inner.fundingSessionOpen(intent)
+
     /** Record that the host told the user how ended session [intent] went. */
     @Throws(HostRejection::class)
     suspend fun acknowledgeFundingSession(intent: String): Boolean = inner.acknowledgeFundingSession(intent)
@@ -1188,16 +1193,6 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Every funding session the core holds in full, with its progress now, newest opened first. */
     fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
-
-    /** The user's funding activity: sessions in flight, then the history of ended ones. */
-    fun fundingActivity(): FundingActivity = inner.fundingActivity()
-
-    /**
-     * Acknowledge that the user saw how the ended sessions [intents] went, with the ones history leaves out. Call it
-     * only while history is on screen. Answers the sessions acknowledged.
-     */
-    @Throws(HostRejection::class)
-    suspend fun acknowledgeFundingShown(intents: List<String>): List<String> = inner.acknowledgeFundingShown(intents)
 
     /** Replace the funding providers this host offers, each with the Worker manifest it ships for it. */
     @Throws(HostRejection::class)

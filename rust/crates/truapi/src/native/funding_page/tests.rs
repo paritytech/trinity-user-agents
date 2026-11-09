@@ -27,6 +27,7 @@ fn a_return_url_matches_by_scheme_host_port_and_path() {
 fn a_page_navigates_on_https_and_builds_sub_frames_itself() {
 	let cases = [
 		("https://pay.example/", true, true),
+		("https://acs.bank.example/3ds", true, true),
 		("https://pay.example/", false, true),
 		("about:blank", false, true),
 		("about:blank", true, false),
@@ -54,6 +55,10 @@ fn an_origin_is_normalised() {
 	assert_eq!(
 		funding_page_origin("https://pay.example:8443/".into()).map(|o| o.port),
 		Some(Some(8443))
+	);
+	assert_eq!(
+		funding_page_origin("https://acs.bank.example/3ds?step=1".into()).map(|o| o.host),
+		Some("acs.bank.example".to_string())
 	);
 	assert_eq!(funding_page_origin("about:blank".into()), None);
 }

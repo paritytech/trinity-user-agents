@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
-import uniffi.truapi.FundingActivity
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
@@ -37,16 +36,16 @@ interface FundingRuntime {
     val sessions: StateFlow<Map<String, FundingBookEntry>>
 
     /**
-     * The sessions in flight and the history of ended ones, as the core last answered: `null` until it has, and again
-     * whenever a session changes or funding resumes.
+     * Every ended session the core holds, in full or compacted, as summaries newest first, as the core last answered:
+     * read again when the core starts, whenever a session changes and once funding resumes.
      */
-    val activity: StateFlow<FundingActivity?>
+    val history: StateFlow<List<FundingSessionSummary>>
 
-    /** Records that the user saw how the ended sessions [intents] went, as the history showed them. */
-    suspend fun acknowledgeShown(intents: List<String>): Result<List<String>>
+    /** Whether session [intent] is still open, so its overlay can be shown again; `false` once it ended. */
+    suspend fun sessionOpen(intent: String): Boolean
 
-    /** Every ended session the core holds, in full or compacted, as summaries newest first. Read it each time history shows. */
-    suspend fun history(): Result<List<FundingSessionSummary>>
+    /** Ended session [intent]'s summary, as history lists it; `null` while it is open or for no such session. */
+    suspend fun summary(intent: String): Result<FundingSessionSummary?>
 
     /** What session [intent]'s overlay offers, as the core last answered; `null` until it has. */
     fun options(intent: String): Flow<FundingOptions?>

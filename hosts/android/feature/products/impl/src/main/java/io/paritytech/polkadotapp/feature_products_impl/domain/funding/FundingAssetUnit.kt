@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import uniffi.truapi.U128
-import uniffi.truapi.fundingAssetIsFiat
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
@@ -12,8 +11,8 @@ import java.util.Locale
 
 /**
  * What a quote's `send_amount` (In) or `receive_amount` (Out) is counted in: the asset the ask named, in its
- * smallest unit, at the decimals the provider stated with the quote or the deposit. A fiat code is shown as money
- * in the platform's locale.
+ * smallest unit, at the decimals the provider stated with the quote or the deposit. A code ISO 4217 knows is
+ * shown as money.
  */
 data class FundingAssetUnit(
     val code: String,
@@ -24,10 +23,10 @@ data class FundingAssetUnit(
         private const val CRYPTO_DISPLAY_DIGITS = 6
         private const val CODE_MINIMUM_DIGITS = 2
 
-        /** A unit at the decimals the provider stated with a quote or a deposit instruction; the core says whether it is fiat. */
+        /** A unit at the decimals the provider stated with a quote or a deposit instruction. */
         fun of(code: String, decimals: Int): FundingAssetUnit {
             val upper = code.uppercase(Locale.ROOT)
-            return FundingAssetUnit(upper, decimals, isFiat = fundingAssetIsFiat(upper))
+            return FundingAssetUnit(upper, decimals, isFiat = isoCurrency(upper) != null)
         }
 
         private fun isoCurrency(code: String): Currency? = runCatching { Currency.getInstance(code) }.getOrNull()
