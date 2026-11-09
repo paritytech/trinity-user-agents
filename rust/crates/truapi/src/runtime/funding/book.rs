@@ -1,58 +1,25 @@
-//! What a native host reads its funding state from. The core keeps it as
-//! funding changes and tells the host only what changed; the host reads the
-//! rest back from the runtime.
+//! The funding state a host reads back beside the sessions themselves. The
+//! core fills it as it tells the host's feed what changed, whichever runtime
+//! serves the host.
 
 use std::{
 	collections::{BTreeSet, HashMap},
-	path::{Path, PathBuf},
-	sync::{Mutex, MutexGuard, PoisonError},
+	sync::Mutex,
 };
 
 use truapi::latest::HostFundingStatusSubscribeItem;
 
+use super::lock;
 use crate::{
 	host_logic::{
-		funding::{FundingProgress, FundingSession, FundingSessionSummary},
-		funding_activity::{ActivityView, activity},
+		funding::{FundingSession, FundingSessionSummary},
+		funding_activity::{ActivityView, FundingBookEntry, activity},
 		funding_providers::FundingOptions,
 	},
 	platform::FundingQuoteList,
 };
 
-/// Lock `mutex`, recovering its value if a holder panicked: the book stays
-/// valid between statements.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// The file under the core database directory whose presence says a
-/// provider still works on a funding session.
-const RESUME_MARKER: &str = "funding-resume";
-
-/// What changed in the funding state a host reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum FundingChangeKind {
-	/// A session's record, progress, or whether it is acknowledged; the
-	/// activity with it.
-	Session,
-	/// What a session's overlay offers.
-	Options,
-	/// A session's quote list.
-	Quotes,
-	/// Whether a provider still works on any session.
-	InProgress,
-}
-
-/// A session the host has heard of, with its progress now.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct FundingBookEntry {
-	/// The session.
-	pub session: FundingSession,
-	/// Its progress now.
-	pub progress: FundingProgress,
-}
-
-/// The funding state the core keeps for a native host beside the sessions
+/// The funding state the core keeps for the host beside the sessions
 /// themselves, which the registry holds.
 #[derive(Default)]
 pub struct FundingSessionBook {
@@ -67,8 +34,6 @@ struct BookState {
 	quotes: HashMap<String, FundingQuoteList>,
 	/// Ended sessions the host has not acknowledged.
 	unacknowledged: BTreeSet<String>,
-	/// Whether a provider still works on any session, once funding resumed.
-	in_progress: Option<bool>,
 	/// The activity as last worked out, until a session changes.
 	activity: Option<ActivityView>,
 }
@@ -99,11 +64,6 @@ impl FundingSessionBook {
 		} else {
 			state.unacknowledged.remove(intent);
 		}
-	}
-
-	/// Record whether a provider still works on any session.
-	pub fn in_progress_changed(&self, in_progress: bool) {
-		lock(&self.state).in_progress = Some(in_progress);
 	}
 
 	/// Record what session `intent`'s overlay offers.
@@ -145,17 +105,11 @@ impl FundingSessionBook {
 		lock(&self.state).unacknowledged.iter().cloned().collect()
 	}
 
-	/// Whether a provider still works on any session; `None` until funding
-	/// resumed.
-	pub fn in_progress(&self) -> Option<bool> {
-		lock(&self.state).in_progress
-	}
-
 	/// The activity from `entries` and `history`, worked out once until a
 	/// session changes.
 	pub fn activity(
 		&self,
-		entries: impl FnOnce() -> Vec<(FundingSession, FundingProgress)>,
+		entries: impl FnOnce() -> Vec<FundingBookEntry>,
 		history: impl FnOnce() -> Vec<FundingSessionSummary>,
 	) -> ActivityView {
 		if let Some(view) = lock(&self.state).activity.clone() {
@@ -164,29 +118,6 @@ impl FundingSessionBook {
 		let view = activity(&entries(), &history());
 		lock(&self.state).activity = Some(view.clone());
 		view
-	}
-}
-
-/// The resume marker's path under `database_directory`.
-pub fn resume_marker(database_directory: &Path) -> PathBuf {
-	database_directory.join(RESUME_MARKER)
-}
-
-/// Leave or clear the resume marker under `database_directory`, so the host
-/// starts funding at its next launch only while a provider still works on a
-/// session.
-pub fn write_resume_marker(database_directory: &Path, in_progress: bool) {
-	let marker = resume_marker(database_directory);
-	let written = if in_progress {
-		std::fs::write(&marker, b"")
-	} else {
-		match std::fs::remove_file(&marker) {
-			Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-			other => other,
-		}
-	};
-	if let Err(error) = written {
-		tracing::error!(marker = %marker.display(), %error, "funding resume marker not written");
 	}
 }
 

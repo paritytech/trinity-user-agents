@@ -1,6 +1,7 @@
-use truapi::latest::{FundingQuote, FundingRail};
+use truapi::latest::FundingQuote;
 
 use super::*;
+use crate::host_logic::funding::{FundingChoice, FundingStage};
 
 fn choice() -> FundingChoice {
 	FundingChoice {
@@ -93,10 +94,6 @@ fn a_cancel_before_paying_is_hidden_unless_something_came_back() {
 			),
 		]
 	);
-	assert_eq!(
-		view.activity.history[0].paid,
-		Some(FundingPaid { amount: 5_100, asset: "EUR".to_string(), decimals: 2, network: None })
-	);
 }
 
 #[test]
@@ -114,16 +111,20 @@ fn sessions_in_flight_lead_and_leave_history() {
 		FundingStatus::ToppedUp,
 		None,
 	)];
-	let view = activity(&[(older, older_progress), (open, progress)], &history);
+	let entries = [
+		FundingBookEntry { session: older, progress: older_progress },
+		FundingBookEntry { session: open, progress },
+	];
+	let view = activity(&entries, &history);
 	assert_eq!(
 		view.activity
 			.in_flight
 			.iter()
-			.map(|row| (row.intent.as_str(), row.amount, row.in_flight, row.status.clone()))
+			.map(|row| (row.intent.as_str(), row.amount, row.status.clone()))
 			.collect::<Vec<_>>(),
 		vec![
-			("open", Some(5_100), true, FundingStatus::TransactionInitiated),
-			("older", Some(7), true, FundingStatus::WaitingForTransfer),
+			("open", Some(5_100), FundingStatus::TransactionInitiated),
+			("older", Some(7), FundingStatus::WaitingForTransfer),
 		]
 	);
 	assert!(view.activity.history.is_empty());

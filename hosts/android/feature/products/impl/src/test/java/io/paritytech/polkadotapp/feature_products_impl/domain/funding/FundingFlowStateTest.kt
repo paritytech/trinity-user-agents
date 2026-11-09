@@ -67,7 +67,7 @@ class FundingFlowStateTest {
     @Test
     fun `the selection carries the country's currency`() {
         assertEquals(
-            FundingSelection(rail = FundingRail.CARD, asset = "EUR", network = null, country = "DE", currency = "EUR"),
+            FundingSelection(rail = FundingRail.CARD, asset = null, network = null, country = "DE", currency = "EUR"),
             state(options(asset = "EUR")).selection,
         )
     }
@@ -161,8 +161,8 @@ class FundingFlowStateTest {
             options(
                 defaultRail = FundingRail.CRYPTO,
                 networks = listOf(
-                    FundingNetworkLimits("ethereum", "Ethereum", FundingAmountLimits(min = "30000000", max = null)),
-                    FundingNetworkLimits("polkadot", "Polkadot", FundingAmountLimits(min = null, max = null)),
+                    FundingNetworkLimits("ethereum", FundingAmountLimits(min = "30000000", max = null)),
+                    FundingNetworkLimits("polkadot", FundingAmountLimits(min = null, max = null)),
                 ),
             ),
         )

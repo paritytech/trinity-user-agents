@@ -63,8 +63,8 @@ class AppFundingHostBridge @Inject constructor(
         context: FundingFrameContext,
     ): FundingFrameOutcome {
         val frameTarget = when (target) {
-            // The core sets the path for every App route.
-            is FundingFrameTarget.App -> ProviderFrameTarget.App(context.appPath ?: target.route)
+            // The core checked the route, which is the path inside the App.
+            is FundingFrameTarget.App -> ProviderFrameTarget.App(target.route)
             is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
         return when (val outcome = overlay.get().presentProviderFrame(providerId, intent, frameTarget, context.awaitsUserTransfer)) {

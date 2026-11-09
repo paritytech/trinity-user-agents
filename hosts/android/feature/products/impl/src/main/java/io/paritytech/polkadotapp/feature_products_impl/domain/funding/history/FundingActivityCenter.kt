@@ -49,7 +49,7 @@ class FundingActivityCenter @Inject constructor(
      */
     private val acknowledged = mutableSetOf<FundingBookEntry>()
 
-    /** Ended sessions the core listed as unacknowledged and acknowledged in this process. Under [reloadMutex]. */
+    /** Ended sessions whose history row was acknowledged as shown in this process. Under [reloadMutex]. */
     private val acknowledgedSummaries = mutableSetOf<String>()
 
     /**
@@ -58,9 +58,9 @@ class FundingActivityCenter @Inject constructor(
      * built, so the core stops pushing it on resume.
      */
     fun observe(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.unacknowledged, runtime.inProgress) { sessions, summaries, _ -> sessions.values to summaries }
+        combine(runtime.sessions, runtime.activity) { sessions, _ -> sessions.values }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-            .map { (sessions, summaries) -> reloadMutex.withLock { reload(sessions, summaries) } }
+            .map { sessions -> reloadMutex.withLock { reload(sessions) } }
 
     /** The ended session [intent] as the user is shown it, or `null` when the core holds no ended session by that id. */
     suspend fun ended(intent: String): FundingRecord? =
@@ -70,7 +70,7 @@ class FundingActivityCenter @Inject constructor(
             ?.firstOrNull { it.intent == intent }
             ?.let(FundingRecord::of)
 
-    private suspend fun reload(sessions: Collection<FundingBookEntry>, summaries: Set<String>): FundingActivity {
+    private suspend fun reload(sessions: Collection<FundingBookEntry>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
@@ -83,7 +83,7 @@ class FundingActivityCenter @Inject constructor(
             .mapNotNull(FundingRecord::of)
 
         acknowledgeEnded(entries)
-        acknowledgeSummaries(summaries.filterTo(mutableSetOf()) { intent -> records.any { it.intent == intent } })
+        acknowledgeShown(records.mapTo(mutableSetOf()) { it.intent })
 
         return FundingActivity(
             inFlight = inFlight,
@@ -104,13 +104,13 @@ class FundingActivityCenter @Inject constructor(
             }
     }
 
-    /** Acknowledges each ended session the core lists as unacknowledged once its history row is built. */
-    private suspend fun acknowledgeSummaries(intents: Set<String>) {
-        (intents - acknowledgedSummaries).forEach { intent ->
-            runtime.acknowledge(intent)
-                .logFailure("Funding acknowledgement failed")
-                .onSuccess { acknowledgedSummaries += intent }
-        }
+    /** Acknowledges the ended sessions whose history rows were built and not yet acknowledged in this process. */
+    private suspend fun acknowledgeShown(intents: Set<String>) {
+        val fresh = intents - acknowledgedSummaries
+        if (fresh.isEmpty()) return
+        runtime.acknowledgeShown(fresh.toList())
+            .logFailure("Funding acknowledgement failed")
+            .onSuccess { acknowledgedSummaries += fresh }
     }
 
     /** The row of a session the core still has in progress, or `null` once its status is final. */

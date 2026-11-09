@@ -6,8 +6,7 @@
 //! These are facts and rules only. Each host decides how to present them.
 
 use truapi::latest::{
-	FundingDirection, FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote,
-	FundingQuoteRefusal, FundingRail,
+	FundingDirection, FundingFailure, FundingPayout, FundingQuote, FundingQuoteRefusal, FundingRail,
 };
 
 use crate::{
@@ -21,30 +20,17 @@ use crate::{
 	},
 };
 
-/// The frame facts for `target` in a session moving value in `direction` by
-/// `rail`: the path an App route opens at, and whether the user makes the
-/// transfer themselves, outside the frame, as on a bank top-up.
+/// The frame facts for a session moving value in `direction` by `rail`:
+/// the user makes the transfer themselves, outside the frame, only on a bank
+/// top-up.
 pub fn frame_context(
-	target: &FundingFrameTarget,
 	direction: FundingDirection,
 	rail: Option<FundingRail>,
 ) -> FundingFrameContext {
-	let app_path = match target {
-		FundingFrameTarget::App { route } if route.starts_with('/') || route.starts_with('#') => {
-			Some(route.clone())
-		},
-		FundingFrameTarget::App { route } => Some(format!("/{route}")),
-		FundingFrameTarget::Page { .. } => None,
-	};
 	FundingFrameContext {
-		app_path,
 		awaits_user_transfer: rail == Some(FundingRail::Bank) && direction == FundingDirection::In,
 	}
 }
-
-/// The rails in core order, which decides the default one.
-pub const FUNDING_RAIL_ORDER: [FundingRail; 3] =
-	[FundingRail::Crypto, FundingRail::Card, FundingRail::Bank];
 
 /// The fiat asset asked for when neither the user's country nor any provider
 /// names one.
@@ -57,17 +43,17 @@ pub fn routes_rail(candidate: &FundingCandidate, rail: FundingRail) -> bool {
 	candidate.routes.is_empty() || candidate.routes.iter().any(|route| route.rail == rail)
 }
 
-/// The rails some candidate routes, in [`FUNDING_RAIL_ORDER`]: the only
-/// ones a session can use.
+/// The rails some candidate routes, in core order (crypto, card, bank): the
+/// only ones a session can use.
 pub fn routed_rails(candidates: &[FundingCandidate]) -> Vec<FundingRail> {
-	FUNDING_RAIL_ORDER
+	[FundingRail::Crypto, FundingRail::Card, FundingRail::Bank]
 		.into_iter()
 		.filter(|rail| candidates.iter().any(|candidate| routes_rail(candidate, *rail)))
 		.collect()
 }
 
-/// The default rail: the first of `rails`, which are in
-/// [`FUNDING_RAIL_ORDER`], or card when none is routed.
+/// The default rail: the first of `rails`, which are in core order, or card
+/// when none is routed.
 pub fn default_rail(rails: &[FundingRail]) -> FundingRail {
 	rails.first().copied().unwrap_or(FundingRail::Card)
 }
@@ -124,10 +110,12 @@ pub fn crypto_tokens(candidates: &[FundingCandidate], network: Option<&str>) -> 
 	tokens
 }
 
-/// The canonical English name of a network id, which hosts may localise.
-/// Known ids have their proper name; any other is title-cased word by word.
-pub fn network_name(id: &str) -> String {
-	match id {
+/// The canonical English name of a crypto network id, which hosts may
+/// localise. Known ids have their proper name; any other is title-cased word
+/// by word.
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_network_name(id: String) -> String {
+	match id.as_str() {
 		"polkadot" => "Polkadot".to_string(),
 		"bitcoin" => "Bitcoin".to_string(),
 		"ethereum" => "Ethereum".to_string(),
@@ -288,7 +276,8 @@ pub fn status_in_flight(status: &FundingStatus) -> bool {
 
 /// Whether a session at `status` is held up: retrying, taking longer, or
 /// waiting on a cancel the provider offered terms on or refused.
-pub fn status_delayed(status: &FundingStatus) -> bool {
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_status_delayed(status: FundingStatus) -> bool {
 	matches!(
 		status,
 		FundingStatus::Retrying |
@@ -423,11 +412,7 @@ pub fn ended_view(summary: &FundingSessionSummary) -> FundingEndedView {
 		(Ending::Delivered | Ending::Released, _) => FundingEndedOutcome::Succeeded,
 		(Ending::Failed(reason), _) => FundingEndedOutcome::Failed { reason: reason.clone() },
 	};
-	let settled = match summary.stage {
-		FundingStage::Delivered { credited, .. } => Some(credited),
-		FundingStage::Released { debited, .. } => Some(debited),
-		_ => None,
-	};
+	let settled = summary.stage.settled_amount();
 	let quoted = summary.choice.as_ref().map(|choice| choice.balance_amount(summary.direction));
 	let last = match summary.direction {
 		FundingDirection::In => FundingStep::Added,
@@ -474,11 +459,9 @@ pub struct FundingFeeBreakdown {
 	/// What the user pays less the fees, in the unit of `send_amount`.
 	pub net: u128,
 	/// The provider's and the network's fees together, in the unit of
-	/// `send_amount`.
+	/// `send_amount`. A withdrawal's, in CASH, is rounded up to the cent, as
+	/// it is charged, so the cost is never under-stated.
 	pub total_fee: u128,
-	/// `total_fee` as the user is charged it: on a withdrawal, whose fees are
-	/// in CASH, rounded up to the cent so the cost is never under-stated.
-	pub total_fee_rounded_up: u128,
 	/// The rate's numerator: the provider's asset, in its smallest unit, per
 	/// `rate_den` CASH balance units.
 	pub rate_num: u128,
@@ -487,32 +470,35 @@ pub struct FundingFeeBreakdown {
 	pub rate_den: u128,
 }
 
-/// What `quote`'s fees come to in `direction`. The rate sets the provider's
-/// asset against CASH: inbound, what the user pays less fees per CASH
-/// credited; outbound, what the user receives per CASH paid less fees.
-pub fn fee_breakdown(quote: &FundingQuote, direction: FundingDirection) -> FundingFeeBreakdown {
-	let total_fee = quote.provider_fee.saturating_add(quote.network_fee);
-	let net = quote.send_amount.saturating_sub(total_fee);
-	let (rate_num, rate_den) = match direction {
-		FundingDirection::In => (net, quote.receive_amount),
-		FundingDirection::Out => (quote.receive_amount, net),
-	};
-	let total_fee_rounded_up = match direction {
-		FundingDirection::In => total_fee,
+/// What `quote`'s fees come to in `direction`.
+///
+/// The rate sets the provider's asset against CASH: inbound, what the user
+/// pays less fees per CASH credited; outbound, what the user receives per
+/// CASH paid less fees.
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_fee_breakdown(
+	quote: FundingQuote,
+	direction: FundingDirection,
+) -> FundingFeeBreakdown {
+	let fees = quote.provider_fee.saturating_add(quote.network_fee);
+	let net = quote.send_amount.saturating_sub(fees);
+	let (rate_num, rate_den, total_fee) = match direction {
+		FundingDirection::In => (net, quote.receive_amount, fees),
 		FundingDirection::Out => {
 			let cent = 10u128.pow(u32::from(CASH_DECIMALS.saturating_sub(2)));
-			total_fee.div_ceil(cent).saturating_mul(cent)
+			(quote.receive_amount, net, fees.div_ceil(cent).saturating_mul(cent))
 		},
 	};
-	FundingFeeBreakdown { net, total_fee, total_fee_rounded_up, rate_num, rate_den }
+	FundingFeeBreakdown { net, total_fee, rate_num, rate_den }
 }
 
 /// `text`, a decimal amount the user typed with `.` as its separator, in
 /// units of `decimals` decimals, rounded down. `None` for anything but ASCII
 /// digits with at most one `.`, for no digits at all, and for an amount too
 /// large to hold.
-pub fn units(text: &str, decimals: u8) -> Option<u128> {
-	let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_units(text: String, decimals: u8) -> Option<u128> {
+	let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
 	let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
 	if (whole.is_empty() && fraction.is_empty()) || !digits(whole) || !digits(fraction) {
 		return None;
@@ -533,7 +519,8 @@ pub fn units(text: &str, decimals: u8) -> Option<u128> {
 
 /// Whether `code` names a fiat currency, by its ISO 4217 code in any case.
 /// Anything else a provider lists is a crypto asset.
-pub fn asset_is_fiat(code: &str) -> bool {
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_asset_is_fiat(code: String) -> bool {
 	let upper = code.to_ascii_uppercase();
 	ISO_4217.binary_search(&upper.as_str()).is_ok()
 }
