@@ -23,7 +23,7 @@ final class PocketCardScreenViewController: UIViewController {
     private weak var origin: PocketOrigin?
 
     private let scrollView = FaceScrollView()
-    private let backSwipe = UIScreenEdgePanGestureRecognizer()
+    private lazy var backSwipe = PocketBackSwipe(screen: self)
     private var productHeight: Constraint?
 
     private var pendingFaceShown: Bool? = true
@@ -64,7 +64,7 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
-        setupBackSwipe()
+        backSwipe.install(ahead: [scrollView.panGestureRecognizer, product.pageScrollView.panGestureRecognizer])
         setupPageDrag()
         setupClosePan()
 
@@ -82,13 +82,13 @@ final class PocketCardScreenViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        setSystemBackSwipesEnabled(false)
+        backSwipe.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        setSystemBackSwipesEnabled(true)
+        backSwipe.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -379,29 +379,6 @@ private extension PocketCardScreenViewController {
             make.width.equalTo(scrollView.frameLayoutGuide)
             productHeight = make.height.equalTo(scrollView.frameLayoutGuide)
                 .offset(-PocketOpenedCardView.height).constraint
-        }
-    }
-
-    /// Closes the card once the swipe ends, as Android's back gesture does,
-    /// so the close plays in full rather than following the finger.
-    func setupBackSwipe() {
-        backSwipe.edges = .left
-        backSwipe.addTarget(self, action: #selector(swipedBack))
-        view.addGestureRecognizer(backSwipe)
-        scrollView.panGestureRecognizer.require(toFail: backSwipe)
-        product.pageScrollView.panGestureRecognizer.require(toFail: backSwipe)
-    }
-
-    @objc func swipedBack() {
-        guard backSwipe.state == .ended, backSwipe.velocity(in: view).x >= 0 else { return }
-
-        navigationController?.popViewController(animated: true)
-    }
-
-    func setSystemBackSwipesEnabled(_ enabled: Bool) {
-        navigationController?.interactivePopGestureRecognizer?.isEnabled = enabled
-        if #available(iOS 26, *) {
-            navigationController?.interactiveContentPopGestureRecognizer?.isEnabled = enabled
         }
     }
 

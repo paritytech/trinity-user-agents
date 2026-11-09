@@ -16,6 +16,7 @@ final class CollectiblesViewController: UIViewController {
     private let pageView = UIView()
     private let skeleton = CollectiblesSkeletonView(frame: .zero)
     private let book = CollectiblesBookView(frame: .zero)
+    private lazy var backSwipe = PocketBackSwipe(screen: self)
 
     private var opening = CollectiblesOpening()
     private var hasStartedOpening = false
@@ -44,6 +45,7 @@ final class CollectiblesViewController: UIViewController {
 
         view.backgroundColor = .bgSurfaceMain
         setupPage()
+        backSwipe.install(ahead: [product.pageScrollView.panGestureRecognizer])
         view.addSubview(book)
         observePageLoad()
     }
@@ -61,17 +63,16 @@ final class CollectiblesViewController: UIViewController {
         }
     }
 
-    // Only the back button closes the screen, so the book can fly back to the Pocket.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        setSystemBackSwipesEnabled(false)
+        backSwipe.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        setSystemBackSwipesEnabled(true)
+        backSwipe.setSystemBackSwipesEnabled(true)
     }
 
     override func viewDidLayoutSubviews() {
@@ -97,27 +98,32 @@ final class CollectiblesViewController: UIViewController {
         guard parent == nil else { return }
 
         stopWatchingLoad()
-        if origin?.openItem == .collectibles {
-            origin?.setOpenItem(nil)
+        if let origin, origin.openItem == .collectibles {
+            origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
+            origin.setOpenItem(nil)
         }
     }
 }
 
 extension CollectiblesViewController: TabBarRootStandIn {}
 
+extension CollectiblesViewController: PocketItemScreen {
+    var pocketItem: PocketItem {
+        .collectibles
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension CollectiblesViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
-        guard let origin else { return nil }
-
         switch operation {
         case .push:
-            return CollectiblesBookFlight(screen: self, origin: origin)
+            CollectiblesBookFlight(screen: self, origin: origin)
         case .pop:
-            return CollectiblesBookReturn(screen: self, origin: origin)
+            CollectiblesBookReturn(screen: self, origin: origin)
         default:
-            return nil
+            nil
         }
     }
 }
@@ -347,12 +353,5 @@ private extension CollectiblesViewController {
         loadObservation = nil
         loadTimeout?.cancel()
         frameWatch.cancel()
-    }
-
-    func setSystemBackSwipesEnabled(_ enabled: Bool) {
-        navigationController?.interactivePopGestureRecognizer?.isEnabled = enabled
-        if #available(iOS 26, *) {
-            navigationController?.interactiveContentPopGestureRecognizer?.isEnabled = enabled
-        }
     }
 }

@@ -4,8 +4,7 @@ import UIKit
 /// The screen a flight carries: the item it draws, and how the item and the
 /// screen's page move while the flight runs.
 @MainActor
-protocol PocketFlightScreen: UIViewController {
-    var pocketItem: PocketItem { get }
+protocol PocketFlightScreen: PocketItemScreen {
     func itemFrame(in view: UIView) -> CGRect
     func beginFlight()
     func moveItem(by offset: CGPoint)
@@ -76,8 +75,52 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
         return .fly(toSlot: toSlot)
     }
 
+    /// Fades `screen` in or out over the Pocket, for an item that cannot fly. The caller adds its own animations to
+    /// `animator`, and completes the transition in `completion`.
+    static func fade(
+        _ context: UIViewControllerContextTransitioning,
+        screen: UIViewController,
+        origin: PocketOrigin?,
+        opening: Bool,
+        animator: UIViewPropertyAnimator,
+        then completion: @escaping () -> Void
+    ) {
+        let container = context.containerView
+        let backdrop = UIView(frame: container.bounds)
+        backdrop.backgroundColor = .bgSurfaceMain
+        container.insertSubview(backdrop, belowSubview: screen.view)
+
+        let fading: [UIView] = [screen.view, backdrop]
+        let alpha: CGFloat = opening ? 1 : 0
+        if opening {
+            fading.forEach { $0.alpha = 0 }
+        } else {
+            origin?.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
+        }
+
+        animator.addAnimations {
+            fading.forEach { $0.alpha = alpha }
+        }
+        animator.addCompletion { _ in
+            backdrop.removeFromSuperview()
+            completion()
+        }
+        animator.startAnimation()
+    }
+
+    /// The animator a fade runs on: the flight's clock, or a short crossfade under Reduce Motion.
+    static func fallbackAnimator(reduceMotion: Bool) -> UIViewPropertyAnimator {
+        reduceMotion
+            ? UIViewPropertyAnimator(duration: crossfadeDuration, curve: .easeInOut)
+            : PocketFlightTiming.makeAnimator()
+    }
+
+    static func duration(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? crossfadeDuration : PocketFlightTiming.duration
+    }
+
     func transitionDuration(using _: UIViewControllerContextTransitioning?) -> TimeInterval {
-        reduceMotion ? Self.crossfadeDuration : PocketFlightTiming.duration
+        Self.duration(reduceMotion: reduceMotion)
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
@@ -102,10 +145,9 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
         switch Self.motion(toSlot: toSlot, reduceMotion: reduceMotion) {
         case let .fly(slot):
             fly(context, toSlot: slot)
-        case .fade:
-            fade(context, animator: PocketFlightTiming.makeAnimator())
-        case .crossfade:
-            fade(context, animator: UIViewPropertyAnimator(duration: Self.crossfadeDuration, curve: .easeInOut))
+        case .fade,
+             .crossfade:
+            fadeInPlace(context)
         }
     }
 }
@@ -142,31 +184,20 @@ private extension PocketFlight {
         }
     }
 
-    /// The backdrop fades in for the Pocket to fade out behind the screen.
-    func fade(_ context: UIViewControllerContextTransitioning, animator: UIViewPropertyAnimator) {
-        let container = context.containerView
-        let backdrop = UIView(frame: container.bounds)
-        backdrop.backgroundColor = .bgSurfaceMain
-        container.insertSubview(backdrop, belowSubview: screen.view)
-
-        let fading: [UIView] = [screen.view, backdrop]
+    /// The screen's page fades with the screen, on the same animator the shared fade runs.
+    func fadeInPlace(_ context: UIViewControllerContextTransitioning) {
         let alpha: CGFloat = opening ? 1 : 0
         if opening {
             screen.setPageAlpha(0)
-            fading.forEach { $0.alpha = 0 }
-        } else {
-            origin?.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         }
 
+        let animator = Self.fallbackAnimator(reduceMotion: reduceMotion)
         animator.addAnimations { [self] in
             screen.setPageAlpha(alpha)
-            fading.forEach { $0.alpha = alpha }
         }
-        animator.addCompletion { [self] _ in
-            backdrop.removeFromSuperview()
+        Self.fade(context, screen: screen, origin: origin, opening: opening, animator: animator) { [self] in
             finish(context)
         }
-        animator.startAnimation()
     }
 
     func finish(_ context: UIViewControllerContextTransitioning) {

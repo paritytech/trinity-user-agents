@@ -4,10 +4,10 @@ import Testing
 import UIKit
 @testable import polkadot_app
 
-/// A card's screen lives on the Wallet tab's stack, directly above the Pocket,
+/// An item's screen lives on the Wallet tab's stack, directly above the Pocket,
 /// so the tab bar stays over it and a tab switch leaves it open, as on Android.
 @MainActor
-struct PocketCardNavigationTests {
+struct PocketNavigationTests {
     /// A link opening a card while another Wallet screen was showing puts the
     /// card straight above the Pocket, which is where its close flies back to.
     /// The card's page may ask for its face to move only once its screen is
@@ -20,7 +20,7 @@ struct PocketCardNavigationTests {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         var onDisplayWhenShown = false
 
-        PocketCardNavigation.show(screen, on: navigation, animated: false) {
+        PocketNavigation.show(screen, on: navigation, animated: false) {
             onDisplayWhenShown = screen.isOnDisplay
         }
 
@@ -48,6 +48,34 @@ struct PocketCardNavigationTests {
             PocketPlacement(),
             PocketPlacement(openItem: .card(trophyCard.key))
         ])
+    }
+
+    /// Collectibles opens from the Pocket the way a card does: pushed above it while the Pocket is on screen.
+    @Test
+    func pushesCollectiblesAboveThePocket() {
+        let pocket = UIViewController()
+        let navigation = UINavigationController(rootViewController: pocket)
+        let collectibles = CollectiblesViewController(product: StubSPAView())
+
+        PocketNavigation.show(collectibles, on: navigation, animated: true) {}
+
+        #expect(navigation.viewControllers == [pocket, collectibles])
+    }
+
+    /// A card and Collectibles share the place above the Pocket, so each replaces the other there.
+    @Test
+    func replacesTheOpenItemAboveThePocketInEitherDirection() {
+        let pocket = UIViewController()
+        let navigation = UINavigationController(rootViewController: pocket)
+        let card = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
+        let collectibles = CollectiblesViewController(product: StubSPAView())
+        PocketNavigation.show(card, on: navigation, animated: false) {}
+
+        PocketNavigation.show(collectibles, on: navigation, animated: true) {}
+        #expect(navigation.viewControllers == [pocket, collectibles])
+
+        PocketNavigation.show(card, on: navigation, animated: true) {}
+        #expect(navigation.viewControllers == [pocket, card])
     }
 }
 

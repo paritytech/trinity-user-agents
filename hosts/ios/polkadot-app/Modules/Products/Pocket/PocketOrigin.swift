@@ -25,3 +25,9 @@ protocol PocketOrigin: AnyObject {
     /// animated.
     func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool)
 }
+
+/// A screen that shows an item the Pocket opened.
+@MainActor
+protocol PocketItemScreen: UIViewController {
+    var pocketItem: PocketItem { get }
+}

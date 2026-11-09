@@ -36,7 +36,7 @@ struct PocketCardOpening {
 
             let origin = wallet.viewControllers.first as? PocketOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-            PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {
                 product.surface.claim(screen)
             }
 

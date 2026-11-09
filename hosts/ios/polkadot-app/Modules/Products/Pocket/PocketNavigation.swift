@@ -1,12 +1,12 @@
 import UIKit
 
-/// Puts a card's screen on the Wallet tab's stack, directly above the Pocket,
+/// Puts an item's screen on the Wallet tab's stack, directly above the Pocket,
 /// moving there as Android does: a flight from a Pocket on screen, a crossfade
-/// from another open card, and no animation otherwise.
+/// from another open item, and no animation otherwise.
 @MainActor
-enum PocketCardNavigation {
+enum PocketNavigation {
     static func show(
-        _ screen: PocketCardScreenViewController,
+        _ screen: PocketItemScreen,
         on wallet: UINavigationController,
         animated: Bool,
         then shown: @escaping @MainActor () -> Void
@@ -22,7 +22,7 @@ enum PocketCardNavigation {
 
         if animated, wallet.topViewController === pocket {
             wallet.pushViewController(screen, animated: true)
-        } else if animated, wallet.topViewController is PocketCardScreenViewController {
+        } else if animated, wallet.topViewController is PocketItemScreen {
             UIView.transition(
                 with: wallet.view,
                 duration: PocketFlightTiming.duration,
