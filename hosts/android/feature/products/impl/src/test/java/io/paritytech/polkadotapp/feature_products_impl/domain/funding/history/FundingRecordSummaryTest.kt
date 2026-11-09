@@ -9,7 +9,7 @@ import org.junit.Test
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
-import uniffi.truapi.FundingEndedView
+import uniffi.truapi.FundingEnding
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingQuote
@@ -129,6 +129,6 @@ class FundingRecordSummaryTest {
         refunded = refunded,
         transactionId = "tx",
         reference = "ref",
-        ended = FundingEndedView(FundingEndedOutcome.Open, null, null, null, null),
+        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null),
     )
 }

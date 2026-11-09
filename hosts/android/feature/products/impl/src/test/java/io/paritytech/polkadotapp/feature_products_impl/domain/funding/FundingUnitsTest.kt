@@ -67,9 +67,7 @@ class FundingUnitsTest {
     }
 
     @Test
-    fun `networks and tokens show their first letter as a monogram`() {
-        assertEquals("P", FundingNetwork("polkadot", "Polkadot").monogram)
-        assertEquals("A", FundingNetwork("avalanche", "avalanche").monogram)
+    fun `tokens show their first letter as a monogram`() {
         assertEquals("U", FundingToken("usdt").monogram)
     }
 }

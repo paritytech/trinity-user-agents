@@ -18,14 +18,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import uniffi.truapi.FundingActivity as CoreFundingActivity
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCancelAvailability
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
-import uniffi.truapi.FundingEndedView
+import uniffi.truapi.FundingEnding
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
@@ -40,22 +39,20 @@ import uniffi.truapi.ProductId
 class FundingActivityCenterTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val sessions = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
-    private val activity = MutableStateFlow<CoreFundingActivity?>(null)
-    private var recorded = emptyList<FundingSessionSummary>()
+    private val recorded = MutableStateFlow<List<FundingSessionSummary>>(emptyList())
     private val runtime = mockk<FundingRuntime> {
         every { sessions } returns this@FundingActivityCenterTest.sessions
-        every { activity } returns this@FundingActivityCenterTest.activity
-        coEvery { history() } answers { Result.success(recorded) }
+        every { history } returns recorded
+        coEvery { summary(any()) } answers { Result.success(recorded.value.firstOrNull { it.intent == firstArg<String>() }) }
         coEvery { start() } returns Result.success(Unit)
         coEvery { acknowledge(any()) } returns Result.success(true)
-        coEvery { acknowledgeShown(any()) } answers { Result.success(firstArg()) }
     }
     private val center = FundingActivityCenter(runtime)
 
     @Test
     fun `an ended top-up is listed and acknowledged`() = runBlocking {
         serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
-        recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
+        recorded.value = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
 
         val activity = center.observe().first()
 
@@ -67,7 +64,7 @@ class FundingActivityCenterTest {
     @Test
     fun `a released withdrawal is acknowledged, and stays in progress until its payout`() = runBlocking {
         serve(session("out", FundingDirection.OUT, FundingStage.Released("50", settledAtMs = 1uL)) to progress(FundingStatus.PreparingPayout))
-        recorded = listOf(summary("out", FundingStage.Released("50", settledAtMs = 1uL), FundingStatus.PreparingPayout, FundingDirection.OUT))
+        recorded.value = listOf(summary("out", FundingStage.Released("50", settledAtMs = 1uL), FundingStatus.PreparingPayout, FundingDirection.OUT))
 
         val activity = center.observe().first()
 
@@ -79,12 +76,12 @@ class FundingActivityCenterTest {
     // The core hands over an ending it has compacted as its summary only; its row tells the user how it went.
     @Test
     fun `an ending handed over as its summary is acknowledged as shown once its row is built`() = runBlocking {
-        recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
+        recorded.value = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
 
         val activity = center.observe().first()
         center.observe().first()
 
-        coVerify(exactly = 1) { runtime.acknowledgeShown(listOf("in")) }
+        coVerify(exactly = 1) { runtime.acknowledge("in") }
         assertEquals(listOf("in"), activity.history.map { it.id })
     }
 
@@ -118,7 +115,7 @@ class FundingActivityCenterTest {
             session("out", FundingDirection.OUT, released) to
                 progress(FundingStatus.PayoutFailed(refunded = "45"), FundingPayout.Failed("rejected"), refunded = "45"),
         )
-        recorded = listOf(
+        recorded.value = listOf(
             summary("out", released, FundingStatus.PayoutFailed(refunded = "45"), FundingDirection.OUT, FundingPayout.Failed("rejected"), "45"),
         )
         val activity = center.observe().first()
@@ -130,7 +127,7 @@ class FundingActivityCenterTest {
     // A session from an earlier run is not pushed again once acknowledged, so its row comes from the summary alone.
     @Test
     fun `ended rows read from the core's history, newest first, with the summary's rail`() = runBlocking {
-        recorded = listOf(
+        recorded.value = listOf(
             summary("newer", FundingStage.Delivered("40", settledAtMs = 3uL), FundingStatus.ToppedUp),
             summary("failed", FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL), FundingStatus.Failed(FundingFailure.Declined)),
             summary("older", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp),
@@ -141,7 +138,7 @@ class FundingActivityCenterTest {
         assertEquals(listOf("newer", "older", "failed"), activity.history.map { it.id })
         assertEquals(listOf(40.intoBalance(), 30.intoBalance(), 50.intoBalance()), activity.history.map { it.amount })
         assertEquals(List(3) { FundingRailType.CARD }, activity.history.map { it.rail })
-        coVerify(exactly = 0) { runtime.acknowledge(any()) }
+        coVerify(exactly = 3) { runtime.acknowledge(any()) }
     }
 
     // The core loads its sessions once funding resumes, and pushes its activity again then.
@@ -152,8 +149,7 @@ class FundingActivityCenterTest {
         val ids = withTimeout(2_000) {
             center.observe().take(2).map { activity ->
                 if (activity.history.isEmpty()) {
-                    recorded = listOf(summary("loaded", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
-                    this@FundingActivityCenterTest.activity.value = CoreFundingActivity(inFlight = emptyList(), history = emptyList())
+                    recorded.value = listOf(summary("loaded", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
                 }
                 activity.history.map { it.id }
             }.toList()
@@ -164,7 +160,7 @@ class FundingActivityCenterTest {
 
     @Test
     fun `an ended session's detail reads from its summary`() = runBlocking {
-        recorded = listOf(summary("older", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
+        recorded.value = listOf(summary("older", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
 
         val record = center.ended("older")
 
@@ -217,7 +213,7 @@ class FundingActivityCenterTest {
     // An accepted cancel ends a withdrawal released; the summary's status tells it from a sent one, in any later run.
     @Test
     fun `a withdrawal cancelled on the provider's terms is listed as cancelled with its refund`() = runBlocking {
-        recorded = listOf(
+        recorded.value = listOf(
             summary(
                 "out",
                 FundingStage.Released("50", settledAtMs = 1uL),
@@ -235,7 +231,7 @@ class FundingActivityCenterTest {
     /** The payout went through before the provider could act on the accepted cancel, so the withdrawal stands. */
     @Test
     fun `a withdrawal paid out after the user accepted a cancel is listed as sent`() = runBlocking {
-        recorded = listOf(
+        recorded.value = listOf(
             summary(
                 "out",
                 FundingStage.Released("50", settledAtMs = 1uL),
@@ -294,7 +290,7 @@ class FundingActivityCenterTest {
         refunded = refunded,
         transactionId = null,
         reference = null,
-        ended = FundingEndedView(FundingEndedOutcome.Open, null, null, null, null),
+        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null),
     )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {

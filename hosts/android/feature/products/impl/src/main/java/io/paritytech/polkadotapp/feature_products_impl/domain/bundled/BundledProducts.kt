@@ -8,9 +8,9 @@ import uniffi.truapi.BundleEntry
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.ProductId
+import uniffi.truapi.bundledFundingProviders
 import javax.inject.Inject
 import javax.inject.Singleton
-import uniffi.truapi.bundledFundingProviders
 import uniffi.truapi.bundledProducts as coreBundledProducts
 
 /** The files the app ships, by their path under its assets. */
