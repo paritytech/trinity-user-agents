@@ -3081,7 +3081,7 @@ fn screening_normalizes_and_trims() {
 #[derive(Default)]
 struct RecordingNativeFunding {
 	host: std::sync::OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
-	changes: Mutex<Vec<(Option<String>, super::funding_book::FundingChangeKind)>>,
+	changes: Mutex<Vec<(Option<String>, super::funding_feed::FundingChangeKind)>>,
 	/// Whether the overlay could read its options when it was shown.
 	options_when_shown: Mutex<Option<bool>>,
 }
@@ -3124,7 +3124,7 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 	fn funding_changed(
 		&self,
 		intent: Option<String>,
-		kind: super::funding_book::FundingChangeKind,
+		kind: super::funding_feed::FundingChangeKind,
 	) {
 		self.changes.lock().expect("changes mutex poisoned").push((intent, kind));
 	}
@@ -3137,7 +3137,7 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 // does.
 #[test]
 fn the_host_reads_back_what_the_core_says_changed() {
-	use super::funding_book::FundingChangeKind;
+	use super::funding_feed::FundingChangeKind;
 	let config = native_host_runtime_config();
 	let database_directory = config.database_directory.clone();
 	let host =

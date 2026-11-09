@@ -67,7 +67,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::{FundingFeed, FundingProviderLink};
+pub use funding::{FundingBookEntry, FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use truapi::latest::{FundingDirection, FundingQuote};
 
-use super::funding_book::resume_marker;
+use super::funding_feed::resume_marker;
 use crate::{
 	host_logic::{
 		bundled_products::{self, BundleFiles, BundledProduct},

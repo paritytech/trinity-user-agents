@@ -381,20 +381,19 @@ impl RuntimeServices {
 		if self.funding_country_due() {
 			self.detect_country_for_options(intent);
 		}
-		feed.funding_options_changed(
-			intent.to_string(),
-			FundingOptions {
-				candidates,
-				countries,
-				limits,
-				networks,
-				rails,
-				default_rail,
-				asset,
-				tokens,
-				detected_country: self.recent_funding_country(),
-			},
-		);
+		let options = FundingOptions {
+			candidates,
+			countries,
+			limits,
+			networks,
+			rails,
+			default_rail,
+			asset,
+			tokens,
+			detected_country: self.recent_funding_country(),
+		};
+		self.funding().book().options_changed(intent, options.clone());
+		feed.funding_options_changed(intent.to_string(), options);
 	}
 
 	/// Ask the host for the user's country in the background, and send

@@ -22,7 +22,7 @@ mod errors;
 mod events;
 mod executor;
 mod funding;
-mod funding_book;
+mod funding_feed;
 mod platform;
 mod pocket;
 mod renderer;
@@ -55,7 +55,7 @@ pub use funding::{
 	funding_page_origin, funding_resume_pending, funding_status_delayed, funding_status_in_flight,
 	funding_units, mime_for,
 };
-pub use funding_book::{FundingBookEntry, FundingChangeKind};
+pub use funding_feed::FundingChangeKind;
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
