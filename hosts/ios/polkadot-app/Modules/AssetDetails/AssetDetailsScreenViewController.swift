@@ -174,6 +174,7 @@ private extension AssetDetailsScreenViewController {
 }
 
 /// The state the flight changes, which the screen's SwiftUI root draws from.
+@MainActor
 @Observable
 private final class AssetDetailsScreenState {
     var isCardHidden = false
@@ -185,7 +186,7 @@ private struct AssetDetailsScreenRoot: View {
     let viewModel: AssetDetailsViewModel
     let state: AssetDetailsScreenState
 
-    @State private var overscroll: CGFloat = 0
+    @State private var overscroll = DSOverscroll()
 
     var body: some View {
         ScrollView {
@@ -200,14 +201,14 @@ private struct AssetDetailsScreenRoot: View {
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)
         }
-        .modifier(OverscrollReader(overscroll: $overscroll))
+        .modifier(OverscrollReader(overscroll: overscroll))
     }
 }
 
 /// The host scroll view's rubber-band distance past the top. Scroll geometry is an iOS 18 API; on
 /// iOS 17 the value stays 0, so an expanded header stretches with its details on a pull.
 private struct OverscrollReader: ViewModifier {
-    @Binding var overscroll: CGFloat
+    let overscroll: DSOverscroll
 
     func body(content: Content) -> some View {
         if #available(iOS 18, *) {
@@ -215,7 +216,7 @@ private struct OverscrollReader: ViewModifier {
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     max(0, -(geometry.contentOffset.y + geometry.contentInsets.top))
                 } action: { _, newValue in
-                    overscroll = newValue
+                    overscroll.distance = newValue
                 }
         } else {
             content

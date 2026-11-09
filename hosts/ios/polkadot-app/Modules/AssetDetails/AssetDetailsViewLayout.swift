@@ -7,7 +7,7 @@ struct AssetDetailsView: View {
     @State var viewModel: AssetDetailsViewModelProtocol
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
-    var overscroll: CGFloat = 0
+    var overscroll: DSOverscroll?
     var isCardHidden: Bool = false
     var showsOpenedFace: Bool = false
     var onCardFrame: (CGRect) -> Void = { _ in }
@@ -27,7 +27,7 @@ struct AssetDetailsView: View {
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
-        overscroll: CGFloat = 0,
+        overscroll: DSOverscroll? = nil,
         isCardHidden: Bool = false,
         showsOpenedFace: Bool = false,
         onCardFrame: @escaping (CGRect) -> Void = { _ in }

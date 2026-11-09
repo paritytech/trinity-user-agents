@@ -48,11 +48,11 @@ public struct AssetDetailsBalanceCard: View {
                         DSAmount(amount: balance, symbol: viewModel.symbol, typography: .titleLarge)
                             .foregroundStyle(Color.fgStaticWhite)
                             .opacity(isExpanded ? 0 : 1)
+                            .animation(.easeInOut, value: isExpanded)
                             .accessibilityHidden(isExpanded)
                             .accessibilityId(AccessibilityID.Wallet.cashCardBalance)
                     }
                 }
-                .animation(.easeInOut, value: isExpanded)
                 Spacer()
 
                 if isUpdating {
