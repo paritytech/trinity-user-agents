@@ -55,7 +55,8 @@ const MAX_TICK_INTERVAL: Duration = Duration::from_secs(3_600);
 /// chain has rotated to the new period by the time we scan slots.
 const PERIOD_BOUNDARY_MARGIN: Duration = Duration::from_secs(120);
 
-/// Why one target's renewal failed, and whether the host had no slot left.
+/// Why one target's renewal failed, whether the host had no slot left, and
+/// whether the wallet that started the pass can no longer sign.
 ///
 /// The distinction drives the rest of the pass, so it is read off the typed
 /// error rather than its rendered text.
@@ -63,6 +64,7 @@ const PERIOD_BOUNDARY_MARGIN: Duration = Duration::from_secs(120);
 struct RenewalFailure {
 	reason: String,
 	slots_exhausted: bool,
+	wallet_changed: bool,
 }
 
 impl From<StatementAllowanceError> for RenewalFailure {
@@ -72,6 +74,7 @@ impl From<StatementAllowanceError> for RenewalFailure {
 				err,
 				StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. })
 			),
+			wallet_changed: matches!(err, StatementAllowanceError::Authority(_)),
 			reason: err.to_string(),
 		}
 	}
@@ -166,7 +169,8 @@ pub struct RenewalChainContext<'a> {
 
 /// Register every target for `period`, continuing past per-target failures
 /// and stopping early once the host's slots for the period are exhausted
-/// (remaining targets are reported as skipped).
+/// (remaining targets are reported as skipped) or once the wallet that started
+/// the pass can no longer sign (remaining targets are reported as failed).
 ///
 /// Slots already held by any target, plus slots claimed earlier in the pass,
 /// are protected from replacement. Without that, a new target early in the
@@ -203,6 +207,11 @@ pub async fn renew_targets(
 			.await
 			.map_err(RenewalFailure::from)
 		};
+		if let Err(failure) = &scans &&
+			failure.wallet_changed
+		{
+			return stopped_by_wallet_change(period, targets, Vec::new(), failure.clone());
+		}
 		target_scans.push(scans);
 	}
 
@@ -278,7 +287,14 @@ pub async fn renew_targets(
 			}
 		}
 		let exhausted = matches!(&result, Err(failure) if failure.slots_exhausted);
+		let wallet_change = match &result {
+			Err(failure) if failure.wallet_changed => Some(failure.clone()),
+			_ => None,
+		};
 		results.push(result);
+		if let Some(failure) = wallet_change {
+			return stopped_by_wallet_change(period, targets, results, failure);
+		}
 		if exhausted {
 			break;
 		}
@@ -321,6 +337,18 @@ fn log_target_result(
 			warn!(period, label, reason = %failure.reason, "statement-store renewal failed");
 		},
 	}
+}
+
+/// Keep every result of a pass whose wallet can no longer sign, and report the
+/// targets it did not reach as failed for the same reason.
+fn stopped_by_wallet_change(
+	period: u32,
+	targets: &[ResolvedRenewalTarget],
+	mut results: Vec<Result<RegistrationOutcome, RenewalFailure>>,
+	failure: RenewalFailure,
+) -> StatementRenewalReport {
+	results.resize_with(targets.len(), || Err(failure.clone()));
+	fold_outcomes(period, targets, results)
 }
 
 /// Pair each target with its registration result; targets past the end of

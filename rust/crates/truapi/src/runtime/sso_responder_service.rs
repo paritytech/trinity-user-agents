@@ -39,23 +39,18 @@ use crate::{
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::{
-		entropy::root_entropy_source,
-		product_account::{
-			ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
-		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
-			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
-			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
-			establish_responder_session_info, v2,
+			PairingDeeplinkDecodeError, VersionedHandshakeProposal, bootstrap_topic,
+			decode_pairing_deeplink, encrypt_v2_handshake_response, v2,
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
 		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
+		authority::{AccountHolder, AuthoritySession},
 		services::RuntimeServices,
-		signing_host::{SigningHost, SigningHostSsoService},
+		signing_host::{SigningHost, SigningHostSsoService, WalletAccountHolder},
 		sso_remote::{fresh_statement_expiry, sso_message_id},
 		sso_service::{Dispatch, SsoWithdrawals},
 		statement_store_rpc,
@@ -64,30 +59,8 @@ use crate::{
 };
 use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
 
-/// RFC-0022 domain for the responder's persistent SSO X25519 key.
-const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
-
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
-
-fn derive_responder_identity(
-	entropy: &[u8],
-	network_suffix: &str,
-) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-	let statement = derive_identity_keypair(entropy, network_suffix)?;
-	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(entropy, SSO_ENCRYPTION_DOMAIN);
-	let identity_chat_private_key = derive_identity_chat_private_key(entropy);
-	Ok((
-		ResponderIdentity {
-			statement_secret: statement.secret.to_bytes(),
-			statement_public_key: statement.public.to_bytes(),
-			encryption_secret_key,
-			encryption_public_key,
-		},
-		identity_chat_private_key,
-	))
-}
 
 /// Bounded set of undecodable request ids acknowledged within one serve loop.
 struct DecodeFailureRequestIds {
@@ -255,6 +228,7 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 /// duplicate detection.
 pub struct SsoResponderService {
 	services: Arc<RuntimeServices>,
+	wallet: Arc<WalletAccountHolder>,
 	signing_host: Arc<SigningHost>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
@@ -263,7 +237,19 @@ pub struct SsoResponderService {
 impl SsoResponderService {
 	/// Answer peers of `signing_host` over the runtime's statement store.
 	pub fn new(services: Arc<RuntimeServices>, signing_host: Arc<SigningHost>) -> Arc<Self> {
-		Arc::new(Self { services, signing_host, replay_locks: SsoReplayLocks::default() })
+		Arc::new(Self {
+			services,
+			wallet: signing_host.wallet().clone(),
+			signing_host,
+			replay_locks: SsoReplayLocks::default(),
+		})
+	}
+
+	/// The wallet activation a pairing operation answers under.
+	fn wallet_session(&self) -> Result<AuthoritySession, String> {
+		self.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())
 	}
 
 	/// Answer `deeplink` and serve the resulting SSO session until it ends.
@@ -284,39 +270,21 @@ impl SsoResponderService {
 		deeplink: &str,
 	) -> Result<EstablishedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		// Product accounts and the SSO statement identity derive from the
-		// canonical root key; the identity is the RFC-0028 `peopl.<suffix>` account 0
-		// of the network this host is configured for.
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let (identity, identity_chat_private_key) =
-			derive_responder_identity(&entropy, self.signing_host.network_suffix())
-				.map_err(|err| format!("responder identity derivation failed: {err}"))?;
+		let wallet_session = self.wallet_session()?;
 		let device_enc_secret =
 			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
 		let device_enc_pub_key = device_enc_secret.public_key().0;
-		let session = responder_session_from_identity(&identity, peer)?;
-
-		let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
-			identity_account_id: identity.statement_public_key,
-			root_account_id: root.public.to_bytes(),
-			identity_chat_private_key,
-			sso_enc_pub_key: identity.encryption_public_key,
-			device_enc_pub_key,
-			root_entropy_source: root_entropy_source(&entropy),
-		}));
-		submit_handshake_answer(
-			&self.services,
-			&session,
-			peer,
-			&success,
-			"sso-responder handshake",
-		)
-		.await?;
+		let (session, statement) = self
+			.wallet
+			.pairing_answer(&wallet_session, peer, device_enc_pub_key)
+			.map_err(|error| error.to_string())?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder handshake")
+			.await?;
+		self.wallet
+			.require_current_session(&wallet_session)
+			.map_err(|error| error.to_string())?;
 		debug!("answered pairing handshake");
 		// The submit is the earliest point the peer could read the answer.
 		if let Some(observer) = self.services.device_pairing_observer() {
@@ -326,7 +294,7 @@ impl SsoResponderService {
 		Ok(EstablishedPairing {
 			session,
 			replay_scope: SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
+				root_public_key: wallet_session.public_key,
 				peer_statement_account_id: peer.statement_account_id,
 				peer_encryption_public_key: peer.encryption_public_key,
 			},
@@ -335,18 +303,16 @@ impl SsoResponderService {
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
 	pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
+		let wallet_session = self.wallet_session()?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		serve_session(
 			self,
 			session,
 			SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
+				root_public_key: wallet_session.public_key,
 				peer_statement_account_id: peer.statement_account_id,
 				peer_encryption_public_key: peer.encryption_public_key,
 			},
@@ -356,11 +322,11 @@ impl SsoResponderService {
 
 	/// Notify a paired host that this signing host is ending their SSO session.
 	pub async fn disconnect_paired_host(&self, peer: PairedSsoPeer) -> Result<(), String> {
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
+		let wallet_session = self.wallet_session()?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		let message_id = sso_message_id();
 		let message = RemoteMessage {
 			message_id: message_id.clone(),
@@ -391,25 +357,19 @@ impl SsoResponderService {
 		deeplink: &str,
 	) -> Result<AnnouncedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let (identity, _) = derive_responder_identity(&entropy, self.signing_host.network_suffix())
-			.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let session = responder_session_from_identity(&identity, peer)?;
-
+		let wallet_session = self.wallet_session()?;
+		let transport = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
-		submit_handshake_answer(
-			&self.services,
-			&session,
-			peer,
-			&pending,
-			"sso-responder allowance allocation",
-		)
-		.await?;
+		let statement = prepare_handshake_answer(&transport, peer, &pending)?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder allowance allocation")
+			.await?;
 		debug!("told pairing host that allowance allocation started");
-		Ok(AnnouncedPairing { identity, peer })
+		Ok(AnnouncedPairing { transport, peer })
 	}
 
 	/// Tell the pairing host that pairing failed, so it reports `reason` and offers
@@ -419,67 +379,38 @@ impl SsoResponderService {
 		announced: &AnnouncedPairing,
 		reason: String,
 	) -> Result<(), String> {
-		let session = responder_session_from_identity(&announced.identity, announced.peer)?;
-		let failed = v2::EncryptedResponse::Failed(reason);
-		submit_handshake_answer(
-			&self.services,
-			&session,
+		let statement = prepare_handshake_answer(
+			&announced.transport,
 			announced.peer,
-			&failed,
-			"sso-responder pairing failure",
-		)
-		.await?;
+			&v2::EncryptedResponse::Failed(reason),
+		)?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder pairing failure")
+			.await?;
 		debug!("told pairing host that pairing failed");
 		Ok(())
 	}
 }
 
-fn responder_session(
-	entropy: &[u8],
-	network_suffix: &str,
+/// Transport and peer of an in-progress pairing notice.
+///
+/// The transport is derived once, when the allocation is announced, so the
+/// failure notice can still be signed after the wallet locks or switches.
+pub struct AnnouncedPairing {
+	transport: SsoSessionInfo,
 	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	let (identity, _) = derive_responder_identity(entropy, network_suffix)
-		.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-	responder_session_from_identity(&identity, peer)
 }
 
-fn responder_session_from_identity(
-	identity: &ResponderIdentity,
-	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	establish_responder_session_info(
-		identity,
-		peer.statement_account_id,
-		peer.encryption_public_key,
-	)
-}
-
-/// Encrypt `response` to the pairing host and post it on the handshake topic.
-async fn submit_handshake_answer(
-	services: &RuntimeServices,
-	session: &SsoSessionInfo,
+/// Encrypt `response` to `peer` and sign it on the handshake topic.
+pub fn prepare_handshake_answer(
+	transport: &SsoSessionInfo,
 	peer: PairedSsoPeer,
 	response: &v2::EncryptedResponse,
-	context: &'static str,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
 	let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
 	let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-	let statement = build_signed_statement(
-		session,
-		topic,
-		topic,
-		handshake.encode(),
-		fresh_statement_expiry(),
-	)?;
-	services.statement_store.submit(statement, context).await
-}
-
-/// Keep the responder identity and peer for both pairing notices.
-// No `Debug`: it holds the responder statement secret.
-pub struct AnnouncedPairing {
-	identity: ResponderIdentity,
-	peer: PairedSsoPeer,
+	build_signed_statement(transport, topic, topic, handshake.encode(), fresh_statement_expiry())
 }
 
 /// Serve inbound session statements until the session ends.
