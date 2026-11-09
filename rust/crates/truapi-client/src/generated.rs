@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ee4f207ed8eaecd4";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "690b94433a94241d";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1180,6 +1180,82 @@ impl RequestMethod for JamPeerTransportEvents {
 	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsRequest;
 	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsResponse;
 	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_listen` method marker.
+pub struct JamPeerTransportListen;
+impl JamPeerTransportListen {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "listen",
+		wire_name: "jam_peer_transport_listen",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportListenRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportListenResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportListenError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 7 }),
+	};
+}
+impl RequestMethod for JamPeerTransportListen {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportListenRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportListenResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportListenError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_send_chunk` method marker.
+pub struct JamPeerTransportSendChunk;
+impl JamPeerTransportSendChunk {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "send_chunk",
+		wire_name: "jam_peer_transport_send_chunk",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkResponse",
+		error_type: Some(
+			"truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkError",
+		),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 8 }),
+	};
+}
+impl RequestMethod for JamPeerTransportSendChunk {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendChunkError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_recv_chunk` method marker.
+pub struct JamPeerTransportRecvChunk;
+impl JamPeerTransportRecvChunk {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "recv_chunk",
+		wire_name: "jam_peer_transport_recv_chunk",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkResponse",
+		error_type: Some(
+			"truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkError",
+		),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 9 }),
+	};
+}
+impl RequestMethod for JamPeerTransportRecvChunk {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvChunkError;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2364,6 +2440,9 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	JamPeerTransportReset::DESCRIPTOR,
 	JamPeerTransportClose::DESCRIPTOR,
 	JamPeerTransportEvents::DESCRIPTOR,
+	JamPeerTransportListen::DESCRIPTOR,
+	JamPeerTransportSendChunk::DESCRIPTOR,
+	JamPeerTransportRecvChunk::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
 	LocalStorageRead::DESCRIPTOR,
@@ -2451,6 +2530,9 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	JamPeerTransportReset::DESCRIPTOR,
 	JamPeerTransportClose::DESCRIPTOR,
 	JamPeerTransportEvents::DESCRIPTOR,
+	JamPeerTransportListen::DESCRIPTOR,
+	JamPeerTransportSendChunk::DESCRIPTOR,
+	JamPeerTransportRecvChunk::DESCRIPTOR,
 	ExpandedCardSetFaceShown::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
@@ -2545,6 +2627,9 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	JamPeerTransportReset::DESCRIPTOR,
 	JamPeerTransportClose::DESCRIPTOR,
 	JamPeerTransportEvents::DESCRIPTOR,
+	JamPeerTransportListen::DESCRIPTOR,
+	JamPeerTransportSendChunk::DESCRIPTOR,
+	JamPeerTransportRecvChunk::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
 	LocalStorageRead::DESCRIPTOR,

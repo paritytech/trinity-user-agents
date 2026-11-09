@@ -40,3 +40,18 @@ prompt, including batched requests, and in permission details. Short summary tit
 JAM consent uses the shared canonical product permission authority, including revision fences and revocation of
 execution-local grants, while preserving the account-neutral product/genesis scope.
 Quota reservations use the current atomic update API so warning-denied source installs remain supported.
+
+Extend trait 111 with `listen` (7), `send_chunk` (8), `recv_chunk` (9), and
+`PeerAccepted` connection events. Native listeners require separate trusted,
+execution-only consent in addition to the product/genesis `JamPeers` grant:
+loopback binding, 1–64 unique allowed peer identities excluding the local
+custodied identity, and an immutable policy established before dialing.
+Custody/execution teardown discards the listener and its consent; browser
+listeners remain unsupported.
+
+Chunked messages carry at most 256 KiB per fragment and 64 MiB per logical
+message while retaining the 4 MiB per-connection buffering budget. Ordinary
+`send`/`recv` retain their 1 MiB limit. Empty terminal `send` now sends only
+FIN, whereas empty nonterminal sends and zero-length chunked messages retain
+their length prefix. See the listener and bounded-message contract in
+`docs/rfcs/0002-permission-model.md`.

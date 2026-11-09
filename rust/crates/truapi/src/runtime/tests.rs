@@ -2935,6 +2935,42 @@ fn jam_peers_not_granted() -> CallError<HostJamPeerTransportDialError> {
 }
 
 #[test]
+fn stored_jam_peers_grant_never_enables_an_unsupported_listener() {
+    futures::executor::block_on(async {
+        use truapi::api::JamPeerTransport;
+        use truapi::versioned::jam_peer_transport::{
+            HostJamPeerTransportListenError, HostJamPeerTransportListenRequest,
+        };
+
+        let genesis = [0x35; 32];
+        let platform = stub_platform();
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        host.set_permission_authorization_status(
+            PermissionAuthorizationRequest::Remote(jam_peers(genesis)),
+            PermissionAuthorizationStatus::Authorized,
+        )
+        .await
+        .unwrap();
+
+        let request = HostJamPeerTransportListenRequest::V1(
+            v01::HostJamPeerTransportListenRequest {
+                genesis,
+                ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
+                port: 43000,
+                allowed_peers: vec![[0x11; 32]],
+            },
+        );
+        assert_eq!(
+            host.listen(&CallContext::default(), request).await,
+            Err(CallError::Domain(HostJamPeerTransportListenError::V1(
+                v01::HostJamPeerTransportListenError::Refused,
+            ))),
+        );
+        assert!(platform.remote_permission_requests.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
 fn jam_peer_dials_follow_the_stored_decision_without_prompting() {
     futures::executor::block_on(async {
         let platform = stub_platform();

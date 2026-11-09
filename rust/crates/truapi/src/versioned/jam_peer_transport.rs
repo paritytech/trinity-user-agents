@@ -24,4 +24,13 @@ truapi_macros::versioned_type! {
     pub enum HostJamPeerTransportEventsRequest { V1 }
     pub enum HostJamPeerTransportEventsResponse { V1 => v01::HostJamPeerTransportEventsResponse }
     pub enum HostJamPeerTransportEventsError { V1 => v01::HostJamPeerTransportEventsError }
+    pub enum HostJamPeerTransportListenRequest { V1 => v01::HostJamPeerTransportListenRequest }
+    pub enum HostJamPeerTransportListenResponse { V1 => v01::HostJamPeerTransportListenResponse }
+    pub enum HostJamPeerTransportListenError { V1 => v01::HostJamPeerTransportListenError }
+    pub enum HostJamPeerTransportSendChunkRequest { V1 => v01::HostJamPeerTransportSendChunkRequest }
+    pub enum HostJamPeerTransportSendChunkResponse { V1 }
+    pub enum HostJamPeerTransportSendChunkError { V1 => v01::HostJamPeerTransportSendChunkError }
+    pub enum HostJamPeerTransportRecvChunkRequest { V1 => v01::HostJamPeerTransportRecvChunkRequest }
+    pub enum HostJamPeerTransportRecvChunkResponse { V1 => v01::HostJamPeerTransportRecvChunkResponse }
+    pub enum HostJamPeerTransportRecvChunkError { V1 => v01::HostJamPeerTransportRecvChunkError }
 }

@@ -6,9 +6,12 @@ import {
   JAM_PEER_TRANSPORT_CLOSE,
   JAM_PEER_TRANSPORT_DIAL,
   JAM_PEER_TRANSPORT_EVENTS,
+  JAM_PEER_TRANSPORT_LISTEN,
   JAM_PEER_TRANSPORT_OPEN,
   JAM_PEER_TRANSPORT_RECV,
+  JAM_PEER_TRANSPORT_RECV_CHUNK,
   JAM_PEER_TRANSPORT_SEND,
+  JAM_PEER_TRANSPORT_SEND_CHUNK,
   SYSTEM_HANDSHAKE,
 } from "./generated/wire-table.js";
 import { decodeWireMessage, encodeWireMessage, MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_REQUEST, type MethodIds } from "./transport.js";
@@ -31,6 +34,7 @@ interface FakeStream {
   local: WebTransportBidirectionalStreamLike;
   /** Bytes the session wrote, in order. */
   sent: Uint8Array[];
+  readonly sendFinished: boolean;
   peerWrite(bytes: Uint8Array): void;
   peerFin(): void;
 }
@@ -48,6 +52,7 @@ interface FakeTransport extends WebTransportLike {
 
 function fakeStream(write?: (chunk: Uint8Array) => Promise<void>): FakeStream {
   const sent: Uint8Array[] = [];
+  let sendFinished = false;
   let peerController!: ReadableByteStreamController;
   const readable = new ReadableStream({ type: "bytes", start: (c) => (peerController = c) });
   const writable = new WritableStream<Uint8Array>({
@@ -55,10 +60,12 @@ function fakeStream(write?: (chunk: Uint8Array) => Promise<void>): FakeStream {
       sent.push(chunk);
       return write?.(chunk);
     },
+    close: () => { sendFinished = true; },
   });
   return {
     local: { readable, writable },
     sent,
+    get sendFinished() { return sendFinished; },
     peerWrite: (bytes) => peerController.enqueue(bytes),
     peerFin: () => {
       peerController.close();
@@ -188,6 +195,45 @@ describe("peerUrl", () => {
 
 describe("authorization", () => {
   const LIMIT = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } };
+
+  test("an outbound grant cannot enable a browser listener or outlive disposal", async () => {
+    const { session, transports } = await negotiated();
+    expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    const request = T.VersionedHostJamPeerTransportListenRequest.enc({
+      tag: "V1",
+      value: { genesis: GENESIS, ip: LOOPBACK, port: 43000, allowedPeers: [`0x${"11".repeat(32)}`] },
+    });
+    const codec = S.Result(T.VersionedHostJamPeerTransportListenResponse, S.CallError(T.VersionedHostJamPeerTransportListenError));
+    expect(await call(session, JAM_PEER_TRANSPORT_LISTEN, request, codec)).toEqual({
+      success: false, value: { tag: "Domain", value: { tag: "V1", value: "Refused" } },
+    });
+    expect(transports).toHaveLength(1);
+    session.close();
+    expect(await call(session, JAM_PEER_TRANSPORT_LISTEN, request, codec)).toEqual({
+      success: false, value: { tag: "Denied" },
+    });
+  });
+
+  test("listen before negotiation is NotGranted and never asks permission", async () => {
+    const asked: string[] = [];
+    const session = createJamPeerTransportSession({
+      authorize: async (genesis) => { asked.push(genesis); return true; },
+      connect: () => { throw new Error("listen must not connect"); },
+    });
+    try {
+      const request = T.VersionedHostJamPeerTransportListenRequest.enc({
+        tag: "V1",
+        value: { genesis: GENESIS, ip: LOOPBACK, port: 43000, allowedPeers: [] },
+      });
+      const codec = S.Result(T.VersionedHostJamPeerTransportListenResponse, S.CallError(T.VersionedHostJamPeerTransportListenError));
+      expect(await call(session, JAM_PEER_TRANSPORT_LISTEN, request, codec)).toEqual({
+        success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } },
+      });
+      expect(asked).toEqual([]);
+    } finally {
+      session.close();
+    }
+  });
 
   test("permission waits consume connection slots and cancellation releases them before a retry", async () => {
     const pending = Promise.withResolvers<boolean>();
@@ -485,6 +531,42 @@ describe("withdrawn dials", () => {
 });
 
 describe("streams", () => {
+  test("browser chunk methods remain explicitly unsupported", async () => {
+    const { session } = await negotiated();
+    try {
+      const codec = S.Result(S._void, S.CallError(S._void));
+      const unsupported = { success: false, value: { tag: "Unsupported" } };
+      expect(await call(session, JAM_PEER_TRANSPORT_SEND_CHUNK, T.VersionedHostJamPeerTransportSendChunkRequest.enc({
+        tag: "V1", value: { stream: 1, total: 2, offset: 0, bytes: "0xaabb", fin: true },
+      }), codec)).toEqual(unsupported);
+      expect(await call(session, JAM_PEER_TRANSPORT_RECV_CHUNK, T.VersionedHostJamPeerTransportRecvChunkRequest.enc({
+        tag: "V1", value: { stream: 1, maxBytes: 256 << 10 },
+      }), codec)).toEqual(unsupported);
+    } finally {
+      session.close();
+    }
+  });
+
+  test("empty terminal send is FIN-only, unlike an empty nonterminal message", async () => {
+    const { session, transport, conn } = await dialed();
+    try {
+      const open = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 149 } }), openCodec);
+      if (!open.success) throw new Error("open failed");
+      const stream = open.value.value.stream;
+      const wire = transport.streams[0]!;
+      const message = await call(session, JAM_PEER_TRANSPORT_SEND, T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x", fin: false } }), sendCodec);
+      expect(message.success).toBe(true);
+      expect(wire.sent.map((c) => S.bytesToHex(c))).toEqual(["0x95", "0x00000000"]);
+      expect(wire.sendFinished).toBe(false);
+      const fin = await call(session, JAM_PEER_TRANSPORT_SEND, T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x", fin: true } }), sendCodec);
+      expect(fin.success).toBe(true);
+      expect(wire.sent.map((c) => S.bytesToHex(c))).toEqual(["0x95", "0x00000000"]);
+      expect(wire.sendFinished).toBe(true);
+    } finally {
+      session.close();
+    }
+  });
+
   test("concurrent opens reserve the sixteen slots before transport creation settles", async () => {
     const { session, transport, conn } = await dialed();
     const pending: Array<(stream: WebTransportBidirectionalStreamLike) => void> = [];
