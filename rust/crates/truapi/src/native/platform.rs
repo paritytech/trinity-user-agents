@@ -753,19 +753,12 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 }
 
 /// [`crate::platform::FundingPlatform`] served by host-provided
-/// [`NativeFundingCallbacks`], telling the host what changed in the funding
-/// state it reads back from the runtime.
+/// [`NativeFundingCallbacks`].
 pub struct FundingCallbackPlatform {
 	/// Host funding overlay.
 	pub funding: Arc<dyn NativeFundingCallbacks>,
 	/// The core database directory, which holds the resume marker.
 	pub database_directory: std::path::PathBuf,
-}
-
-impl FundingCallbackPlatform {
-	fn changed(&self, intent: Option<String>, kind: FundingChangeKind) {
-		self.funding.funding_changed(intent, kind);
-	}
 }
 
 #[async_trait::async_trait]
@@ -812,7 +805,7 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	}
 
 	fn funding_quotes_changed(&self, intent: String, _quotes: crate::platform::FundingQuoteList) {
-		self.changed(Some(intent), FundingChangeKind::Quotes);
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
 	}
 }
 
@@ -824,12 +817,12 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 		_session: Option<crate::host_logic::funding::FundingSession>,
 		_progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
-		self.changed(Some(intent), FundingChangeKind::Session);
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Session);
 	}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
 		write_resume_marker(&self.database_directory, in_progress);
-		self.changed(None, FundingChangeKind::InProgress);
+		self.funding.funding_changed(None, FundingChangeKind::InProgress);
 	}
 
 	fn funding_options_changed(
@@ -837,7 +830,7 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 		intent: String,
 		_options: crate::host_logic::funding_providers::FundingOptions,
 	) {
-		self.changed(Some(intent), FundingChangeKind::Options);
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Options);
 	}
 }
 

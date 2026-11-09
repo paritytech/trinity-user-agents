@@ -807,8 +807,9 @@ impl SigningHostRuntime {
 		self.services.funding().history()
 	}
 
-	/// Funding session `intent` as the core holds it in full, `None` once
-	/// only its summary is kept or for no such session.
+	/// Funding session `intent` as the core holds it in full.
+	///
+	/// `None` once only its summary is kept, or for no such session.
 	pub fn funding_session(
 		&self,
 		intent: &str,
@@ -839,39 +840,23 @@ impl SigningHostRuntime {
 		self.services.funding().book().quotes(intent)
 	}
 
-	/// Every funding session the host has heard of that the core holds in
-	/// full, with its progress now, newest opened first.
+	/// The funding sessions the host has heard of that the core holds in
+	/// full, with their progress now, newest opened first.
 	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// The ended funding sessions the host has not acknowledged.
-	pub fn funding_unacknowledged(&self) -> Vec<String> {
-		self.services.funding().book().unacknowledged()
-	}
-
-	/// Whether a provider still works on any funding session; `None` until
-	/// funding resumed.
-	pub fn funding_in_progress(&self) -> Option<bool> {
-		self.services.funding().book().in_progress()
-	}
-
-	/// Whether funding session `intent`'s payment moved: it ended, or it
-	/// reached a step past Started. `false` for a session the core does not
-	/// hold.
-	pub fn funding_payment_moved(&self, intent: &str) -> bool {
-		self.services.funding().payment_moved(intent)
-	}
-
 	/// The user's funding activity: sessions in flight and the history of
-	/// ended ones, worked out again only once a session changed.
+	/// ended ones.
 	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
 		self.services.funding().activity_view().activity
 	}
 
 	/// Acknowledge that the user saw how the ended funding sessions
-	/// `intents` went, and with them the ended sessions history leaves out,
-	/// so none is owed to the host again. Returns the sessions acknowledged.
+	/// `intents` went.
+	///
+	/// Ended sessions history leaves out are acknowledged with them. Returns
+	/// the sessions acknowledged.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_shown"))]
 	pub async fn acknowledge_funding_shown(
 		&self,
@@ -880,11 +865,12 @@ impl SigningHostRuntime {
 		Ok(self.services.acknowledge_funding_shown(intents).await?)
 	}
 
-	/// Offer the funding providers the host's remote configuration lists by
-	/// product name, then the `bundled` ones it does not name. Names that are
-	/// not product ids are skipped and logged, and a call listing what the
-	/// last one listed changes nothing, so the host calls it on every
-	/// configuration refresh.
+	/// Offer the funding providers the remote configuration names, then the
+	/// `bundled` ones it does not.
+	///
+	/// Names that are not product ids are skipped and logged. A call listing
+	/// what the last one listed changes nothing, so the host calls it on
+	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
 	pub fn set_funding_provider_config(
 		&self,
