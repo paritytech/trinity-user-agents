@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
+import io.sentry.SentryLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
@@ -118,6 +119,8 @@ class HostProcessTelemetryTest {
         }
 
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
+        assertEquals(SentryLevel.INFO, sentryEvent?.level)
+        assertEquals("host.telemetry", sentryEvent?.logger)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
     }
