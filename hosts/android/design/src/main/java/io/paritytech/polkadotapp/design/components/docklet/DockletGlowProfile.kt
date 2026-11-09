@@ -36,7 +36,7 @@ internal object DockletGlowProfile {
         return total
     }
 
-    fun taperedDistance(inFromEdge: Float, along: Float, length: Float): Float {
+    fun roundedEndDistance(inFromEdge: Float, along: Float, length: Float): Float {
         val fromNearerEnd = max(0f, min(along, length - along))
         val radius = min(EndRadius, length / 2f)
         if (radius <= 0f) return DockletDrawbridge.GlowWidth
@@ -45,7 +45,7 @@ internal object DockletGlowProfile {
     }
 
     fun glowAlpha(inFromEdge: Float, along: Float, length: Float): Float {
-        val tapered = taperedDistance(inFromEdge, along, length)
+        val tapered = roundedEndDistance(inFromEdge, along, length)
         if (tapered >= DockletDrawbridge.GlowWidth) return 0f
         val index = tapered / LookupStep
         val lower = index.toInt()
@@ -53,7 +53,7 @@ internal object DockletGlowProfile {
     }
 
     fun shimmerStrength(inFromEdge: Float, along: Float, length: Float): Float =
-        max(0f, 1f - taperedDistance(inFromEdge, along, length) / DockletDrawbridge.GlowWidth)
+        max(0f, 1f - roundedEndDistance(inFromEdge, along, length) / DockletDrawbridge.GlowWidth)
 
     fun widthScale(progress: Float): Float = MinWidthFraction + (1f - MinWidthFraction) * progress.coerceIn(0f, 1f)
 

@@ -29,14 +29,14 @@ class DockletGlowProfileTest {
 
     @Test
     fun `away from its ends the glow keeps its full width`() {
-        assertEquals(5f, DockletGlowProfile.taperedDistance(inFromEdge = 5f, along = 22f, length = Length), EPS)
-        assertEquals(5f, DockletGlowProfile.taperedDistance(inFromEdge = 5f, along = Length - 22f, length = Length), EPS)
+        assertEquals(5f, DockletGlowProfile.roundedEndDistance(inFromEdge = 5f, along = 22f, length = Length), EPS)
+        assertEquals(5f, DockletGlowProfile.roundedEndDistance(inFromEdge = 5f, along = Length - 22f, length = Length), EPS)
     }
 
     @Test
     fun `the ends taper along a quarter ellipse to nothing at the tip`() {
         assertEquals(0f, DockletGlowProfile.glowAlpha(inFromEdge = 0f, along = 0f, length = Length), EPS)
-        assertEquals(12f, DockletGlowProfile.taperedDistance(inFromEdge = 0f, along = 11f, length = Length), EPS)
+        assertEquals(12f, DockletGlowProfile.roundedEndDistance(inFromEdge = 0f, along = 11f, length = Length), EPS)
         assertEquals(
             DockletGlowProfile.glowAlpha(inFromEdge = 3f, along = 5f, length = Length),
             DockletGlowProfile.glowAlpha(inFromEdge = 3f, along = Length - 5f, length = Length),
@@ -46,8 +46,8 @@ class DockletGlowProfileTest {
 
     @Test
     fun `a glow shorter than both end radii rounds over half its length`() {
-        assertEquals(0f, DockletGlowProfile.taperedDistance(inFromEdge = 0f, along = 10f, length = 20f), EPS)
-        assertEquals(24f, DockletGlowProfile.taperedDistance(inFromEdge = 0f, along = 0f, length = 20f), EPS)
+        assertEquals(0f, DockletGlowProfile.roundedEndDistance(inFromEdge = 0f, along = 10f, length = 20f), EPS)
+        assertEquals(24f, DockletGlowProfile.roundedEndDistance(inFromEdge = 0f, along = 0f, length = 20f), EPS)
     }
 
     @Test

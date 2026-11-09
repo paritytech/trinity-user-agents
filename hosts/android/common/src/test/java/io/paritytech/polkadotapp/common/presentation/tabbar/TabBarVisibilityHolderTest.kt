@@ -10,14 +10,14 @@ class TabBarVisibilityHolderTest {
     fun `a product pins the bar over itself`() {
         holder.pin(ProductA)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = ProductA), holder.visibility())
+        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
     }
 
     @Test
     fun `Main pins the bar without a product`() {
         holder.pin(Main)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = null), holder.visibility())
+        assertEquals(shown(), holder.visibility())
     }
 
     @Test
@@ -25,7 +25,7 @@ class TabBarVisibilityHolderTest {
         holder.pin(Main)
         holder.pin(ProductA)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = ProductA), holder.visibility())
+        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
     }
 
     @Test
@@ -33,11 +33,11 @@ class TabBarVisibilityHolderTest {
         holder.pin(ProductA)
         holder.pin(Main)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = ProductA), holder.visibility())
+        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
 
         holder.release(ProductA)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = null), holder.visibility())
+        assertEquals(shown(), holder.visibility())
     }
 
     @Test
@@ -45,11 +45,11 @@ class TabBarVisibilityHolderTest {
         holder.pin(ProductA)
         holder.pin(ProductB)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = ProductB), holder.visibility())
+        assertEquals(shown(tuckedPin = ProductB), holder.visibility())
 
         holder.release(ProductB)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = ProductA), holder.visibility())
+        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
     }
 
     @Test
@@ -57,30 +57,57 @@ class TabBarVisibilityHolderTest {
         holder.pin(ProductA)
         holder.release(ProductA)
 
-        assertEquals(Visibility(hidden = true, forced = false, tuckedPin = null), holder.visibility())
+        assertEquals(absent(), holder.visibility())
     }
 
     @Test
-    fun `a chat keeps the bar away and says so`() {
+    fun `a chat keeps the bar away`() {
         holder.pin(Chat)
 
-        assertEquals(Visibility(hidden = true, forced = false, tuckedPin = null), holder.visibility())
-        assertEquals(Chat, holder.hiddenPin.value)
+        assertEquals(absent(hiddenPin = Chat), holder.visibility())
     }
 
     @Test
-    fun `leaving a chat for Main clears the hidden pin`() {
+    fun `a chat opening while Main is still pinned already takes the bar away`() {
+        holder.pin(Main)
+        holder.pin(Chat)
+
+        assertEquals(absent(hiddenPin = Chat), holder.visibility())
+    }
+
+    @Test
+    fun `a chat opening over a product takes the bar away and keeps the product's pin`() {
+        holder.pin(ProductA)
+        holder.pin(Chat)
+
+        assertEquals(absent(tuckedPin = ProductA, hiddenPin = Chat), holder.visibility())
+    }
+
+    @Test
+    fun `Main comes back with the bar once the chat lets go`() {
         holder.pin(Chat)
         holder.pin(Main)
+
+        assertEquals(absent(hiddenPin = Chat), holder.visibility())
+
         holder.release(Chat)
 
-        assertEquals(Visibility(hidden = false, forced = true, tuckedPin = null), holder.visibility())
-        assertEquals(null, holder.hiddenPin.value)
+        assertEquals(shown(), holder.visibility())
     }
 
-    private data class Visibility(val hidden: Boolean, val forced: Boolean, val tuckedPin: TabBarTuckedPin?)
+    private data class Visibility(
+        val hidden: Boolean,
+        val forced: Boolean,
+        val tuckedPin: TabBarTuckedPin?,
+        val hiddenPin: TabBarHiddenPin?,
+    )
 
-    private fun TabBarVisibilityHolder.visibility() = Visibility(hidden.value, forced.value, tuckedPin.value)
+    private fun shown(tuckedPin: TabBarTuckedPin? = null) = Visibility(hidden = false, forced = true, tuckedPin = tuckedPin, hiddenPin = null)
+
+    private fun absent(tuckedPin: TabBarTuckedPin? = null, hiddenPin: TabBarHiddenPin? = null) =
+        Visibility(hidden = true, forced = false, tuckedPin = tuckedPin, hiddenPin = hiddenPin)
+
+    private fun TabBarVisibilityHolder.visibility() = Visibility(hidden.value, forced.value, tuckedPin.value, hiddenPin.value)
 
     private companion object {
         val Main = Any()

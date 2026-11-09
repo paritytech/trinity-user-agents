@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.design.components.docklet.DockletAutoHideBlocke
 import io.paritytech.polkadotapp.design.components.docklet.DockletBackAction
 import io.paritytech.polkadotapp.design.components.docklet.DockletEdgeGlow
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
+import io.paritytech.polkadotapp.design.components.docklet.DockletGlowMasks
 import io.paritytech.polkadotapp.design.components.docklet.DockletHideState
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackAction
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackEdge
@@ -60,6 +61,7 @@ fun RootNavBarHide(
     hideState: DockletHideState,
     searchOpen: Boolean,
     tuckedPin: TabBarTuckedPin?,
+    glowMasks: DockletGlowMasks,
     panelExpanded: Boolean,
     scannerTooltipVisible: Boolean,
     dockletTip: DockletTip?,
@@ -122,7 +124,7 @@ fun RootNavBarHide(
 
     val drawbridge = hideState.drawbridge
     if (drawbridge != null) {
-        DockletEdgeGlow(state = hideState, grabZone = drawbridge.grabZone, label = stringResource(RCommon.string.docklet_show_dock))
+        DockletEdgeGlow(state = hideState, grabZone = drawbridge.grabZone, masks = glowMasks, label = stringResource(RCommon.string.docklet_show_dock))
         val glow = drawbridge.glowFrame
         Box(modifier = Modifier.offset(glow.left, glow.top).size(TipAnchorWidth, glow.height)) {
             DockletTipPopup(tip = shownTip, onRestore = hideState::restore, onDismiss = onTipDismiss)

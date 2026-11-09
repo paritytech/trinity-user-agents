@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -62,6 +63,7 @@ import io.paritytech.polkadotapp.design.components.docklet.dockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.dockletSearchBackStep
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletCardState
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlowMasks
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletHideState
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
@@ -183,8 +185,12 @@ fun RootNavBarOverlay(
     LaunchedEffect(tuckedPin) {
         if (onTuckedScreen) hideState.tuck()
     }
-    LaunchedEffect(hiddenPin) {
-        if (hiddenPin != null) hideState.untuck()
+    val glowMasks = rememberDockletGlowMasks()
+    val barVisibility = remember { MutableTransitionState(!hidden) }
+    barVisibility.targetState = !hidden
+    val barGone by remember { derivedStateOf { barVisibility.isIdle && !barVisibility.currentState } }
+    LaunchedEffect(hiddenPin, barGone) {
+        if (hiddenPin != null && barGone) hideState.untuck()
     }
 
     openScanPanelRequests.collectAsEffect { _, _ ->
@@ -256,7 +262,7 @@ fun RootNavBarOverlay(
 
         val edgeOffset: (Int) -> Int = { -it }
         AnimatedVisibility(
-            visible = !hidden,
+            visibleState = barVisibility,
             enter = slideInHorizontally(initialOffsetX = edgeOffset) + fadeIn(),
             exit = slideOutHorizontally(targetOffsetX = edgeOffset) + fadeOut(),
         ) {
@@ -315,6 +321,7 @@ fun RootNavBarOverlay(
                 hideState = hideState,
                 searchOpen = pull.scanExpanded,
                 tuckedPin = tuckedPin,
+                glowMasks = glowMasks,
                 panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                 scannerTooltipVisible = tooltipVisible,
                 dockletTip = dockletTip,

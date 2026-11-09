@@ -14,7 +14,7 @@ import javax.inject.Singleton
 
 /**
  * Whether the bar is shown at all. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
- * [ShowTabBarTucked]; everywhere else it is absent entirely: no nub, nothing to pull out.
+ * [ShowTabBarTucked], and only while no screen pins [HideTabBar]; everywhere else it is absent entirely.
  * There is deliberately no opt-out state in between, so a screen cannot end up with a bar it did not ask for.
  */
 @Singleton
@@ -48,7 +48,7 @@ class TabBarVisibilityHolder @Inject constructor() {
     }
 
     private fun recompute() {
-        val showing = forceKeys.any { it !is TabBarHiddenPin }
+        val showing = forceKeys.isNotEmpty() && forceKeys.none { it is TabBarHiddenPin }
         forced.value = showing
         hidden.value = !showing
         tuckedPin.value = forceKeys.filterIsInstance<TabBarTuckedPin>().lastOrNull()
