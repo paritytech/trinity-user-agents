@@ -282,7 +282,7 @@ private struct NetworkTestProduct {
             ))
             let execution = try runtime.openProductExecution(
                 bridge: bridge,
-                configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
+                configuration: ProductExecutionConfig(productId: ProductId("network.paseo"), executionKind: .app)
             )
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()

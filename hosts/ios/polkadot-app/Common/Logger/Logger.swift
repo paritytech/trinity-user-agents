@@ -13,22 +13,6 @@ final class Logger: Sendable {
 
     let log = SwiftyBeaver.self
 
-    var minLevel: SwiftyBeaver.Level? {
-        get {
-            log.destinations.first?.minLevel
-        }
-
-        set {
-            log.removeAllDestinations()
-
-            if let level = newValue {
-                let destination = ConsoleDestination()
-                destination.minLevel = level
-                log.addDestination(destination)
-            }
-        }
-    }
-
     private init() {
         addConsoleDestination()
         addFileDestination()

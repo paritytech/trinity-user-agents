@@ -32,13 +32,14 @@ use truapi::{
 };
 
 use crate::{
-	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::Stack,
 };
 
 /// Inputs for one full-person registration run.
 pub struct RegisterNameConfig {
 	/// Network preset providing the People and Asset Hub endpoints.
-	pub network: NetworkConfig,
+	pub network: Stack,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Base label to register: lowercase ASCII letters only (`is_person_label`
@@ -68,11 +69,11 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	{
 		bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
 	}
-	let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
+	let who = derive_identity_keypair(&config.entropy, config.network.tld())
 		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
-	let mut reader = AssetHubReader::for_network(&config.network).await?;
+	let mut reader = AssetHubReader::connect(&config.network).await?;
 	// Registered names (any flow) fail only at submission otherwise; a pending
 	// reservation of `label` is not a mint and stays claimable.
 	if !reader.label_available(label).await? {
@@ -105,13 +106,17 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
-	let people_rpc = RpcClient::connect(config.network.people_ws)
-		.await
-		.context("connect People RPC")?;
+	let chains = CliChainProvider::new(&config.network);
+	let people_location = chains.location(config.network.genesis().people);
+	let people_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().people)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
-	let full_entropy =
-		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix);
+	let full_entropy = derive_full_person_ring_vrf_entropy(&config.entropy, config.network.tld());
 	let candidates =
 		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
 	let signer = FixedPersonhoodSigner::new(&candidates).await?;
@@ -151,9 +156,13 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading Asset Hub metadata and the exponent the subscriber verifies
 	// proofs against.
-	let ah_rpc = RpcClient::connect(config.network.asset_hub_ws)
-		.await
-		.context("connect Asset Hub RPC")?;
+	let asset_hub_location = chains.location(config.network.genesis().asset_hub);
+	let ah_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().asset_hub)
+			.await
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
+	);
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)
@@ -195,7 +204,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsics = crate::extrinsic_service(&config.network);
 	let extrinsic = extrinsics
-		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis))
+		.build_mortal_extrinsic(H256(config.network.genesis().asset_hub))
 		.with_call_args("DotnsGateway", "register_name", call)
 		.with_extension(authorizer)
 		.with_restrict_origins(true)

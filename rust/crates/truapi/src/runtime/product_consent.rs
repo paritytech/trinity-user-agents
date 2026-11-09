@@ -13,10 +13,10 @@ use super::{
 };
 use crate::{
 	host_internal::permissions::{
-		account_access_status, cross_product_signature_key, set_account_access_status,
+		authorization_status, cross_product_signature_key, set_authorization_status,
 	},
 	platform::{
-		AccountAccessReview, CreateTransactionReview, CrossProductSignatureKind,
+		AccountAccessReview, CoreStorageKey, CreateTransactionReview, CrossProductSignatureKind,
 		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
 		SignRawReview, UserConfirmationReview,
 	},
@@ -56,11 +56,11 @@ impl ProductConsent {
 		// Filed per product, the granularity a manifest grant uses, so a refused
 		// product cannot keep access by respelling itself under a subname.
 		let pair = (requester.bare_label().to_string(), target.bare_label().to_string());
-		if let Some(status) = self.decided(&pair).await? {
+		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
 		}
 		let _prompt = self.permission_prompt.lock().await;
-		if let Some(status) = self.decided(&pair).await? {
+		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
 		}
 		let decision = prompt
@@ -78,9 +78,13 @@ impl ProductConsent {
 			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
 			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
 		};
-		set_account_access_status(self.platform.as_ref(), &pair.0, &pair.1, status)
-			.await
-			.map_err(AccountAccessError::PermissionStorage)?;
+		set_authorization_status(
+			self.platform.as_ref(),
+			CoreStorageKey::product_account_access_authorization(requester, target),
+			status,
+		)
+		.await
+		.map_err(AccountAccessError::PermissionStorage)?;
 		Ok(status)
 	}
 
@@ -153,11 +157,15 @@ impl ProductConsent {
 	/// A stored decision wins over Allow once, so a change made in settings applies at once.
 	async fn decided(
 		&self,
-		(requester, target): &(String, String),
+		requester: &ProductId,
+		target: &ProductId,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
-		let stored = account_access_status(self.platform.as_ref(), requester, target)
-			.await
-			.map_err(AccountAccessError::PermissionStorage)?;
+		let stored = authorization_status(
+			self.platform.as_ref(),
+			CoreStorageKey::product_account_access_authorization(requester, target),
+		)
+		.await
+		.map_err(AccountAccessError::PermissionStorage)?;
 		if stored != PermissionAuthorizationStatus::NotDetermined {
 			return Ok(Some(stored));
 		}
@@ -165,7 +173,7 @@ impl ProductConsent {
 			.allowed_once
 			.lock()
 			.expect("account access mutex poisoned")
-			.contains(&(requester.clone(), target.clone()));
+			.contains(&(requester.bare_label().to_string(), target.bare_label().to_string()));
 		Ok(allowed_once.then_some(PermissionAuthorizationStatus::Authorized))
 	}
 }
@@ -192,7 +200,8 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 		UserConfirmationReview::SignRaw(SignRawReview::Product { .. }) |
 		UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product { .. }) |
 		UserConfirmationReview::ResourceAllocation(_) |
-		UserConfirmationReview::ProductSubtree(_) => first_party,
+		UserConfirmationReview::ProductSubtree(_) |
+		UserConfirmationReview::NftPurseDrain(_) => first_party,
 		// Watermarked bytes cannot pass for a transaction's signing payload, so a
 		// trusted product signs them the way it signs with its own accounts.
 		UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
@@ -209,91 +218,4 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::test_support::StubPlatform;
-	use PermissionAuthorizationStatus::{Authorized, Denied};
-
-	fn consent_answering(
-		decisions: impl IntoIterator<Item = PermissionDecision>,
-	) -> (Arc<StubPlatform>, ProductConsent) {
-		let platform = Arc::new(StubPlatform {
-			permission_confirmation_decisions: Mutex::new(decisions.into_iter().collect()),
-			..StubPlatform::default()
-		});
-		(platform.clone(), ProductConsent::new(platform))
-	}
-
-	fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
-		futures::executor::block_on(consent.account_access(
-			&ProductId::for_test(requester),
-			&ProductId::for_test("peopl.dot"),
-			consent.platform.as_ref(),
-		))
-		.expect("the stub answers every prompt")
-	}
-
-	fn prompts(platform: &StubPlatform) -> usize {
-		platform.account_access_reviews.lock().unwrap().len()
-	}
-
-	/// Resetting a product drops what it was allowed once, not what others were.
-	#[test]
-	fn a_product_reset_forgets_only_that_products_allow_once() {
-		let (platform, consent) = consent_answering([
-			PermissionDecision::AllowOnce,
-			PermissionDecision::AllowOnce,
-			PermissionDecision::Deny,
-		]);
-		access(&consent, "myapp.dot");
-		access(&consent, "other.dot");
-		consent.forget_allowed_once_for(&ProductId::for_test("myapp.dot"));
-		assert_eq!(
-			(access(&consent, "other.dot"), access(&consent, "myapp.dot"), prompts(&platform)),
-			(Authorized, Denied, 3)
-		);
-	}
-
-	/// A decision changed in settings applies at once, even over Allow once.
-	#[test]
-	fn a_stored_decision_overrides_allow_once() {
-		let (platform, consent) = consent_answering([PermissionDecision::AllowOnce]);
-		access(&consent, "myapp.dot");
-		futures::executor::block_on(set_account_access_status(
-			platform.as_ref(),
-			"myapp",
-			"peopl",
-			Denied,
-		))
-		.unwrap();
-		assert_eq!((access(&consent, "myapp.dot"), prompts(&platform)), (Denied, 1));
-	}
-
-	/// Two calls racing for the same decision raise one prompt, and the
-	/// second reuses its answer instead of asking again.
-	#[test]
-	fn a_request_waiting_for_the_prompt_reuses_its_answer() {
-		let (release, gate) = futures::channel::oneshot::channel();
-		let platform = Arc::new(StubPlatform {
-			permission_confirmation_decisions: Mutex::new(
-				[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
-			),
-			account_access_confirmation_gate: Mutex::new(Some(gate)),
-			..StubPlatform::default()
-		});
-		let consent = ProductConsent::new(platform.clone());
-		let (requester, target) =
-			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
-		let (first, second, ()) = futures::executor::block_on(async {
-			futures::join!(
-				consent.account_access(&requester, &target, platform.as_ref()),
-				consent.account_access(&requester, &target, platform.as_ref()),
-				async { release.send(()).unwrap() },
-			)
-		});
-		assert_eq!(
-			(first.unwrap(), second.unwrap(), prompts(&platform)),
-			(Authorized, Authorized, 1)
-		);
-	}
-}
+mod tests;

@@ -1,5 +1,302 @@
 # @parity/truapi-host
 
+## 0.30.0
+
+### Major Changes
+
+- 141ff32: Legacy-account sign payload, sign raw and create transaction reviews carry the account the core resolved the
+  signer to: the wallet's identity account or the product's account at index 0, so a host knows the signer without
+  resolving the request's address itself. Android's signing sheet uses it.
+
+### Minor Changes
+
+- baf831f: `createTransaction` moves to v0.2 and adds a `ChainUnavailable { reason }` error for a chain that stays
+  unreachable, such as during a halt. Nothing was signed, so a product can retry on it, with a bound on the attempts. A
+  paired wallet answering through the TrUAPI core reports a chain it cannot reach the same way. v0.1 callers still get
+  `Unknown`. A product built against this version needs a host that serves v0.2. Hosts from 0.27 refuse it with
+  `UnsupportedVersion`, which products see as `Unsupported`, and earlier ones answer with `MalformedFrame`.
+- 6cd2e50: Native hosts load images with `loadImage(reference)`. The core reads a Bulletin blob by CID over its own
+  Bulletin connection, returns it only once it hashes to the CID, passes on PNG, JPEG, GIF and WebP up to 2 MiB and 4096
+  pixels per side, and rejects bytes in a format other than the one the reference declares. The result carries the
+  bytes, their format and the CID as a content key. The browser core does not expose it.
+- 0caf6b0: `testHost.setLoginBehavior("success" | "reject", account?)` answers a product's login request while the test
+  host is signed out, as a user would on a real host. `"success"` signs in the first account, or the one named, and the
+  product gets `Success`. `"reject"` answers `Rejected`. Unset, a signed-out host still answers `Rejected`, unlike
+  `@parity/host-api-test-sdk`, which approved by default, so a suite relying on that calls
+  `setLoginBehavior("success")`. A withdrawn request is answered `Cancelled`, and `signOut`, `switchAccount` and
+  `setAccounts` wait for a sign-in a request started. The test host page answers the request itself, so the core is
+  unchanged, and a request made while signed in still reaches the core, which answers `AlreadyConnected`. The type
+  `setLoginBehavior` takes is exported as `LoginRequestBehavior`.
+- f108863: `setConfirmUserActions(confirm)` on the mock host and the Playwright `testHost`, and
+  `set_confirm_user_actions` on the Rust `MockPlatform`, change how reviews are answered while a test runs, so one test
+  can decline a signature without a fixture booted with `confirmUserActions: false`. A permission the core has cached
+  keeps its answer, and `reset` restores the configured value.
+- b1ddf79: The test host passes a deep link on to the product: the host page's path, its hash and every query parameter
+  it does not read as its own configuration reach the product's URL, as on a real host. `testHost.openDeepLink(link)`
+  opens the product at a link from the Playwright fixture, so one fixture serves every link, and
+  `deepLinkUrl(hostUrl, link)` from `@parity/truapi-host/testing/server` builds the same URL for a suite that starts the
+  server itself.
+- 0ea8ae3: Additions to the test host:
+  - A preimage lookup is live. `seedPreimage` delivers the value to lookups already open for its key, once, so a product
+    that subscribed before the seed receives it. The Rust `MockPlatform::insert_preimage` does the same.
+  - Product storage can be seeded. `productStorage` on the fixture and the host page config holds entries before the
+    product loads, for state a product reads once at startup, and a reload or `reset()` starts from it again.
+    `seedProductStorage(key, value, productId?)` on the host page and the fixture writes an entry while the product
+    runs. Both take the product's own key; the core builds the stored key through the new `productStorageKey` WASM
+    export. `MockHost.writeProductStorage` and `MockPlatform::write_product_storage` store an entry under the core's key
+    without counting as a host call.
+  - `createTestHostServer` accepts `networks` and `chain` and expands them the way the fixture does, with explicit
+    `mock` and `runtimeConfig` values winning. They need `productUrl`, as does every other page option, such as `mock`,
+    `accounts` and `productStorage`. Without one the server returns a bare base, so it refuses them rather than dropping
+    them. A value that only restates a default, such as `allowances: "granted"`, passes. It refuses a `uri` account as
+    the fixture does.
+  - `loopbackStatements: true` with no `networks` or `chain` is refused on the fixture and the server, since no declared
+    chain could carry the statement store.
+
+- 5d51bd0: `injectStatement` takes a statement's `channel`, `expiry` and `decryptionKey`, and the entries
+  `getStatements` and `getSubmittedStatements` return carry them, so a suite can inject a statement with those fields
+  and assert on the ones a product submits. `expiry` is a bigint, since the store packs a timestamp into its high 32
+  bits. A topic, channel or key that is not 32 bytes, and an expiry outside a `u64` or given as an unsafe integer, is
+  refused rather than encoded into a statement the store would misread.
+- 0ea8ae3: The mock host can report chains it does not serve as unsupported. `onlyServedChains: true` answers
+  `featureSupported` from `supportedChains`, as a real host does, so a product's "network unavailable" path is reachable
+  on a host that serves no chains. It defaults to `false`, and becomes the default in a later breaking release. The Rust
+  `MockConfig::only_served_chains` is the same option.
+- 81c6cd7: `@parity/truapi-host/markers` exports `CORE_MARKERS`, the core's marker table keyed on the dotted target, so
+  a web host reads what may leave the device from the same list the bindings carry to iOS and Android rather than
+  keeping a copy of its own. It sits on its own subpath so reading the table does not pull in the host runtime.
+
+### Patch Changes
+
+- 88cf440: A statement allowance or PGAS transaction that the pool drops or finds invalid fails as soon as the node
+  reports it, rather than after the two-minute submit timeout.
+
+  In the `truapi-host` CLI, a light-client chain keeps running after its last connection closes, so it syncs once per
+  process. Over RPC, a chain connection counts as dead after 50 seconds in which no data arrives at all, and a request
+  waiting on it fails after 30 seconds in which no message arrives or makes progress, so a large message that is still
+  downloading, such as a busy Bulletin block on a slow link, keeps both alive. The interactive status bar names the
+  chain backend next to the network, as in `paseo-next-v2 (light-client)`.
+
+- baf831f: While dotli redials a halted chain, the core retries the requests it refuses after 1, 2, 4, 8, 16 and 16
+  seconds. `createTransaction` and other chain reads wait out a short halt instead of failing with
+  `subscription dropped`. The error that ends a chain follow is logged at `warn`.
+- 922fca5: Contract reads and writes share `EvmContractCaller`. Rust callers prepare a contract transaction with its
+  signer, then execute the opaque request and wait for successful finalized dispatch. Revive wire types and resource
+  estimates are private; dotNS reads retain their transport's block context and distinguish reverts from failed
+  requests. Rust async trait implementations use `async-trait` directly.
+- a51239b: Keep the pairing host's and the signing host's grants in one `HostGrantStore`. Resetting a product no longer
+  ends other products' calls on a signing host or a session activation in progress on a paired host; it still discards
+  grants that a request began issuing before the reset, including an allocation confirmed while the reset happened. A
+  paired host now retries a failed deletion of a disconnected session's stored grants before the next session is
+  installed.
+- 5c8dbf4: A product that navigates its whole document inside an iframe host connects again.
+  - `@parity/truapi`: a product addresses its iframe handshake to the embedding page's origin, taken from
+    `location.ancestorOrigins` first. A referrer on the product's own origin, which is what a document loaded by the
+    product's own navigation carries, no longer stands in for the host.
+  - `@parity/truapi-host`: `createIframeHost` answers each new document's `truapi-ready` with a port of its own and
+    moves the connection to it once the document sends a frame. `onPort` is called again with that port, and the
+    function it returned for the previous port runs when it is replaced or the host is disposed. Each port is a new
+    product session, so a host gives it a core connection of its own rather than piping it into the previous one. A
+    stray ready from a document that already holds its port leaves its connection alone. With an opaque sandbox only the
+    first document is connected, since a page the frame navigates to reports the same `"null"` origin as the product.
+  - The test host gives each product document its own core, so a suite whose product sets `location.href` keeps talking
+    to the host.
+
+- 220baea: Refactor the Rust host runtime and browser provider to the workspace Rust guidance: unit tests live in their
+  own files, lint suppressions are removed by fixing their causes, unused functions and derives are dropped, and
+  truncating casts are checked. The JavaScript API and wire protocol are unchanged.
+- 4b58ce1: Group the signing host's wallet code under `signing_host/wallet_account_holder`: account operations,
+  allowance issuance and the renewal ledger with its native driver. Behavior is unchanged.
+- 4b58ce1: A signing host's wallet lives in one `WalletAccountHolder`, the only reader of the root entropy, and it
+  checks that the wallet activation a call began under is still installed each time it uses the keys. A wallet lock or
+  switch now fails a VRF signature confirmed under the previous wallet, a transaction whose chain metadata was still
+  loading, an alias or proof still preparing its ring, and a pairing answer still reading the device key, instead of
+  completing them with the new wallet's keys or the old one's. A lock during a resource allocation fails the request
+  instead of marking the remaining resources unavailable.
+- Updated dependencies [951466e]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [88cf440]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [f2175c9]
+- Updated dependencies [baf831f]
+- Updated dependencies [baf831f]
+- Updated dependencies [a066379]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [73fef81]
+- Updated dependencies [5c8dbf4]
+- Updated dependencies [6cd2e50]
+- Updated dependencies [b19850d]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [67eb927]
+- Updated dependencies [81c6cd7]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+  - @parity/truapi@0.30.0
+
+## 0.29.0
+
+### Major Changes
+
+- b7b5ffe: Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a
+  string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed
+  `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
+
+  Kotlin `ProductId.parse`, `ProductId.fromName`, `productId.executable` and `productId.owner` return
+  `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate
+  the failure.
+
+  Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>`
+  that writes the string value and validates it through Rust when restoring.
+
+  Rust consumers import `ProductId`, `ProductIdError` and `PRODUCT_ID_MAX_BYTES` from the `truapi` crate root; these
+  version-independent items are not exported through `truapi::latest`.
+
+  Callers must pass typed IDs to product configuration, callbacks, proof contexts, registry queries, cross-product
+  storage and NFT purse ownership. Valid IDs retain string wire and storage encodings. Malformed IDs in typed protocol
+  fields fail decoding before dispatch. Persisted permission scopes and manifest labels keep their existing encodings.
+
+  Native product-link and executable-name operations use shared Rust helpers. Product links must match the host-provided
+  network suffix, including `.li` links. Both native hosts stop content loading on product-resolution failures or
+  missing executables.
+
+  The shared host execution enum is named `ExecutableKind` in Rust, Swift, Kotlin and TypeScript. Host consumers must
+  update imports from `ProductExecutionKind`; its variants and wire encoding are unchanged.
+
+### Minor Changes
+
+- d730414: Native hosts keep the Pocket collection in the core database. The core stores which cards are in the Pocket
+  and the newest face of each, and serves product Pocket calls from it. `HostRuntimeConfig.pinned_pocket_cards`
+  (`pinnedPocketCards` in Swift and Kotlin) lists the cards the host pins, in the order they are listed. `addPocketCard`
+  screens the card id and title as a product's, and refuses ones a product could not use with `PocketAddError`. The
+  runtime gains `pocketCards()`, a stream of every card, pinned first, and `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`. The core keeps the newest face of a card from each Pocket card render, at most every two seconds and
+  once more when the render stops. `PocketHostBridge`, the `pocket` argument of `openProductExecution` and
+  `notifyPocketCardsChanged` are removed, `encodeRendererNode` and `decodeRendererNode` are removed, and
+  `NativeRendererSubscription` is now `NativeSubscription`.
+
+### Patch Changes
+
+- 4e13a84: dotNS contract reads encode calls and decode return data through typed Solidity interfaces. A revert reason
+  reads as `revert: <reason>` or `panic: <kind> (<code>)`.
+- Updated dependencies [85ee8d8]
+- Updated dependencies [ab108f7]
+- Updated dependencies [aef8ba1]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [d730414]
+- Updated dependencies [b7b5ffe]
+  - @parity/truapi@0.29.0
+
+## 0.28.0
+
+### Minor Changes
+
+- 7a9b1e7: Native hosts can provide encrypted storage for the secrets the core keeps through the new
+  `encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete` host callbacks, which default to a
+  rejection. A missing key reads as absent; a store that cannot be read, or a value that no longer decrypts, is an
+  error.
+- 1136d53: Native hosts serve `NftPurse.createReceiveKey` and `NftPurse.createCheque`. `createReceiveKey` makes a
+  one-time X25519 receive key into any purse, with no grant; its secret is kept in the host's encrypted storage, so a
+  host that does not provide it cannot create receive keys. `createCheque` seals the secret of each item to the receive
+  key or a static X25519 key and returns the cheque for the product to deliver; the items are spent from then on.
+  `encryptedSecrets` is the ephemeral X25519 key, the 12-byte nonce, and the ChaCha20-Poly1305 ciphertext (HKDF-SHA256
+  key) of the SCALE-encoded 64-byte sr25519 secrets in `items` order, each in schnorrkel's `SecretKey::to_bytes` form
+  (scalar, then nonce), not the ed25519-expanded form. An ephemeral cheque id is
+  `blake2_256("nft-purse/cheque-id" ++ receiveKey)`. `NftPurseCreateChequeError` gains `NoItems` and `OperationExists`,
+  the latter for a second cheque with the same id from the same product. Handing off items of a purse the product does
+  not own asks the user through `NftPurseDrain`, whose destination gains `Cheque`. The browser core answers both calls
+  `Unsupported`.
+- 860a5f4: Native hosts serve `NftPurse.deposit` and the new `NftPurse.staticReceiveKey`. `deposit` opens a received
+  cheque and registers one move per item into the purse the product names, under the cheque id, which
+  `observeOperationStatus` follows. An `Ephemeral` cheque may be deposited only by the product that made its receive
+  key, and only into that key's purse: another purse answers the new `NftPurseDepositError.PurseMismatch`, and another
+  product's receive key answers `CorruptedCheque`. A `Static` cheque opens with the key `staticReceiveKey` returns, the
+  same for every product, so it is returned only with the identity disclosure consent `getUserId` asks for
+  (`NftPurseStaticReceiveKeyError.PermissionDenied` otherwise). Any product may deposit a `Static` cheque into any
+  purse, but items another deposit already moves answer the new `NftPurseDepositError.ItemsInUse`. Each move waits up to
+  an hour for its cheque key to hold an NFT. The item secrets are kept in the host's encrypted storage, so each move can
+  be signed again after a restart. The browser core answers both calls `Unsupported`.
+- 54f55e6: Native hosts serve `NftPurse.listenOneTimePayment`, which replaces `listenForPayment`, and the new
+  `NftPurse.listenPaymentInbox`. A sender publishes a statement whose data is the cheque sealed to the receiver's key:
+  the ephemeral X25519 key, the nonce, then the ChaCha20-Poly1305 ciphertext of `SCALE(version: u8 = 0, topic, cheque)`.
+  `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel" ‖ receiveKey)` for a receive key the product
+  made, emits that channel, then the first cheque addressed to the key, and ends; another product's key answers
+  `ReceiveKeyNotFound`. `listenPaymentInbox` watches
+  `blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖ blake2_256(productId) ‖ inboxDomain)` for `Static` cheques
+  sealed to the static receive key, emits that channel, then every cheque already stored as one batch, possibly empty,
+  then each batch of new ones. Both emit cheques already deposited again while the store holds them, and end with
+  `Other` when the connection drops. The browser core answers both `Unsupported`.
+- 24f3157: Native hosts serve `NftPurse.rebalancePurse`, `NftPurse.transferItem` and the new
+  `NftPurse.observeOperationStatus`. A chain operation takes an `idempotencyKey` the product chooses and returns once it
+  is registered; a second call under the same key fails with `OperationExists`. `observeOperationStatus` follows any
+  operation the product registered, by its key, until it is `Cleared` or `Incomplete`; deposits and refunds will be
+  followed by their cheque id once they are served. Each transfer is a fee-less Scarcity transfer signed by its item
+  key; an item a live transfer spends is no longer listed by `queryPurse`. Transferring items out of a purse the product
+  does not own asks the user through the new `NftPurseDrain` confirmation review. `deposit` and `refund` take the same
+  shape and still answer unavailable. The browser core answers the new calls `Unsupported`.
+- 4a92efa: Native hosts serve `NftPurse.revokeCheque` and `NftPurse.refund`. `revokeCheque` moves the items at the keys
+  of a cheque the product created back into fresh keys of its purse, and can be repeated to retry the keys whose move
+  failed; another product's cheque answers `ChequeNotFound`, a cheque whose items a deposit on this device already moves
+  answers the new `NftPurseRevokeChequeError.ItemsInUse`, and `NftPurseRevokeChequeError.Denied` is gone. `refund`
+  returns the items a product deposited from a cheque to the cheque's keys once the deposit has settled, and answers
+  which items move and which stay, with the new `NftPurseRefundError.DepositInProgress` and `ItemUnavailable`. Both are
+  followed by `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+  `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of a purse the product does not own asks the user through
+  `NftPurseDrain` with the new `Refund` destination. A transfer now moves whatever its item key holds on its first
+  attempt. The browser core answers both calls `Unsupported`.
+- 5dfdb50: `NavigateDecision::Pocket` carries an `open` link's query parameters other than `product` and `card` in
+  `page_query`, still encoded, and keeps them in `canonical_url`. A link with over 2048 bytes of them, or with
+  characters a URL query cannot hold, is rejected. Swift code matching `.pocket` by position needs a slot for the new
+  field.
+
+### Patch Changes
+
+- bbc7d8d: A chain call that fails because its connection dropped or closed carries the reason the transport gave, as in
+  `remote_chain_spec_genesis_hash: RPC error: client error: json-rpc connection closed`. Each failed chain call is also
+  logged as a warning with its failure kind, and a native host receives warnings and errors through `on_core_log` as
+  `truapi.tracing.warn` and `truapi.tracing.error` lines, whatever the log level, each detail capped at 512 characters.
+- f63cda7: Host-initiated methods returning `Result` generate asynchronous Rust callers and TypeScript handlers
+  returning typed `neverthrow` results over one-item subscriptions. Calls support cooperative cancellation, startup
+  buffering, and connection cleanup through the existing subscription transport.
+- 38a51ce: A render stream the host opened fails with a host failure when its product connection closes, instead of
+  finishing. A finished stream is a body the product completed, so the host keeps it as final; a failed one is a body
+  the host can request again on the next connection. A product that ends a body itself still finishes the stream.
+- bbc7d8d: A ring-VRF proof or signature refused as `NotAllowlisted` by the manifest check or the context check, or an
+  alias read refused by the context check, is logged as a warning, so a native host receives it as a
+  `truapi.tracing.warn` line. This covers the manifest check the runtime makes before a product call reaches the signing
+  or pairing host, and each refusal is logged once, by the check that made it. The line names the reason, the
+  `trustedProducts` entry checked, the proof context, where the manifest came from, and the scopes the entry lists. The
+  source is the cache and its age in seconds, a fresh dotNS read, no Asset Hub, the dotNS lookup failure, or a timeout.
+  A lookup that runs past the deadline of the product call is logged as a timeout, and a call the product cancels logs
+  nothing. A context on another network from the key owner is logged with no source, since no manifest is read. An alias
+  read the owner manifest does not grant still falls back to user consent and logs no warning. A caller, key handle or
+  context that names no product is still refused without a line. The error a product receives is unchanged.
+- Updated dependencies [bbc7d8d]
+- Updated dependencies [f449b93]
+- Updated dependencies [f63cda7]
+- Updated dependencies [1136d53]
+- Updated dependencies [860a5f4]
+- Updated dependencies [54f55e6]
+- Updated dependencies [24f3157]
+- Updated dependencies [4a92efa]
+- Updated dependencies [b1e64dc]
+- Updated dependencies [2c8a677]
+- Updated dependencies [c1a894d]
+- Updated dependencies [2dfc294]
+  - @parity/truapi@0.28.0
+
 ## 0.27.0
 
 ### Major Changes

@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
@@ -36,6 +35,7 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
 
@@ -48,9 +48,9 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     init {
         val workerJob = scope.coroutineContext.job
-        runtime.acquireWorker(productId.value)
+        runtime.acquireWorker(productId)
         workerJob.invokeOnCompletion {
-            runCatching { runtime.releaseWorker(productId.value) }
+            runCatching { runtime.releaseWorker(productId) }
                 .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
         }
         scope.launch {

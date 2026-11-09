@@ -1,10 +1,19 @@
 import UIKit
+import DesignSystem
 internal import SnapKit
 
 public final class ContactsListViewLayout: DiffableCollectionViewProviderView<String, String> {
     private lazy var separatorConfiguration: SeparatorContentConfiguration = createSeparatorConfiguration()
 
-    public var addToContactsHandler: (() -> Void)?
+    public let newChatButton = DSIconButton(
+        style: .secondary,
+        shape: .pill,
+        size: .medium,
+        icon: UIImage(resource: .icon24Plus),
+        glass: true
+    )
+
+    public var newChatHandler: (() -> Void)?
     public var incomingRequestsHeaderTapHandler: (() -> Void)?
 
     public var contactSelectionHandler: ((String) -> Void)?
@@ -26,6 +35,17 @@ public final class ContactsListViewLayout: DiffableCollectionViewProviderView<St
         addSubview(collectionView)
         collectionView.snp.makeConstraints {
             $0.directionalEdges.equalToSuperview()
+        }
+
+        collectionView.contentInset.bottom = Self.newChatButtonBottomInset + newChatButton.intrinsicContentSize.height
+
+        newChatButton.onTap = { [weak self] in
+            self?.newChatHandler?()
+        }
+        addSubview(newChatButton)
+        newChatButton.snp.makeConstraints {
+            $0.trailing.equalToSuperview().inset(Self.newChatButtonTrailingInset)
+            $0.bottom.equalTo(safeAreaLayoutGuide.snp.bottom).inset(Self.newChatButtonBottomInset)
         }
     }
 
@@ -80,6 +100,8 @@ public extension ContactsListViewLayout {
 
 private extension ContactsListViewLayout {
     static let incomingRequestCellId: String = "incoming_requests_header"
+    static let newChatButtonTrailingInset = DSSpacings.large
+    static let newChatButtonBottomInset = DSSpacings.mediumIncreased
 
     // Aligns separator with the DSChatListItem text column:
     //   12pt outer padding + 64pt avatar + 12pt avatar↔content spacing = 88pt
@@ -148,17 +170,13 @@ private extension ContactsListViewLayout {
 
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 0
-            let topInset: CGFloat = viewModel.hasRequests ? 8 : 16
+            let topInset: CGFloat = viewModel.hasRequests ? 8 : 0
             section.contentInsets = .init(top: topInset, leading: 0, bottom: 0, trailing: 0)
             return section
         }
         applySnapshot(sections: [
             sectionProvider
         ])
-    }
-
-    @objc func handleHeaderTap() {
-        addToContactsHandler?()
     }
 }
 

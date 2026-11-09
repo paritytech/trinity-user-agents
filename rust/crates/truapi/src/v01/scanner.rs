@@ -86,7 +86,8 @@ pub enum HostScannerScanError {
 	/// Another scan is open.
 	Busy,
 	/// The calling execution is not on screen, and is not a Worker handling a
-	/// tap from the user, so no viewfinder was opened.
+	/// tap from the user, or the user has left the host application, so no
+	/// viewfinder was opened.
 	NotVisible,
 	/// The request breaks a limit, so no viewfinder was shown.
 	InvalidRequest {

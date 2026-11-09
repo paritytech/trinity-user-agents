@@ -27,6 +27,9 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 
+    /// The view the host's own prompts present from, once attached.
+    @MainActor var presentationView: ControllerBackedProtocol? { get }
+
     /// Attach what runs product workers when the core's reference ledger asks
     /// for them. Called once at startup, before the runtime is first built.
     func attach(workerManager: any TrUAPIWorkerManaging)
@@ -79,6 +82,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     @MainActor
     func setPresentationView(_ view: ControllerBackedProtocol) {
         confirmationRouterFacade.setPresentationView(view)
+    }
+
+    @MainActor
+    var presentationView: ControllerBackedProtocol? {
+        confirmationRouterFacade.productsRouter.presentationView
     }
 
     func attach(workerManager: any TrUAPIWorkerManaging) {
@@ -148,6 +156,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
@@ -161,6 +170,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
         paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
@@ -226,6 +239,7 @@ extension TrUAPIHostRuntimeProvider {
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
             networkSuffix: networkSuffix,
             databaseDirectory: databaseDirectory,
+            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername
         )

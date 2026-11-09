@@ -4,16 +4,18 @@ import PolkadotUI
 import UIKit_iOS
 import Combine
 import FoundationExt
+import SnapKit
 
-final class ContactsListViewController: UIViewController, ViewHolder, RootScreen {
+final class ContactsListViewController: UIViewController, ViewHolder, RootScreen, NavigationBarHiding {
     typealias RootViewType = ContactsListViewLayout
 
     let presenter: ContactsListPresenterProtocol
     var timerCancellable: AnyCancellable?
     var isLoading: Bool = true
 
-    private let statusTitleView = NetworkStatusTitleView()
     private let openingIndicator = UIActivityIndicatorView(style: .medium)
+
+    var hidesNavigationBar: Bool { true }
 
     init(
         presenter: ContactsListPresenterProtocol
@@ -46,9 +48,8 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        setTitleView(statusTitleView)
         addHandlers()
-        setupBarItems()
+        setupOpeningIndicator()
 
         presenter.setup()
     }
@@ -91,21 +92,21 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
 }
 
 private extension ContactsListViewController {
-    func setupBarItems() {
-        let action = UIAction { [weak self] _ in
-            self?.presenter.showScanPanel()
+    func setupOpeningIndicator() {
+        openingIndicator.hidesWhenStopped = true
+        view.addSubview(openingIndicator)
+        openingIndicator.snp.makeConstraints { make in
+            make.top.equalTo(view.safeAreaLayoutGuide).offset(Constants.openingIndicatorInset)
+            make.trailing.equalTo(view.safeAreaLayoutGuide).inset(Constants.openingIndicatorInset)
         }
-
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: .add24,
-            primaryAction: action
-        )
-
-        navigationItem.rightBarButtonItem?.accessibilityId(AccessibilityID.Chats.newChatButton)
-        titleView?.accessibilityId(AccessibilityID.Chats.title)
     }
 
     func addHandlers() {
+        rootView.newChatButton.accessibilityId(AccessibilityID.Chats.newChatButton)
+        rootView.newChatHandler = { [weak self] in
+            self?.presenter.showScanPanel()
+        }
+
         rootView.contactSelectionHandler = { [weak self] id in
             self?.presenter.openChat(contactIdentifier: id)
         }
@@ -119,12 +120,10 @@ private extension ContactsListViewController {
 extension ContactsListViewController: ContactsListViewProtocol {
     func didStartOpeningChat() {
         openingIndicator.startAnimating()
-        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: openingIndicator)
     }
 
     func didStopOpeningChat() {
         openingIndicator.stopAnimating()
-        navigationItem.leftBarButtonItem = nil
     }
 
     func didReceive(viewModel: ContactsListViewLayout.ViewModel) {
@@ -133,8 +132,10 @@ extension ContactsListViewController: ContactsListViewProtocol {
 
         setNeedsUpdateContentUnavailableConfiguration()
     }
+}
 
-    func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel) {
-        statusTitleView.bind(viewModel: titleViewModel)
+private extension ContactsListViewController {
+    enum Constants {
+        static let openingIndicatorInset: CGFloat = 16
     }
 }

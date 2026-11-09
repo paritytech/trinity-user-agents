@@ -29,12 +29,12 @@ use crate::platform::{
 	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
-	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
+	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
+	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
+	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -54,7 +54,8 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 mod scripted_chain;
 
 pub use scripted_chain::{
-	ScriptedProvider, extract_id, later_notification_sender, notification_sender, wait_for_sent,
+	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
+	notification_sender, sent_count, wait_for_sent,
 };
 
 /// Block until `condition` holds, failing with `message` after two seconds.
@@ -126,6 +127,8 @@ pub struct StubPlatform {
 	/// pre-consent behavior where a cold own-account resolve was not gated.
 	pub product_subtree_denied: bool,
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
+	pub nft_purse_drain_confirmed: bool,
+	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
@@ -201,6 +204,9 @@ pub struct StubPlatform {
 	/// test releases them.
 	pub rpc_method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	pub sso_response_script: Option<SsoResponseScript>,
+	/// How many SSO subscriptions get dotli's halt error before any is
+	/// acknowledged.
+	pub sso_halted_subscribes: usize,
 	/// Every genesis hash handed to `connect`, in order. Lets a test assert
 	/// *which* chain a lookup reached, not merely that it reached one: the
 	/// hashes a host is configured with are same-typed `[u8; 32]` passed
@@ -220,6 +226,8 @@ pub struct StubPlatform {
 	/// Hold every core-storage read pending forever, standing in for a host
 	/// callback that is never answered.
 	pub core_storage_pending: bool,
+	/// Substitute storage for wallet lifecycle tests.
+	pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
 	pub chain_connect_pending: bool,
 	/// Set when a `chain_connect_pending` connect future is dropped.
 	pub pending_connect_dropped: Arc<AtomicBool>,
@@ -247,10 +255,6 @@ pub struct StubPlatform {
 	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -634,6 +638,36 @@ pub fn sso_peer_disconnect_monitor_responses(
 	]
 }
 
+/// dotli's JSON-RPC error while it redials a halted chain.
+pub fn chain_halted_error() -> serde_json::Value {
+	serde_json::json!({
+		"code": -32603,
+		"message": "Chain transport halted",
+		"data": "dotli:chain-halted",
+	})
+}
+
+/// dotli's halt error as the answer to `request_id`.
+pub fn chain_halted_frame(request_id: &str) -> String {
+	serde_json::json!({"jsonrpc": "2.0", "id": request_id, "error": chain_halted_error()})
+		.to_string()
+}
+
+/// dotli's halt error as the core's RPC client receives it.
+pub fn chain_halted_rpc_error() -> subxt_rpcs::Error {
+	subxt_rpcs::Error::User(serde_json::from_value(chain_halted_error()).unwrap())
+}
+
+/// A JSON-RPC error with dotli's halt code and `data`, but not its marker
+/// unless `data` is it.
+pub fn rpc_refusal(data: Option<serde_json::Value>) -> subxt_rpcs::Error {
+	let mut error = serde_json::json!({"code": -32603, "message": "refused"});
+	if let Some(data) = data {
+		error["data"] = data;
+	}
+	subxt_rpcs::Error::User(serde_json::from_value(error).unwrap())
+}
+
 /// JSON-RPC subscription acknowledgement frame.
 pub fn subscribe_ack_frame(request_id: &str, subscription_id: &str) -> String {
 	serde_json::json!({
@@ -655,24 +689,33 @@ fn statement_submit_ack_frame(request_id: &str) -> String {
 	.to_string()
 }
 
-/// JSON-RPC `newStatements` notification carrying SCALE statements.
+/// JSON-RPC `newStatements` notification carrying SCALE statements, the last
+/// page of the backlog.
 pub fn new_statements_frame(subscription_id: &str, statements: Vec<Vec<u8>>) -> String {
+	statement_page_frame(subscription_id, statements, Some(0))
+}
+
+/// JSON-RPC `newStatements` notification carrying SCALE statements, with
+/// `remaining` left out when `None`, as on a page of new statements.
+pub fn statement_page_frame(
+	subscription_id: &str,
+	statements: Vec<Vec<u8>>,
+	remaining: Option<u64>,
+) -> String {
 	let statements = statements
 		.into_iter()
 		.map(|statement| format!("0x{}", hex::encode(statement)))
 		.collect::<Vec<_>>();
+	let mut data = serde_json::json!({ "statements": statements });
+	if let Some(remaining) = remaining {
+		data["remaining"] = remaining.into();
+	}
 	serde_json::json!({
 		"jsonrpc": "2.0",
 		"method": "statement_subscribeStatement",
 		"params": {
 			"subscription": subscription_id,
-			"result": {
-				"event": "newStatements",
-				"data": {
-					"statements": statements,
-					"remaining": 0,
-				},
-			},
+			"result": { "event": "newStatements", "data": data },
 		},
 	})
 	.to_string()
@@ -683,7 +726,7 @@ fn sso_statement(
 	data: pairing::SsoStatementData,
 	nonce_seed: u8,
 ) -> Vec<u8> {
-	let mut nonce = [0; pairing::AEAD_NONCE_LEN];
+	let mut nonce = [0; crate::host_logic::x25519_seal::AEAD_NONCE_LEN];
 	nonce[0] = nonce_seed;
 	let encrypted = pairing::encrypt_session_statement_data_with_nonce(
 		session.sso.as_ref().unwrap(),
@@ -741,7 +784,7 @@ pub fn failed_wallet_handshake_statement(deeplink: &str, reason: &str) -> Vec<u8
 /// tests catch a session that keys device-scoped material off the SSO channel
 /// key by mistake.
 pub fn wallet_device_encryption_public_key() -> [u8; 32] {
-	pairing::x25519_public_key([9; 32])
+	crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0
 }
 
 fn wallet_handshake_success() -> pairing::v2::Success {
@@ -826,7 +869,7 @@ pub fn raw_payload() -> v01::RawPayload {
 /// Product-scoped proof context fixture for `product_id`.
 pub fn product_proof_context(product_id: &str) -> v01::ProductProofContext {
 	v01::ProductProofContext {
-		product_id: product_id.to_string(),
+		product_id: ProductId::for_test(product_id),
 		suffix: v01::DerivationIndex::Index(7),
 	}
 }
@@ -931,7 +974,7 @@ pub fn signed_statement(topic: [u8; 32]) -> v01::SignedStatement {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductStorage for StubPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		if let Some(reason) = self.local_storage_error {
@@ -993,7 +1036,7 @@ impl PlatformProductStorage for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformProductOperations for StubPlatform {
 	async fn begin_operation(
 		&self,
@@ -1013,7 +1056,7 @@ impl PlatformProductOperations for StubPlatform {
 		let id = {
 			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
 			begun.push((product.product_id.clone(), label));
-			begun.len() as u32
+			u32::try_from(begun.len()).expect("test product count fits in u32")
 		};
 		// The operation exists host-side from here on, so a test holding the
 		// gate keeps only the answer in flight.
@@ -1046,12 +1089,15 @@ impl PlatformProductOperations for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
 		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.read_core_storage(key).await;
+		}
 		if self.core_storage_pending {
 			futures::future::pending::<()>().await;
 		}
@@ -1082,6 +1128,9 @@ impl PlatformCoreStorage for StubPlatform {
 		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.write_core_storage(key, value).await;
+		}
 		if let CoreStorageKey::AuthSession = key {
 			self.session_writes
 				.lock()
@@ -1097,10 +1146,7 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1111,14 +1157,14 @@ impl PlatformCoreStorage for StubPlatform {
 	}
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.clear_core_storage(key).await;
+		}
 		if let CoreStorageKey::AuthSession = key {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1135,7 +1181,7 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl crate::installation::InstallationIdProvider for StubPlatform {
 	async fn current_installation(
 		&self,
@@ -1144,7 +1190,7 @@ impl crate::installation::InstallationIdProvider for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.navigations.lock().expect("navigation list mutex poisoned").push(url);
@@ -1152,7 +1198,7 @@ impl PlatformNavigation for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
@@ -1174,7 +1220,7 @@ impl PlatformNotifications for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformPermissions for StubPlatform {
 	async fn device_permission(
 		&self,
@@ -1228,7 +1274,7 @@ impl PlatformPermissions for StubPlatform {
 
 impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PlatformFeatures for StubPlatform {
 	async fn feature_supported(
 		&self,
@@ -1261,6 +1307,7 @@ struct RecordingConnection {
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	sso_response_script: Option<SsoResponseScript>,
+	sso_halted_subscribes: usize,
 	auth_states: Arc<Mutex<Vec<AuthState>>>,
 	pairing_success_response: bool,
 	pairing_pending_response: bool,
@@ -1279,7 +1326,8 @@ async fn wait_for_rpc_method_id(
 	method: &str,
 	index: usize,
 ) -> String {
-	for _ in 0..100 {
+	// Long enough to outlast a halt pause.
+	for _ in 0..5_000 {
 		let ids = sent
 			.lock()
 			.expect("rpc list mutex poisoned")
@@ -1308,18 +1356,33 @@ fn retarget_sso_response(mut response: RemoteMessage, message_id: &str) -> Remot
 fn sso_scripted_responses(
 	sent: Arc<Mutex<Vec<String>>>,
 	script: SsoResponseScript,
+	halted_subscribes: usize,
 ) -> BoxStream<'static, String> {
-	Box::pin(stream::unfold(0, move |state| {
+	let halts = stream::unfold(0, {
+		let sent = sent.clone();
+		move |halted| {
+			let sent = sent.clone();
+			async move {
+				if halted == halted_subscribes {
+					return None;
+				}
+				let id = wait_for_statement_subscribe_id(sent, halted).await;
+				Some((chain_halted_frame(&id), halted + 1))
+			}
+		}
+	});
+	let answers = stream::unfold(0, move |state| {
 		let sent = sent.clone();
 		let script = script.clone();
 		async move {
 			match state {
 				0 => {
-					let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
+					let id = wait_for_statement_subscribe_id(sent.clone(), halted_subscribes).await;
 					Some((subscribe_ack_frame(&id, "own-sub"), 1))
 				},
 				1 => {
-					let id = wait_for_statement_subscribe_id(sent.clone(), 1).await;
+					let id =
+						wait_for_statement_subscribe_id(sent.clone(), halted_subscribes + 1).await;
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
@@ -1398,7 +1461,8 @@ fn sso_scripted_responses(
 				_ => futures::future::pending().await,
 			}
 		}
-	}))
+	});
+	halts.chain(answers).boxed()
 }
 
 impl JsonRpcConnection for RecordingConnection {
@@ -1558,7 +1622,7 @@ impl JsonRpcConnection for RecordingConnection {
 			}));
 		}
 		if let Some(script) = self.sso_response_script.clone() {
-			return sso_scripted_responses(self.sent.clone(), script);
+			return sso_scripted_responses(self.sent.clone(), script, self.sso_halted_subscribes);
 		}
 		if !self.method_responses.is_empty() {
 			let answers = method_keyed_responses(self.sent.clone(), self.method_responses.clone());
@@ -1797,7 +1861,7 @@ impl Drop for DropFlagGuard {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for StubPlatform {
 	async fn connect(
 		&self,
@@ -1826,6 +1890,7 @@ impl ChainProvider for StubPlatform {
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),
+			sso_halted_subscribes: self.sso_halted_subscribes,
 			auth_states: self.auth_states.clone(),
 			pairing_success_response: self.pairing_success_response,
 			pairing_pending_response: self.pairing_pending_response,
@@ -1850,7 +1915,7 @@ impl AuthPresenter for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for StubPlatform {
 	async fn confirm_permission(
 		&self,
@@ -1964,6 +2029,13 @@ impl UserConfirmation for StubPlatform {
 					.push(review);
 				(None, !self.product_subtree_denied)
 			},
+			UserConfirmationReview::NftPurseDrain(review) => {
+				self.nft_purse_drain_reviews
+					.lock()
+					.expect("NFT purse drain review list mutex poisoned")
+					.push(review);
+				(None, self.nft_purse_drain_confirmed)
+			},
 		};
 		if let Some(reason) = error {
 			return Err(v01::GenericError { reason: reason.to_string() });
@@ -2000,7 +2072,7 @@ impl LocaleHost for StubPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,

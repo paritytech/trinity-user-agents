@@ -1,5 +1,6 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
-import { hostPageUrl } from "./host-page-url.js";
+import { deepLinkUrl, hostPageUrl, productUrlFor } from "./host-page-url.js";
 import { createTestHostServer } from "./server.js";
 
 describe("createTestHostServer host configuration", () => {
@@ -11,7 +12,7 @@ describe("createTestHostServer host configuration", () => {
     const server = await createTestHostServer({
       unref: true,
       productUrl: "http://localhost:5173",
-      productId: "localhost:5173",
+      productId: asProductId("localhost:5173"),
       accounts: ["alice", "bob"],
     });
     const url = new URL(server.url);
@@ -27,6 +28,139 @@ describe("createTestHostServer host configuration", () => {
     const server = await createTestHostServer({ unref: true });
     expect(new URL(server.url).search).toBe("");
     await server.close();
+  });
+
+  it("serves the chains `networks` names, expanded as the fixture expands them", async () => {
+    // A suite that starts the server itself gets its chains from here, so
+    // they have to reach the page as the fixture would send them.
+    const genesisHash = `0x${"aa".repeat(32)}`;
+    const server = await createTestHostServer({
+      unref: true,
+      productUrl: "http://localhost:5173",
+      networks: [
+        { id: "paseo-asset-hub", genesisHash, rpcUrl: "wss://hub.invalid" },
+      ],
+    });
+    const url = new URL(server.url);
+    expect(JSON.parse(url.searchParams.get("mock")!)).toMatchObject({
+      chainProxies: [{ rpcUrl: "wss://hub.invalid" }],
+      supportedChains: {
+        network: "paseo",
+        chains: [{ identifier: "AssetHub", genesisHash }],
+      },
+    });
+    expect(JSON.parse(url.searchParams.get("runtimeConfig")!)).toEqual({
+      assetHub: { genesisHash },
+    });
+    await server.close();
+  });
+
+  it("lets explicit mock settings win over what `networks` derives", async () => {
+    const server = await createTestHostServer({
+      unref: true,
+      productUrl: "http://localhost:5173",
+      networks: [
+        {
+          id: "paseo-asset-hub",
+          genesisHash: `0x${"aa".repeat(32)}`,
+          rpcUrl: "wss://hub.invalid",
+        },
+      ],
+      mock: { chainProxies: [] },
+    });
+    expect(
+      JSON.parse(new URL(server.url).searchParams.get("mock")!),
+    ).toMatchObject({
+      chainProxies: [],
+      supportedChains: { network: "paseo" },
+    });
+    await server.close();
+  });
+
+  it("refuses `chain` and `networks` together", async () => {
+    const chain = {
+      id: "paseo-asset-hub",
+      genesisHash: `0x${"aa".repeat(32)}`,
+      rpcUrl: "wss://hub.invalid",
+    };
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        chain,
+        networks: [chain],
+      }),
+    ).rejects.toThrow(/either `chain`/);
+  });
+
+  it("refuses chains it could not apply, rather than dropping them", async () => {
+    // Without a `productUrl` the server returns a bare base the fixture
+    // configures per test, so chains given here would reach no page.
+    await expect(
+      createTestHostServer({
+        unref: true,
+        networks: [
+          {
+            id: "paseo-asset-hub",
+            genesisHash: `0x${"aa".repeat(32)}`,
+            rpcUrl: "wss://hub.invalid",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/`networks` needs `productUrl`/);
+  });
+
+  it("accepts settings that ask for nothing without a productUrl", async () => {
+    const server = await createTestHostServer({
+      unref: true,
+      loopbackStatements: false,
+      networks: [],
+      allowances: "granted",
+      loginBehavior: "auto",
+      topology: "worker",
+      mock: {},
+      runtimeConfig: {},
+      productStorage: {},
+    });
+    expect(new URL(server.url).search).toBe("");
+    await server.close();
+  });
+
+  it("refuses `loopbackStatements: true` with no chain to carry it", async () => {
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        loopbackStatements: true,
+      }),
+    ).rejects.toThrow(/`loopbackStatements` needs a chain/);
+  });
+
+  it("rejects a derivation-path account, and says why", async () => {
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        accounts: [
+          { name: "alice", uri: "//Alice" } as unknown as {
+            name: string;
+            entropy: Uint8Array;
+          },
+        ],
+      }),
+    ).rejects.toThrow(/`uri` is not supported/);
+  });
+
+  it("refuses page options it would drop without a productUrl", async () => {
+    // A bare base reaches no page, so a mock or accounts passed here would be
+    // lost without a word.
+    await expect(
+      createTestHostServer({
+        unref: true,
+        mock: { featureSupported: false },
+        accounts: ["alice"],
+      }),
+    ).rejects.toThrow(/`mock`, `accounts` needs `productUrl`/);
   });
 
   it("rejects a pinned product account, and says why", async () => {
@@ -52,6 +186,20 @@ describe("createTestHostServer host configuration", () => {
     );
     const url = new URL(hostPageUrl("http://127.0.0.1:1234", config));
     expect(url.searchParams.get("login")).toBe("manual");
+  });
+});
+
+describe("host page URL", () => {
+  it("carries boot-time product storage", () => {
+    const url = new URL(
+      hostPageUrl("http://127.0.0.1:1234", {
+        productUrl: "http://localhost:5173",
+        productStorage: { "app:state": "{}" },
+      }),
+    );
+    expect(JSON.parse(url.searchParams.get("storage")!)).toEqual({
+      "app:state": "{}",
+    });
   });
 });
 
@@ -157,5 +305,70 @@ describe("how resource allocation is answered", () => {
       }),
     );
     expect(url.searchParams.get("allowances")).toBe("granted");
+  });
+});
+
+describe("deep links", () => {
+  const host = (url: string) => {
+    const { href, pathname, search, hash } = new URL(url);
+    return { href, pathname, search, hash };
+  };
+
+  it("hands the host page's path, query and hash to the product", () => {
+    const hostUrl = deepLinkUrl(
+      hostPageUrl("http://127.0.0.1:1234", {
+        productUrl: "http://localhost:5173",
+        accounts: ["alice"],
+      }),
+      "/notes/1?view=raw#top",
+    );
+    expect(productUrlFor("http://localhost:5173", host(hostUrl))).toBe(
+      "http://localhost:5173/notes/1?view=raw#top",
+    );
+  });
+
+  it("keeps the host's own configuration out of the product URL", () => {
+    const hostUrl = hostPageUrl("http://127.0.0.1:1234", {
+      productUrl: "http://localhost:5173",
+      accounts: ["alice"],
+      loginBehavior: "manual",
+      topology: "main-thread",
+    });
+    expect(productUrlFor("http://localhost:5173/", host(hostUrl))).toBe(
+      "http://localhost:5173/",
+    );
+    // The configuration survives the link, so the page boots the same host.
+    const linked = new URL(deepLinkUrl(hostUrl, "/a"));
+    expect(linked.searchParams.get("login")).toBe("manual");
+    expect(linked.searchParams.get("product")).toBe("http://localhost:5173");
+  });
+
+  it("appends to a product that is served under a path, and keeps its query", () => {
+    expect(
+      productUrlFor(
+        "http://localhost:5173/app/?lang=en#start",
+        host("http://127.0.0.1:1234/notes/1?view=raw"),
+      ),
+    ).toBe("http://localhost:5173/app/notes/1?lang=en&view=raw#start");
+  });
+
+  it("resolves a relative product URL against the host page", () => {
+    expect(productUrlFor("/product/", host("http://127.0.0.1:1234/"))).toBe(
+      "http://127.0.0.1:1234/product/",
+    );
+  });
+
+  it("refuses a link the product would not receive", () => {
+    const hostUrl = "http://127.0.0.1:1234/?product=http%3A%2F%2Fp.test";
+    expect(() => deepLinkUrl(hostUrl, "notes/1")).toThrow(/must start with/);
+    expect(() => deepLinkUrl(hostUrl, "/a?accounts=bob")).toThrow(
+      /carries `accounts`/,
+    );
+    expect(() => deepLinkUrl(hostUrl, "/wasm/web/x.js")).toThrow(
+      /serves itself/,
+    );
+    expect(() => deepLinkUrl(hostUrl, "/test-host.js")).toThrow(
+      /serves itself/,
+    );
   });
 });

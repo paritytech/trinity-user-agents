@@ -13,7 +13,7 @@ use crate::{
 /// Product-rendered bodies and the actions triggered inside them.
 #[wire_trait(id = 17)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Renderer: Send + Sync {
 	/// Streams renderer trees for one product-rendered body. Each item
 	/// replaces the previous tree. The stream stays open while the body is

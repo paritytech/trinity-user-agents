@@ -35,6 +35,7 @@ jobs:
       ios_version: ${{ steps.version.outputs.ios_version }}
       android_version: ${{ steps.version.outputs.android_version }}
       cli_version: ${{ steps.version.outputs.cli_version }}
+      crate_version: ${{ steps.version.outputs.crate_version }}
       published: ${{ steps.confirm.outputs.published }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,6 +63,7 @@ jobs:
           ios_version=""
           android_version=""
           cli_version=""
+          crate_version=""
           seen_names="|"
 
           IFS=',' read -ra targets <<< "${release}"
@@ -96,7 +98,10 @@ jobs:
               @parity/truapi-host) path="js/packages/truapi-host" ;;
               @parity/truapi-provider) path="js/packages/truapi-provider" ;;
               @parity/truapi-debugger) path="js/packages/truapi-debugger" ;;
-              @parity/trinity-stack) path="js/packages/trinity-stack" ;;
+              @parity/trinity-stack)
+                path="js/packages/trinity-stack"
+                crate_version="${declared_version}"
+                ;;
               @parity/ios-host)
                 if [[ ! "${declared_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
                   echo "::error::Invalid iOS host version '${declared_version}'."
@@ -199,6 +204,7 @@ jobs:
           echo "ios_version=${ios_version}" >> "$GITHUB_OUTPUT"
           echo "android_version=${android_version}" >> "$GITHUB_OUTPUT"
           echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
+          echo "crate_version=${crate_version}" >> "$GITHUB_OUTPUT"
 
           if [ -z "${packages}" ]; then
             echo "No requested npm packages need publishing."
@@ -406,6 +412,106 @@ jobs:
     with:
       version: ${{ needs.release.outputs.cli_version }}
       ref: ${{ github.event.workflow_run.head_sha }}
+
+  # Runs after the release job confirmed the npm package. crate_version is set
+  # even when npm already had that version, so a re-run publishes a crate that
+  # a failed run did not.
+  publish-crate:
+    name: Publish trinity-stack crate
+    needs: release
+    if: needs.release.outputs.crate_version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Check the crate version against crates.io
+        id: crate
+        env:
+          VERSION: ${{ needs.release.outputs.crate_version }}
+        run: |
+          set -euo pipefail
+          crate="$(awk -F'"' '/^version = /{print $2; exit}' rust/crates/trinity-stack/Cargo.toml)"
+          if [ "${crate}" != "${VERSION}" ]; then
+            echo "::error::rust/crates/trinity-stack/Cargo.toml is ${crate}, but the release declares ${VERSION}. Run npm run version-packages."
+            exit 1
+          fi
+          lookup=0
+          scripts/crates-io-index.sh trinity-stack "${VERSION}" || lookup=$?
+          case "${lookup}" in
+            0)
+              echo "trinity-stack ${VERSION} is already on crates.io; skipping."
+              echo "listed=true" >> "$GITHUB_OUTPUT"
+              ;;
+            1) echo "listed=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::could not read the crates.io index for trinity-stack."
+              exit 1
+              ;;
+          esac
+
+      - if: steps.crate.outputs.listed == 'false'
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+
+      # Builds the packaged sources, so the automation, which publishes with
+      # --no-verify, never receives a crate that does not compile.
+      - name: Package the crate
+        if: steps.crate.outputs.listed == 'false'
+        run: cargo package -p trinity-stack
+
+      - name: Upload the crate
+        if: steps.crate.outputs.listed == 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crates
+          path: target/package/*.crate
+          if-no-files-found: error
+          # A re-run reuses the run id, so it replaces the earlier attempt's artifact.
+          overwrite: true
+
+      - name: Generate the dispatch token
+        id: dispatch-token
+        if: steps.crate.outputs.listed == 'false'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CRATES_NPM_PUBLISHING_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CRATES_NPM_PUBLISHING_APP_PRIVATE_KEY }}
+          owner: paritytech
+
+      # The run also contains the npm `package` artifact, and the automation reads
+      # the first artifact unless artifact_name selects one.
+      - name: Publish via crates_publish_automation
+        if: steps.crate.outputs.listed == 'false'
+        uses: octokit/request-action@b91aabaa861c777dcdb14e2387e30eddf04619ae # v3.0.0
+        with:
+          route: POST /repos/paritytech/crates_publish_automation/actions/workflows/publish.yml/dispatches
+          ref: main
+          inputs: '${{ format(''{{ "repo": "{0}", "run_id": "{1}", "artifact_name": "crates" }}'', github.repository, github.run_id) }}'
+        env:
+          GITHUB_TOKEN: ${{ steps.dispatch-token.outputs.token }}
+
+      # The dispatch only reports acceptance, so the index is the only proof the
+      # crate was published.
+      - name: Confirm the crate reached crates.io
+        if: steps.crate.outputs.listed == 'false'
+        timeout-minutes: 15
+        env:
+          VERSION: ${{ needs.release.outputs.crate_version }}
+          CRATES_INDEX_WAIT_SECONDS: "600"
+        run: |
+          set -euo pipefail
+          if ! scripts/crates-io-index.sh trinity-stack "${VERSION}"; then
+            echo "::error::trinity-stack ${VERSION} is not on crates.io; the crates_publish_automation run reports why, and opens an issue here when it fails."
+            exit 1
+          fi
+          echo "Confirmed trinity-stack ${VERSION} on crates.io."
 
   publish-ios:
     name: Publish iOS host

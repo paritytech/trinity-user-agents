@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import UIKit
 import UIKitExt
@@ -65,11 +66,12 @@ extension SPAPresenter: SPAPresenterProtocol {
         )
     }
 
-    func didTapMinimize() {
-        wireframe.minimize()
-    }
-
     func didTapClose() {
+        if configuration.presentation == .fullScreen {
+            wireframe.dismiss(view: view)
+            return
+        }
+
         guard let browserTabId = configuration.browserTabId else { return }
 
         wireframe.close(tabId: browserTabId)
@@ -77,6 +79,10 @@ extension SPAPresenter: SPAPresenterProtocol {
 
     func didTapRefresh() {
         interactor.reloadLatestBuild()
+    }
+
+    func didBecomeVisible() {
+        interactor.checkForNewBuild()
     }
 
     func hasChatEntry() -> Bool {
@@ -88,8 +94,7 @@ extension SPAPresenter: SPAPresenterProtocol {
     }
 
     func didTapShare() {
-        let host = configuration.page.host.name
-        guard let url = AppConfig.ProductUniversalLink.url(for: host) else {
+        guard let url = AppConfig.ProductUniversalLink.url(for: configuration.page.host) else {
             return
         }
         wireframe.shareURL(url, from: view)
@@ -130,6 +135,10 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
 
     func didUpdateLoadPhase(_ phase: ProductLoadPhase) {
         view?.updateLoadPhase(phase)
+    }
+
+    func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+        view?.showChainStatus(rows)
     }
 
     func didFail(error: Error) {

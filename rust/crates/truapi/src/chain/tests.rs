@@ -25,8 +25,11 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod evm_contract_caller;
 mod live_extrinsic_builder;
 mod live_storage_watch;
+
+pub use live_storage_watch::{live_asset_hub, live_asset_hub_genesis, tokio_spawner};
 mod watched_storage;
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -94,7 +97,12 @@ impl Node {
 	}
 
 	fn block(&self, number: u64) -> HashAndNumber {
-		HashAndNumber { hash: header_hash(&self.headers[number as usize]), number }
+		HashAndNumber {
+			hash: header_hash(
+				&self.headers[usize::try_from(number).expect("block number fits in usize")],
+			),
+			number,
+		}
 	}
 
 	fn header_at(&self, hash: &Value) -> Option<&SubstrateHeader<H256>> {
@@ -275,7 +283,7 @@ impl Node {
 }
 
 /// What `TaggedTransactionQueue_validate_transaction` answers.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Validation {
 	Valid,
 	Invalid,
@@ -515,7 +523,8 @@ fn dispatch_outcome_reads_the_events_of_that_extrinsics_index() {
 	let outcomes = [extrinsic(1), extrinsic(2), extrinsic(3)]
 		.map(|extrinsic| block_on(chain.dispatch_outcome(GENESIS, at, extrinsic.hash())).unwrap());
 
-	assert_eq!(outcomes, [Some(DispatchOutcome::Succeeded), Some(DispatchOutcome::Failed), None],);
+	let failed = DispatchOutcome::Failed("Some unknown error occurred.".to_string());
+	assert_eq!(outcomes, [Some(DispatchOutcome::Succeeded), Some(failed), None],);
 }
 
 #[test]

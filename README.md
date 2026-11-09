@@ -15,6 +15,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
@@ -74,6 +75,7 @@ npm install @parity/truapi
 
 ```ts
 import {
+  asProductId,
   createClient,
   createMessagePortProvider,
   createTransport,
@@ -83,9 +85,35 @@ const transport = createTransport(createMessagePortProvider(port));
 const truapi = createClient(transport);
 
 const result = await truapi.accountManagement.accountGet({
-  productAccountId: { dotNsIdentifier: "my-product.dot", derivationIndex: { tag: "Index", value: 0 } },
+  productAccountId: { dotNsIdentifier: asProductId("my-product.dot"), derivationIndex: { tag: "Index", value: 0 } },
 });
 ```
+
+Product identifiers use `ProductId` throughout the protocol and host APIs.
+Rust exposes this version-independent type as `truapi::ProductId`.
+The client receives typed IDs from the host; `asProductId` brands an explicit
+string without parsing or loading WASM. Rust validates IDs at the host boundary.
+Swift's `try ProductId("my-product.dot")` and Kotlin's
+`ProductId.parse("my-product.dot")` call Rust once. Kotlin also provides
+`ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
+so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
+`owner()` methods expose their failures the same way. Both platforms
+own the resulting immutable values. Browser hosts can use their existing worker
+runtime's `parseProductId` method for the same validation and normalization.
+Native callers use Rust for product names, executable ownership, and share-link parsing and formatting.
+Both native hosts use Rust's `ExecutableKind` for executable selection and
+its label mapping for manifest discriminators.
+Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
+Product links require an explicitly supplied network suffix; both direct names
+and `.li` links must match it. Share-host recognition and enumeration use one
+Rust suffix policy. Rust defines the `polkadotapp` deeplink and
+`polkadot` content schemes shared by both native hosts. Both native hosts stop
+content loading on resolution errors or missing executables. Products without
+a manifest explicitly serve their app from the base name.
+Rust's reserved identity constructors return `ProductId` directly from the
+validated network suffix.
+The Android app's fixed reserved identities also return `ProductId` directly;
+an unsupported configured network is a bug and fails the internal unwrap.
 
 The transport retries iframe bootstrap until the host channel arrives and rejects unanswered
 requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` to override it.
@@ -112,8 +140,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
-  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
-                         conformance vectors and JSON Schema
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
+                         refresh policy; conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -125,7 +153,8 @@ js/packages/
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
   trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
-                          reading with a store and publishing
+                          reading with a store and publishing; `/reader` keeps stacks
+                          current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
@@ -146,6 +175,8 @@ scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           Run the CLI on both chain backends and compare what each serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
                            ci.yml change gates
@@ -210,6 +241,8 @@ JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/tru
 a single package with tree-shakeable subpath entries:
 
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
+- `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
+  leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
@@ -230,11 +263,16 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node, which only the WASM build compiles, are not counted
-against it. A light-client connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. Only a provider built with `catalog()` resolves a genesis nobody
+registered from the catalog, so one for remote nodes never starts the light client
+for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
+running after its last connection closes. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
+On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
+certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,
 stall verdict) as a watch.
 The crate
@@ -262,7 +300,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 The core builds its own extrinsics through `ExtrinsicService` in the `chain`
 module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
-preimages, and the CLI's dotNS registrations. A caller names the call and the
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
 extensions after it, signs, and returns a mortal extrinsic born at the finalized
@@ -276,6 +314,18 @@ allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
 only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
 `AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
 runtime's type by name.
+
+### Contract calls
+
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
+
+```rust
+let transaction = contracts.dry_run(&signer, &contract, &input).await?;
+transaction.execute_until_finalized().await?;
+```
 
 ### Durable transactions
 
@@ -306,10 +356,91 @@ purses: its own freely, Root's or another product's with the user's
 `//nft//<purse>//<installation>//<index>`, under the installation the host
 reports through `currentInstallation`. A tracker watches
 `Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
-`queryPurse` pages through the keys that hold an NFT. The same grant covers
-both. Calls that move items answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the four served
-calls.
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
+
+`rebalancePurse` and `transferItem` register an operation under an idempotency
+key the product chooses and return; `observeOperationStatus` follows it by that
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
+submitted, and proven landed when its instance is at the destination. What
+each transfer spends is recorded in `nft_consumption`, whether the key is one
+of ours or a cheque key, and a key a live transfer spends cannot be spent by
+another. A failed transfer frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review.
+
+`createReceiveKey` makes a random X25519 key for a receiver. Its secret goes to
+the host's encrypted storage (`encryptedStorageRead` and `encryptedStorageWrite`
+on the runtime bridge: the Keychain on iOS, encrypted preferences on Android),
+and the core database records only the public key, its purse and its creator.
+`createCheque` hands items to a receive key or a static X25519 key: it seals
+the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
+key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
+under the cheque id, so they are spent from then on. A second cheque with the
+same id from the same product answers `OperationExists`.
+
+`deposit` opens a received cheque and registers one move per item into fresh
+keys of the purse the product names, under the cheque id, and returns;
+`observeOperationStatus` follows it by that id. An `Ephemeral` cheque opens with
+its receive key's secret, and only the product that made the key may deposit
+it, into the key's purse (`PurseMismatch` otherwise). A `Static` cheque opens
+with the host's static receive key, which `staticReceiveKey` returns so a
+product can publish it; for now it is the user's chat key, so it is returned
+only with the user's `getUserId` identity disclosure consent. Any product may
+deposit such a cheque into any purse, but a cheque whose items another deposit
+already moves answers `ItemsInUse`, whichever product deposits it and under
+whatever id. The item secrets go to encrypted storage after those checks and
+before the moves are registered, so each move is signed from its stored secret
+after a restart too. A move waits up to an hour for its cheque key to hold an
+NFT, so a product need not wait for the sender's mint itself.
+
+`revokeCheque` moves the items at the keys of a cheque the product created
+back into fresh keys of the purse they left; another product's cheque answers
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed,
+and a cheque whose keys a deposit on this device already moves answers
+`ItemsInUse`.
+`refund` moves the items a product deposited from a cheque back to the
+cheque's keys, once every move of the deposit finalized or failed
+(`DepositInProgress` before that), and the sender can then revoke them.
+Whether an item can still go back comes from the core database alone: one
+spent since stays and is listed as unavailable. Each is followed by
+`observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
+`blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
+another product's purse asks the user through `NftPurseDrain`.
+
+Cheques arrive over the People chain's statement store. A sender publishes a
+statement under the receiver's topic whose data seals `SCALE(version, topic,
+cheque)` to the key that opens the cheque, in the same sealed box as the item
+secrets. `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel"
+‖ receiveKey)` for a key the product made, emits that channel, then the first
+cheque addressed to the key, and ends. `listenPaymentInbox` watches
+`blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖
+blake2_256(productId) ‖ inboxDomain)` for `Static` cheques, so a product opens
+only its own inboxes. It emits the channel, then everything already stored as
+one batch, possibly empty, then each batch of new cheques. Statements that do
+not open, decode or match are skipped. Both emit cheques already deposited
+again while the store holds them, and a dropped connection ends them with
+`Other`. Receiving a cheque proves nothing about its items: `deposit` checks
+them. Underneath, `StatementStoreApi` watches any topic filter as its stored
+backlog in one batch, then each live page.
+
+A host without a core database, such as the browser core, answers
+`Unsupported` to the served calls.
+
+### Images
+
+Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
+[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+A reference is a Bulletin CID, with the format its source declares if it
+declares one. The core reads the blob with `bitswap_v1_get` over its own
+Bulletin connection, the call the CLI host's preimage lookup also makes, and
+returns the bytes only once they hash to the CID. It passes on PNG, JPEG, GIF
+and WebP, read from the file header, up to 2 MiB and 4096 pixels per side, and
+rejects bytes in a format other than the declared one. A load asks again every
+6 seconds while Bulletin does not hold the blob, and a second after a failed
+request, such as a light client's before its first Bitswap peer connects, for
+up to 30 seconds in all. The content key it returns is the CID, for keying a
+host's disk cache. The browser core does not expose it.
 
 ### Trinity stack descriptors
 
@@ -348,6 +479,12 @@ so `make dev` leaves the board empty with no error.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
 
+Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
+`async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript
+`onMethod` handler returning a typed result, carried by a one-item subscription.
+A method returning `Subscription` generates a streaming handler. See the
+[client handler contract](js/packages/truapi/README.md#host-initiated-requests).
+
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
 ## Develop
@@ -370,6 +507,11 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Contract response fixtures encode the Revive result structs, re-exported only in test builds.
+Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
+their product fixtures use `ProductId::for_test` from that feature.
+Product ID and link parsing rules are tested in Rust. Native ProductId tests
+cover serialization, persistence and host integration.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
@@ -399,7 +541,15 @@ make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 make e2e-funding-cli                # funding requests and statuses against a scripted funding host
+make e2e-cli-backends               # the phases above and the dev diagnosis on rpc and light-client
 ```
+
+`make e2e-cli-backends` (`scripts/cli-backends-e2e.ts`) runs the signing and
+pairing phases and the `dev` playground diagnosis once per chain backend, then
+checks the CLI's routing rules and the live chain tests. It fails when a Chain,
+Statement Store or Preimage example fails on either backend or the two disagree.
+`SESSION=<name>` creates or selects the signing session; reports land in
+`target/cli-backends/`.
 
 The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
@@ -418,9 +568,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures. Android hosts with Sentry enabled report the reminder lifecycle
-through `host.reminder.*` Sentry events without changing reminder delivery or
-cleanup.
+host failures. Android and iOS hosts with Sentry enabled report the reminder
+lifecycle through `host.reminder.*` Sentry events without changing reminder
+delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
@@ -562,19 +712,24 @@ request touching the app or the crates its bindings come from;
 `.github/hosts.json` names those inputs. A pull request that changes only those
 crates skips both when main already passed the tests against the same bindings.
 Pull requests from forks and from Dependabot skip it, since the Macs are shared
-and Dependabot runs get no secrets, and so does the merge queue. A push to main
-that touches those inputs runs the same suite through `ios-main.yml`, outside
-`CI Status`, and publishes the core pull requests reuse. `preview` is
+and Dependabot runs get no secrets, and so does the merge queue. So do drafts and
+pull requests into another pull request's branch, which run it once they are
+ready and target main or a release branch. `on-label.yml` runs it before then
+for a pull request labelled `ci:ios-tests`, outside `CI Status`. A pull request
+retargeted to main when its base merges keeps its earlier result until it is
+pushed, or closed and reopened. A push to main that touches those inputs runs
+the same suite through `ios-main.yml`, outside `CI Status`, and publishes the
+core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
-labelled `ios-simulator-build`. The same workflow's
+labelled `ci:ios-simulator`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
 touching their inputs, which the `swift` package in `.github/hosts.json` names,
 and runs their network permission tests. Like the rest of the iOS app it skips
-fork and Dependabot pull requests and the merge queue. The first time a
-pull request touches the iOS or Android app, `build-label-hint.yml` comments with
-the labels that build it: `ios-simulator-build`, `ios-device-build` and
-`android-device-build`.
+fork, Dependabot, draft and stacked pull requests and the merge queue. The first
+time a pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
+`ci:android-device`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -603,7 +758,7 @@ on the simulator, the emulator or a phone, without a deploy. See
 
 ### A build that installs on a phone
 
-Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a
+Label a pull request `ci:ios-device` and `ios-device-preview.yml` produces a
 signed ad-hoc archive attached to the run, named for the commit it was built
 from. It uploads nowhere: not to Apple, not to any distribution service.
 
@@ -619,7 +774,7 @@ preview itself is tracked on #681.
 
 ### An Android build that installs on a phone
 
-Label a pull request `android-device-build` and `android-device-preview.yml`
+Label a pull request `ci:android-device` and `android-device-preview.yml`
 attaches an installable APK to the run. Android needs no provisioning, so it
 installs on any phone rather than only on registered devices, and it is signed
 with the shared develop key so a new build replaces the last one rather than
@@ -707,7 +862,7 @@ Remote Config, keyed on an `environment` signal the build sets.
 ### Instrumented tests
 
 `android-instrumented-tests.yml` boots an emulator and runs the app module's
-connected tests. It starts from the `android-instrumented-tests` label rather
+connected tests. It starts from the `ci:android-emulator-tests` label rather
 than from every commit, because the runner is macOS and a cold emulator costs
 minutes before the first assertion. `workflow_dispatch` runs it without a pull
 request to carry the label.

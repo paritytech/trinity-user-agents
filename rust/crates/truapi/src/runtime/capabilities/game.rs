@@ -42,7 +42,7 @@ impl ProductConnection {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Game for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "game.remind_next_game"))]
 	async fn remind_next_game(

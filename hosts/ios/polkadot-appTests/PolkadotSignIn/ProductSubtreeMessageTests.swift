@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Individuality
 import MessageExchangeKit
@@ -15,7 +16,7 @@ struct ProductSubtreeMessageTests {
     @Test("Content indices are 16 for request and 17 for response")
     func contentIndicesMatchWireContract() throws {
         let request = PolkadotHostRemoteMessage.ContentV1.productSubtreeRequest(
-            .init(productId: "browse.dot")
+            .init(productId: try! ProductId("browse.dot"))
         )
         let response = PolkadotHostRemoteMessage.ContentV1.productSubtreeResponse(
             requestMessageId: "id",
@@ -39,7 +40,7 @@ struct ProductSubtreeMessageTests {
     func contentBytesMatchCrossPlatformVectors() throws {
         // index 16 ++ compact-len utf8 productId | index 17 ++ requestMessageId ++ Ok ++ [u8; 32].
         let request = PolkadotHostRemoteMessage.ContentV1.productSubtreeRequest(
-            .init(productId: "browse.dot")
+            .init(productId: try! ProductId("browse.dot"))
         )
         let response = PolkadotHostRemoteMessage.ContentV1.productSubtreeResponse(
             requestMessageId: "request",
@@ -55,7 +56,7 @@ struct ProductSubtreeMessageTests {
     @Test("Request and response round-trip")
     func roundTrips() throws {
         let contents: [PolkadotHostRemoteMessage.ContentV1] = [
-            .productSubtreeRequest(.init(productId: "browse.dot")),
+            .productSubtreeRequest(.init(productId: try! ProductId("browse.dot"))),
             .productSubtreeResponse(
                 requestMessageId: "request-1",
                 result: .success(.init(productPublicKey: Data.random(of: 32)!))
@@ -97,7 +98,7 @@ struct ProductSubtreeMessageTests {
 
         let message = PolkadotHostRemoteMessage(
             messageId: "request-1",
-            versionedContent: .v1(.productSubtreeRequest(.init(productId: "browse.dot")))
+            versionedContent: .v1(.productSubtreeRequest(.init(productId: try! ProductId("browse.dot"))))
         )
 
         await handler.handle(message: message, from: makeHost())
@@ -112,7 +113,7 @@ struct ProductSubtreeMessageTests {
 
         #expect(requestMessageId == "request-1")
         #expect(key.productPublicKey == accountManager.subtreePublicKey)
-        #expect(accountManager.requestedProductIds == ["browse.dot"])
+        #expect(accountManager.requestedProductIds == [try! ProductId("browse.dot")])
     }
 
     @Test("Handler reports a failure result when derivation throws")
@@ -128,7 +129,7 @@ struct ProductSubtreeMessageTests {
 
         let message = PolkadotHostRemoteMessage(
             messageId: "request-2",
-            versionedContent: .v1(.productSubtreeRequest(.init(productId: "bad/id")))
+            versionedContent: .v1(.productSubtreeRequest(.init(productId: try! ProductId("bad.dot"))))
         )
 
         await handler.handle(message: message, from: makeHost())

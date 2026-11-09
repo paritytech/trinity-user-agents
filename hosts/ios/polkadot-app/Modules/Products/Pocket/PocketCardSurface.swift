@@ -1,13 +1,12 @@
-import TrUAPIHost
 import UIKit
 
-/// Where a card's page reaches the screen that shows its face.
+/// The screen a card's product is on display in, if any.
 ///
 /// Held with the product rather than the screen, since the product outlives
 /// the screens that show it: the card reopened is a new screen, and the page
 /// already loaded under it must find that one.
 @MainActor
-final class PocketCardSurface: ExpandedCardFaceShowing {
+final class PocketCardSurface {
     private weak var screen: PocketCardScreenViewController?
 
     var isOnDisplay: Bool {
@@ -20,11 +19,5 @@ final class PocketCardSurface: ExpandedCardFaceShowing {
         guard screen.isOnDisplay else { return }
 
         self.screen = screen
-    }
-
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        guard let screen, screen.isOnDisplay else { return .notPresented }
-
-        return screen.setFaceShown(shown, animated: true)
     }
 }

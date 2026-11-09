@@ -4,7 +4,10 @@
 //! so a sequence of storage reads and contract views sees one consistent state.
 //! No chain metadata is needed.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::{
+	fmt,
+	sync::atomic::{AtomicU64, Ordering},
+};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
@@ -24,8 +27,10 @@ use crate::chain_runtime::{
 };
 use tracing::{debug, info};
 
-use crate::host_logic::dotns_gateway::{
-	DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
+use crate::{
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
+	platform::ProductId,
 };
 
 /// Budget for one step of a lookup: opening the follow, one storage read, one
@@ -40,6 +45,33 @@ const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 /// Monotonic salt for follow ids, so concurrent lookups do not collide.
 static DOTNS_LOOKUP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// What a dotNS lookup is resolving, as it reads in that lookup's follow id.
+///
+/// A named kind rather than free text, because the follow id reaches a host's
+/// log through the events that name the follows holding a connection's budget.
+/// It has to say what is being read without saying whose account is reading.
+/// [`DOTNS_LOOKUP_COUNTER`] already tells concurrent lookups apart, so a kind
+/// needs no identifier of its own to be unique.
+pub enum DotnsLookupKind<'a> {
+	/// The usernames on an account. Carries nothing: an account id here would
+	/// put a user identifier in every log line that names this follow.
+	Identity,
+	/// A product's root manifest, named by the product it belongs to.
+	Manifest(&'a ProductId),
+	/// A product's Worker manifest, named by the product it belongs to.
+	WorkerManifest(&'a ProductId),
+}
+
+impl fmt::Display for DotnsLookupKind<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Identity => f.write_str("identity"),
+			Self::Manifest(product_id) => write!(f, "manifest:{product_id}"),
+			Self::WorkerManifest(product_id) => write!(f, "executable:{product_id}"),
+		}
+	}
+}
+
 /// One pinned-block context for a sequence of dotNS reads. It owns the
 /// `chainHead_v1` follow every read and view runs over.
 pub struct DotnsLookup<'a> {
@@ -53,16 +85,16 @@ pub struct DotnsLookup<'a> {
 impl<'a> DotnsLookup<'a> {
 	/// Opens a follow on Asset Hub and pins it to the current best block.
 	///
-	/// `label` distinguishes this lookup's follow id from concurrent ones and
-	/// appears in chain logs, so it should name what is being resolved.
+	/// `kind` names what this lookup resolves and appears in its follow id, so
+	/// it is a named kind rather than free text. See [`DotnsLookupKind`].
 	pub async fn pinned_to_best_block(
 		chain: &'a ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
-		label: &str,
-	) -> Result<Self, DotnsViewError> {
+		kind: DotnsLookupKind<'_>,
+	) -> Result<Self, DotnsError> {
 		let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
 		let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
-		let follow_id = format!("truapi:dotns:{lookup_id}:{label}");
+		let follow_id = format!("truapi:dotns:{lookup_id}:{kind}");
 		let mut follow = chain.remote_chain_head_follow_items(
 			follow_id.clone(),
 			RemoteChainHeadFollowRequest { genesis_hash: genesis_hash.clone(), with_runtime: true },
@@ -90,7 +122,8 @@ impl<'a> DotnsLookup<'a> {
 				"the Asset Hub follow never initialized; every grant behind \
 				 this lookup is refused"
 			);
-		})?;
+		})
+		.map_err(DotnsError::Follow)?;
 		Ok(Self { chain, follow, genesis_hash, follow_id, hash })
 	}
 }
@@ -164,27 +197,8 @@ impl DotnsTransport for DotnsLookup<'_> {
 	///
 	/// Views originate from the synthetic always-mapped account. They work
 	/// regardless of the queried account's revive mapping.
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let response = self
-			.chain
-			.remote_chain_head_call(RemoteChainHeadCallRequest {
-				genesis_hash: self.genesis_hash.clone(),
-				follow_subscription_id: self.follow_id.clone(),
-				hash: self.hash.clone(),
-				function: "ReviveApi_call".to_string(),
-				call_parameters: encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input),
-			})
-			.await
-			.map_err(|failure| DotnsViewError::Failed(failure.reason()))?;
-		let operation_id = started_operation_id(response.operation)?;
-		let output = wait_for_chain_head_call_output(
-			&mut self.follow,
-			&operation_id,
-			"Asset Hub",
-			OPERATION_TIMEOUT,
-		)
-		.await?;
-		let result = view_output(&output);
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		let result = EvmContractCaller::read(self, dest, &input).await;
 		debug!(
 			target: "truapi::dotns",
 			follow_id = %self.follow_id,
@@ -199,6 +213,33 @@ impl DotnsTransport for DotnsLookup<'_> {
 	}
 }
 
+#[async_trait::async_trait]
+impl RuntimeApiCaller for DotnsLookup<'_> {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		let response = self
+			.chain
+			.remote_chain_head_call(RemoteChainHeadCallRequest {
+				genesis_hash: self.genesis_hash.clone(),
+				follow_subscription_id: self.follow_id.clone(),
+				hash: self.hash.clone(),
+				function: function.to_string(),
+				call_parameters: input.to_vec(),
+			})
+			.await
+			.map_err(subxt::Error::other)?;
+		let operation_id =
+			started_operation_id(response.operation).map_err(subxt::Error::other_str)?;
+		wait_for_chain_head_call_output(
+			&mut self.follow,
+			&operation_id,
+			"Asset Hub",
+			OPERATION_TIMEOUT,
+		)
+		.await
+		.map_err(subxt::Error::other_str)
+	}
+}
+
 /// Unwraps a started operation id. `LimitReached` maps to an error.
 fn started_operation_id(operation: OperationStartedResult) -> Result<String, String> {
 	match operation {
@@ -208,3 +249,6 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 		},
 	}
 }
+
+#[cfg(test)]
+mod tests;

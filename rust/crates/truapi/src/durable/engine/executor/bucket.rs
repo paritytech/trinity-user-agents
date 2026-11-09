@@ -45,7 +45,7 @@ struct ResolvedPolicy {
 }
 
 /// What a round, or one row of it, changed in the ledger.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum RoundOutcome {
 	/// A row was decided, so the next round runs at once.
 	Progress,
@@ -54,7 +54,7 @@ enum RoundOutcome {
 }
 
 /// Whether a bucket task ends after a round.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum BucketExit {
 	/// No row is left, or another task took the bucket over.
 	Leave,
@@ -193,8 +193,8 @@ impl BucketRun {
 			return RoundOutcome::NoProgress;
 		};
 		let change = match preparation {
-			Preparation::Ready(extrinsic) => {
-				start_built_attempt(&engine, id, genesis, extrinsic).await
+			Preparation::Ready { extrinsic, params } => {
+				start_built_attempt(&engine, id, genesis, extrinsic, params).await
 			},
 			Preparation::GiveUp => give_up_submission(&engine, id).await,
 		};

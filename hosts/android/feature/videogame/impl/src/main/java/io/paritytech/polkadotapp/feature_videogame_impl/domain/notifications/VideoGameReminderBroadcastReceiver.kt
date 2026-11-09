@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -23,7 +22,7 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
 
         when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
             is VideoGameNotificationType.ProductGameStartsSoon ->
-                alarmHandler.onAlarm(ProductId.fromStoredValue(type.productId), ringAlarm = context.canScheduleExactAlarms())
+                alarmHandler.onAlarm(type.productId, ringAlarm = context.canScheduleExactAlarms())
 
             null -> Unit
         }

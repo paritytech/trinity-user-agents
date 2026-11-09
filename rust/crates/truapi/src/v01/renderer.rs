@@ -43,7 +43,7 @@ uniffi::custom_type!(OptionBool, Option<bool>, {
 /// Edge dimensions. `bottom` defaults to `top` and `start` to `end` when absent.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Dimensions {
 	/// Top edge.
@@ -198,7 +198,7 @@ pub enum Shape {
 /// Border styling. Drawn inside the node, so it never covers a neighbour.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BorderStyle {
 	/// Border width.
@@ -212,7 +212,7 @@ pub struct BorderStyle {
 /// Background styling. A shaped background also clips the node's content to its shape.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Background {
 	/// Background color.
@@ -224,7 +224,7 @@ pub struct Background {
 /// How a node composites with what is behind it. The values are those common
 /// to CSS `mix-blend-mode`, SwiftUI `BlendMode` and Compose `BlendMode`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum BlendingMode {
 	/// Source over destination.
@@ -264,7 +264,7 @@ pub enum BlendingMode {
 /// Layout and styling applied to one node.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Modifier {
 	/// Outer spacing.
@@ -297,7 +297,7 @@ pub enum Modifier {
 /// Properties of a `Box`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BoxProps {
 	/// Placement of content within the box. Top start when absent.
@@ -307,7 +307,7 @@ pub struct BoxProps {
 /// Properties of a `Column`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ColumnProps {
 	/// Cross-axis alignment of children.
@@ -320,7 +320,7 @@ pub struct ColumnProps {
 /// Properties of a `Row`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct RowProps {
 	/// Cross-axis alignment of children.
@@ -333,7 +333,7 @@ pub struct RowProps {
 /// Properties of a `Text`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct TextProps {
 	/// Typography preset.
@@ -421,7 +421,7 @@ pub struct ImageProps {
 
 /// A visual effect. Each variant names one effect and carries its parameters.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Effect {
 	/// Animated rainbow tint over the children.
@@ -431,7 +431,7 @@ pub enum Effect {
 /// Properties of an `Effect`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct EffectProps {
 	/// The effect applied to the children.
@@ -602,100 +602,4 @@ pub struct HostRendererActionSubscribeItem {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[derive(Encode)]
-	struct RendererWireComponent<P> {
-		modifiers: Vec<Modifier>,
-		props: P,
-		children: Vec<RendererNode>,
-	}
-
-	#[derive(Encode)]
-	enum RendererWireNode<P> {
-		#[codec(index = 3)]
-		Column(RendererWireComponent<P>),
-	}
-
-	fn renderer_node() -> RendererNode {
-		RendererNode::Column {
-			modifiers: vec![Modifier::Padding(Dimensions {
-				top: Compact(12),
-				end: Compact(8),
-				bottom: None,
-				start: Some(Compact(4)),
-			})],
-			props: ColumnProps {
-				horizontal_alignment: Some(HorizontalAlignment::Center),
-				vertical_arrangement: Some(Arrangement::SpaceBetween),
-			},
-			children: vec![
-				RendererNode::String { text: "Votes: 1".to_string() },
-				RendererNode::Button {
-					modifiers: Vec::new(),
-					props: ButtonProps {
-						text: "Vote".to_string(),
-						variant: Some(ButtonVariant::Primary),
-						enabled: OptionBool(Some(true)),
-						loading: OptionBool(None),
-						click_action: Some("vote".to_string()),
-					},
-					children: Vec::new(),
-				},
-				RendererNode::Spacer { modifiers: vec![Modifier::Opacity(128)] },
-				RendererNode::Image {
-					modifiers: vec![Modifier::Width(Compact(40))],
-					props: ImageProps {
-						source: ImageSource::Bulletin("bafy".to_string()),
-						fit: Some(ImageFit::Cover),
-					},
-				},
-				RendererNode::Effect {
-					props: EffectProps { effect: Effect::Rainbow },
-					children: vec![RendererNode::Nil],
-				},
-			],
-		}
-	}
-
-	#[test]
-	fn column_preserves_the_component_wire_shape() {
-		let node = renderer_node();
-		let RendererNode::Column { modifiers, props, children } = node.clone() else {
-			unreachable!();
-		};
-		let wire = RendererWireNode::Column(RendererWireComponent { modifiers, props, children });
-
-		assert_eq!(node.encode(), wire.encode());
-	}
-
-	#[test]
-	fn variants_encode_only_the_fields_they_carry() {
-		let spacer = RendererNode::Spacer { modifiers: Vec::new() };
-		assert_eq!(spacer.encode(), vec![5, 0]);
-
-		let effect = RendererNode::Effect {
-			props: EffectProps { effect: Effect::Rainbow },
-			children: Vec::new(),
-		};
-		assert_eq!(effect.encode(), vec![10, 0, 0]);
-	}
-
-	#[test]
-	fn tree_round_trips_through_scale() {
-		let node = renderer_node();
-		let decoded = RendererNode::decode(&mut node.encode().as_slice()).unwrap();
-		assert_eq!(decoded, node);
-	}
-
-	#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-	#[test]
-	fn tree_round_trips_through_uniffi() {
-		let node = renderer_node();
-		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
-		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
-
-		assert_eq!(lifted, node);
-	}
-}
+mod tests;

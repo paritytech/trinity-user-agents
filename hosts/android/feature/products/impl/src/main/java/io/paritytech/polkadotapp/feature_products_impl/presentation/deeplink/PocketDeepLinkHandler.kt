@@ -16,7 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
@@ -53,7 +53,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
         // reachable here as through any other dotNS link.
-        return gate.opens(ProductId.fromString(card.productHost, tld).getOrNull())
+        return gate.opens(productIdFromHost(card.productId.value, tld).getOrNull())
     }
 
     /**
@@ -72,8 +72,10 @@ internal class PocketDeepLinkHandler @Inject constructor(
             null -> Result.success(malformed(data))
             PocketDeeplink.Collection -> openCollection()
             is PocketDeeplink.Card -> dotNsTldProvider.getTld()
-                .flatMap { tld -> ProductId.fromString(deeplink.productHost, tld) }
-                .flatMap { productId -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId))) }
+                .flatMap { tld -> productIdFromHost(deeplink.productId.value, tld) }
+                .flatMap { productId ->
+                    dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery)
+                }
         }
     }
 
@@ -83,7 +85,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         DeeplinkProcessingOutcome.Navigate { router.openWalletTab() }
     }
 
-    private suspend fun dispatchCard(key: PocketCardKey): Result<DeeplinkProcessingOutcome> {
+    private suspend fun dispatchCard(key: PocketCardKey, pageQuery: String): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }
 
         // A card already held is opened, whichever action asked for it. One that is not held has to
@@ -92,7 +94,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         return if (present) {
             Result.success(
                 DeeplinkProcessingOutcome.Navigate {
-                    cardOpenRequests.request(key)
+                    cardOpenRequests.request(key, pageQuery)
                     router.openWalletTab()
                 },
             )
@@ -104,7 +106,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private suspend fun offerToAdd(key: PocketCardKey): Result<DeeplinkProcessingOutcome> {
         val offer: Result<DeeplinkProcessingOutcome> = publishedCards.find(key.productId, key.cardId).map {
             DeeplinkProcessingOutcome.Navigate {
-                router.openPocketAddCard(PocketAddCardPayload(key.productId.value, key.cardId.value))
+                router.openPocketAddCard(PocketAddCardPayload(key.productId, key.cardId.value))
             }
         }
         return offer.recoverCatching { failure ->

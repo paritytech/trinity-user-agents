@@ -1,15 +1,17 @@
 //! Purse records.
 
+use parity_scale_codec::{Decode, Encode};
+
 use crate::store::DbError;
 
 /// A purse's id. Ids are allocated in order from 0 and never reused, because
 /// each one becomes part of its items' key derivation and recovery walks them
 /// in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct PurseId(pub u32);
 
 /// No purse has this id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 #[error("purse {} does not exist", .0.0)]
 pub struct UnknownPurse(pub PurseId);
 
@@ -24,11 +26,11 @@ impl PurseId {
 /// tag. Layer 1 stores and matches tags but never reads their contents. The
 /// empty tag marks a purse no caller has claimed: the main purse, and purses
 /// recovered without metadata.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, Hash)]
 pub struct PurseTag(pub Vec<u8>);
 
 /// A stored purse.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PurseRecord {
 	/// Its id.
 	pub id: PurseId,

@@ -4,41 +4,43 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
+mod cheque;
+mod dao;
+mod deposit;
+#[cfg(test)]
+mod live;
+mod operation;
+mod payment;
+mod receive_key;
+mod refund;
+
 use core::num::NonZeroU32;
+use std::sync::Arc;
 
 use truapi::latest::{
 	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 	NftPursePurse, RemotePermission,
 };
 
+pub use deposit::DepositRefusal;
+pub use operation::drain_needs_confirmation;
+#[cfg(test)]
+pub use payment::{ENVELOPE_VERSION, EnvelopeContents};
+pub use payment::{PaymentListen, PaymentListenError};
+pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
+
 use crate::{
+	encrypted_storage::EncryptedStorage,
+	host_logic::statement_store::StatementStoreApi,
 	nft::{
 		AllocateItemsError, CreatePurseError, ItemKey, NftLedger, PageRequest, PurseId,
 		PurseRecord, PurseTag,
 	},
-	platform::{ProductId, ProductIdError},
-	store::DbError,
+	platform::ProductId,
+	store::{Db, DbError},
 };
 
-/// Who owns a purse, with a product's id validated and normalized.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PurseOwner {
-	/// The user's own account: the main purse, and purses recovered without
-	/// metadata.
-	Root,
-	/// The product that created the purse.
-	Product(ProductId),
-}
-
-impl PurseOwner {
-	/// The owner a product named, refusing a product id that is not one.
-	pub fn parse(owner: &NftPurseOwner) -> Result<Self, ProductIdError> {
-		match owner {
-			NftPurseOwner::Root => Ok(Self::Root),
-			NftPurseOwner::Product(id) => id.parse().map(Self::Product),
-		}
-	}
-
+impl NftPurseOwner {
 	/// Root is the empty tag. A product is the UTF-8 of its id, which
 	/// [`ProductId`] guarantees is never empty.
 	fn tag(&self) -> PurseTag {
@@ -55,13 +57,6 @@ impl PurseOwner {
 		}
 		let id = core::str::from_utf8(&tag.0).ok()?;
 		id.parse().ok().map(Self::Product)
-	}
-
-	fn to_wire(&self) -> NftPurseOwner {
-		match self {
-			Self::Root => NftPurseOwner::Root,
-			Self::Product(id) => NftPurseOwner::Product(id.as_str().to_owned()),
-		}
 	}
 }
 
@@ -102,7 +97,7 @@ pub const MAX_ITEMS_PER_CALL: u32 = 1000;
 pub const MAX_PAGE_SIZE: u32 = 100;
 
 /// A count in `1..=MAX`, as the RFC bounds the counts a call takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CountUpTo<const MAX: u32>(NonZeroU32);
 
 impl<const MAX: u32> CountUpTo<MAX> {
@@ -119,16 +114,35 @@ pub type ItemCount = CountUpTo<MAX_ITEMS_PER_CALL>;
 /// A page size `query_purse` accepts.
 pub type PageSize = CountUpTo<MAX_PAGE_SIZE>;
 
+/// What the RFC's purse calls run on.
+pub struct NftPursesDeps {
+	/// Layer 1: purses, items and their transfers.
+	pub ledger: NftLedger,
+	/// The core database, for the tables Layer 2 owns.
+	pub db: Db,
+	/// Keeps the secrets of receive keys.
+	pub encrypted: Arc<dyn EncryptedStorage>,
+	/// Opens `Static` cheques.
+	pub static_secret: Arc<dyn StaticReceiveSecret>,
+	/// The statement store cheques arrive through.
+	pub statements: Arc<dyn StatementStoreApi>,
+}
+
 /// The RFC's purse calls, shared by every product.
 #[derive(Clone)]
 pub struct NftPurses {
 	ledger: NftLedger,
+	db: Db,
+	encrypted: Arc<dyn EncryptedStorage>,
+	static_secret: Arc<dyn StaticReceiveSecret>,
+	statements: Arc<dyn StatementStoreApi>,
 }
 
 impl NftPurses {
-	/// The RFC calls over `ledger`.
-	pub fn new(ledger: NftLedger) -> Self {
-		Self { ledger }
+	/// The RFC calls over `deps`.
+	pub fn new(deps: NftPursesDeps) -> Self {
+		let NftPursesDeps { ledger, db, encrypted, static_secret, statements } = deps;
+		Self { ledger, db, encrypted, static_secret, statements }
 	}
 
 	/// Creates a purse owned by the product `caller`.
@@ -140,18 +154,21 @@ impl NftPurses {
 		if name.len() > NFT_PURSE_MAX_NAME_BYTES {
 			return Err(CreateProductPurseError::NameTooLong { len: name.len() });
 		}
-		let owner = PurseOwner::Product(caller.clone());
+		let owner = NftPurseOwner::Product(caller.clone());
 		let created = self.ledger.create_purse(name, owner.tag()).await?;
 		Ok(created)
 	}
 
 	/// Who owns `purse`, or `None` when no purse has that id.
-	pub async fn owner_of(&self, purse: PurseId) -> Result<Option<PurseOwner>, OwnerLookupError> {
+	pub async fn owner_of(
+		&self,
+		purse: PurseId,
+	) -> Result<Option<NftPurseOwner>, OwnerLookupError> {
 		let Some(record) = self.ledger.purse(purse).await? else {
 			return Ok(None);
 		};
 		let unreadable = || OwnerLookupError::UnreadableTag { purse, tag: record.tag.0.clone() };
-		PurseOwner::from_tag(&record.tag).ok_or_else(unreadable).map(Some)
+		NftPurseOwner::from_tag(&record.tag).ok_or_else(unreadable).map(Some)
 	}
 
 	/// Allocates `count` keys in `purse`. The caller checks [`read_grant`] on
@@ -180,19 +197,86 @@ impl NftPurses {
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.
-	pub async fn list_purses(&self, owner: &PurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
+	pub async fn list_purses(&self, owner: &NftPurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
 		let records = self.ledger.purses_tagged(owner.tag()).await?;
 		Ok(records.into_iter().map(listed_purse).collect())
 	}
 }
 
+/// Purse calls over `db` with the test ledger, encrypted storage in memory,
+/// [`TEST_STATIC_SECRET`] and a statement store that has nothing to watch.
+#[cfg(test)]
+pub fn test_purses(db: Db) -> NftPurses {
+	test_purses_watching(db, Arc::default())
+}
+
+/// [`test_purses`] whose statement store is `statements`.
+#[cfg(test)]
+pub fn test_purses_watching(db: Db, statements: Arc<ScriptedStatements>) -> NftPurses {
+	test_purses_over(db, statements)
+}
+
+/// [`test_purses`] over any statement store, such as a live one.
+#[cfg(test)]
+pub fn test_purses_over(db: Db, statements: Arc<dyn StatementStoreApi>) -> NftPurses {
+	let ledger = crate::nft::test_ledger(db.clone());
+	let encrypted = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
+	let static_secret = Arc::new(FixedStaticSecret(TEST_STATIC_SECRET));
+	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements })
+}
+
+/// A statement store whose every watch yields `batches` and then ends, and
+/// that remembers the filters it was asked to watch.
+#[cfg(test)]
+#[derive(Default)]
+pub struct ScriptedStatements {
+	/// What each watch yields.
+	pub batches: std::sync::Mutex<Vec<Vec<Vec<u8>>>>,
+	/// The filters watched, in order.
+	pub watched: std::sync::Mutex<Vec<crate::host_logic::statement_store::TopicFilter>>,
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl StatementStoreApi for ScriptedStatements {
+	async fn start_statement_watch(
+		&self,
+		filter: crate::host_logic::statement_store::TopicFilter,
+	) -> Result<
+		crate::host_logic::statement_store::StatementBatches,
+		crate::host_logic::statement_store::StatementWatchError,
+	> {
+		self.watched.lock().unwrap().push(filter);
+		let batches = self.batches.lock().unwrap().clone().into_iter().map(Ok);
+		let watch = futures::stream::iter(batches);
+		Ok(futures::StreamExt::boxed(watch))
+	}
+}
+
+/// The static receive secret of [`test_purses`].
+#[cfg(test)]
+pub const TEST_STATIC_SECRET: [u8; 32] = [0x5e; 32];
+
+/// Always the same static receive secret.
+#[cfg(test)]
+pub struct FixedStaticSecret(pub [u8; 32]);
+
+#[cfg(test)]
+impl StaticReceiveSecret for FixedStaticSecret {
+	fn static_receive_secret(
+		&self,
+	) -> Result<crate::host_logic::x25519_seal::X25519PrivateKey, crate::runtime::AuthorityError> {
+		Ok(crate::host_logic::x25519_seal::X25519PrivateKey::from(self.0))
+	}
+}
+
 /// The grant `caller` needs to read `owner`'s purses, or `None` when they are
 /// its own.
-pub fn read_grant(caller: &ProductId, owner: &PurseOwner) -> Option<RemotePermission> {
-	if matches!(owner, PurseOwner::Product(id) if id == caller) {
+pub fn read_grant(caller: &ProductId, owner: &NftPurseOwner) -> Option<RemotePermission> {
+	if matches!(owner, NftPurseOwner::Product(id) if id == caller) {
 		return None;
 	}
-	Some(RemotePermission::NftPurseRead { owner: owner.to_wire() })
+	Some(RemotePermission::NftPurseRead { owner: owner.clone() })
 }
 
 fn item_key(key: ItemKey) -> NftPurseItemKey {
@@ -204,161 +288,4 @@ fn listed_purse(record: PurseRecord) -> NftPursePurse {
 }
 
 #[cfg(test)]
-mod tests {
-	use futures::executor::block_on;
-	use tempfile::TempDir;
-
-	use super::*;
-	use crate::{nft::test_ledger, store::open_temporary_core_db};
-
-	const PRODUCT: &str = "tickets.dot";
-
-	/// The purse calls, with the directory that keeps their database alive.
-	fn purses() -> (TempDir, NftPurses) {
-		let (dir, db) = open_temporary_core_db();
-		(dir, NftPurses::new(test_ledger(db)))
-	}
-
-	fn product_id(id: &str) -> ProductId {
-		ProductId::for_test(id)
-	}
-
-	fn product(id: &str) -> PurseOwner {
-		PurseOwner::Product(product_id(id))
-	}
-
-	fn create(purses: &NftPurses, caller: &str, name: &str) -> PurseId {
-		block_on(purses.create_purse(&product_id(caller), name.to_owned())).expect("purse created")
-	}
-
-	fn listed(purses: &NftPurses, owner: &PurseOwner) -> Vec<NftPursePurse> {
-		block_on(purses.list_purses(owner)).expect("purses list")
-	}
-
-	fn purse(id: u32, name: &str) -> NftPursePurse {
-		NftPursePurse { id: NftPurseId(id), name: name.to_owned() }
-	}
-
-	/// Item keys derive from the purse id and recovery walks ids from 0, so a
-	/// gap or a reused id would lose items.
-	#[test]
-	fn purses_get_sequential_ids_from_zero() {
-		let (_dir, purses) = purses();
-		let ids: Vec<PurseId> =
-			["a", "b", "c"].into_iter().map(|name| create(&purses, PRODUCT, name)).collect();
-		assert_eq!(ids, vec![PurseId(0), PurseId(1), PurseId(2)]);
-	}
-
-	#[test]
-	fn a_fresh_database_gives_root_the_main_purse() {
-		let (_dir, purses) = purses();
-		assert_eq!(listed(&purses, &PurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
-	}
-
-	#[test]
-	fn a_product_lists_only_its_own_purses() {
-		let (_dir, purses) = purses();
-		create(&purses, PRODUCT, "mine");
-		create(&purses, "other.dot", "theirs");
-		assert_eq!(listed(&purses, &product(PRODUCT)), vec![purse(0, "mine")]);
-	}
-
-	#[test]
-	fn a_product_without_purses_lists_none() {
-		let (_dir, purses) = purses();
-		assert_eq!(listed(&purses, &product(PRODUCT)), vec![]);
-	}
-
-	/// The empty product id would share Root's empty tag, so naming it as an
-	/// owner must fail rather than reach Root's purses.
-	#[test]
-	fn an_empty_product_owner_is_refused() {
-		let refused = PurseOwner::parse(&NftPurseOwner::Product(String::new()));
-		assert_eq!(refused, Err(ProductIdError::Empty));
-	}
-
-	/// Lookups match tags byte for byte, so an owner a product spells
-	/// differently must still find the purses its owner created.
-	#[test]
-	fn an_owner_is_found_however_the_product_spells_its_id() {
-		let (_dir, purses) = purses();
-		create(&purses, PRODUCT, "mine");
-		let spelled = PurseOwner::parse(&NftPurseOwner::Product("Tickets.DOT".to_owned()))
-			.expect("valid product id");
-		assert_eq!(listed(&purses, &spelled), vec![purse(0, "mine")]);
-	}
-
-	/// The RFC caps names at 64 bytes, and a refused name must not use up an id.
-	#[test]
-	fn names_are_capped_at_64_bytes_without_using_an_id() {
-		let (_dir, purses) = purses();
-		let refused = block_on(purses.create_purse(&product_id(PRODUCT), "x".repeat(65)));
-		assert!(matches!(refused, Err(CreateProductPurseError::NameTooLong { len: 65 })));
-		assert_eq!(create(&purses, PRODUCT, &"x".repeat(64)), PurseId(0));
-	}
-
-	/// The id after `u32::MAX - 1` would collide with the main purse.
-	#[test]
-	fn creating_past_the_last_id_is_refused() {
-		let (_dir, db) = open_temporary_core_db();
-		let purses = NftPurses::new(test_ledger(db.clone()));
-		let last = PurseId::MAIN.0 - 1;
-		block_on(db.write(move |tx| {
-			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (?1, 'last', x'')", [last])?;
-			Ok(())
-		}))
-		.unwrap();
-		let refused = block_on(purses.create_purse(&product_id(PRODUCT), "one more".to_owned()));
-		assert!(matches!(
-			refused,
-			Err(CreateProductPurseError::Ledger(CreatePurseError::IdsExhausted))
-		));
-	}
-
-	/// A grant is never asked for a product's own purses, and never skipped for
-	/// anyone else's.
-	#[test]
-	fn only_another_owners_purses_need_a_read_grant() {
-		let caller = product_id(PRODUCT);
-		assert_eq!(read_grant(&caller, &product(PRODUCT)), None);
-		assert_eq!(
-			read_grant(&caller, &PurseOwner::Root),
-			Some(RemotePermission::NftPurseRead { owner: NftPurseOwner::Root })
-		);
-		assert_eq!(
-			read_grant(&caller, &product("other.dot")),
-			Some(RemotePermission::NftPurseRead {
-				owner: NftPurseOwner::Product("other.dot".to_owned())
-			})
-		);
-	}
-
-	/// The owner decides which grant a call needs, so it must read back as
-	/// exactly the one the purse was created for.
-	#[test]
-	fn a_purse_reads_back_the_owner_it_was_created_for() {
-		let (_dir, purses) = purses();
-		let created = create(&purses, PRODUCT, "Tickets");
-		let owners = [created, PurseId::MAIN, PurseId(7)]
-			.map(|purse| block_on(purses.owner_of(purse)).expect("owner is read"));
-		assert_eq!(owners, [Some(product(PRODUCT)), Some(PurseOwner::Root), None]);
-	}
-
-	/// A tag that names no product must not be read as Root, which would
-	/// ask for the wrong grant.
-	#[test]
-	fn a_tag_naming_no_product_is_an_error() {
-		let (_dir, db) = open_temporary_core_db();
-		let purses = NftPurses::new(test_ledger(db.clone()));
-		block_on(db.write(|tx| {
-			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (0, 'odd', x'ff')", [])?;
-			Ok(())
-		}))
-		.expect("odd purse is written");
-		let read = block_on(purses.owner_of(PurseId(0)));
-		assert!(matches!(
-			read,
-			Err(OwnerLookupError::UnreadableTag { purse: PurseId(0), tag }) if tag == [0xff]
-		));
-	}
-}
+mod tests;

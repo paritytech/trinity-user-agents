@@ -1,3 +1,5 @@
+import { asProductId } from "@parity/truapi";
+import type { ProductId } from "@parity/truapi";
 // A deterministic, in-memory mock host. `createMockHost` returns a complete
 // `RequiredHostCallbacks` set (the JS sibling of `truapi::platform`'s
 // `MockPlatform`) plus recordings for assertions. Hand `host.callbacks` to
@@ -273,7 +275,7 @@ function liveSubscription<T>(
 /** One operation a product began and has not ended. */
 export interface OpenOperation {
   /** Product that began it. */
-  productId: string;
+  productId: ProductId;
   /** Id the mock handed back, unique among this product's open operations. */
   id: number;
   /** Label the product gave, empty when it gave none. */
@@ -299,6 +301,15 @@ export interface StatementEntry {
   data: string | undefined;
   /** The signature proof, when the statement carries a signing one. */
   proof: { signature: string; signer: string } | undefined;
+  /** The 32-byte channel, `0x`-hex, or `undefined` when it carries none. */
+  channel: string | undefined;
+  /**
+   * The expiry as encoded: the expiration timestamp in seconds in the high 32
+   * bits and a sequence number in the low 32. `undefined` when it carries none.
+   */
+  expiry: bigint | undefined;
+  /** The 32-byte decryption key, `0x`-hex, or `undefined` when it carries none. */
+  decryptionKey: string | undefined;
   /** True when the product submitted it, false when a test injected it. */
   fromProduct: boolean;
   /** When the store took it, as epoch milliseconds. */
@@ -394,11 +405,21 @@ export interface MockHostConfig {
   remotePermissions?: PermissionPolicy;
   /** Whether `featureSupported` reports support. Default `true`. */
   featureSupported?: boolean;
+  /**
+   * When set, `featureSupported` answers from `supportedChains`, as a real host
+   * does, so a chain outside that set is unsupported. Default `false`. It
+   * becomes the default in a later breaking release. The Rust
+   * `MockConfig::only_served_chains` is the same option.
+   */
+  onlyServedChains?: boolean;
   /** Theme emitted by `subscribeTheme`. Default `"Dark"`. */
   theme?: ThemeVariant;
   /** BCP 47 tag emitted by `subscribeLocale`. Default `"en"`. */
   languageTag?: string;
-  /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
+  /**
+   * Whether `confirmUserAction` confirms reviewed actions. Default `true`.
+   * {@link MockHost.setConfirmUserActions} changes it for one test.
+   */
   confirmUserActions?: boolean;
   /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
   scanner?: HostScan;
@@ -559,6 +580,12 @@ export interface MockHost {
   setTheme(variant: ThemeVariant): void;
   /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): void;
+  /**
+   * Answer reviews from now on with `confirm`, as `confirmUserActions` does at
+   * boot. A review already answered keeps its answer, and so does a
+   * permission the core has cached. `reset` restores the configured value.
+   */
+  setConfirmUserActions(confirm: boolean): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
   /** Mark the chain disconnected, as a dropped transport would. */
@@ -643,9 +670,16 @@ export interface MockHost {
    * Seed a preimage so a later `preimage.lookupPreimage` resolves it, and
    * return the deterministic lookup key. The core (not the host) owns Bulletin
    * submission on current core; this is the host-side content store the mock's
-   * `lookupPreimage` reads from.
+   * `lookupPreimage` reads from. Lookups already open for the key receive it.
    */
   seedPreimage(value: Uint8Array): Uint8Array;
+  /**
+   * Store `value` under `storedKey`, the key the core reads product storage
+   * by, as an entry persisted from an earlier session would be. Subscribers to
+   * that key are notified, and it does not count as a host call. The host page
+   * builds `storedKey` from the product's own key with `seedProductStorage`.
+   */
+  writeProductStorage(storedKey: string, value: Uint8Array): void;
 }
 
 /** Lowercase hex without `0x`, so a hash compares equal however it was written. */
@@ -663,13 +697,13 @@ function normalizeHash(hash: string | Uint8Array): string {
  * asked for even when a real node answers it.
  *
  * One socket per lease, never shared. Production opens a fresh connection for
- * every chain connect -- `truapi-provider`'s `connect` and the CLI's
- * `WsJsonRpcConnection::connect` both do -- and JSON-RPC ids are numbered per
- * connection from 1. Two leases on one socket therefore put two id spaces on
- * the same wire, and every inbound frame reaches every reader, so a lease sees
- * traffic it never asked for. That is transport behaviour no real host has and
- * the core can observe it, which makes sharing a fidelity bug rather than an
- * optimisation. Do not reintroduce it to save connections.
+ * every chain connect -- `truapi-provider`'s `connect` does, and the CLI dials
+ * through it -- and JSON-RPC ids are numbered per connection from 1. Two leases
+ * on one socket therefore put two id spaces on the same wire, and every inbound
+ * frame reaches every reader, so a lease sees traffic it never asked for. That
+ * is transport behaviour no real host has and the core can observe it, which
+ * makes sharing a fidelity bug rather than an optimisation. Do not reintroduce
+ * it to save connections.
  *
  * This is not a multi-chain concern. Two leases on one chain are enough: they
  * would cross-talk, and releasing one would leave its listeners on a socket the
@@ -857,6 +891,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
+    onlyServedChains = false,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -913,6 +948,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   let remotePermissions = remotePermissionsInitial;
   let enforcePermissions = false;
   let currentTheme = theme;
+  let confirming = confirmUserActions;
   // Live theme subscriptions, so `setTheme` reaches a subscribed product the way
   // the Rust mock's `theme_subscribers` does. A generator that ended after the
   // first value would make every `setTheme` in a migrating suite a no-op.
@@ -1005,7 +1041,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     // its contents: a suite chasing one it injected by hand has something to
     // see, where dropping it looks like the injection never happened.
     const fields = decodeStatement(statement.encoded) ?? [];
-    const proof = fields.find((field) => field.tag === "Proof")?.value as
+    const field = (tag: string) =>
+      fields.find((candidate) => candidate.tag === tag)?.value;
+    const proof = field("Proof") as
       | { tag: string; value: { signature: string; signer: string } }
       | undefined;
     return {
@@ -1019,6 +1057,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         proof && proof.tag !== "OnChain"
           ? { signature: proof.value.signature, signer: proof.value.signer }
           : undefined,
+      channel: field("Channel") as string | undefined,
+      expiry: field("Expiry") as bigint | undefined,
+      decryptionKey: field("DecryptionKey") as string | undefined,
       fromProduct: statement.fromProduct,
       timestamp: statement.timestamp,
     };
@@ -1039,6 +1080,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     const item = { value: value && scale.bytesToHex(value) };
     for (const push of storageSubscribers.get(key) ?? []) push(item);
   };
+  // Per key as well, so a seed reaches only the lookups waiting on it.
+  const preimageSubscribers = new Map<
+    string,
+    Set<(value: Uint8Array | undefined) => void>
+  >();
 
   let hostCallCount = 0;
 
@@ -1202,9 +1248,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
     features: {
-      async featureSupported() {
+      async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
-        return { supported: featureSupported };
+        const served =
+          !onlyServedChains ||
+          supportedChains.chains.some(
+            (entry) =>
+              normalizeHash(entry.genesisHash) ===
+              normalizeHash(request.value.genesisHash),
+          );
+        return { supported: featureSupported && served };
       },
       async supportedChains() {
         if (faults.featureError) throw new Error(faults.featureError);
@@ -1294,14 +1347,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async confirmUserAction(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return confirmUserActions;
+        return confirming;
       },
       // The Rust trait answers this from `confirm_user_action` by default, so
       // a review is recorded here too and one knob still answers both.
       async confirmPermission(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return decision(confirmUserActions);
+        return decision(confirming);
       },
     },
 
@@ -1389,12 +1442,23 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     preimage: {
-      async *lookupPreimage(
-        key,
-      ): AsyncGenerator<Result<Uint8Array | undefined, GenericError>> {
-        yield ok(preimages.get(hex(key)));
-        // Stay open for future updates (none, in the mock).
-        await new Promise<never>(() => {});
+      lookupPreimage(key) {
+        const id = hex(key);
+        return liveSubscription<Uint8Array | undefined>(
+          preimages.get(id),
+          subscriptionClosers,
+          (push) => {
+            const subscribers =
+              preimageSubscribers.get(id) ??
+              new Set<(value: Uint8Array | undefined) => void>();
+            preimageSubscribers.set(id, subscribers);
+            subscribers.add(push);
+            return () => {
+              subscribers.delete(push);
+              if (subscribers.size === 0) preimageSubscribers.delete(id);
+            };
+          },
+        );
       },
     },
   };
@@ -1523,6 +1587,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       }
       scan.answer = answer;
     },
+    setConfirmUserActions: (confirm) => {
+      confirming = confirm;
+    },
     setTheme: (variant) => {
       currentTheme = variant;
       const item: HostThemeSubscribeItem = {
@@ -1548,8 +1615,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getChatMessageLog: () => [...chatMessages],
     seedPreimage(value) {
       const key = preimageKey(value);
-      preimages.set(hex(key), value);
+      const id = hex(key);
+      // A key names its content, so a value already held is already what
+      // every open lookup was given; pushing it again would deliver it twice.
+      if (preimages.has(id)) return key;
+      preimages.set(id, value);
+      for (const push of preimageSubscribers.get(id) ?? []) push(value);
       return key;
+    },
+    writeProductStorage(storedKey, value) {
+      storage.set(productKey(storedKey), value);
+      publishStorage(storedKey, value);
     },
     getProductStorage: () => {
       const prefix = productKey("");
@@ -1632,6 +1708,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       remotePermissions = remotePermissionsInitial;
       chainStatus = "Idle";
       enforcePermissions = false;
+      confirming = confirmUserActions;
       nextNotificationId = 1;
       nextChatMessageId = 0;
       hostCallCount = 0;
@@ -1666,7 +1743,7 @@ export function mockRuntimeConfig(
   overrides: Partial<ProductRuntimeConfig> = {},
 ): ProductRuntimeConfig {
   return {
-    productId: "mock.dot",
+    productId: asProductId("mock.dot"),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",

@@ -1,3 +1,4 @@
+import type { ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -9,7 +10,7 @@ import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-call
 import type {
   CoreAdmin,
   CoreStorageKey,
-  ProductExecutionKind,
+  ExecutableKind,
 } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
@@ -62,9 +63,9 @@ export type LogLevel = string;
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
   /** Stable identifier used to scope product accounts, permissions, and storage. */
-  productId: string;
+  productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
-  executionKind?: ProductExecutionKind;
+  executionKind?: ExecutableKind;
   /** Metadata describing the host application. */
   host: {
     /** Human-readable host name. */
@@ -153,7 +154,7 @@ export interface RenderSink {
  * one left, so the host may stop it.
  */
 export interface WorkerDemandChange {
-  productId: string;
+  productId: ProductId;
   wanted: boolean;
 }
 

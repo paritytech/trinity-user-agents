@@ -66,8 +66,6 @@ class TabBarPullState(
 
     fun toggleNetworkStatus() = toggle(ExpandedPanel.NetworkStatus)
 
-    fun toggleScan() = toggle(ExpandedPanel.Scan)
-
     fun openScan() { expandedPanel = ExpandedPanel.Scan }
 
     /** Snap to the screen's default posture: open when [forceShown] (Main), collapsed otherwise. */

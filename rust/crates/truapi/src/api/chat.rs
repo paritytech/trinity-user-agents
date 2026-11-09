@@ -16,7 +16,7 @@ use crate::{
 /// Chat room, bot, and message APIs.
 #[wire_trait(id = 4)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Chat: Send + Sync {
 	/// Create a chat room.
 	///

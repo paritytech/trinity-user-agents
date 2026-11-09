@@ -14,7 +14,6 @@ import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.runBlocking
@@ -23,6 +22,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class TrUAPISessionStarterTest {
     private val runtime = mockk<TrUAPIHostRuntime>()
@@ -112,6 +112,6 @@ class TrUAPISessionStarterTest {
 
     private companion object {
         const val PRODUCT_URL = "https://product.paseo/app"
-        val PRODUCT_ID = ProductId.fromStoredValue("product.paseo")
+        val PRODUCT_ID = ProductId.parse("product.paseo").getOrThrow()
     }
 }
