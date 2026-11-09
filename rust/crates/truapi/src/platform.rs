@@ -79,11 +79,7 @@ pub struct PairingHostConfig {
 	/// Host-spec B.1.3 defines the host metadata consumed by the signing host:
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L48-L60>
 	pub host: HostIdentity,
-	/// The stack the host runs: People for statement-store SSO, Bulletin for
-	/// in-core preimage submission, and Asset Hub, whose dotNS contracts hold
-	/// session usernames and product manifests. Without an Asset Hub no
-	/// manifest resolves, and every cross-product `trustedProducts` grant not
-	/// already cached is refused.
+	/// The stack the host runs.
 	pub stack: Stack,
 	/// Deeplink URI scheme used in pairing QR payloads, without `://`.
 	///
