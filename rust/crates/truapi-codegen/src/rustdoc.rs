@@ -511,8 +511,16 @@ fn should_skip_type_name(name: &str) -> bool {
 	)
 }
 
+/// Whether one candidate for `name` is outside the emitted client surface.
+///
+/// `latest` re-exports the newest version of a protocol type under its plain
+/// name, and `markers` holds the core's host-facing log markers, which are
+/// host policy rather than anything a product sends or receives. A type that
+/// only ever appears under one of those paths is left out of the generated
+/// client entirely.
 fn should_skip_type_candidate(name: &str, candidate: &ItemCandidate) -> bool {
-	should_skip_type_name(name) || candidate.path.iter().any(|segment| segment == "latest")
+	should_skip_type_name(name) ||
+		candidate.path.iter().any(|segment| segment == "latest" || segment == "markers")
 }
 
 /// Names the protocol types a platform signature refers to the way the
