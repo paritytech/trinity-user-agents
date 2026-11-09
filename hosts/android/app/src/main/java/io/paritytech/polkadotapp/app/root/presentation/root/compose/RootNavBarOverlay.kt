@@ -96,6 +96,7 @@ private const val BEHIND_CARD_DIM = 1f - DockletMaterials.BehindCardBrightness
 fun RootNavBarOverlay(
     hidden: Boolean,
     forceShown: Boolean,
+    overProduct: Boolean,
     screenKey: String?,
     currentTab: BottomTab,
     tabWarnings: ImmutableMap<BottomTab, Boolean>,
@@ -173,6 +174,11 @@ fun RootNavBarOverlay(
                 }
             }
         }
+    }
+
+    val dockMeasured = hideState.drawbridge != null
+    LaunchedEffect(overProduct, dockMeasured) {
+        if (overProduct) hideState.quietHide()
     }
 
     openScanPanelRequests.collectAsEffect { _, _ ->
@@ -269,7 +275,7 @@ fun RootNavBarOverlay(
                     hideState = hideState,
                     onDockletAreas = { dockletAreas = it },
                     onSlotClick = { target ->
-                        when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown, cardOpen = pull.scanExpanded)) {
+                        when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown && !overProduct, cardOpen = pull.scanExpanded)) {
                             DockletSlotAction.CloseCard -> pull.collapsePanels()
                             DockletSlotAction.ToggleApps -> pull.toggleApps()
                             DockletSlotAction.ToggleNetworkStatus -> pull.toggleNetworkStatus()
@@ -302,6 +308,7 @@ fun RootNavBarOverlay(
             RootNavBarHide(
                 hideState = hideState,
                 searchOpen = pull.scanExpanded,
+                restoresOnBack = !overProduct,
                 panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                 scannerTooltipVisible = tooltipVisible,
                 dockletTip = dockletTip,

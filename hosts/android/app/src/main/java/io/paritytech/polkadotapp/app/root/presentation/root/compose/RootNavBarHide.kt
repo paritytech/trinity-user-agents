@@ -56,6 +56,7 @@ private val TipAnchorWidth = 1.dp
 fun RootNavBarHide(
     hideState: DockletHideState,
     searchOpen: Boolean,
+    restoresOnBack: Boolean,
     panelExpanded: Boolean,
     scannerTooltipVisible: Boolean,
     dockletTip: DockletTip?,
@@ -99,7 +100,7 @@ fun RootNavBarHide(
     }
 
     var plainBackRequested by remember { mutableStateOf(false) }
-    if (hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
+    if (restoresOnBack && hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
         HiddenDockBack(hideState = hideState, onPlainBack = { plainBackRequested = true })
     }
     val dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher

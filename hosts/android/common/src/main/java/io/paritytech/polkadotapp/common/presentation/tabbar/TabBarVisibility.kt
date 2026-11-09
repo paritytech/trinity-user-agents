@@ -13,13 +13,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Whether the bar is shown at all. It exists only on screens that pin it via [ForceShowTabBar] (Main);
- * everywhere else it is absent entirely — no nub, nothing to pull out. There is deliberately no opt-out
- * state in between, so a screen cannot end up with a bar it did not ask for.
+ * Whether the bar is shown at all. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
+ * [ShowTabBarOverProduct] (a product); everywhere else it is absent entirely — no nub, nothing to pull out.
+ * There is deliberately no opt-out state in between, so a screen cannot end up with a bar it did not ask for.
  */
 @Singleton
 class TabBarVisibilityHolder @Inject constructor() {
-    private val forceKeys = mutableSetOf<Any>()
+    private val forceKeys = mutableMapOf<Any, Boolean>()
 
     val hidden: StateFlow<Boolean>
         field = MutableStateFlow(true)
@@ -29,9 +29,13 @@ class TabBarVisibilityHolder @Inject constructor() {
     val forced: StateFlow<Boolean>
         field = MutableStateFlow(false)
 
+    /** Whether a product pins the bar: it starts tucked away there, and Back belongs to the product. */
+    val overProduct: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
     @Synchronized
-    fun forceShow(key: Any) {
-        forceKeys.add(key)
+    fun forceShow(key: Any, overProduct: Boolean) {
+        forceKeys[key] = overProduct
         recompute()
     }
 
@@ -44,6 +48,7 @@ class TabBarVisibilityHolder @Inject constructor() {
     private fun recompute() {
         forced.value = forceKeys.isNotEmpty()
         hidden.value = forceKeys.isEmpty()
+        overProduct.value = forceKeys.containsValue(true)
     }
 }
 
@@ -55,6 +60,17 @@ val LocalTabBarVisibility = staticCompositionLocalOf<TabBarVisibilityHolder?> { 
  */
 @Composable
 fun ForceShowTabBar() {
+    PinTabBar(overProduct = false)
+}
+
+/** Pins the bar over a product, like [ForceShowTabBar], with the bar starting tucked away. */
+@Composable
+fun ShowTabBarOverProduct() {
+    PinTabBar(overProduct = true)
+}
+
+@Composable
+private fun PinTabBar(overProduct: Boolean) {
     val holder = LocalTabBarVisibility.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // A back-gesture preview composes the screen unresumed; releasing on pause would republish a zero bar height.
@@ -63,7 +79,7 @@ fun ForceShowTabBar() {
     if (holder != null && resumed) {
         DisposableEffect(holder) {
             val key = Any()
-            holder.forceShow(key)
+            holder.forceShow(key, overProduct)
             onDispose { holder.releaseForce(key) }
         }
     }

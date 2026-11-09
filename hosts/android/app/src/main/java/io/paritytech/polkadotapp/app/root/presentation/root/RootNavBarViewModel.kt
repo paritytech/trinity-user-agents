@@ -47,6 +47,7 @@ class RootNavBarViewModel @Inject constructor(
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
     val hidden: StateFlow<Boolean> = tabBarVisibilityHolder.hidden
     val forced: StateFlow<Boolean> = tabBarVisibilityHolder.forced
+    val overProduct: StateFlow<Boolean> = tabBarVisibilityHolder.overProduct
     val openApps: StateFlow<ImmutableList<TabInfo>> = productSessionController.openTabs
         .map { it.toImmutableList() }
         .stateInBackground(started = SharingStarted.Eagerly, initialValue = persistentListOf())
