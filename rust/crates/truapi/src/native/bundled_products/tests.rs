@@ -11,8 +11,8 @@ impl Bundle {
 	}
 }
 
-impl BundleFiles for Bundle {
-	fn list(&self, dir: &str) -> Vec<String> {
+impl BundleReader for Bundle {
+	fn list(&self, dir: String) -> Vec<String> {
 		let prefix = format!("{dir}/");
 		let mut names: Vec<String> = self
 			.0
@@ -24,12 +24,12 @@ impl BundleFiles for Bundle {
 		names
 	}
 
-	fn exists(&self, path: &str) -> bool {
-		self.0.contains_key(path)
+	fn exists(&self, path: String) -> bool {
+		self.0.contains_key(&path)
 	}
 
-	fn read_text(&self, path: &str) -> Option<String> {
-		self.0.get(path).cloned()
+	fn read_text(&self, path: String) -> Option<String> {
+		self.0.get(&path).cloned()
 	}
 }
 
@@ -56,7 +56,7 @@ fn bundle() -> Bundle {
 
 #[test]
 fn bundled_funding_providers_ship_a_funding_worker() {
-	let providers = bundled_funding_providers("root", &bundle());
+	let providers = bundled_funding_providers("root".to_string(), Box::new(bundle()));
 	assert_eq!(
 		providers
 			.iter()
@@ -72,7 +72,7 @@ fn bundled_funding_providers_ship_a_funding_worker() {
 
 #[test]
 fn bundled_products_are_named_directories() {
-	let ids: Vec<String> = bundled_products("root", &bundle())
+	let ids: Vec<String> = bundled_products("root".to_string(), Box::new(bundle()))
 		.into_iter()
 		.map(|product| product.product_id.as_str().to_string())
 		.collect();
@@ -81,8 +81,13 @@ fn bundled_products_are_named_directories() {
 
 #[test]
 fn an_asset_path_falls_back_to_the_index_for_app_routes() {
-	let files =
-		Bundle::new(&[("app/index.html", ""), ("app/main.js", ""), ("app/docs/index.html", "")]);
+	let files = || {
+		Box::new(Bundle::new(&[
+			("app/index.html", ""),
+			("app/main.js", ""),
+			("app/docs/index.html", ""),
+		]))
+	};
 	let cases = [
 		("/", false, Some("app/index.html")),
 		("/main.js", false, Some("app/main.js")),
@@ -93,7 +98,8 @@ fn an_asset_path_falls_back_to_the_index_for_app_routes() {
 		("/../secret", true, None),
 	];
 	for (path, main, expected) in cases {
-		assert_eq!(bundled_asset_path("app", path, main, &files).as_deref(), expected, "{path}");
+		let found = bundled_asset_path("app".to_string(), path.to_string(), main, files());
+		assert_eq!(found.as_deref(), expected, "{path}");
 	}
 }
 
@@ -109,6 +115,6 @@ fn mime_types_go_by_extension() {
 		("a.b/file", "application/octet-stream"),
 	];
 	for (path, mime) in cases {
-		assert_eq!(mime_for(path), mime, "{path}");
+		assert_eq!(mime_for(path.to_string()), mime, "{path}");
 	}
 }

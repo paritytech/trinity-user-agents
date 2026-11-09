@@ -2303,10 +2303,6 @@ pub enum FundingQuoteUnavailable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingFrameContext {
-	/// For an App route, the path inside the provider's App origin: the
-	/// route itself when it starts with `/` or `#`, otherwise the route after
-	/// a `/`. `None` for an external page.
-	pub app_path: Option<String>,
 	/// Whether the session waits on a transfer the user makes outside the
 	/// frame: an inbound bank deposit.
 	pub awaits_user_transfer: bool,
