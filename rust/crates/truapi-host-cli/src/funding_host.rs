@@ -230,12 +230,12 @@ impl CliFundingHost {
 	}
 
 	/// What session `intent`'s overlay offers once the user takes its
-	/// defaults: the core's default rail and, for crypto, the first token it
+	/// defaults: the first rail the core routes and, for crypto, the first token it
 	/// lists. The core answers a selection with the options it leads to
 	/// before `select_funding_options` returns.
 	fn select_defaults(runtime: &SigningHostRuntime, intent: &str) -> Option<FundingOptions> {
 		let offered = runtime.funding_options(intent)?;
-		let rail = offered.default_rail;
+		let rail = default_rail(&offered);
 		let token = match rail {
 			FundingRail::Crypto => offered.tokens.first().cloned(),
 			FundingRail::Card | FundingRail::Bank => None,
@@ -275,13 +275,19 @@ impl CliFundingHost {
 	}
 }
 
+/// The rail a user who takes the defaults is on: the first the core routes,
+/// crypto first, or card when it routes none.
+fn default_rail(options: &FundingOptions) -> FundingRail {
+	options.rails.first().copied().unwrap_or(FundingRail::Card)
+}
+
 /// What `session`'s overlay asks to be quoted on `options`, the defaults the
 /// user took: the selected rail and the asset the core names for it, on the
 /// first network it lists for crypto, for the amount the product asked or
 /// else the smallest one the selection takes. `None` when a crypto selection
 /// has no network to ask on.
 fn default_ask(options: &FundingOptions, session: &FundingPresentation) -> Option<FundingQuoteAsk> {
-	let rail = options.default_rail;
+	let rail = default_rail(options);
 	let network = match rail {
 		FundingRail::Crypto => Some(options.networks.first()?.network.clone()),
 		FundingRail::Card | FundingRail::Bank => None,
