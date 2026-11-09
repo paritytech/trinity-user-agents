@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
-import io.paritytech.polkadotapp.common.utils.FeatureOption
-import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.sentry.Sentry
-import io.sentry.SentryEvent
-import io.sentry.SentryLevel
-import io.sentry.protocol.Message
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -56,25 +56,17 @@ enum class GameReminderSkipReason(val value: String) {
     FAILED("failed"),
 }
 
-internal fun interface GameReminderEventCapture {
-    fun capture(event: () -> SentryEvent)
-}
-
-internal class SentryGameReminderEventCapture @Inject constructor() : GameReminderEventCapture {
-    override fun capture(event: () -> SentryEvent) {
-        if (FeatureOption.HOST_TELEMETRY.isEnabled) {
-            Sentry.captureEvent(event())
-        }
-    }
-}
-
 class GameReminderTelemetry @Inject internal constructor(
     private val timeProvider: TimeProvider,
-    private val capture: GameReminderEventCapture,
+    private val originProvider: HostEventOriginProvider,
+    private val capture: HostEventCapture,
 ) {
     fun report(event: GameReminderEvent) {
-        runCatching { capture.capture { event.toSentryEvent(timeProvider.now().toEpochMilliseconds()) } }
-            .logFailure("Failed to capture game reminder event")
+        runCatching {
+            capture.capture {
+                event.toHostEvent(originProvider.current(), timeProvider.now().toEpochMilliseconds())
+            }
+        }.logFailure("Failed to capture game reminder event")
     }
 }
 
@@ -87,27 +79,30 @@ private fun GameReminderEvent.eventName() = when (this) {
     is GameReminderEvent.Cancelled -> "host.reminder.cancelled"
 }
 
-private fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().apply {
-    val event = this@toSentryEvent
-    message = Message().apply { formatted = event.eventName() }
-    level = SentryLevel.INFO
-    logger = "host.telemetry"
-    setTag("host.platform", "android")
-    setTag("reminder.product_id", event.productId.value)
-    event.startsAtMillis?.let { startsAt ->
-        setExtra("reminder.starts_at_unix_ms", startsAt)
-        setExtra("reminder.delay_after_start_ms", nowMillis - startsAt)
-    }
-    when (event) {
-        is GameReminderEvent.Scheduled -> setTag("reminder.delivery", event.delivery.value)
-        is GameReminderEvent.Fired -> {
-            setTag("reminder.delivery", event.delivery.value)
-            setTag("host.app_state", if (event.foreground) "active" else "background")
-            setTag("reminder.still_scheduled", event.stillScheduled.toString())
+private fun GameReminderEvent.toHostEvent(origin: HostEventOrigin, nowMillis: Long): HostEvent {
+    val event = this
+    val tags = buildMap {
+        putAll(origin.baseTags())
+        put("reminder.product_id", event.productId.value)
+        when (event) {
+            is GameReminderEvent.Scheduled -> put("reminder.delivery", event.delivery.value)
+            is GameReminderEvent.Fired -> {
+                put("reminder.delivery", event.delivery.value)
+                put("host.app_state", if (event.foreground) "active" else "background")
+                put("reminder.still_scheduled", event.stillScheduled.toString())
+            }
+            is GameReminderEvent.NotScheduled -> put("reminder.skip_reason", event.reason.value)
+            is GameReminderEvent.Tapped,
+            is GameReminderEvent.ProductOpened,
+            is GameReminderEvent.Cancelled -> Unit
         }
-        is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", event.reason.value)
-        is GameReminderEvent.Tapped,
-        is GameReminderEvent.ProductOpened,
-        is GameReminderEvent.Cancelled -> Unit
     }
+    val extras = buildMap<String, Any> {
+        putAll(origin.baseExtras())
+        event.startsAtMillis?.let { startsAt ->
+            put("reminder.starts_at_unix_ms", startsAt)
+            put("reminder.delay_after_start_ms", nowMillis - startsAt)
+        }
+    }
+    return HostEvent(name = event.eventName(), tags = tags, extras = extras)
 }

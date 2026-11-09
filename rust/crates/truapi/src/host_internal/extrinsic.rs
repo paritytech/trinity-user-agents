@@ -34,7 +34,7 @@ use subxt::{
 	utils::{AccountId32, H256, MultiAddress, MultiSignature},
 };
 use tracing::warn;
-use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+use truapi::latest::TxPayloadExtension;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
@@ -325,15 +325,11 @@ pub enum LocalTransactionError {
 	Other(String),
 }
 
-/// Assemble a local transaction using the client's runtime metadata.
-pub async fn build_local_transaction(
+/// Runtime metadata for locally constructing a transaction.
+pub async fn local_transaction_metadata(
 	chain: &ChainRuntime,
-	keypair: &schnorrkel::Keypair,
 	genesis_hash: [u8; 32],
-	call_data: &[u8],
-	extensions: &[TxPayloadExtension],
-	tx_ext_version: u8,
-) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
+) -> Result<ArcMetadata, LocalTransactionError> {
 	let started = Instant::now();
 	let at_block = chain.current_block(&genesis_hash).await.map_err(|error| match error {
 		CurrentBlockError::NoChainConnection(failure) => LocalTransactionError::NoChainConnection(
@@ -358,16 +354,7 @@ pub async fn build_local_transaction(
 			},
 		}
 	}
-	let at_block = at_block?;
-	let transaction = build_signed_transaction(
-		&Sr25519Signer::from_keypair(keypair),
-		genesis_hash,
-		call_data,
-		extensions,
-		tx_ext_version,
-		at_block.metadata(),
-	)?;
-	Ok(HostCreateTransactionResponse { transaction })
+	Ok(at_block?.metadata())
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.
@@ -376,7 +363,7 @@ pub async fn build_local_transaction(
 /// builds V5. Version 0 builds V5 while it includes `VerifyMultiSignature`,
 /// since only then can a general transaction carry a signature, and V4
 /// otherwise.
-fn build_signed_transaction(
+pub fn build_signed_transaction(
 	signer: &Sr25519Signer,
 	genesis_hash: [u8; 32],
 	call_data: &[u8],
