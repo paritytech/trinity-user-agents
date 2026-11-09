@@ -93,7 +93,7 @@ class FundingFlowStateTest {
 
     @Test
     fun `quoting lasts until the first list for the ask arrives`() {
-        val asked = state(options(asset = "EUR"), amount = "50").let { it.asking(requireNotNull(it.currentAsk())) }
+        val asked = state(options(asset = "EUR"), amount = "50").asked(1u)
 
         assertTrue(asked.isQuoting)
         assertFalse(asked.receiving(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
@@ -101,9 +101,7 @@ class FundingFlowStateTest {
 
     @Test
     fun `a list for an earlier request is dropped`() {
-        val asked = state(options(asset = "EUR"), amount = "50").let { start ->
-            start.asking(requireNotNull(start.currentAsk())).requested(2u)
-        }
+        val asked = state(options(asset = "EUR"), amount = "50").asked(2u)
 
         val late = asked.receiving(list(quoted(providerA, send = "500"), best = providerA, requestId = 1u))
 
@@ -111,10 +109,46 @@ class FundingFlowStateTest {
         assertNull(late.selectedProviderId)
     }
 
+    // The core's id is not the previous one plus one: other asks share the counter, so only the returned id matches.
+    @Test
+    fun `only lists for the id the core returned are shown`() {
+        val first = state(options(asset = "EUR"), amount = "50").asked(1u)
+            .receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 1u))
+        val asked = first.asked(5u)
+
+        assertSame(asked, asked.receiving(list(quoted(providerA, send = "5100"), best = providerA, requestId = 1u)))
+        assertSame(asked, asked.receiving(list(quoted(providerA, send = "5100"), best = providerA, requestId = 2u)))
+        assertEquals(providerB, asked.receiving(list(quoted(providerB, send = "5000"), best = providerB, requestId = 5u)).selectedProviderId)
+    }
+
+    @Test
+    fun `a list that arrives before the core's id shows once the id matches it`() {
+        val start = state(options(asset = "EUR"), amount = "50")
+        val asking = start.asking(requireNotNull(start.currentAsk()))
+        val early = asking.receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 3u))
+
+        assertNull(early.selectedProviderId)
+        assertEquals(providerA, early.requested(3u, early.askNumber).selectedProviderId)
+        assertNull(early.requested(4u, early.askNumber).selectedProviderId)
+    }
+
+    @Test
+    fun `the id of an ask replaced while on its way is not taken`() {
+        val start = state(options(asset = "EUR"), amount = "50")
+        val ask = requireNotNull(start.currentAsk())
+        val firstAsk = start.asking(ask)
+        val secondAsk = firstAsk.asking(ask)
+
+        val late = secondAsk.requested(1u, firstAsk.askNumber)
+
+        assertSame(secondAsk, late)
+        assertNull(late.receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 1u)).list)
+    }
+
     @Test
     fun `the core's best quote is selected until the user picks another`() {
         val quoted = state(options(asset = "EUR"), amount = "50").let { start ->
-            start.asking(requireNotNull(start.currentAsk()))
+            start.asked(1u)
                 .receiving(list(quoted(providerA, send = "5200"), quoted(providerB, send = "5100"), best = providerB))
         }
 
@@ -129,9 +163,9 @@ class FundingFlowStateTest {
         val quote = quoted(providerA, send = "5200")
         val refreshed = state(options(asset = "EUR"), amount = "50").let { start ->
             val ask = requireNotNull(start.currentAsk())
-            start.asking(ask)
+            start.asking(ask).let { it.requested(1u, it.askNumber) }
                 .receiving(list(quote, best = providerA))
-                .asking(ask)
+                .asking(ask).let { it.requested(2u, it.askNumber) }
                 .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), requestId = 2u))
         }
 
@@ -176,9 +210,13 @@ class FundingFlowStateTest {
         val start = state(options(asset = "EUR"), amount = "50")
         val flow = start.asking(requireNotNull(start.currentAsk())).withRail(FundingRail.CRYPTO).withNetwork("ethereum")
 
-        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum"), flow)
+        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum", askNumber = 2), flow)
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
+
+    /** Asks for the quotes on screen, and takes [id] as the core's id for the ask. */
+    private fun FundingFlowState.asked(id: ULong): FundingFlowState =
+        asking(requireNotNull(currentAsk())).let { it.requested(id, it.askNumber) }
 
     private fun state(
         options: FundingOptions?,
