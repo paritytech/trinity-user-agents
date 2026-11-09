@@ -4,6 +4,8 @@ import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
@@ -36,10 +38,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -58,6 +62,7 @@ class PocketViewModel @Inject constructor(
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
+    private val tabSelection: BottomTabSelection,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -219,8 +224,8 @@ class PocketViewModel @Inject constructor(
     /** Whether the selected card opens with its face shown; null until its product has answered. */
     val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
 
-    // A tab shown for the first time has no product cards until the collection loads.
     init {
+        // A tab shown for the first time has no product cards until the collection loads.
         combine(cards, cardOpenRequests.requested) { held, request ->
             request?.let {
                 held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == request.key }?.to(request)
@@ -228,6 +233,13 @@ class PocketViewModel @Inject constructor(
         }
             .filterNotNull()
             .onEach { (card, request) -> openRequestedCard(card, request) }
+            .launchIn(this)
+
+        merge(
+            tabSelection.reselectedTab.filter { it == BottomTab.WALLET },
+            tabSelection.currentTab.filter { it != BottomTab.WALLET },
+        )
+            .onEach { resetToList() }
             .launchIn(this)
     }
 
@@ -245,8 +257,7 @@ class PocketViewModel @Inject constructor(
             return
         }
 
-        if (selectedCardId.value != null) dismissCard()
-        hideCollectiblesSketchbook()
+        returnToList()
         removalCandidate.value = null
         selectCard(card, request.pageQuery)
     }
@@ -374,6 +385,16 @@ class PocketViewModel @Inject constructor(
         expandedProduct.release()
         forgetOpeningFace()
         selectedCardId.value = null
+    }
+
+    private fun resetToList() {
+        cardOpenRequests.clear()
+        returnToList()
+    }
+
+    private fun returnToList() {
+        if (selectedCardId.value != null) dismissCard()
+        if (collectiblesShown.value) hideCollectiblesSketchbook()
     }
 
     private companion object {
