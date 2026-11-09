@@ -86,7 +86,7 @@ pub enum StackError {
 	#[display("bundled stack descriptor refused ({}): {_0}", _0.code())]
 	Descriptor(#[error(not(source))] trinity_stack::Error),
 	/// The descriptor has no chain with this role.
-	#[display("stack has no {} chain", descriptor_role(*chain))]
+	#[display("stack has no {} chain", <&str>::from(*chain))]
 	MissingChain {
 		/// The missing role.
 		chain: ChainIdentifier,
@@ -134,7 +134,8 @@ impl Stack {
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		}
-		let genesis_of = |chain| descriptor.chain(descriptor_role(chain)).map(Chain::genesis);
+		let genesis_of =
+			|chain: ChainIdentifier| descriptor.chain(chain.into()).map(Chain::genesis);
 		let required = |chain| genesis_of(chain).ok_or(StackError::MissingChain { chain });
 		let chains = StackChains {
 			relay: genesis_of(ChainIdentifier::Relay),
@@ -213,17 +214,6 @@ impl Stack {
 				genesis_hash,
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
-	}
-}
-
-/// The role a descriptor lists `chain` under. Descriptors name their chains
-/// with RFC 0026's roles, so each [`ChainIdentifier`] has exactly one.
-fn descriptor_role(chain: ChainIdentifier) -> &'static str {
-	match chain {
-		ChainIdentifier::Relay => "Relay",
-		ChainIdentifier::AssetHub => "AssetHub",
-		ChainIdentifier::People => "People",
-		ChainIdentifier::Bulletin => "Bulletin",
 	}
 }
 
