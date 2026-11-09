@@ -2517,6 +2517,28 @@
         }
       }
     },
+    "report.issue.github.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub username (optional)"
+          }
+        }
+      }
+    },
+    "report.issue.github.username.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid GitHub username"
+          }
+        }
+      }
+    },
     "report.issue.placeholder" : {
       "extractionState" : "manual",
       "localizations" : {
