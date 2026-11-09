@@ -33,9 +33,7 @@ pub enum Granted {
 	Unrecognised,
 }
 
-/// Manifest JSON for tests. Only `$v` and `trustedProducts` are modelled, so a
-/// fixture carrying the display name, description and icon a publisher also
-/// writes would be exercising serde's tolerance rather than this parser.
+/// Manifest JSON for tests, with only `$v` and `trustedProducts`.
 #[cfg(test)]
 pub fn test_manifest_json(trusted: &str) -> String {
 	format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)
@@ -48,10 +46,23 @@ pub struct RootManifest {
 	/// undiscoverable rather than malformed.
 	#[serde(rename = "$v")]
 	pub schema_version: u32,
+	/// The name the product is shown by, when it declares one.
+	#[serde(default, rename = "displayName")]
+	pub display_name: Option<String>,
+	/// The product's icon, when it declares one.
+	#[serde(default)]
+	pub icon: Option<ManifestIcon>,
 	/// What each named product may do to this one, keyed by bare product label
 	/// with no TLD suffix.
 	#[serde(default, rename = "trustedProducts")]
 	pub trusted_products: BTreeMap<String, Vec<Granted>>,
+}
+
+/// A product icon stored on Bulletin.
+#[derive(Clone, Deserialize)]
+pub struct ManifestIcon {
+	/// The Bulletin CID the icon bytes are fetched by.
+	pub cid: String,
 }
 
 /// A manifest that cannot be decoded or uses an unsupported schema.
