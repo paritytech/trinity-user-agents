@@ -197,9 +197,9 @@ private struct AssetDetailsScreenRoot: View {
                 isExpanded: true,
                 onCardTapped: {},
                 overscroll: overscroll,
-                isCardHidden: state.isCardHidden
+                isCardHidden: state.isCardHidden,
+                onCardFrame: { state.cardFrame = $0 }
             )
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { state.cardFrame = $0 }
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)
         }
