@@ -43,6 +43,24 @@ signing host's TLD from the descriptor. It refuses a pointer without a key and a
 descriptor without a People or Bulletin chain. Without an Asset Hub no product
 manifest resolves, so a cross-product grant that is not cached is refused.
 
+The wasm core keeps the descriptor current when the host passes three raw
+callbacks to the runtime constructor, typed as `StackCallbacks`:
+
+- `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
+  following redirects, and answer `document`, `notModified` or `unreachable`.
+  The core asks at start, again once its copy is an hour old, and on
+  `refreshStack()`.
+- `stackChanged(status)`: the `StackStatus` at start and on each change. The
+  same value comes from `stackStatus()`. `restartRequired` means a newer copy
+  changes a chain, the network or the TLD, and applies once the runtime is
+  built again.
+- `storeStackRecord(record)`: keep the bytes and pass them back as
+  `stack.stored` at the next start, so the core starts from the last copy it
+  verified instead of the bundled one.
+
+Without `fetchStackDescriptor` the core stays on the copy it started from. The
+`/web` worker runtime does not pass these callbacks yet.
+
 The test host has no descriptor, so it passes `testStack` instead: the network,
 the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright

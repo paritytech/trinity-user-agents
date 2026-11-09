@@ -4,6 +4,7 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { ProductId } from "@parity/truapi";
+import type { StackStatus } from "./runtime.js";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -54,6 +55,17 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
+  /**
+   * The stack the runtime runs, the value `stackChanged` receives.
+   * `undefined` for a test stack.
+   */
+  stackStatus(): StackStatus | undefined;
+  /**
+   * Fetch the stack's descriptor now instead of when the copy is an hour old.
+   * The result arrives through `stackChanged`. Does nothing without a
+   * `fetchStackDescriptor` callback.
+   */
+  refreshStack(): void;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
   /**

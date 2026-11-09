@@ -1824,6 +1824,82 @@ fn each_descriptor_chain_reaches_its_own_role() {
 	);
 }
 
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: Mutex<std::sync::mpsc::Sender<crate::platform::StackStatus>>,
+}
+
+#[async_trait::async_trait]
+impl crate::native::NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: crate::platform::StackFetchRequest,
+	) -> crate::platform::StackFetchResponse {
+		crate::platform::StackFetchResponse::Document { bytes: self.document.clone(), etag: None }
+	}
+
+	fn stack_changed(&self, status: crate::platform::StackStatus) {
+		let _ = self.statuses.lock().expect("statuses mutex poisoned").send(status);
+	}
+}
+
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
+#[test]
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
+		..native_host_runtime_config()
+	};
+	let mut wiped =
+		crate::test_support::test_descriptor("paseo", [0xa9; 32], [0xbb; 32], Some([0xcc; 32]));
+	wiped["sequence"] = 2.into();
+	wiped["generation"] = "second".into();
+	let (told, statuses) = std::sync::mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: Mutex::new(told),
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &crate::platform::StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(first.set_stack_callbacks(Arc::new(published)));
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			after_fetch.new_generation,
+			sequence(&rebuilt.stack_status()),
+		),
+		(1.into(), 1.into(), true, true, 2.into())
+	);
+}
+
 #[test]
 fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 	// A copy the host fetches later is checked against the pointer's key, so

@@ -219,18 +219,58 @@ Both host configs carry a `Stack`, the core's only chain configuration: the
 Relay, Asset Hub, People and Bulletin genesis hashes, the network
 `get_chain_info` reports, and the dotNS TLD.
 
-A native or browser shell builds it with `Stack::bundled` from the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. A Rust host that resolves its chains itself, such as
-the CLI, uses `Stack::new`, and a test-host browser bundle passes
-`runtimeConfig.testStack`. Each constructor documents what it refuses.
+A native or browser shell passes the stack's pointer, the signed descriptor its
+build bundles, and whether the build allows Polkadot's reserved values. The core
+resolves the `Stack` with `StackRefresh::load`. A Rust host that resolves its
+chains itself, such as the CLI, uses `Stack::new`, and a test-host browser
+bundle passes `runtimeConfig.testStack`. The core does not refresh those two.
+Each constructor documents what it refuses.
 
 Reserved identities derive under `uid.<tld>` and `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain, does
-not check genesis hashes against the live chains, and does not fetch newer
-copies.
+derivation working offline. The core does not check it against the chain and
+does not check genesis hashes against the live chains.
+
+#### Descriptor refresh
+
+The core starts from the bundled copy or from the last copy it verified,
+whichever has the higher `sequence`, and never waits on the network to start.
+While it runs it fetches the descriptor again once its copy is an hour old, and
+whenever the host asks. The decision about a fetched copy is the
+`trinity-stack` crate's `StackReader`: a failed fetch, a refused copy or a
+lower `sequence` keeps the copy the core holds. The core also refuses a copy it
+could not start from, such as one without a People chain.
+
+The core has no HTTP client. The host makes each request and reports what it
+got:
+
+| Host         | Fetch and status                                                                | Stored copy                                                 |
+| ------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| iOS, Android | `NativeStackCallbacks`, installed with `set_stack_callbacks`                    | the core database                                           |
+| Browser      | the `fetchStackDescriptor`, `stackChanged` and `storeStackRecord` raw callbacks | the host keeps the record and passes it as `stack.stored`   |
+
+The host sends a `GET` to the URL without following redirects, stops reading
+past `max_bytes` (1 MiB), and answers `Unreachable` for anything but `200` and
+`304`. The core gives up on an answer after 30 seconds. Without the callbacks
+the core stays on the copy it started from.
+
+`stack_changed` reports a `StackStatus` when the refresh starts and on every
+change, and `stack_status` returns the current one:
+
+- `descriptor` is the verified descriptor the core runs, as plain JSON. The
+  host's own features read their chains and services from it.
+- `stale` and `expired` say the newest copy is past `validUntil` or
+  `expiresAt`. The core keeps running on it. The host shows it.
+- `restart_required` says the core holds a newer copy that changes a genesis
+  hash, the network or the TLD, or that restarts the chains. The runtime's
+  chain services are built on the stack it started with, so that copy applies
+  from the next start: the host builds the runtime again. A newer copy that
+  changes none of these replaces `descriptor` at once.
+- `new_generation` says the chains restarted in that newer copy. The host drops
+  cached chain data, such as a light client's database, before the next start.
+- `last_refresh` is `Current`, `Unreachable` or `Refused` with the rule the
+  published copy breaks.
 
 ### Core database
 

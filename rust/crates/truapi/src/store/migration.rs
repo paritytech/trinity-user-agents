@@ -9,6 +9,7 @@ mod v5_to_v6_nft_receive_keys;
 mod v6_to_v7_foreign_nft_consumption;
 mod v7_to_v8_funding_sessions;
 mod v8_to_v9_pocket_cards;
+mod v9_to_v10_stack_records;
 
 use rusqlite_migration::Migrations;
 
@@ -25,5 +26,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v6_to_v7_foreign_nft_consumption::recreate_nft_consumption_for_foreign_keys(),
 		v7_to_v8_funding_sessions::create_funding_sessions(),
 		v8_to_v9_pocket_cards::create_pocket_cards(),
+		v9_to_v10_stack_records::create_stack_records(),
 	])
 }

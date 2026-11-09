@@ -12,7 +12,8 @@ rust/crates/
                          holds the host syscall traits (storage, navigation, consent, ...),
                          its `stack` module resolves the Trinity stack the host runs, the
                          core's only chain configuration, from the descriptor its build
-                         bundles, its `chain` module builds the core's own extrinsics through
+                         bundles or a newer copy the core stored, and fetches newer
+                         copies through the host while it runs, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
