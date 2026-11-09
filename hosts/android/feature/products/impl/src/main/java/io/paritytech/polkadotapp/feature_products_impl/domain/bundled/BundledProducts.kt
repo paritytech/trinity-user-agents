@@ -6,8 +6,11 @@ import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
+import uniffi.truapi.BundleReader
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
+import uniffi.truapi.bundledAssetPath
+import uniffi.truapi.bundledProducts as coreBundledProducts
 import java.io.InputStream
 import java.net.URI
 import java.util.Locale
@@ -88,22 +91,25 @@ class BundledProducts internal constructor(
         private const val WORKER_MANIFEST = "worker-manifest.json"
     }
 
-    private class Shipped(val products: Map<ProductId, BundledProduct>, val files: Set<String>)
+    private class Shipped(val products: Map<ProductId, Listed>)
 
+    private class Listed(val product: BundledProduct, val hasWorker: Boolean, val hasApp: Boolean)
+
+    // The core decides what the bundle holds and which file serves a request; the app only reads its assets.
     // Listed once, on first use, so serving a request looks a path up instead of opening the asset to see
     // whether it is there.
-    private val shipped: Shipped by lazy {
-        if (!enabled) return@lazy Shipped(emptyMap(), emptySet())
+    private val reader: AssetReader by lazy { AssetReader(files, if (enabled) ROOT else null) }
 
-        val products = files.list(ROOT)
-            .filterNot { it.startsWith(".") }
-            .filter { name -> files.list("$ROOT/$name").isNotEmpty() }
-            .mapNotNull { name -> ProductId.parse(name).getOrNull()?.let { id -> id to BundledProduct(id, "$ROOT/$name") } }
-            .toMap()
-        Shipped(products, products.values.flatMapTo(mutableSetOf()) { filesUnder(it.root) })
+    private val shipped: Shipped by lazy {
+        if (!enabled) return@lazy Shipped(emptyMap())
+
+        val products = coreBundledProducts(ROOT, reader).associate { shipped ->
+            shipped.productId to Listed(BundledProduct(shipped.productId, shipped.path), shipped.hasWorker, shipped.hasApp)
+        }
+        Shipped(products)
     }
 
-    fun product(id: ProductId): BundledProduct? = shipped.products[id]
+    fun product(id: ProductId): BundledProduct? = shipped.products[id]?.product
 
     /** The bundled product whose App [url] opens, when it ships one. */
     fun appFor(url: String): BundledProduct? {
@@ -111,52 +117,41 @@ class BundledProducts internal constructor(
         return ProductId.parse(host).getOrNull()?.let(::product)?.takeIf(::hasApp)
     }
 
-    fun workerManifest(product: BundledProduct): String? =
-        files.open("${product.root}/$WORKER_MANIFEST")?.use { it.readBytes().decodeToString() }
+    fun workerManifest(product: BundledProduct): String? = reader.readText("${product.root}/$WORKER_MANIFEST")
 
-    fun hasWorker(product: BundledProduct): Boolean = exists("${product.workerRoot}/${BundledProduct.WORKER_ENTRY}")
+    fun hasWorker(product: BundledProduct): Boolean = shipped.products[product.id]?.hasWorker == true
 
-    fun hasApp(product: BundledProduct): Boolean = exists("${product.appRoot}/${BundledProduct.APP_INDEX}")
+    fun hasApp(product: BundledProduct): Boolean = shipped.products[product.id]?.hasApp == true
 
     /** Whether the worker [product] ships declares the Chat modality; a manifest the parser rejects declares none. */
     fun includesChat(product: BundledProduct): Boolean =
         workerManifest(product)?.let { worker(product, it) }?.includesChat == true
 
-    /**
-     * The file under [root] that a request for [requestPath] is served, the way a published archive is:
-     * the exact file, a directory's `index.html`, and for a page navigation the root `index.html`, which
-     * lets an App route itself.
-     */
-    fun assetPath(root: String, requestPath: String, isMainFrame: Boolean): String? {
-        val path = requestPath.trim('/')
-        val index = "$root/${BundledProduct.APP_INDEX}"
-        if (path.isEmpty()) return index.takeIf(::exists)
-        // An escaping path is never served, whatever the asset manager would make of it.
-        if (path.split('/').any { it == ".." }) return null
-
-        val exact = "$root/$path"
-        if (exists(exact)) return exact
-
-        if ('.' !in path.substringAfterLast('/')) {
-            val directoryIndex = "$exact/${BundledProduct.APP_INDEX}"
-            if (exists(directoryIndex)) return directoryIndex
-        }
-
-        return index.takeIf { isMainFrame && exists(it) }
-    }
+    /** The file under [root] that a request for [requestPath] is served, by the core's rules for a published archive. */
+    fun assetPath(root: String, requestPath: String, isMainFrame: Boolean): String? =
+        if (enabled) bundledAssetPath(root, requestPath, isMainFrame, reader) else null
 
     fun open(path: String): InputStream? = files.open(path)
 
-    private fun exists(path: String): Boolean = path in shipped.files
+    // Read by the same parser a published worker manifest goes through.
+    private fun worker(product: BundledProduct, manifest: String): ProductExecutable.Worker? =
+        manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(product.workerHost))
+            .getOrNull() as? ProductExecutable.Worker
+}
+
+/** The core's view of the app's assets: every file under [root] listed once, so [exists] never opens one. */
+private class AssetReader(private val files: BundledProductFiles, root: String?) : BundleReader {
+    private val shipped: Set<String> = root?.let { filesUnder(it).toSet() }.orEmpty()
+
+    override fun list(dir: String): List<String> = files.list(dir)
+
+    override fun exists(path: String): Boolean = path in shipped
+
+    override fun readText(path: String): String? = files.open(path)?.use { it.readBytes().decodeToString() }
 
     // The asset manager lists a directory's children and nothing under a file.
     private fun filesUnder(path: String): List<String> {
         val children = files.list(path)
         return if (children.isEmpty()) listOf(path) else children.flatMap { filesUnder("$path/$it") }
     }
-
-    // Read by the same parser a published worker manifest goes through.
-    private fun worker(product: BundledProduct, manifest: String): ProductExecutable.Worker? =
-        manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(product.workerHost))
-            .getOrNull() as? ProductExecutable.Worker
 }
