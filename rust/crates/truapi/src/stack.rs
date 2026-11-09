@@ -92,16 +92,14 @@ pub enum StackError {
 }
 
 impl Stack {
-	/// The stack a host build bundles: `pointer` is the stack's link, such as
-	/// `polkadotapp://stack?key=0x…&url=…`, and `descriptor` the signed
-	/// envelope the build ships.
+	/// The stack a host build bundles: `pointer` is the stack's link
+	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
+	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
+	/// genesis hashes and the `dot` TLD.
 	///
-	/// Fails when the pointer has no key, when the descriptor does not verify
-	/// under it, when it has no People or Bulletin chain, when its TLD is not a
-	/// dotNS TLD the core serves, or when it names a reserved value and
-	/// `allows_reserved_values` is false. Neither `validUntil` nor `expiresAt`
-	/// is checked: the bundled copy is the only one a host holds, so a stale or
-	/// expired copy still starts.
+	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
+	/// and `expiresAt` are not checked, because the bundled copy is the only one
+	/// the host has.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
