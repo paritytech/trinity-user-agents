@@ -239,13 +239,14 @@ it cannot describe. Every variant is covered by
 
 The core takes every chain it uses, and the chain info it reports to products,
 from the Trinity stack descriptor in `HostRuntimeConfig.stack`. `TrUAPIStack`
-holds each stack's pointer and maps the build's `TestnetEnvironment` to one:
-`TESTNET` runs previewnet, `NIGHTLY` paseo-next-v2 and `PRODUCTION` Polkadot,
-the only one allowed Polkadot's reserved genesis hashes and `dot` TLD. The
-signed descriptors ship byte for byte under
-`feature/products/impl/src/main/assets/stacks/`, and `scripts/update-stacks.sh`
-refreshes them with the CLI's copies. Each verifies only under the key in its
-own pointer, so a copy the core refuses fails the runtime boot.
+maps the build's `TestnetEnvironment` to a stack: `TESTNET` runs previewnet,
+`NIGHTLY` paseo-next-v2 and `PRODUCTION` Polkadot, the only one allowed
+Polkadot's reserved genesis hashes and `dot` TLD. Each stack ships under
+`feature/products/impl/src/main/assets/stacks/` as its link and its signed
+descriptor. `scripts/update-stacks.sh` refreshes the descriptors from the CLI's
+copies, and refuses to while an app's link differs from the CLI's. The core
+checks each descriptor against its link's key, so a copy it refuses fails the
+runtime boot.
 
 ### Chain agreement
 
