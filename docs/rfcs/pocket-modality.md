@@ -17,14 +17,15 @@ status: draft
 Pocket is a host surface holding a small set of **cards**, each backed by a product. The host owns the collection and
 renders every collapsed card natively from a renderer tree the product's worker streams to it. Tapping a card opens the
 product's Widget executable. A product cannot add a card by itself: a card enters Pocket when the user follows a
-Pocket-targeted deeplink and approves a host dialog showing the card as it will look. Both the user and the owning
-product can remove a card. Three privileged cards, Humanity, Balance and Scarcity, are always present and removable by
-neither.
+Pocket-targeted deeplink and approves a host dialog showing the card as it will look. A link can also name an instance,
+which the product's worker labels for the dialog, so one card definition can back many cards. The user removes a card,
+directly or through the owning product. Three privileged cards, Humanity, Balance and Scarcity, are always present and
+removable by no one.
 
 A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
-`PocketCard` context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker
-manifest, and a host-owned deeplink that names the Pocket. An opened card adds one `ExpandedCard` trait, through
-which the Widget moves the face out of the way and back.
+`PocketCard` context, or `PocketCardInstance` for an instance. The collection itself is one `Pocket` trait with three
+methods, a Pocket section in the Worker manifest, and a host-owned deeplink that names the Pocket. An opened card adds
+one `ExpandedCard` trait, through which the Widget moves the face out of the way and back.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -42,8 +43,11 @@ host-placed card on their own and the add flow layers on top without changing th
 
 ### Model
 
-- A **card** is identified by `(product_id, card_id)`. `card_id` is a short label the product declares, screened by the
-  same rules as a chat identifier (see Wire surface).
+- A **card** is identified by `(product_id, card_id, instance_id)`. `card_id` is a short id the product declares,
+  screened by the same rules as a chat identifier (see Wire surface). `instance_id` is absent on a **plain card** and
+  present on an **instance**, one of the cards a definition backs for an id a Pocket link names (see Instances). A
+  privileged card is always a plain card. An instance's **label** is the short text the product's worker gives it,
+  naming it as the user knows it.
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
 - The **expanded card** is the product's `widget` executable in a WebView.
 - The **worker** is the product's one Worker executable. It draws the faces, handles their actions, and is the only
@@ -52,14 +56,16 @@ host-placed card on their own and the add flow layers on top without changing th
   Iteration 1 ships exactly three, Humanity, Balance and Scarcity, and the host designates the product that backs each
   (the personhood provider of RFC 0024 for Humanity).
 
-The host is the only writer of the collection. A product observes its own cards and may remove them, and nothing else.
+The host is the only writer of the collection. A product observes its own cards, labels an instance the user is about to
+add, removes a card when the user asks it to, and does nothing else.
 
 ### Rendering and actions
 
 A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-user-agents/pull/633), on the
 `PocketCard { card_id }` context. The host opens a `render` stream while the face is on screen and gets a `RendererNode`
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
-serves every card of the product.
+serves every card of the product. An instance's face is drawn on `PocketCardInstance { card_id, instance_id }` instead,
+so a product tells its instances apart by context alone.
 
 Pocket adds two rules on top. First, the host caches the newest tree per card durably, so a face is shown offline and at
 cold start before the worker answers, and a privileged card has something to show on first run.
@@ -70,8 +76,9 @@ theme. In the Polkadot Android and iOS apps that theme is Berlin Night: `FgPrima
 
 ### Expanded card
 
-Tapping a face opens the product's `widget` executable with the card named in the launch URL query, `card=<card_id>`.
-The Widget runs under the same product identity and storage namespace as the worker, so the card the user opened and the
+Tapping a face opens the product's `widget` executable with the card named in the launch URL query, `card=<card_id>`,
+followed by `instance=<instance_id>` for an instance, each percent-encoded outside RFC 3986's unreserved characters. The
+Widget runs under the same product identity and storage namespace as the worker, so the card the user opened and the
 state it shows are one product's.
 
 The host draws the face above the Widget, and the user can move it out of the way and back. The Widget can do the same
@@ -85,8 +92,8 @@ not part of the contract.
 
 ### Lifecycle
 
-Pocket holds one worker reference per card whose face is on screen. A product cannot add a reference, only drop one by
-removing a card.
+Pocket holds one worker reference per card whose face is on screen, and one while it waits for the worker to label an
+instance. A product cannot add a reference, only drop one by removing a card.
 
 ### Adding a card (full iteration)
 
@@ -103,7 +110,7 @@ type WorkerManifest = CommonExecutableFields & {
 };
 
 type PocketCardDefinition = {
-  id: string; // Card label, unique within the product. Screened as a chat identifier is.
+  id: string; // Card id, unique within the product. Screened as a chat identifier is.
   title: string; // Shown in the approval dialog and in host chrome.
   preview: string; // Path inside the worker archive to a RendererNode tree, JSON in the generated TypeScript shape.
   faceShown?: boolean; // Whether the face is shown above the expanded card when it opens. Default true.
@@ -114,33 +121,35 @@ A `faceShown` that is not a boolean makes the definition invalid, as a missing `
 drops all of the product's cards. A host that does not read `faceShown` shows nothing wrong, so a product checks the
 field before publishing rather than relying on what today's hosts display.
 
-The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
-same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
-It is the face the user approves; the live face may differ once the worker streams.
+The preview is a static file in the CID-pinned archive, so the host can show a plain card before any product code runs,
+the same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its
+rail list. It is the face the user approves; the live face may differ once the worker streams.
 
 **Deeplinks name the Pocket.** A Pocket link is one of the app's own routes, beside `pair` and `pay`, with the product
 as a parameter. Its host, `pocket`, has no TLD, so no dotNS product can take it, and a product URL
 `polkadot://<product_id>.<tld>/<path>` always opens the App, whatever its path:
 
 ```text
-polkadotapp://pocket                                                Open the Pocket
-polkadotapp://pocket/add?product=<product_id>.<tld>&card=<id>       Offer to add a published card
-polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a card that is present
+polkadotapp://pocket                                                                    Open the Pocket
+polkadotapp://pocket/add?product=<product_id>.<tld>&card=<id>[&instance=<instance_id>]  Offer to add a published card
+polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>[&instance=<instance_id>] Expand a card that is present
 ```
 
 `polkadotapp://pocket` with no action opens the Pocket itself, for a product that sends the user to the collection
 without naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it
 gives (see [Expanded card](#expanded-card)).
 
-An `open` link's other query parameters, URL-encoded and up to 2048 bytes, are passed on to the card's page after
-`card`, so a product can pick the screen its card opens on. Anyone can write the link, so the page reads them as a hint,
-never proof.
+An `open` link's query parameters other than `product`, `card` and `instance`, URL-encoded and up to 2048 bytes, are
+passed on to the card's page after `card` and `instance` when the link expands a card that is present, so a product can
+pick the screen its card opens on. Anyone can write the link, so the page reads them as a hint, never proof. The same
+holds for `card` and `instance` in the page's URL: a host that predates instances passes a link's `instance` on as a
+page parameter.
 
 The same link works from a product, a QR code or a web page. A link that names an action the host does not serve, or
 names no product or no card, is refused with a message. Products reach a Pocket link from their own web UI through
 `system.navigate_to`, which lets it through without the `OpenUrl` grant other `polkadotapp://` links need, so an "Add to
-Pocket" button is one call. The `product` need not be the caller: the dialog shows the card, and approving it is the
-user's consent.
+Pocket" button is one call. The `product` need not be the caller: the dialog shows the card, with an instance's label
+from the product's worker, and approving it is the user's consent.
 
 ```text
 User                Host                             Product worker
@@ -174,18 +183,43 @@ reference as a privileged one, without the pin. If the card is already present, 
 not, `open` behaves as `add`, so a link to a card the user has yet to add leads to it through the dialog. An unknown
 card, or a product whose manifest lacks `includes.pocket`, produces a host error and no dialog.
 
+### Instances
+
+A Pocket link names an instance with `instance=<instance_id>`, on `add` and `open` alike, for any published card that is
+not privileged. An instance is present or not on its own, so a link to an instance the user has yet to add leads to the
+dialog even when other instances of its card are present. A host that predates instances drops `instance` from an `add`
+and from an `open` that leads to the dialog, so it adds the plain card, and a worker draws a plain face for every card
+it publishes.
+
+`instance_id` is 1 to 128 bytes of ASCII letters, digits, `.`, `_`, `~` and `-`, compared byte for byte, so it passes
+through links and URLs unchanged. A link whose `instance` breaks that rule, or that names `instance` twice, is refused
+with a message. The id is stored with the card and travels in links, QR codes and the card's launch URL, so a product
+mints a handle only its own worker can map, never an address, a username or a secret, and the host keeps it out of
+telemetry, as it keeps the label out. The collection is kept per device, so the worker maps the same id on every device
+the user adds it on.
+
+Before showing the dialog for an instance, the host starts the worker and asks it to label the instance with
+`Pocket::label_instance`. The worker answers with a label only for an id its own state ties to the user, and refuses any
+other. A refusal, an error, no answer within a time the host sets, or a worker without the method ends the add with a
+message and no dialog, whoever wrote the link. The dialog shows the card's title, the label and the card's preview, and
+host chrome shows the label wherever it names the card, attributed to the product. The host keeps the label given at the
+add. Until the worker draws a new instance, its face is the card's preview.
+
+The worker draws an instance whose id it can no longer resolve as unavailable rather than removing it.
+
 ### Removing a card
 
-The user removes a card in host UI. The product removes one of its own with `remove_card`. Either way the card is gone:
-its cached face is discarded, its `Renderer::render` stream ends, its reference is dropped, and getting it back means
-the deeplink flow again. Removing a card that is not present succeeds. Removing a privileged card fails with
-`Privileged`, for the product, and is not offered to the user.
+The user removes a card in host UI. A product removes one of its own with `remove_card` when the user asks it to, such
+as from a "Remove from Pocket" button on its page; offering one is up to the product, and the host cannot check that the
+user asked. Either way the card is gone: its cached face is discarded, its `Renderer::render` stream ends, its reference
+is dropped, and getting it back means the deeplink flow again. Removing a card that is not present succeeds. Removing a
+privileged card fails with `Privileged`, for the product, and is not offered to the user.
 
 ### Wire surface
 
 Every frame is addressed by a trait byte and a method byte ([RFC 0028](0028-wire-message-type-byte.md)). Pocket holds
-trait `18`, the next after `Renderer` at `17`, with `list_subscribe` as method `0` and `remove_card` as method `1`. New
-Pocket methods append within the trait.
+trait `18`, the next after `Renderer` at `17`, with `list_subscribe` as method `0`, `remove_card` as method `1` and
+`label_instance` as method `2`, which the host calls on the worker. New Pocket methods append within the trait.
 
 ```rust
 /// Pocket cards backed by the calling product.
@@ -207,37 +241,83 @@ pub trait Pocket: Send + Sync {
         cx: &CallContext,
         request: HostPocketRemoveCardRequest,
     ) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>>;
+
+    /// Label an instance the user is about to add, or refuse it. The host calls it before the add dialog.
+    #[wire(host_initiated, id = 2)]
+    async fn label_instance(
+        &self,
+        cx: &CallContext,
+        request: ProductPocketLabelInstanceRequest,
+    ) -> Result<ProductPocketLabelInstanceResponse, CallError<ProductPocketLabelInstanceError>>;
 }
 ```
 
 ```rust
 pub struct PocketCard {
+    /// Card id, as declared in the product's worker manifest.
     pub card_id: String,
+    /// The instance's id; `None` for a plain card.
+    pub instance_id: Option<String>,
     /// Placed by the host; cannot be removed.
     pub privileged: bool,
 }
 
 pub struct HostPocketListSubscribeItem { pub cards: Vec<PocketCard> }
 
-pub struct HostPocketRemoveCardRequest { pub card_id: String }
+pub struct HostPocketRemoveCardRequest {
+    /// Card id, as declared in the product's worker manifest.
+    pub card_id: String,
+    /// The instance to remove; `None` names the plain card.
+    pub instance_id: Option<String>,
+}
 pub enum HostPocketRemoveCardError {
     /// The card is privileged.
     Privileged,
     Unknown { reason: String },
 }
+
+pub struct ProductPocketLabelInstanceRequest {
+    /// Card id, as declared in the product's worker manifest.
+    pub card_id: String,
+    /// The instance the link names.
+    pub instance_id: String,
+}
+
+pub struct ProductPocketLabelInstanceResponse {
+    /// The instance as the user knows it, such as an account's name.
+    pub label: String,
+}
+
+pub enum ProductPocketLabelInstanceError {
+    /// The product does not tie the instance to the user.
+    Refused,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
 ```
 
-Each payload travels in a `V1` versioned envelope like every other method. `HostPocketRemoveCardResponse` carries no
-payload of its own: removal has nothing to report beyond success, so its envelope is the bare `V1` variant, as every
-other unit response is.
+Each payload travels in a versioned envelope like every other method. `list_subscribe` and `remove_card` are at `V2`,
+which carries `instance_id` in `PocketCard` and `HostPocketRemoveCardRequest`; `V1` is the same without it. A product
+built before instances speaks `V1`, so its list holds plain cards only and its removal names a plain card. A host that
+predates `V2` refuses a `V2` call as an unsupported version. `label_instance` starts at `V1`.
+`HostPocketRemoveCardResponse` carries no payload of its own: removal has nothing to report beyond success, so its
+envelope is the bare variant, as every other unit response is.
+
+Instances add one variant to the renderer's `RenderContext`, `PocketCardInstance { card_id, instance_id }`, appended
+last so existing contexts keep their encoding. A worker on an SDK without the variant cannot label an instance either,
+so the host never asks it to draw one.
 
 **Bounds.** `card_id` is a product-supplied identifier and carries the rules chat already applies to its own, through
 `normalize_chat_identifier`: trimmed, NFC-normalized, non-empty, at most `CHAT_FIELD_MAX_BYTES` (256) bytes once
 normalized, and rejected if it contains characters that let two distinct ids render identically (joiners, variation
 selectors, soft hyphens, non-ASCII spaces). Pocket reuses the constant rather than declaring its own, so the modalities
 cannot drift; chat acquired these bounds only after hosts had already diverged
-([#453](https://github.com/paritytech/trinity-user-agents/pull/453)), which is the outcome stating them here avoids. Action
-ids and action payloads are the renderer's, and bounded there.
+([#453](https://github.com/paritytech/trinity-user-agents/pull/453)), which is the outcome stating them here avoids.
+Action ids and action payloads are the renderer's, and bounded there. An instance's label is screened as a chat display
+name is, through `validate_chat_name`, and is never empty; a label that fails ends the add as a refusal does.
 
 No request names a product: the host knows which worker it is talking to, so a product can neither observe nor remove
 another product's cards. A host with no Pocket surface answers `remove_card` with `Unavailable` and interrupts
@@ -281,9 +361,9 @@ pub enum HostExpandedCardSetFaceShownError {
 }
 ```
 
-`HostExpandedCardSetFaceShownResponse` is a bare `V1`, as `remove_card`'s is. The call moves the face above the Widget
-that made it, so no request names a card. An App or Worker caller is `Denied`, a host without expanded cards answers
-`Unsupported`, and a call made while the user is moving the face answers `UserMoving`.
+`HostExpandedCardSetFaceShownResponse` is a bare `V1`, as other unit responses are. The call moves the face above the
+Widget that made it, so no request names a card. An App or Worker caller is `Denied`, a host without expanded cards
+answers `Unsupported`, and a call made while the user is moving the face answers `UserMoving`.
 
 ## Trade-offs
 
@@ -295,6 +375,10 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
   together. The host can bound the drift by rendering both from the same node vocabulary, not by checking content.
 - **Card definitions cost manifest budget.** Text records are small; a product with many cards pushes the Worker
   manifest toward the dotNS limit. Only ids, titles, and paths go in the manifest; the trees live in the archive.
+- **An instance runs product code before the dialog.** The host asks the worker to label an instance before showing the
+  dialog, so adding one needs the worker to start and answer, and tells the product that a link to the instance was
+  opened. The preview stays a static file; only the label comes from the worker, and like the live face it is the
+  product's claim, which the host screens but does not check.
 - **Expanded cards need a Widget.** A product with cards but no `widget` executable has faces that do not open. Products
   that want interaction without a WebView use face actions. `Pocket` is reachable only from the worker, so an expanded
   card that wants to offer "Remove from Pocket" has to reach its own worker to do it.
