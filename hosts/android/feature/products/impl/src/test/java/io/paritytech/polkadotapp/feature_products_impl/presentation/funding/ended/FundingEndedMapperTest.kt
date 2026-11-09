@@ -11,7 +11,7 @@ import org.junit.Test
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
-import uniffi.truapi.FundingEndedView
+import uniffi.truapi.FundingEnding
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingPayoutState
@@ -184,7 +184,8 @@ class FundingEndedMapperTest {
         refunded = refunded,
         transactionId = transactionId,
         reference = null,
-        ended = FundingEndedView(
+        ended = FundingEnding(
+            atMs = SETTLED_MS,
             outcome = outcome,
             payoutState = payoutState,
             cashAmount = "50000000",

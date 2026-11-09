@@ -62,6 +62,7 @@ fun FundingProviderFrameScreen(viewModel: FundingProviderFrameViewModel) {
                     page = page,
                     state = pageState,
                     onStarted = viewModel::onPageStarted,
+                    onNavigated = viewModel::onNavigated,
                     onLoaded = viewModel::onPageLoaded,
                     onFailed = viewModel::onPageFailed,
                     onReturned = viewModel::onPageReturned,

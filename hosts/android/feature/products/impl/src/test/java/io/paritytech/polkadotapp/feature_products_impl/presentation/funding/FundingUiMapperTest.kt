@@ -107,7 +107,6 @@ class FundingUiMapperTest {
             limits = FundingAmountLimits(min = null, max = null),
             networks = emptyList(),
             rails = listOf(FundingRail.CARD),
-            defaultRail = FundingRail.CARD,
             asset = "EUR",
             tokens = emptyList(),
             detectedCountry = null,

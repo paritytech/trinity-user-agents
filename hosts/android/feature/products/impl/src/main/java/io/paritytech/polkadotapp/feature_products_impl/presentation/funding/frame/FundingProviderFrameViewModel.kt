@@ -99,6 +99,11 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
         pageProgress.value = DotNsLoadProgress.Idle
     }
 
+    /** The main frame is on [url] now, which the chrome names. */
+    fun onNavigated(url: String) {
+        pageOrigin.value = originOf(url)
+    }
+
     /** WebView finishes a load that failed too, and a failure stays until the next load starts. */
     fun onPageLoaded() {
         if (pageProgress.value !is DotNsLoadProgress.Failed) pageProgress.value = DotNsLoadProgress.Completed

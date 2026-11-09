@@ -37,6 +37,9 @@ interface FundingRuntime {
      */
     val history: StateFlow<List<FundingSessionSummary>>
 
+    /** Whether session [intent] is still open, so its overlay can be shown again; `false` once it ended. */
+    suspend fun sessionOpen(intent: String): Boolean
+
     /** Ended session [intent]'s summary, as history lists it; `null` while it is open or for no such session. */
     suspend fun summary(intent: String): Result<FundingSessionSummary?>
 

@@ -78,6 +78,9 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override val history: StateFlow<List<FundingSessionSummary>> = historyState.asStateFlow()
 
+    override suspend fun sessionOpen(intent: String): Boolean =
+        runtimeProvider.runtime().mapCatching { it.fundingSessionOpen(intent) }.getOrDefault(false)
+
     override suspend fun summary(intent: String): Result<FundingSessionSummary?> =
         runtimeProvider.runtime().mapCatching { it.fundingSummary(intent) }
 

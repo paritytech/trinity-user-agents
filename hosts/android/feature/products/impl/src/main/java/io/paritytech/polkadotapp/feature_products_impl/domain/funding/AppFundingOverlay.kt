@@ -88,11 +88,12 @@ class AppFundingOverlay @Inject constructor(
 
     /**
      * Shows a session in flight again, on the screen it stands at, with the provider's screen over it while the
-     * provider still waits on one. Answers `false` for a session that is over or that the core no longer holds,
-     * which shows on its outcome instead.
+     * provider still waits on one. Answers `false` for a session the core says is no longer open, ended even while it
+     * still pushes it, which shows on its outcome instead.
      */
     suspend fun reopen(intent: String): Boolean {
-        val session = runtime.session(intent)?.takeIf { it.stage.isOpen } ?: return false
+        if (!runtime.sessionOpen(intent)) return false
+        val session = runtime.session(intent) ?: return false
         if (contexts.get(intent) != null) return true
 
         val request = FundingOverlayRequest(

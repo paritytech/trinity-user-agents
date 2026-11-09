@@ -63,6 +63,7 @@ fun FundingExternalPageView(
     page: FundingExternalPage,
     state: FundingExternalPageState,
     onStarted: (String) -> Unit,
+    onNavigated: (String) -> Unit,
     onLoaded: () -> Unit,
     onFailed: (Throwable) -> Unit,
     onReturned: (String) -> Unit,
@@ -73,6 +74,7 @@ fun FundingExternalPageView(
     val scope = rememberCoroutineScope()
     val pickFiles by rememberUpdatedState(onPickFiles)
     val started by rememberUpdatedState(onStarted)
+    val navigated by rememberUpdatedState(onNavigated)
     val loaded by rememberUpdatedState(onLoaded)
     val failed by rememberUpdatedState(onFailed)
     val returned by rememberUpdatedState(onReturned)
@@ -116,6 +118,11 @@ fun FundingExternalPageView(
                         } else {
                             started(url)
                         }
+                    }
+
+                    // A redirect or a history change lands the main frame on a URL its start did not name.
+                    override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                        navigated(url)
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {
