@@ -149,10 +149,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             .logFailure("TrUAPI local session unavailable; booting the host runtime without one")
             .getOrNull()
         // The pinned cards are backed by products named under this TLD, so it has to
-        // be the network's own. This takes the one an earlier run read from the chain,
-        // else reads it, and fails the boot when neither answers. A saved suffix is not
-        // a guess: a build has one network. Failing releases the memoised boot so the
-        // next caller tries again.
+        // be the network's own. A saved one is safe to reuse because a build has one
+        // network. Throwing releases the memoised boot so the next caller tries again.
         val tld = dotNsTldProvider.currentTldOrNull()
             ?: withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) { dotNsTldProvider.getTldRetrying() }
             ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
