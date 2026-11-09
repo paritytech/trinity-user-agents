@@ -1,5 +1,4 @@
 import Foundation
-import IssueMonitoring
 import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
@@ -232,7 +231,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
-            telemetry: HostLoadTelemetry(recorder: IssueMonitoringFactory.createHostEventRecorder()),
+            telemetry: spaFlowState.telemetry,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
