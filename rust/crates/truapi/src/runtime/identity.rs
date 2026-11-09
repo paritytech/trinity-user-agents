@@ -22,7 +22,10 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
+	runtime::{
+		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		services::RuntimeServices,
+	},
 	session_usernames::SessionUsernames,
 };
 
@@ -110,6 +113,30 @@ pub async fn lookup_session_identity(
 			None
 		}
 	}
+}
+
+/// The accounts a username lookup reads: the session's root key and its
+/// identity account, when it has one.
+pub(crate) type SessionAccounts = ([u8; 32], Option<[u8; 32]>);
+
+/// [`lookup_session_identity`] through `services`, so lookups of one session
+/// that overlap, such as a host activating the same session twice in a row,
+/// read dotNS once between them.
+pub async fn lookup_session_identity_shared(
+	services: &RuntimeServices,
+	session: &SessionInfo,
+) -> Option<DotnsIdentity> {
+	services
+		.dotns_reads
+		.identities
+		.run((session.public_key, session.identity_account_id), || {
+			lookup_session_identity(
+				&services.chain,
+				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
+				session,
+			)
+		})
+		.await
 }
 
 /// Maximum lookup attempts per account on transient failure. The first attempt

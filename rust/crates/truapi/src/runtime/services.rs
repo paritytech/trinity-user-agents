@@ -45,6 +45,29 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
+/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
+/// until it settles, so callers asking for the same thing while one runs wait
+/// for its answer, and a burst of them holds one follow slot, not one each.
+#[derive(Default)]
+pub(crate) struct DotnsReads {
+	/// Root manifest reads, by product label.
+	pub(crate) root_manifests: crate::runtime::single_flight::SingleFlight<
+		String,
+		(Option<String>, crate::runtime::product_manifest::ManifestSource),
+	>,
+	/// Worker manifest reads, by product label.
+	pub(crate) worker_manifests: crate::runtime::single_flight::SingleFlight<
+		String,
+		crate::runtime::product_manifest::WorkerManifestRead,
+	>,
+	/// Username lookups, by the accounts they read. The keys are never
+	/// written to storage or to a log.
+	pub(crate) identities: crate::runtime::single_flight::SingleFlight<
+		crate::runtime::identity::SessionAccounts,
+		Option<crate::host_logic::dotns_gateway::DotnsIdentity>,
+	>,
+}
+
 /// Infrastructure shared by all product runtimes created from one host role.
 pub struct RuntimeServices {
 	/// Host platform backing all syscalls.
@@ -80,6 +103,8 @@ pub struct RuntimeServices {
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+	/// dotNS reads running now, shared by the callers that overlap them.
+	pub(crate) dotns_reads: DotnsReads,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -240,6 +265,7 @@ impl RuntimeServices {
 			balance_platform: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
+			dotns_reads: Default::default(),
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),

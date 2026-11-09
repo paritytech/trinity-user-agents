@@ -268,7 +268,7 @@ impl RefusedBecause {
 /// for that long, so two devices can judge one grant differently by where each
 /// got its manifest.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-enum ManifestSource {
+pub(crate) enum ManifestSource {
 	/// Read from the cache on this device, written `age_secs` ago.
 	#[display("cache, {age_secs} s old")]
 	Cached { age_secs: u64 },
@@ -662,11 +662,25 @@ async fn key_access(
 /// chain's answer that there is no manifest, which is authoritative for the same
 /// TTL.
 ///
-/// The cache dedupes misses only once one has finished, and nothing upstream
-/// caps in-flight dispatches, so a product can hold one follow per concurrent
-/// miss for up to `OPERATION_TIMEOUT` each. A single-flight keyed by target or
-/// a dispatch cap belongs with the request pipeline, not here.
+/// Lookups of one product that overlap share one read, through
+/// [`DotnsReads::root_manifests`](crate::runtime::services::DotnsReads::root_manifests), so a
+/// burst of them holds one Asset Hub follow rather than one each. A caller that
+/// gives up on its own ceiling while running the read ends it, and a caller
+/// waiting on it starts the read again within whatever is left of its ceiling.
 async fn root_manifest(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	target: &ProductId,
+) -> (Option<String>, ManifestSource) {
+	services
+		.dotns_reads
+		.root_manifests
+		.run(target.bare_label().to_string(), || read_root_manifest(services, platform, target))
+		.await
+}
+
+/// [`root_manifest`] for one caller, from the cache or dotNS.
+async fn read_root_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	target: &ProductId,
@@ -690,15 +704,33 @@ async fn root_manifest(
 	}
 }
 
-/// `product_id`'s Worker manifest, cached as [`root_manifest`] caches the root
-/// manifest. `Ok(None)` when it publishes none or what it publishes cannot be
-/// used, which the RFC treats alike; `Err` when the chain could not be read,
-/// which says nothing about the product.
+/// A Worker manifest read: the usable manifest, `None` when there is none to
+/// use, or why the chain could not be read.
+pub(crate) type WorkerManifestRead = Result<Option<WorkerManifest>, String>;
+
+/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is. `Ok(None)` when it
+/// publishes none or what it publishes cannot be used, which the RFC treats alike; `Err` when the
+/// chain could not be read, which says nothing about the product.
 pub async fn worker_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	product_id: &ProductId,
-) -> Result<Option<WorkerManifest>, String> {
+) -> WorkerManifestRead {
+	services
+		.dotns_reads
+		.worker_manifests
+		.run(product_id.bare_label().to_string(), || {
+			read_worker_manifest(services, platform, product_id)
+		})
+		.await
+}
+
+/// [`worker_manifest`] for one caller, from the cache or dotNS.
+async fn read_worker_manifest(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	product_id: &ProductId,
+) -> WorkerManifestRead {
 	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
 		fetch_worker_manifest(&services.chain, asset_hub(services)?, product_id)
 			.await
