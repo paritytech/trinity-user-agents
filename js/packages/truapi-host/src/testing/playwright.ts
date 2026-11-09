@@ -17,6 +17,7 @@ import {
   type ChainStatus,
   type ChatMessageRecord,
   type MockHostConfig,
+  type MockRuntimeConfig,
   type NotificationLogEntry,
   type PermissionLogEntry,
   type PermissionPolicy,
@@ -137,7 +138,7 @@ export interface TestHostFixtureOptions {
    * hash the config declares, so that hash has to be the real one rather than
    * a {@link MOCK_GENESIS} placeholder.
    */
-  runtimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Accounts the host can sign as. Defaults to `["alice"]`.
    *
