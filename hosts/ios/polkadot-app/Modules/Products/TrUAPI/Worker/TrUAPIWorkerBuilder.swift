@@ -67,8 +67,8 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     func workerSource(
         for productId: ProductId
     ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
-        if let bundled = bundledProducts.product(productId), bundled.hasWorker() {
-            return (.bundled(bundled), DotNsFileProvider(contentURL: bundled.directory))
+        if case let .bundled(entry) = bundledProducts.source(of: productId), entry.hasWorker {
+            return (.bundled(entry), DotNsFileProvider(contentURL: entry.directory))
         }
 
         // Its 1 s and 2 s backoffs fit inside the manager's startup window.

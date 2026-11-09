@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::{
 	host_logic::funding_view::{
-		FundingCancelAvailability, FundingEndedView, cancel_availability, ended_view,
+		FundingCancelAvailability, FundingEnding, cancel_availability, ending,
 	},
 	platform::ProductId,
 };
@@ -104,7 +104,7 @@ pub struct FundingSessionSummary {
 	/// The facts about how the session ended. Not stored: it is worked out
 	/// from the rest whenever a summary is made or loaded.
 	#[codec(skip)]
-	pub ended: FundingEndedView,
+	pub ended: FundingEnding,
 }
 
 impl FundingSession {
@@ -112,7 +112,7 @@ impl FundingSession {
 	pub fn summary(&self) -> FundingSessionSummary {
 		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
-			ended: FundingEndedView::default(),
+			ended: FundingEnding::default(),
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
 			direction: self.direction,
@@ -134,7 +134,7 @@ impl FundingSession {
 impl FundingSessionSummary {
 	/// The summary with its `ended` view worked out from the rest.
 	pub fn with_ended(mut self) -> Self {
-		self.ended = ended_view(&self);
+		self.ended = ending(&self);
 		self
 	}
 
@@ -147,6 +147,23 @@ impl FundingSessionSummary {
 	pub fn settled_at_ms(&self) -> Option<u64> {
 		self.stage.settled_at_ms()
 	}
+
+	/// Whether the session was cancelled with nothing moved: no amount
+	/// settled and nothing refunded, so there is nothing to tell the user.
+	pub fn cancelled_unmoved(&self) -> bool {
+		matches!(self.stage, FundingStage::Failed { reason: FundingFailure::Cancelled, .. }) &&
+			self.refunded.is_none()
+	}
+}
+
+/// A session the host has heard of, with its progress now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingBookEntry {
+	/// The session.
+	pub session: FundingSession,
+	/// Its progress now.
+	pub progress: FundingProgress,
 }
 
 /// What the core knows about one session, independent of any host surface.

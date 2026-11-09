@@ -24,18 +24,3 @@ extension BundledProducts {
         return bundledFundingProviders(root: root.path, reader: FileBundleReader())
     }
 }
-
-/// The app's bundle as the core reads it, by file path.
-private final class FileBundleReader: BundleReader {
-    func list(dir: String) -> [String] {
-        (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-    }
-
-    func exists(path: String) -> Bool {
-        FileManager.default.fileExists(atPath: path)
-    }
-
-    func readText(path: String) -> String? {
-        FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
-    }
-}

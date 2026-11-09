@@ -42,7 +42,8 @@ pub use crate::{
 	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
 };
 pub use bundled_products::{
-	BundleReader, bundled_asset_path, bundled_funding_providers, bundled_products, mime_for,
+	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_funding_providers,
+	bundled_products, product_source,
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,

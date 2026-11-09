@@ -36,8 +36,7 @@ struct FundingFlowModelQuoteTests {
     func offersTheRailsTheCoreRoutesAndStartsOnItsDefault() {
         let model = makeModel(MockFundingRuntime(
             candidates: [candidate("unrouted", routes: [])],
-            rails: [.crypto, .card],
-            defaultRail: .crypto
+            rails: [.crypto, .card]
         ))
 
         #expect(model.availableRails == [.crypto, .card])
