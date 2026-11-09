@@ -661,7 +661,7 @@ impl SigningHostRuntime {
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
-			.derive_subtree_public_key(product_id)
+			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
