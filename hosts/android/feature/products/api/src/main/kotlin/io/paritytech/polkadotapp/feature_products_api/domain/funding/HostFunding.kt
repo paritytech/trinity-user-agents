@@ -17,11 +17,14 @@ interface HostFunding {
      */
     suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?>
 
-    /**
-     * The sessions in flight and the ended ones the core keeps. Observing it acknowledges each ended session once
-     * its row is built.
-     */
+    /** The sessions in flight and the ended ones the core keeps, as the core lists them. Observing it starts the core. */
     fun observeActivity(): Flow<FundingActivity>
+
+    /**
+     * Records that the user saw how the ended sessions [intents] went. Call it only while the history shows them; until
+     * then the core keeps each one owed to the host.
+     */
+    suspend fun acknowledgeShown(intents: List<String>)
 
     /**
      * Shows session [intent] again: one in flight where it stands, with the provider's screen over it while the

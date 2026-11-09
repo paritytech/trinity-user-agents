@@ -45,6 +45,9 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
 
     suspend fun showFundingSession(intent: String) = hostFunding.showSession(intent)
 
+    /** The ended sessions [intents] are on screen in the history, so the user saw how they went. */
+    suspend fun acknowledgeFundingShown(intents: List<String>) = hostFunding.acknowledgeShown(intents)
+
     /**
      * The four figures and the rows beneath them, off one classification.
      *

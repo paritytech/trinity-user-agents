@@ -59,6 +59,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
+import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -198,7 +199,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             networkSuffix = tld.value,
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
-            databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
+            databaseDirectory = truapiDatabaseDirectory(context).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
         )
     }
@@ -347,15 +348,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          * `getTldRetrying` polls until it succeeds, so the boot needs its own bound.
          */
         const val TLD_RESOLVE_TIMEOUT_MS = 30_000L
-
-        /**
-         * Core database directory, under `noBackupFilesDir`: a durable-transaction
-         * ledger restored onto another device would act on transactions that
-         * already settled.
-         */
-        const val DATABASE_DIRECTORY = "truapi"
     }
 }
+
+/**
+ * Where the core keeps its database, and the funding resume marker with it: under `noBackupFilesDir`, as a
+ * durable-transaction ledger restored onto another device would act on transactions that already settled.
+ */
+internal fun truapiDatabaseDirectory(context: Context): File = context.noBackupFilesDir.resolve("truapi")
 
 private object HostLevelStorage : HostStorage {
     override suspend fun read(key: String): ByteArray? = null

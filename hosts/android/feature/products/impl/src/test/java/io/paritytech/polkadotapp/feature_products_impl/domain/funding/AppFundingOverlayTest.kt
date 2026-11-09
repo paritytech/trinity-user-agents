@@ -43,7 +43,6 @@ class AppFundingOverlayTest {
     private val runtime = mockk<FundingRuntime> {
         every { sessionChanges() } returns MutableSharedFlow()
         every { sessions } returns this@AppFundingOverlayTest.sessions
-        every { unacknowledged } returns MutableStateFlow(emptySet())
     }
 
     // A sheet that appears marks itself shown, as the real one does once it finds its context.

@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingActivity
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingDirection
@@ -48,8 +49,7 @@ class TrUAPIFundingRuntime @Inject constructor(
     private val notices = Channel<FundingChange>(Channel.UNLIMITED)
 
     private val entries = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
-    private val unacknowledgedIntents = MutableStateFlow<Set<String>>(emptySet())
-    private val inProgressState = MutableStateFlow<Boolean?>(null)
+    private val activityState = MutableStateFlow<FundingActivity?>(null)
     private val optionsByIntent = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
@@ -78,9 +78,10 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override val sessions: StateFlow<Map<String, FundingBookEntry>> = entries.asStateFlow()
 
-    override val unacknowledged: StateFlow<Set<String>> = unacknowledgedIntents.asStateFlow()
+    override val activity: StateFlow<FundingActivity?> = activityState.asStateFlow()
 
-    override val inProgress: StateFlow<Boolean?> = inProgressState.asStateFlow()
+    override suspend fun acknowledgeShown(intents: List<String>): Result<List<String>> =
+        runtimeProvider.runtime().mapCatching { it.acknowledgeFundingShown(intents) }
 
     override suspend fun history(): Result<List<FundingSessionSummary>> =
         runtimeProvider.runtime().mapCatching { it.fundingHistory() }
@@ -120,7 +121,7 @@ class TrUAPIFundingRuntime @Inject constructor(
         when (notice.kind) {
             FundingChangeKind.SESSION -> {
                 entries.value = runtime.fundingEntries().associateBy { it.session.intent }
-                unacknowledgedIntents.value = runtime.fundingUnacknowledged().toSet()
+                activityState.value = runtime.fundingActivity()
                 intent?.let(changedSessions::tryEmit)
             }
 
@@ -133,7 +134,8 @@ class TrUAPIFundingRuntime @Inject constructor(
                 runtime.fundingQuotes(intent)?.let { quoteLists.tryEmit(FundingQuoteListUpdate(intent, it)) }
             }
 
-            FundingChangeKind.IN_PROGRESS -> inProgressState.value = runtime.fundingInProgress()
+            // Funding resuming is when the core has loaded the ended sessions the history lists.
+            FundingChangeKind.IN_PROGRESS -> activityState.value = runtime.fundingActivity()
         }
     }
 

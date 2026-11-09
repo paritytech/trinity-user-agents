@@ -42,6 +42,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -150,6 +154,10 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     val fundingSheet: StateFlow<FundingSheet?> = sheets.shown
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 
+    init {
+        acknowledgeShownHistory()
+    }
+
     /** Top-ups in progress show first, so a second one is a deliberate choice rather than a paid-twice slip. */
     fun onGetCashClick() {
         if (fundingActivity.value.toppingUp.isEmpty()) {
@@ -165,6 +173,20 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     }
 
     fun onHistoryClick() = sheets.open(FundingSheet.HISTORY)
+
+    /**
+     * Tells the core the user saw how the ended sessions went, only while the history sheet lists them, and again as
+     * rows arrive while it is open. The activity is read only while the sheet is up.
+     */
+    private fun acknowledgeShownHistory() = launchUnit {
+        fundingSheet
+            .flatMapLatest { sheet ->
+                if (sheet == FundingSheet.HISTORY) fundingActivity.map { activity -> activity.completed.map { it.id } } else emptyFlow()
+            }
+            .distinctUntilChanged()
+            .filter { it.isNotEmpty() }
+            .collect { shown -> interactor.acknowledgeFundingShown(shown) }
+    }
 
     fun onSheetBack() = sheets.back()
 
