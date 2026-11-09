@@ -53,11 +53,7 @@ fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
 	let catalog = paseo_next_v2();
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
 	for genesis in [catalog.bulletin, catalog.relay] {
-		store
-			.stored
-			.lock()
-			.expect("test store")
-			.insert(genesis, "stored-blob".to_owned());
+		store.put(genesis, "stored-blob");
 	}
 	let provider = EmbeddedChainProvider::builder().storage(store.clone()).build();
 
@@ -78,11 +74,7 @@ fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
 fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
 	let catalog = paseo_next_v2();
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
-	store
-		.stored
-		.lock()
-		.expect("test store")
-		.insert(catalog.relay, "stored-blob".to_owned());
+	store.put(catalog.relay, "stored-blob");
 	let provider = EmbeddedChainProvider::builder().catalog().storage(store.clone()).build();
 
 	assert!(
@@ -145,12 +137,42 @@ fn snapshot_round_trips_into_a_seed() {
 		.expect("a chain seeded with its own snapshot connects");
 }
 
+/// What a blob is stored under.
+#[cfg(feature = "smoldot")]
+#[derive(PartialEq, Eq, Hash)]
+struct StoredKey {
+	stack: Option<String>,
+	genesis_hash: [u8; 32],
+}
+
 /// A store answering from memory, recording what it was asked to keep.
 #[cfg(feature = "smoldot")]
 #[derive(Default)]
 struct MemoryStorageClient {
-	stored: std::sync::Mutex<std::collections::HashMap<[u8; 32], String>>,
+	stored: std::sync::Mutex<std::collections::HashMap<StoredKey, String>>,
 	loads: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "smoldot")]
+impl MemoryStorageClient {
+	/// Store `blob` as a provider without a stack would.
+	fn put(&self, genesis_hash: [u8; 32], blob: &str) {
+		self.stored
+			.lock()
+			.expect("test store")
+			.insert(StoredKey { stack: None, genesis_hash }, crate::storage::seal(None, blob));
+	}
+
+	/// The blob a provider without a stack stored.
+	fn blob(&self, genesis_hash: [u8; 32]) -> Option<String> {
+		let stored = self
+			.stored
+			.lock()
+			.expect("test store")
+			.get(&StoredKey { stack: None, genesis_hash })
+			.cloned();
+		crate::storage::unseal(None, stored?)
+	}
 }
 
 #[cfg(feature = "smoldot")]
@@ -159,17 +181,27 @@ impl crate::storage::StorageClient for MemoryStorageClient {
 	async fn load(
 		&self,
 		genesis_hash: [u8; 32],
+		stack: Option<String>,
 	) -> Result<Option<String>, crate::storage::StorageClientError> {
 		self.loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-		Ok(self.stored.lock().expect("test store").get(&genesis_hash).cloned())
+		Ok(self
+			.stored
+			.lock()
+			.expect("test store")
+			.get(&StoredKey { stack, genesis_hash })
+			.cloned())
 	}
 
 	async fn save(
 		&self,
 		genesis_hash: [u8; 32],
 		blob: String,
+		stack: Option<String>,
 	) -> Result<(), crate::storage::StorageClientError> {
-		self.stored.lock().expect("test store").insert(genesis_hash, blob);
+		self.stored
+			.lock()
+			.expect("test store")
+			.insert(StoredKey { stack, genesis_hash }, blob);
 		Ok(())
 	}
 }
@@ -181,11 +213,7 @@ impl crate::storage::StorageClient for MemoryStorageClient {
 fn a_stored_blob_seeds_a_chain() {
 	const GENESIS: [u8; 32] = [3; 32];
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
-	store
-		.stored
-		.lock()
-		.expect("test store")
-		.insert(GENESIS, "stored-blob".to_owned());
+	store.put(GENESIS, "stored-blob");
 
 	let provider = EmbeddedChainProvider::builder()
 		.chain(GENESIS, ChainSource::light_client("{}").build())
@@ -221,11 +249,7 @@ fn a_stored_blob_seeds_a_chain() {
 fn an_explicit_blob_wins_over_the_store() {
 	const GENESIS: [u8; 32] = [4; 32];
 	let store = std::sync::Arc::new(MemoryStorageClient::default());
-	store
-		.stored
-		.lock()
-		.expect("test store")
-		.insert(GENESIS, "stored-blob".to_owned());
+	store.put(GENESIS, "stored-blob");
 
 	let provider = EmbeddedChainProvider::builder()
 		.chain(GENESIS, ChainSource::light_client("{}").build())
@@ -273,11 +297,7 @@ fn persist_without_a_connection_stores_nothing() {
 fn a_rust_client_is_driven_by_both_database_calls() {
 	const GENESIS: [u8; 32] = [10; 32];
 	let client = std::sync::Arc::new(MemoryStorageClient::default());
-	client
-		.stored
-		.lock()
-		.expect("test client")
-		.insert(GENESIS, "stored-blob".to_owned());
+	client.put(GENESIS, "stored-blob");
 
 	let provider = EmbeddedChainProvider::builder()
 		.chain(GENESIS, ChainSource::light_client("{}").build())
@@ -311,7 +331,7 @@ fn a_snapshot_without_the_runtime_code_does_not_replace_one_with_it() {
 	const WITHOUT_CODE: &str = r#"{"chain":{"a":1}}"#;
 
 	let client = std::sync::Arc::new(MemoryStorageClient::default());
-	client.stored.lock().expect("test client").insert(GENESIS, WITH_CODE.to_owned());
+	client.put(GENESIS, WITH_CODE);
 
 	let provider = EmbeddedChainProvider::builder()
 		.chain(GENESIS, ChainSource::light_client("{}").build())
@@ -323,11 +343,7 @@ fn a_snapshot_without_the_runtime_code_does_not_replace_one_with_it() {
 			.expect("the client answers"),
 		"a blob that lost the runtime code is not worth storing"
 	);
-	assert_eq!(
-		client.stored.lock().expect("test client").get(&GENESIS),
-		Some(&WITH_CODE.to_owned()),
-		"the better blob is still there"
-	);
+	assert_eq!(client.blob(GENESIS), Some(WITH_CODE.to_owned()), "the better blob is still there");
 }
 
 /// A blob carrying the runtime code always wins, and does so without
@@ -353,10 +369,7 @@ fn a_snapshot_with_the_runtime_code_is_stored_without_a_read() {
 		0,
 		"a blob with the runtime code needs no comparison"
 	);
-	assert_eq!(
-		client.stored.lock().expect("test client").get(&GENESIS),
-		Some(&WITH_CODE.to_owned())
-	);
+	assert_eq!(client.blob(GENESIS), Some(WITH_CODE.to_owned()));
 }
 
 /// A blob with nothing finalized is never stored, whatever is there.
@@ -436,4 +449,132 @@ fn later_registration_wins() {
 		panic!("expected an RpcNode source");
 	};
 	assert_eq!(*url, second);
+}
+
+/// A provider built for the test stack with `stack`'s specs.
+#[cfg(feature = "smoldot")]
+fn stack_provider(
+	stack: crate::LightStack,
+	store: &std::sync::Arc<MemoryStorageClient>,
+) -> EmbeddedChainProvider {
+	EmbeddedChainProvider::builder().stack(stack).storage(store.clone()).build()
+}
+
+/// A spec that could not be fetched leaves its chain unknown and the rest of
+/// the stack running, and the chain comes up on the same provider once the
+/// host has the spec.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_chain_without_its_spec_is_unknown_until_the_spec_is_added() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let mut stack = stack(STACK_ID, "one");
+	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
+	let provider = EmbeddedChainProvider::builder().stack(stack).build();
+
+	let refusals =
+		[relay, people].map(|genesis| futures::executor::block_on(provider.connect(genesis)).err());
+	assert_eq!(
+		refusals,
+		[
+			Some(crate::ProviderError::UnknownGenesis { genesis: relay }),
+			Some(crate::ProviderError::UnknownRelay { relay }),
+		]
+	);
+
+	provider.add_light_spec(relay, RELAY_SPEC.as_bytes()).expect("the spec matches");
+	let _connection = futures::executor::block_on(provider.connect(people))
+		.expect("People syncs through the relay the descriptor names");
+	assert_eq!(provider.relay_count(), 1, "the relay came up behind People");
+	assert_eq!(provider.relay_of(people), Some(relay));
+}
+
+/// A spec arriving after the build is checked like one arriving before it.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_wrong_spec_added_after_the_build_is_refused() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let relay = genesis(RELAY_SPEC);
+	let provider = EmbeddedChainProvider::builder().stack(stack(STACK_ID, "one")).build();
+
+	let error = provider
+		.add_light_spec(relay, PEOPLE_SPEC.as_bytes())
+		.expect_err("People's spec is not the relay's");
+
+	assert!(
+		matches!(&error, crate::ProviderError::LightSpec { role, genesis, .. }
+			if role == "Relay" && *genesis == relay),
+		"{error}"
+	);
+	assert!(
+		matches!(
+			EmbeddedChainProvider::builder()
+				.build()
+				.add_light_spec(relay, RELAY_SPEC.as_bytes()),
+			Err(crate::ProviderError::Stack { .. })
+		),
+		"a provider without a stack has no descriptor to check a spec against"
+	);
+}
+
+/// A stack's provider answers only for its descriptor's chains, so a host
+/// that asked for one stack never syncs a bundled network instead.
+#[cfg(feature = "networks")]
+#[test]
+fn a_stack_provider_does_not_resolve_from_the_catalog() {
+	use crate::test_stack::{STACK_ID, synced_stack};
+
+	let catalog = paseo_next_v2();
+	let provider = EmbeddedChainProvider::builder()
+		.catalog()
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	let Err(error) = futures::executor::block_on(provider.connect(catalog.people)) else {
+		panic!("a chain outside the stack must not connect");
+	};
+	assert_eq!(error, crate::ProviderError::UnknownGenesis { genesis: catalog.people });
+	assert!(provider.relay_of(catalog.people).is_none());
+}
+
+/// A fork shares its source's genesis hashes, so the genesis hash alone would
+/// hand one stack the other's finalized state. A wipe keeps the stack and
+/// changes its generation, and the old chains' state must not seed the new.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_database_is_read_only_by_its_own_stack_and_generation() {
+	use crate::test_stack::{PEOPLE_SPEC, STACK_ID, genesis, synced_stack};
+
+	const FORK_ID: &str = "https://fork.example/descriptor.json";
+	const WITH_CODE: &str = r#"{"chain":{"a":1},"runtimeCode":"AAAA"}"#;
+	const WITHOUT_CODE: &str = r#"{"chain":{"b":2}}"#;
+	let people = genesis(PEOPLE_SPEC);
+	let store = std::sync::Arc::new(MemoryStorageClient::default());
+	use futures::executor::block_on;
+
+	let writer = stack_provider(synced_stack(STACK_ID, "one"), &store);
+	assert!(block_on(writer.store_blob(people, WITH_CODE.to_owned())).expect("the store answers"));
+
+	let loads = [(STACK_ID, "one"), (STACK_ID, "two"), (FORK_ID, "one")].map(|(id, generation)| {
+		let reader = stack_provider(synced_stack(id, generation), &store);
+		block_on(reader.load_database(people)).expect("the store answers")
+	});
+	assert_eq!(loads, [true, false, false]);
+	assert!(store.blob(people).is_none(), "nothing is kept outside a stack");
+
+	// The earlier generation's blob has the runtime code, which would keep a
+	// weaker blob of the same generation out. It is not this generation's, so
+	// the new one replaces it.
+	let next = stack_provider(synced_stack(STACK_ID, "two"), &store);
+	assert!(block_on(next.store_blob(people, WITHOUT_CODE.to_owned())).expect("the store answers"));
+	assert_eq!(
+		store
+			.stored
+			.lock()
+			.expect("test store")
+			.get(&StoredKey { stack: Some(STACK_ID.to_owned()), genesis_hash: people }),
+		Some(&crate::storage::seal(Some("two"), WITHOUT_CODE))
+	);
 }

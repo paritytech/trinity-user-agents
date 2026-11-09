@@ -90,6 +90,22 @@ pub enum ProviderError {
 		/// Comma-separated names of the bundled networks.
 		known: String,
 	},
+	/// A stack's link or descriptor was refused.
+	#[display("stack refused: {reason}")]
+	Stack {
+		/// The rule the link or the descriptor broke.
+		reason: String,
+	},
+	/// A light spec is not the one the stack's descriptor names for the chain.
+	#[display("light spec of {role} (0x{}) refused: {reason}", hex::encode(genesis))]
+	LightSpec {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// The chain's genesis hash.
+		genesis: [u8; 32],
+		/// How the spec differs from the descriptor.
+		reason: String,
+	},
 	/// A bundled genesis hash does not decode to 32 bytes.
 	#[display("bundled genesis hash {hex} is malformed")]
 	MalformedGenesis {

@@ -8,7 +8,9 @@ use super::{
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new(descriptor, ChainBackend::Rpc)
+	let pointer = Pointer::new("https://stack.example/descriptor.json", None)
+		.expect("a descriptor URL is a pointer");
+	Stack::new(&pointer, descriptor, ChainBackend::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of

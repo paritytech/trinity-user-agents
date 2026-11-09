@@ -9,6 +9,13 @@
 //! competes with the host for the same quota and never decides on its behalf
 //! whether the bytes are backed up or encrypted.
 //!
+//! A blob is stored per stack and per chain. Two stacks can share genesis
+//! hashes, as a fork and its source do, so [`StorageClient`] is handed what
+//! identifies the stack with the genesis hash, and a store keeps the pair
+//! apart. What is stored is the stack's `generation` on a line of its own,
+//! then the blob: a stack that restarted its chains reads nothing stored for
+//! the earlier ones, and the next save replaces it.
+//!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
 //! [`save_database`](crate::EmbeddedChainProvider::save_database), rather than
@@ -59,11 +66,44 @@ impl std::error::Error for StorageClientError {}
 #[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), uniffi::export(with_foreign))]
 #[async_trait::async_trait]
 pub trait StorageClient: Send + Sync {
-	/// Read the blob stored for `genesis_hash`, if any.
-	async fn load(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, StorageClientError>;
+	/// Read the blob stored for `genesis_hash` on `stack`, if any.
+	///
+	/// `stack` identifies the stack the provider was built for, and is `None`
+	/// on a provider built without one. The same genesis hash on another stack
+	/// is another blob.
+	async fn load(
+		&self,
+		genesis_hash: [u8; 32],
+		stack: Option<String>,
+	) -> Result<Option<String>, StorageClientError>;
 
-	/// Replace the blob stored for `genesis_hash`.
-	async fn save(&self, genesis_hash: [u8; 32], blob: String) -> Result<(), StorageClientError>;
+	/// Replace the blob stored for `genesis_hash` on `stack`.
+	async fn save(
+		&self,
+		genesis_hash: [u8; 32],
+		blob: String,
+		stack: Option<String>,
+	) -> Result<(), StorageClientError>;
+}
+
+/// What is stored for a chain: `generation` on a line of its own, then `blob`.
+pub fn seal(generation: Option<&str>, blob: &str) -> String {
+	format!("{}\n{blob}", serde_json::json!({ "generation": generation }))
+}
+
+/// The blob inside `stored`, when [`seal`] wrote it for `generation`.
+///
+/// `None` for anything else, including a blob of another generation: the chain
+/// then syncs from its spec's checkpoint, and the next save replaces what is
+/// stored.
+pub fn unseal(generation: Option<&str>, mut stored: String) -> Option<String> {
+	let end = stored.find('\n')?;
+	let header: serde_json::Value = serde_json::from_str(&stored[..end]).ok()?;
+	if header.get("generation")? != &serde_json::json!(generation) {
+		return None;
+	}
+	stored.drain(..=end);
+	Some(stored)
 }
 
 /// Whether `blob` carries the runtime code.

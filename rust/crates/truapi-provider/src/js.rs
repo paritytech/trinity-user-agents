@@ -64,11 +64,15 @@ pub fn set_log_level(level: &str) {
 
 /// Collects genesis-hash to chain-source registrations from JS.
 ///
-/// The built provider resolves an unregistered genesis from the bundled catalog,
-/// unless a remote node was registered with `addRpcChain`.
+/// The built provider resolves an unregistered genesis from the stack given to
+/// `setStack`. Without one it resolves it from the bundled catalog, unless a
+/// remote node was registered with `addRpcChain`.
 #[wasm_bindgen]
 pub struct ChainProviderBuilder {
 	inner: Option<EmbeddedChainProviderBuilder>,
+	/// Set by `setStack` and filled by `addLightSpec` until `build` takes it.
+	#[cfg(feature = "smoldot")]
+	stack: Option<crate::LightStack>,
 	/// Cleared by the first `addRpcChain`.
 	#[cfg(feature = "networks")]
 	catalog: bool,
@@ -81,6 +85,8 @@ impl ChainProviderBuilder {
 	pub fn new() -> Self {
 		ChainProviderBuilder {
 			inner: Some(EmbeddedChainProviderBuilder::new()),
+			#[cfg(feature = "smoldot")]
+			stack: None,
 			#[cfg(feature = "networks")]
 			catalog: true,
 		}
@@ -128,6 +134,45 @@ impl ChainProviderBuilder {
 		Ok(())
 	}
 
+	/// Serve the chains of a Trinity stack on the light client.
+	///
+	/// `link` is the stack's link and `descriptor` its descriptor as served,
+	/// the pair a host gives the core. Throws when the link is malformed or
+	/// the descriptor is refused under it. Each chain then needs its light spec
+	/// from [`add_light_spec`](Self::add_light_spec): the relay wiring and the
+	/// statement-store placement come from the descriptor. Stored databases
+	/// are kept under the stack and its generation, and the bundled catalog is
+	/// not consulted. Build one provider per stack.
+	#[cfg(feature = "smoldot")]
+	#[wasm_bindgen(js_name = setStack)]
+	pub fn set_stack(&mut self, link: &str, descriptor: &[u8]) -> Result<(), JsError> {
+		self.stack = Some(crate::LightStack::open(link, descriptor)?);
+		Ok(())
+	}
+
+	/// Hand over the light spec of the stack's chain with the `0x`-prefixed
+	/// genesis hash, as fetched from the `lightSpec.url` its descriptor names.
+	///
+	/// Throws when the bytes do not match the descriptor's `sha256` or imply
+	/// another genesis hash, when the chain is not in the stack, and before
+	/// [`set_stack`](Self::set_stack). A refused spec leaves the builder as it
+	/// was. A chain left without a spec is unknown to the built provider until
+	/// `addLightSpec` on the provider supplies it.
+	#[cfg(feature = "smoldot")]
+	#[wasm_bindgen(js_name = addLightSpec)]
+	pub fn add_light_spec(
+		&mut self,
+		genesis_hash: &str,
+		specification: &[u8],
+	) -> Result<(), JsError> {
+		let genesis = parse_genesis(genesis_hash)?;
+		let stack = self
+			.stack
+			.as_mut()
+			.ok_or_else(|| JsError::new("call setStack before addLightSpec"))?;
+		Ok(stack.add_light_spec(genesis, specification)?)
+	}
+
 	/// Seed the chain with the `0x`-prefixed genesis hash from a stored
 	/// database blob, so its light client resumes from that finalized state
 	/// instead of syncing from the chain-spec checkpoint.
@@ -155,9 +200,13 @@ impl ChainProviderBuilder {
 	///
 	/// The crate stores nothing itself, so without this call every chain syncs
 	/// from the chain-spec checkpoint on every run. Pass a JS object with
-	/// `load(genesisHash)` resolving to the stored string or `null`, and
-	/// `save(genesisHash, blob)`. Both are called with a `0x`-prefixed hex
-	/// genesis hash and may return a promise. Passing `null` does nothing.
+	/// `load(genesisHash, stack)` resolving to the stored string or `null`, and
+	/// `save(genesisHash, blob, stack)`. Both are called with a `0x`-prefixed
+	/// hex genesis hash and may return a promise. `stack` identifies the stack
+	/// given to [`set_stack`](Self::set_stack) and is `undefined` without one.
+	/// Two stacks can share a genesis hash, so a store that serves more than
+	/// one keeps a blob per stack and genesis hash. Passing `null` does
+	/// nothing.
 	///
 	/// A blob seeded through
 	/// [`set_database_content`](Self::set_database_content) beats one loaded
@@ -231,6 +280,11 @@ impl ChainProviderBuilder {
 			.ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
 		#[cfg(feature = "networks")]
 		let builder = if self.catalog { builder.catalog() } else { builder };
+		#[cfg(feature = "smoldot")]
+		let builder = match self.stack.take() {
+			Some(stack) => builder.stack(stack),
+			None => builder,
+		};
 		Ok(ChainProviderHandle {
 			inner: Arc::new(builder.build()),
 			#[cfg(feature = "smoldot")]
@@ -397,6 +451,19 @@ impl ChainProviderHandle {
 	pub async fn load_database(&self, genesis_hash: &str) -> Result<bool, JsError> {
 		let genesis = parse_genesis(genesis_hash)?;
 		Ok(self.inner.load_database(genesis).await?)
+	}
+
+	/// Hand over the light spec of the stack's chain with the `0x`-prefixed
+	/// genesis hash, so a chain whose spec could not be fetched before `build`
+	/// comes up without a new provider.
+	///
+	/// Throws as `addLightSpec` on the builder does, and on a provider built
+	/// without a stack. A chain that is already running keeps the spec it
+	/// started with.
+	#[cfg(feature = "smoldot")]
+	#[wasm_bindgen(js_name = addLightSpec)]
+	pub fn add_light_spec(&self, genesis_hash: &str, specification: &[u8]) -> Result<(), JsError> {
+		Ok(self.inner.add_light_spec(parse_genesis(genesis_hash)?, specification)?)
 	}
 
 	/// Watch what the light client is doing on the chain identified by the
@@ -698,10 +765,15 @@ impl crate::storage::StorageClient for HostStorageClient {
 	async fn load(
 		&self,
 		genesis_hash: [u8; 32],
+		stack: Option<String>,
 	) -> Result<Option<String>, crate::storage::StorageClientError> {
 		let receiver = {
 			let methods = &*self.inner;
-			await_js(methods.load.call1(&methods.store, &JsValue::from_str(&hex0x(&genesis_hash))))
+			await_js(methods.load.call2(
+				&methods.store,
+				&JsValue::from_str(&hex0x(&genesis_hash)),
+				&JsValue::from(stack),
+			))
 		};
 		let value = receiver.await.map_err(|_| {
 			crate::storage::StorageClientError::new("the warm store never answered")
@@ -713,13 +785,15 @@ impl crate::storage::StorageClient for HostStorageClient {
 		&self,
 		genesis_hash: [u8; 32],
 		blob: String,
+		stack: Option<String>,
 	) -> Result<(), crate::storage::StorageClientError> {
 		let receiver = {
 			let methods = &*self.inner;
-			await_js(methods.save.call2(
+			await_js(methods.save.call3(
 				&methods.store,
 				&JsValue::from_str(&hex0x(&genesis_hash)),
 				&JsValue::from_str(&blob),
+				&JsValue::from(stack),
 			))
 		};
 		receiver.await.map_err(|_| {

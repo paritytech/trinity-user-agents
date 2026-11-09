@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use clap::ValueEnum;
-use trinity_stack::Descriptor;
+use trinity_stack::{Descriptor, Pointer};
 use truapi::{
 	latest::ChainIdentifier,
 	platform::{ChainExtensionVersion, ExtensionVersionMap, HostChainEntry, HostChainSet},
@@ -16,6 +16,9 @@ mod source;
 mod stack;
 #[cfg(test)]
 mod testing;
+
+#[cfg(test)]
+pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, serve_light_specs};
 
 pub use built_in::ensure_built_in_runnable;
 
@@ -98,6 +101,7 @@ pub struct StackArg {
 /// read, so none of them fails.
 #[derive(Debug)]
 pub struct Stack {
+	pointer: Pointer,
 	descriptor: Descriptor,
 	chain_backend: ChainBackend,
 	chains: Roles<ChainEndpoint>,
@@ -152,6 +156,16 @@ impl Stack {
 	/// The `DotnsPopController` address, the stack's `dotns.popController`.
 	pub fn pop_controller(&self) -> [u8; 20] {
 		self.pop_controller
+	}
+
+	/// What identifies the stack, as its pointer gives it.
+	pub fn stack_id(&self) -> String {
+		self.pointer.stack_id()
+	}
+
+	/// The descriptor this stack reads.
+	pub fn descriptor(&self) -> &Descriptor {
+		&self.descriptor
 	}
 
 	/// How this run reaches the chains, from `--chain-backend`.

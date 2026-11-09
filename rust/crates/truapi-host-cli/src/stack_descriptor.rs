@@ -53,10 +53,10 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 	}
 }
 
-/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
-/// key a link carries, or a local descriptor file, signed or not. Fails when it is unreachable,
-/// breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
-pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
+/// The pointer and the descriptor a `--stack` value points to: a link or a URL, fetched and
+/// checked against the key a link carries, or a local descriptor file, signed or not. Fails when
+/// it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn load_descriptor(stack: &str) -> Result<(Pointer, Descriptor)> {
 	let (pointer, bytes) = read_stack(stack, None).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
@@ -66,7 +66,7 @@ pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	Ok(accepted.stack.descriptor)
+	Ok((pointer, accepted.stack.descriptor))
 }
 
 /// One value for each chain role a host routes.

@@ -4,10 +4,7 @@
 //! `truapi-provider` connects to it on the selected backend. When a
 //! connection's response stream ends, the core's chain runtime connects again.
 
-use std::{
-	collections::BTreeMap,
-	sync::{Arc, Mutex, PoisonError},
-};
+use std::sync::Arc;
 
 use clap::ValueEnum;
 use futures::{
@@ -25,6 +22,10 @@ use truapi_provider::{
 };
 
 use crate::network::{ChainEndpoint, Stack};
+
+mod light_stack;
+
+pub use light_stack::{MissingSpec, StackLightClient};
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -65,9 +66,9 @@ pub struct CliChainProvider {
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the network with this product
-	/// namespace; see [`light_client`].
-	LightClient(String),
+	/// The process's light client for the stack, or why it has none; see
+	/// [`StackLightClient::of`].
+	LightClient(Result<Arc<StackLightClient>, String>),
 }
 
 impl CliChainProvider {
@@ -84,7 +85,9 @@ impl CliChainProvider {
 					})
 					.build(),
 			)),
-			ChainBackend::LightClient => Backend::LightClient(network.namespace().to_owned()),
+			ChainBackend::LightClient => Backend::LightClient(
+				StackLightClient::of(network).map_err(|error| error.to_string()),
+			),
 		};
 		Self { people_genesis: network.genesis().people, routed_endpoints, backend }
 	}
@@ -98,10 +101,10 @@ impl CliChainProvider {
 	/// long sync would run into that deadline.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
-		if let (Backend::LightClient(network_id), Some(chain)) =
+		if let (Backend::LightClient(light), Some(chain)) =
 			(&self.backend, self.chain_for(genesis_hash))
 		{
-			wait_until_synced(&*light_client(network_id)?, chain.genesis).await?;
+			wait_until_synced(light_client(light)?.provider(), chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -139,25 +142,19 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient(network_id) => light_client(network_id)?.connect(chain).await,
+			Backend::LightClient(light) => light_client(light)?.connect(chain).await,
 		}
 	}
 }
 
-/// The process's light client for `network`, its chains kept running between
-/// uses. Shared, because each `EmbeddedChainProvider` runs its own smoldot.
-fn light_client(network: &str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
-	static CLIENTS: Mutex<BTreeMap<String, Arc<EmbeddedChainProvider>>> =
-		Mutex::new(BTreeMap::new());
-
-	let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
-	if let Some(client) = clients.get(network) {
-		return Ok(Arc::clone(client));
+/// The stack's light client, or the reason the stack cannot have one.
+fn light_client(
+	light: &Result<Arc<StackLightClient>, String>,
+) -> Result<&StackLightClient, ProviderError> {
+	match light {
+		Ok(light) => Ok(light),
+		Err(reason) => Err(ProviderError::Host { reason: reason.clone() }),
 	}
-	let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
-	let client = Arc::new(builder.keep_chains_running().build());
-	clients.insert(network.to_owned(), Arc::clone(&client));
-	Ok(client)
 }
 
 /// Waits until `light` has synced `genesis_hash`; see [`synced_or_stalled`].

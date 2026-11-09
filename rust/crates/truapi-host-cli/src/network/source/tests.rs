@@ -22,16 +22,11 @@ fn test_network_with_stack_error() {
 	}
 }
 
-/// The light client has chain specs only for the networks truapi-provider
-/// bundles, so a stack, whatever its namespace, fails before the command
-/// starts rather than on every connect.
+/// The light client takes its chain specs from the stack's descriptor, so a
+/// stack runs on either backend.
 #[test]
-fn test_light_client_with_stack_error() {
-	let Err(error) = NetworkSource::new(ChainBackend::LightClient, None, stack_arg(STACK_ENV))
-	else {
-		panic!("light client accepted with a stack");
-	};
-	assert!(error.to_string().contains(STACK_ENV));
-	assert!(NetworkSource::new(ChainBackend::Rpc, None, stack_arg(STACK_ENV)).is_ok());
-	assert!(NetworkSource::new(ChainBackend::LightClient, None, None).is_ok());
+fn test_stack_on_either_backend() {
+	for chain_backend in [ChainBackend::Rpc, ChainBackend::LightClient] {
+		assert!(NetworkSource::new(chain_backend, None, stack_arg(STACK_ENV)).is_ok());
+	}
 }

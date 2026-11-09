@@ -60,7 +60,11 @@ pub mod platform;
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 mod provider;
 #[cfg(feature = "smoldot")]
+mod stack;
+#[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(test, feature = "smoldot"))]
+mod test_stack;
 #[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
 mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
@@ -84,6 +88,8 @@ pub use lifecycle::{ChainHealth, ChainLifecycle, ChainPhase, StallReason};
 pub use networks::{NetworkChains, known_networks};
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 pub use provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder};
+#[cfg(feature = "smoldot")]
+pub use stack::LightStack;
 #[cfg(feature = "smoldot")]
 pub use storage::{StorageClient, StorageClientError};
 

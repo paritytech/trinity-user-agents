@@ -141,19 +141,6 @@ fn a_stalled_relay_fails_the_wait() {
 	);
 }
 
-/// A chain dropped between uses would sync again from its checkpoint and
-/// start with no peers.
-#[tokio::test]
-async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
-	let network = Network::default().bundled_stack(ChainBackend::LightClient);
-	let provider = CliChainProvider::new(&network);
-
-	drop(provider.connect(network.genesis().people).await.expect("add People"));
-
-	let light = light_client(network.namespace()).expect("the default network is bundled");
-	assert!(light.is_connected(network.genesis().people));
-}
-
 /// Ignored by default; needs network access to paseo-next-v2's chains. The
 /// light client syncs from its bundled checkpoint first, so it runs longer.
 ///
@@ -176,8 +163,9 @@ async fn the_light_client_reaches_paseo_next_v2() {
 		.rpc_client(network.genesis().asset_hub)
 		.await
 		.expect("connect to Asset Hub");
-	let light = light_client(network.namespace()).expect("paseo-next-v2 is bundled");
+	let light = StackLightClient::of(&network).expect("the stack has distinct genesis hashes");
 	let state = light
+		.provider()
 		.lifecycle(network.genesis().asset_hub)
 		.expect("Asset Hub is running")
 		.next()

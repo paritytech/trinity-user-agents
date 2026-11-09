@@ -5,15 +5,22 @@ use super::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 /// A client whose `load` and `save` record what they were called with, so a
-/// test can prove the wasm boundary actually reaches the object the host passed.
-fn recording_client(calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>) -> JsValue {
+/// test can prove the wasm boundary actually reaches the object the host
+/// passed. `load` answers `stored`, and a call without a stack records `-`.
+fn recording_client(
+	calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+	stored: String,
+) -> JsValue {
 	let client = js_sys::Object::new();
 
 	let load_calls = std::rc::Rc::clone(&calls);
-	let load = Closure::<dyn FnMut(String) -> JsValue>::new(move |genesis: String| {
-		load_calls.borrow_mut().push(format!("load {genesis}"));
-		JsValue::from_str("stored-blob")
-	});
+	let load = Closure::<dyn FnMut(String, JsValue) -> JsValue>::new(
+		move |genesis: String, stack: JsValue| {
+			let stack = stack.as_string().unwrap_or_else(|| "-".to_owned());
+			load_calls.borrow_mut().push(format!("load {genesis} {stack}"));
+			JsValue::from_str(&stored)
+		},
+	);
 	js_sys::Reflect::set(&client, &JsValue::from_str("load"), load.as_ref()).expect("set load");
 	load.forget();
 
@@ -48,15 +55,21 @@ fn connection_types_read_the_fields_a_host_names() {
 fn the_exported_names_match_the_documented_ones() {
 	let mut builder = ChainProviderBuilder::new();
 	let handle = JsValue::from(builder.build().expect("an empty builder builds"));
-	for name in ["connect", "lifecycle", "loadDatabase", "saveDatabase"] {
+	for name in ["connect", "lifecycle", "loadDatabase", "saveDatabase", "addLightSpec"] {
 		let found = js_sys::Reflect::get(&handle, &JsValue::from_str(name))
 			.expect("the handle is an object");
 		assert!(found.is_function(), "the provider does not export `{name}`");
 	}
 
 	let builder = JsValue::from(ChainProviderBuilder::new());
-	let mut expected =
-		vec!["setStorage", "setDatabaseContent", "setConnectionTypes", "addRpcChain"];
+	let mut expected = vec![
+		"setStorage",
+		"setDatabaseContent",
+		"setConnectionTypes",
+		"addRpcChain",
+		"setStack",
+		"addLightSpec",
+	];
 	if cfg!(feature = "networks") {
 		expected.push("addNetwork");
 	}
@@ -115,7 +128,10 @@ async fn the_host_client_is_called_with_the_genesis_hash() {
 	let mut builder = ChainProviderBuilder::new();
 	builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 	builder
-		.set_storage(recording_client(std::rc::Rc::clone(&calls)))
+		.set_storage(recording_client(
+			std::rc::Rc::clone(&calls),
+			crate::storage::seal(None, "stored-blob"),
+		))
 		.expect("the client has load and save");
 	let provider = builder.build().expect("builds");
 
@@ -123,7 +139,56 @@ async fn the_host_client_is_called_with_the_genesis_hash() {
 		provider.load_database(&genesis).await.expect("the client answers"),
 		"the client returned a blob, so one is now in hand"
 	);
-	assert_eq!(calls.borrow().as_slice(), [format!("load {genesis}")]);
+	assert_eq!(calls.borrow().as_slice(), [format!("load {genesis} -")]);
+}
+
+/// A store serving more than one stack tells their databases apart by the
+/// stack it is called with, and a host may hand over a chain's spec on either
+/// side of `build`.
+#[wasm_bindgen_test]
+async fn a_stack_provider_names_its_stack_to_the_client() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, descriptor_json, genesis};
+
+	let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
+	let link = "polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json";
+	let (relay, people) = (hex0x(&genesis(RELAY_SPEC)), hex0x(&genesis(PEOPLE_SPEC)));
+
+	let mut builder = ChainProviderBuilder::new();
+	assert!(
+		builder.add_light_spec(&relay, RELAY_SPEC.as_bytes()).is_err(),
+		"a spec has no descriptor to be checked against before setStack"
+	);
+	builder
+		.set_stack(link, &descriptor)
+		.expect("an unsigned link opens a plain descriptor");
+	assert!(
+		builder.add_light_spec(&relay, PEOPLE_SPEC.as_bytes()).is_err(),
+		"People's spec is not the relay's"
+	);
+	builder
+		.add_light_spec(&relay, RELAY_SPEC.as_bytes())
+		.expect("a refused spec leaves the builder usable");
+	builder
+		.set_storage(recording_client(
+			std::rc::Rc::clone(&calls),
+			crate::storage::seal(Some("one"), "stored-blob"),
+		))
+		.expect("the client has load and save");
+	let provider = builder.build().expect("builds");
+
+	assert!(
+		provider.load_database(&people).await.is_err(),
+		"People has no spec yet, so the provider does not serve it"
+	);
+	provider
+		.add_light_spec(&people, PEOPLE_SPEC.as_bytes())
+		.expect("the spec matches the descriptor");
+	assert!(provider.load_database(&people).await.expect("the client answers"));
+	assert_eq!(
+		calls.borrow().as_slice(),
+		[format!("load {relay} {STACK_ID}"), format!("load {people} {STACK_ID}")]
+	);
 }
 
 /// The first `addRpcChain` turns the catalog off. A host that mixes remote
@@ -154,7 +219,7 @@ async fn the_first_add_rpc_chain_turns_the_catalog_off() {
 	let mut served = Vec::new();
 	for mut builder in [catalog_only, remote_only, network_then_remote] {
 		builder
-			.set_storage(recording_client(std::rc::Rc::default()))
+			.set_storage(recording_client(std::rc::Rc::default(), String::new()))
 			.expect("the client has load and save");
 		let provider = builder.build().expect("builds");
 		let mut relays = Vec::new();
@@ -176,7 +241,10 @@ async fn a_seeded_blob_beats_the_client() {
 	let mut builder = ChainProviderBuilder::new();
 	builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 	builder
-		.set_storage(recording_client(std::rc::Rc::clone(&calls)))
+		.set_storage(recording_client(
+			std::rc::Rc::clone(&calls),
+			crate::storage::seal(None, "stored-blob"),
+		))
 		.expect("the client has load and save");
 	builder
 		.set_database_content(&genesis, "seeded-blob".to_owned())
