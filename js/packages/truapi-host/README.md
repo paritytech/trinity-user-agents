@@ -28,23 +28,25 @@ The package exposes tree-shakeable subpath exports — import only what your env
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
-`ProductRuntimeConfig` configures both host roles. Its `stack` is the Trinity
-stack the host build runs: `pointer`, the stack's link
-(`polkadotapp://stack?key=0x…&url=…`), and `descriptor`, the bytes of the
-signed copy the build bundles, which the core verifies against the pointer's
-key. Every chain the core uses, the network `getChainInfo` reports, and the TLD
-a signing host derives its reserved identities under come from that
-descriptor. The core refuses a pointer without a key, a descriptor without a
-People or Bulletin chain, and a stack that uses Polkadot's genesis hashes or
-the `dot` TLD unless `allowsReservedValues` is set, which only a Polkadot or
-Polkadot-fork build does. A stack without an Asset Hub resolves no product
-manifest from dotNS, so every cross-product grant not already cached is
-refused.
 
-The test host has no descriptor to bundle, so it passes `testStack` in place of
-`stack`: the network, the TLD and each chain's genesis hash. Only the
-`wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
-`MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
+`ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
+the host build runs:
+
+- `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
+- `descriptor`: the bytes of the signed copy the build bundles. The core checks
+  it against the pointer's key.
+- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
+  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+
+The core takes every chain it uses, the network `getChainInfo` reports and the
+signing host's TLD from the descriptor. It refuses a pointer without a key and a
+descriptor without a People or Bulletin chain. Without an Asset Hub no product
+manifest resolves, so a cross-product grant that is not cached is refused.
+
+The test host has no descriptor, so it passes `testStack` instead: the network,
+the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+`mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
+fixture builds it from `networks`.
 
 ## Bundler requirements
 
