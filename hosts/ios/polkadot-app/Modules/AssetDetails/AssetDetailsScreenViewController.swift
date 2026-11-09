@@ -14,13 +14,10 @@ final class AssetDetailsScreenViewController: UIViewController {
     private weak var origin: PocketOrigin?
     private let state = AssetDetailsScreenState()
     private lazy var hosting = UIHostingController(
-        rootView: AssetDetailsScreenRoot(
-            viewModel: viewModel,
-            state: state,
-            onClose: { [weak self] in self?.close() }
-        )
+        rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var backSwipe = PocketBackSwipe(screen: self)
+    private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private let titleLabel: PolkadotUI.Label = .create { view in
         view.typography = .headlineSmall
         view.textColor = .fgPrimary
@@ -47,6 +44,7 @@ final class AssetDetailsScreenViewController: UIViewController {
         setupTitle()
         setupHosting()
         backSwipe.install(ahead: [])
+        pullDown.install()
     }
 
     // The stack's own swipes would pop the screen beside its back swipe.
@@ -87,9 +85,10 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
         .balance
     }
 
-    /// The card's frame on screen, wherever scrolling has moved it. The flight uses only its top-left corner.
+    /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
-        view.convert(state.cardFrame, from: nil)
+        let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
+        return view.convert(card, from: nil)
     }
 
     /// Lets the Pocket show behind the card.
@@ -184,11 +183,10 @@ private final class AssetDetailsScreenState {
     @ObservationIgnored var cardFrame: CGRect = .zero
 }
 
-/// The Balance card with its details open. The details stay under the card, and a drag on the card closes the screen.
+/// The Balance card with its details open, the details under the card.
 private struct AssetDetailsScreenRoot: View {
     let viewModel: AssetDetailsViewModel
     let state: AssetDetailsScreenState
-    let onClose: () -> Void
 
     @State private var overscroll: CGFloat = 0
 
@@ -199,7 +197,6 @@ private struct AssetDetailsScreenRoot: View {
                 isExpanded: true,
                 onCardTapped: {},
                 overscroll: overscroll,
-                onCollapse: onClose,
                 isCardHidden: state.isCardHidden
             )
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { state.cardFrame = $0 }

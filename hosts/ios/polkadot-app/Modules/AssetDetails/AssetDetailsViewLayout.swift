@@ -8,7 +8,6 @@ struct AssetDetailsView: View {
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
-    var onCollapse: (() -> Void)?
     var isCardHidden: Bool = false
 
     #if DEBUG
@@ -27,14 +26,12 @@ struct AssetDetailsView: View {
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil,
         isCardHidden: Bool = false
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
-        self.onCollapse = onCollapse
         self.isCardHidden = isCardHidden
     }
 
@@ -42,7 +39,6 @@ struct AssetDetailsView: View {
         DSExpandableCardLayout(
             isExpanded: isExpanded,
             overscroll: overscroll,
-            onCollapse: onCollapse,
             card: { headerCard },
             details: { expandedBody }
         )
