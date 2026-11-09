@@ -72,7 +72,7 @@ use truapi::latest::{
 	HostPaymentTopUpStatusSubscribeItem,
 };
 
-pub use crate::host_logic::funding_activity::FundingBookEntry;
+pub use crate::host_logic::funding::FundingBookEntry;
 pub use book::FundingSessionBook;
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
@@ -477,12 +477,6 @@ impl FundingRegistry {
 		entries
 	}
 
-	/// The activity with the sessions history leaves out, worked out again
-	/// only once a session changed.
-	pub fn activity_view(&self) -> crate::host_logic::funding_activity::ActivityView {
-		self.book.activity(|| self.entries(current_unix_millis()), || self.history())
-	}
-
 	/// Install the core database the sessions are stored in. Set-once;
 	/// returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -848,7 +842,8 @@ impl FundingRegistry {
 	}
 
 	/// Every ended session, held in full or compacted into the pack, as
-	/// summaries newest first, each once: what the host shows as history.
+	/// summaries newest first, each once: what the host shows as history. A
+	/// cancel that moved nothing is left out.
 	pub fn history(&self) -> Vec<FundingSessionSummary> {
 		let mut history: Vec<_> = {
 			let held = self.lock_held();
@@ -862,10 +857,22 @@ impl FundingRegistry {
 				.values()
 				.filter(|packed| !held.sessions.contains_key(&packed.summary.intent))
 				.map(|packed| packed.summary.clone());
-			recorded.chain(compacted).collect()
+			recorded
+				.chain(compacted)
+				.filter(|summary| !summary.cancelled_unmoved())
+				.collect()
 		};
 		history.sort_by_key(|summary| core::cmp::Reverse(summary.settled_at_ms()));
 		history
+	}
+
+	/// Ended session `intent`'s summary, held in full or compacted.
+	pub fn summary(&self, intent: &str) -> Option<FundingSessionSummary> {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
+			Some(session) => session.is_terminal().then(|| session.summary()),
+			None => held.pack.get(intent).map(|packed| packed.summary.clone()),
+		}
 	}
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
@@ -1132,6 +1139,13 @@ impl FundingRegistry {
 			for session in draft.sessions.values_mut() {
 				if session.expire_if_due(now_ms) {
 					changed.push(session.intent.clone());
+				}
+				// Nothing to tell the user about a cancel that moved nothing.
+				if session.is_terminal() &&
+					!session.acknowledged &&
+					session.summary().cancelled_unmoved()
+				{
+					session.acknowledged = true;
 				}
 				if session.lapse_cancel_offer(now_ms) {
 					changed.push(session.intent.clone());
@@ -1682,7 +1696,9 @@ impl FundingRegistry {
 					// The record the session has now, or the one it was queued
 					// with once it is compacted.
 					let session = self.get(&intent).or(queued.map(|queued| *queued));
-					self.book.session_changed(&intent, &item, session.as_ref());
+					if session.is_none() {
+						self.book.overlay_closed(&intent);
+					}
 					if let Some(feed) = feed {
 						let progress =
 							session.as_ref().map(|session| session.progress(current_unix_millis()));
@@ -2069,33 +2085,6 @@ impl RuntimeServices {
 		intent: &str,
 	) -> Result<bool, FundingSessionError> {
 		self.funding().acknowledge(current_unix_millis(), intent).await
-	}
-
-	/// Acknowledge that the user saw how the ended sessions `intents` went,
-	/// and with them the ended sessions history leaves out, so none is owed
-	/// to the host again. Returns the sessions acknowledged.
-	pub async fn acknowledge_funding_shown(
-		&self,
-		intents: Vec<String>,
-	) -> Result<Vec<String>, FundingSessionError> {
-		let funding = self.funding();
-		let unacknowledged = funding.book().unacknowledged();
-		let hidden = funding
-			.activity_view()
-			.hidden
-			.into_iter()
-			.filter(|intent| unacknowledged.contains(intent));
-		let mut acknowledged = Vec::new();
-		for intent in intents.into_iter().chain(hidden) {
-			if acknowledged.contains(&intent) {
-				continue;
-			}
-			if self.acknowledge_funding_session(&intent).await? {
-				acknowledged.push(intent.clone());
-			}
-			funding.book().acknowledged(&intent);
-		}
-		Ok(acknowledged)
 	}
 
 	/// Cancel session `intent` at the user's request, and say what that did.

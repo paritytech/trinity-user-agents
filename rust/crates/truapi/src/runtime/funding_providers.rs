@@ -369,7 +369,6 @@ impl RuntimeServices {
 			},
 		};
 		let rails = funding_view::routed_rails(&candidates);
-		let default_rail = funding_view::default_rail(&rails);
 		let tokens = funding_view::crypto_tokens(
 			&candidates,
 			selection.as_ref().and_then(|selection| selection.network.as_deref()),
@@ -384,7 +383,6 @@ impl RuntimeServices {
 			limits,
 			networks,
 			rails,
-			default_rail,
 			asset,
 			tokens,
 			detected_country: detected_country.flatten(),
