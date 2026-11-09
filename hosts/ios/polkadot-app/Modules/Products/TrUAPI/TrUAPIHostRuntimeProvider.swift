@@ -341,17 +341,17 @@ private extension TrUAPIHostRuntimeProvider {
         guard let stream = remoteConfig?.remoteConfigStream() else { return }
 
         fundingProvidersObservation?.cancel()
-        fundingProvidersObservation = Task { [weak self, weak runtime, logger] in
+        fundingProvidersObservation = Task { [weak self, weak runtime] in
             do {
                 try await Self.followRefreshes(
                     of: stream,
                     listed: initial,
                     bundled: bundled,
-                    logger: logger
+                    logger: self?.logger
                 ) { providers in
                     guard let self, let runtime, !Task.isCancelled else { return false }
 
-                    apply(fundingProviders: providers, on: runtime)
+                    self.apply(fundingProviders: providers, on: runtime)
                     return true
                 }
             } catch {
