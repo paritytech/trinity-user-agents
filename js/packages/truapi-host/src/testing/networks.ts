@@ -6,6 +6,7 @@
 import {
   mockTestStack,
   type MockHostConfig,
+  type MockRuntimeConfig,
   type TestStack,
 } from "../web/create-mock-host.js";
 
@@ -124,7 +125,7 @@ export interface NetworkOptions {
   networks?: NetworkConfig[];
   chain?: NetworkConfig;
   mock?: MockHostConfig;
-  runtimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
 }
 
 /**
@@ -135,7 +136,7 @@ export interface NetworkOptions {
 export function withNetworks(
   options: NetworkOptions,
   loopbackStatements: LoopbackStatements = false,
-): { mock?: MockHostConfig; runtimeConfig?: Record<string, unknown> } {
+): { mock?: MockHostConfig; runtimeConfig?: Partial<MockRuntimeConfig> } {
   if (options.chain && options.networks) {
     throw new Error(
       "testHost: pass either `chain` (one chain, the older " +
