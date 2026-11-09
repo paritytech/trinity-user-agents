@@ -45,21 +45,29 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.app.root.domain.main.DockletHideCause
+import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
+import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotAction
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarBaseInset
 import io.paritytech.polkadotapp.common.presentation.tabbar.dockletSlotTap
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
+import io.paritytech.polkadotapp.design.components.docklet.DockletLanding
 import io.paritytech.polkadotapp.design.components.docklet.DockletMaterials
 import io.paritytech.polkadotapp.design.components.docklet.DockletStep
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackdrop
+import io.paritytech.polkadotapp.design.components.docklet.dockletSearchBackStep
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletCardState
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletHideState
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
@@ -95,9 +103,14 @@ fun RootNavBarOverlay(
     chainsHealth: ChainHealthIndicatorsModel,
     scannerTooltipVisible: Boolean,
     openScanPanelRequests: Flow<Unit>,
+    dockletTip: DockletTip?,
+    dockletInputs: Flow<DockletInput>,
     backdropSource: View?,
     onTabSelected: (BottomTab) -> Unit,
     onScannerTooltipDismiss: () -> Unit,
+    onDockletHidden: (DockletHideCause) -> Unit,
+    takeSessionPeek: () -> Boolean,
+    onDockletTipDismiss: () -> Unit,
     onAppClick: (Long) -> Unit,
     onAppClose: (Long) -> Unit,
     onOffset: (Dp) -> Unit,
@@ -138,8 +151,38 @@ fun RootNavBarOverlay(
         cardState.open(step)
         pull.openScan()
     }
+    val changeCardStep: (DockletStep) -> Unit = { step ->
+        cardState.changeStep(step)
+        keyboardRequested = step == DockletStep.Step2
+        if (step == DockletStep.Step1) focusManager.clearFocus()
+    }
+    var searchAfterRestore by remember { mutableStateOf(false) }
+    var dockletAreas by remember { mutableStateOf<ImmutableList<DockletFrame>>(persistentListOf()) }
+    val hideState = rememberDockletHideState { landing ->
+        when (landing) {
+            DockletLanding.HiddenBySwipe, DockletLanding.HiddenQuietly -> {
+                pull.collapsePanels()
+                onDockletHidden(if (landing == DockletLanding.HiddenQuietly) DockletHideCause.Auto else DockletHideCause.Swipe)
+                if (!hidden && takeSessionPeek()) peek()
+            }
+            DockletLanding.Shown -> {
+                onDockletTipDismiss()
+                if (searchAfterRestore) {
+                    searchAfterRestore = false
+                    openCard(DockletStep.Step1)
+                }
+            }
+        }
+    }
 
-    openScanPanelRequests.collectAsEffect { _, _ -> openCard(DockletStep.Step1) }
+    openScanPanelRequests.collectAsEffect { _, _ ->
+        if (hideState.countsAsHidden) {
+            searchAfterRestore = true
+            hideState.restore()
+        } else {
+            openCard(DockletStep.Step1)
+        }
+    }
 
     LaunchedEffect(pull.scanExpanded) {
         if (pull.scanExpanded) {
@@ -154,8 +197,11 @@ fun RootNavBarOverlay(
     val cardOpen = !hidden && pull.scanExpanded
     // Composed only while open, so it registers after the screens' own BackHandlers and runs before them.
     if (cardOpen) {
-        BackHandler { pull.collapsePanels() }
-        OverlayBackCallback { pull.collapsePanels() }
+        val searchBack = {
+            if (dockletSearchBackStep(cardState.step) == DockletStep.Step1) changeCardStep(DockletStep.Step1) else pull.collapsePanels()
+        }
+        BackHandler(onBack = searchBack)
+        OverlayBackCallback(onBack = searchBack)
     }
 
     val scrimVisible by remember(hidden, forceShown) {
@@ -220,6 +266,8 @@ fun RootNavBarOverlay(
                     keyboardRequested = keyboardRequested,
                     pullState = pull,
                     forceShown = forceShown,
+                    hideState = hideState,
+                    onDockletAreas = { dockletAreas = it },
                     onSlotClick = { target ->
                         when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown, cardOpen = pull.scanExpanded)) {
                             DockletSlotAction.CloseCard -> pull.collapsePanels()
@@ -238,11 +286,7 @@ fun RootNavBarOverlay(
                         pull.collapsePanels()
                         cardState.close()
                     },
-                    onCardStepChange = { step ->
-                        cardState.changeStep(step)
-                        keyboardRequested = step == DockletStep.Step2
-                        if (step == DockletStep.Step1) focusManager.clearFocus()
-                    },
+                    onCardStepChange = changeCardStep,
                     onKeyboardRequest = { keyboardRequested = true },
                     onAppClick = onAppClick,
                     onAppClose = onAppClose,
@@ -252,6 +296,19 @@ fun RootNavBarOverlay(
                     onBarWidthChange = pull::setBarWidth,
                 )
             }
+        }
+
+        if (!hidden) {
+            RootNavBarHide(
+                hideState = hideState,
+                searchOpen = pull.scanExpanded,
+                panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
+                scannerTooltipVisible = tooltipVisible,
+                dockletTip = dockletTip,
+                dockletAreas = { dockletAreas },
+                inputs = dockletInputs,
+                onTipDismiss = onDockletTipDismiss,
+            )
         }
     }
 }

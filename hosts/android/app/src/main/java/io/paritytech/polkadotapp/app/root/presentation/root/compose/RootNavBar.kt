@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,7 +45,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -74,11 +80,14 @@ import io.paritytech.polkadotapp.design.components.docklet.DockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.DockletCard
 import io.paritytech.polkadotapp.design.components.docklet.DockletCardFrames
 import io.paritytech.polkadotapp.design.components.docklet.DockletCardState
+import io.paritytech.polkadotapp.design.components.docklet.DockletDrawbridge
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
 import io.paritytech.polkadotapp.design.components.docklet.DockletGeometry
+import io.paritytech.polkadotapp.design.components.docklet.DockletHideState
 import io.paritytech.polkadotapp.design.components.docklet.DockletSlot
 import io.paritytech.polkadotapp.design.components.docklet.DockletStep
 import io.paritytech.polkadotapp.design.components.docklet.liftDockWhileKeyboardLeaves
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletHideSwipe
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletKeyboardHeight
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -96,6 +105,7 @@ import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixi
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -115,6 +125,9 @@ private val AppMenuShadowElevation = 8.dp
 
 private val PillBodyHeight = DockletGeometry.PillDiameter - DockletGeometry.LobeDepth
 
+private val SystemBackExclusionLimit = 200.dp
+private val DockExclusionMargin = 24.dp
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RootNavBar(
@@ -130,6 +143,8 @@ fun RootNavBar(
     keyboardRequested: Boolean,
     pullState: TabBarPullState,
     forceShown: Boolean,
+    hideState: DockletHideState,
+    onDockletAreas: (ImmutableList<DockletFrame>) -> Unit,
     onSlotClick: (DockletSlotTarget) -> Unit,
     onOpenCard: (DockletStep) -> Unit,
     onCloseCard: () -> Unit,
@@ -150,6 +165,7 @@ fun RootNavBar(
     val networkStatusItem = FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR.isEnabled
     val currentOnRestingHeightChange by rememberUpdatedState(onRestingHeightChange)
     val currentOnBarWidthChange by rememberUpdatedState(onBarWidthChange)
+    val currentOnDockletAreas by rememberUpdatedState(onDockletAreas)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val dock = DockletGeometry.dockFrame(maxWidth, maxHeight, navigationInset, threeButtonNavigation)
@@ -174,6 +190,22 @@ fun RootNavBar(
                     step2 = DockletGeometry.step2CardFrame(dock, keyboardTop(), statusInset),
                 )
             }
+        }
+        val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
+        SideEffect { hideState.drawbridge = drawbridge }
+        val excludeFromBack = forceShown && !hideState.countsAsHidden && !cardState.isOpen
+        val poseBackdrop = backdrop.takeUnless { hideState.countsAsHidden && !hideState.isMoving }
+        val dockMarginPx = with(density) { DockExclusionMargin.toPx() }
+        val screenWidth = maxWidth
+        val dockBottomGap = maxHeight - dock.bottom
+        if (excludeFromBack) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(SystemBackExclusionLimit)
+                    .systemGestureExclusion(),
+            )
         }
         val restingHeight = maxHeight - dock.top + DockletGeometry.PillProud
         LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
@@ -202,68 +234,106 @@ fun RootNavBar(
             }.toImmutableList()
         }
 
-        Column(
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = dock.left, bottom = maxHeight - dock.bottom)
-                .width(dock.width)
-                .systemGestureExclusion()
-                .pullOutGestures(pullState, forceShown, density)
-                .grabBandAbove(SWIPE_AREA_EXPANSION),
+                .fillMaxSize()
+                .graphicsLayer {
+                    val pose = hideState.pose()
+                    transformOrigin = TransformOrigin(drawbridge.pivot.x / screenWidth.value, drawbridge.pivot.y / screenHeight.value)
+                    rotationZ = pose.angleDegrees
+                    translationX = pose.dx.dp.toPx()
+                    translationY = pose.dy.dp.toPx()
+                    alpha = hideState.alpha
+                },
         ) {
-            ExpandablePanel(visible = appsExpanded) {
-                OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = dock.left, bottom = dockBottomGap)
+                    .width(dock.width)
+                    .then(
+                        if (excludeFromBack) {
+                            Modifier.systemGestureExclusion {
+                                Rect(-dockMarginPx, -dockMarginPx, it.size.width + dockMarginPx, it.size.height + dockMarginPx)
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .onGloballyPositioned { coordinates ->
+                        if (!hideState.isShownAtRest) return@onGloballyPositioned
+                        val position = coordinates.positionInParent()
+                        val pill = DockletGeometry.pillFrame(dock)
+                        with(density) {
+                            currentOnDockletAreas(
+                                persistentListOf(
+                                    DockletFrame(position.x.toDp(), position.y.toDp(), coordinates.size.width.toDp(), coordinates.size.height.toDp()),
+                                    pill,
+                                    DockletFrame(dock.right, dock.top, screenWidth - dock.right, dock.height),
+                                ),
+                            )
+                        }
+                    }
+                    .then(rememberDockletHideSwipe(hideState) { forceShown && !cardState.isOpen })
+                    .pullOutGestures(pullState, forceShown, density)
+                    .grabBandAbove(SWIPE_AREA_EXPANSION),
+            ) {
+                ExpandablePanel(visible = appsExpanded) {
+                    OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
+                }
+                if (networkStatusItem) {
+                    ExpandablePanel(visible = networkStatusExpanded) {
+                        ChainHealthPanel(model = chainsHealth)
+                    }
+                }
+                VerticalSpacer { DockletGeometry.PillProud }
+                Docklet(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset {
+                            val lifted = liftedDock()
+                            val open = lerp(
+                                DockletGeometry.step1DockTop(lifted),
+                                DockletGeometry.keyboardDock(dock, keyboardTop()).top,
+                                cardState.stepProgress,
+                            )
+                            IntOffset(0, (lerp(lifted.top, open, cardState.clampedProgress) - dock.top).roundToPx())
+                        },
+                    slots = slots,
+                    cardProgress = { cardState.clampedProgress },
+                    quietFade = hideState::quietFade,
+                    backdrop = poseBackdrop,
+                )
             }
-            if (networkStatusItem) {
-                ExpandablePanel(visible = networkStatusExpanded) {
-                    ChainHealthPanel(model = chainsHealth)
+
+            val cameraActive by remember(cardState) {
+                derivedStateOf {
+                    cardState.step == DockletStep.Step1 && cardState.clampedProgress >= CAMERA_START_AT_OPENING_FRACTION
                 }
             }
-            VerticalSpacer { DockletGeometry.PillProud }
-            Docklet(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset {
-                        val lifted = liftedDock()
-                        val open = lerp(
-                            DockletGeometry.step1DockTop(lifted),
-                            DockletGeometry.keyboardDock(dock, keyboardTop()).top,
-                            cardState.stepProgress,
-                        )
-                        IntOffset(0, (lerp(lifted.top, open, cardState.clampedProgress) - dock.top).roundToPx())
-                    },
-                slots = slots,
-                cardProgress = { cardState.clampedProgress },
-                backdrop = backdrop,
-            )
-        }
-
-        val cameraActive by remember(cardState) {
-            derivedStateOf {
-                cardState.step == DockletStep.Step1 && cardState.clampedProgress >= CAMERA_START_AT_OPENING_FRACTION
+            DockletCard(
+                state = cardState,
+                frames = frames,
+                backdrop = poseBackdrop,
+                closeLabel = stringResource(RCommon.string.docklet_close_search),
+                lobeIconColor = { rememberScannerIconColor(animating = scannerTooltipVisible) },
+                onOpenRequest = onOpenCard,
+                onCloseRequest = onCloseCard,
+                onKeyboardRequest = onKeyboardRequest,
+                lobeAnchor = { ScannerTooltip(tooltipVisible = scannerTooltipVisible, onTooltipDismiss = onScannerTooltipDismiss) },
+                hideState = hideState,
+            ) {
+                ScanPanel(
+                    modifier = Modifier.fillMaxSize(),
+                    step = if (cardState.contentStep == DockletStep.Step2) AddContactStep.Search else AddContactStep.Scan,
+                    cameraActive = cameraActive,
+                    keyboardRequested = keyboardRequested,
+                    onSearchFieldClick = { onCardStepChange(DockletStep.Step2) },
+                    onScanClick = { onCardStepChange(DockletStep.Step1) },
+                    onClose = onCloseCard,
+                    onScanHandled = onScanHandled,
+                )
             }
-        }
-        DockletCard(
-            state = cardState,
-            frames = frames,
-            backdrop = backdrop,
-            closeLabel = stringResource(RCommon.string.docklet_close_search),
-            lobeIconColor = { rememberScannerIconColor(animating = scannerTooltipVisible) },
-            onOpenRequest = onOpenCard,
-            onCloseRequest = onCloseCard,
-            onKeyboardRequest = onKeyboardRequest,
-            lobeAnchor = { ScannerTooltip(tooltipVisible = scannerTooltipVisible, onTooltipDismiss = onScannerTooltipDismiss) },
-        ) {
-            ScanPanel(
-                modifier = Modifier.fillMaxSize(),
-                step = if (cardState.contentStep == DockletStep.Step2) AddContactStep.Search else AddContactStep.Scan,
-                cameraActive = cameraActive,
-                keyboardRequested = keyboardRequested,
-                onSearchFieldClick = { onCardStepChange(DockletStep.Step2) },
-                onScanClick = { onCardStepChange(DockletStep.Step1) },
-                onClose = onCloseCard,
-                onScanHandled = onScanHandled,
-            )
         }
     }
 }

@@ -5,6 +5,8 @@ import android.content.res.Resources
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.SystemBarStyle
@@ -102,6 +104,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     @Inject
     lateinit var hostEventCapture: HostEventCapture
 
+    @Inject
+    lateinit var dockletInputEvents: DockletInputEvents
+
     private val viewModel by viewModels<RootViewModel>()
 
     private val navHostFragment: NavHostFragment by lazy(LazyThreadSafetyMode.NONE) {
@@ -144,6 +149,21 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         setupChatExtensionOverlay()
         setupPaymentsSetupNotice()
         setupChainHealthBar()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) dockletInputEvents.report(DockletInput.Touch(ev.x, ev.y))
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) dockletInputEvents.report(DockletInput.Key)
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_SCROLL) dockletInputEvents.report(DockletInput.Wheel)
+        return super.dispatchGenericMotionEvent(ev)
     }
 
     override fun onNewIntent(intent: Intent) {

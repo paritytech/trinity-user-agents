@@ -78,8 +78,10 @@ fun DockletCard(
     onCloseRequest: () -> Unit,
     onKeyboardRequest: () -> Unit,
     lobeAnchor: @Composable BoxScope.() -> Unit,
+    hideState: DockletHideState,
     content: @Composable () -> Unit,
 ) {
+    val iconAlpha = { DockletDrawbridge.quietFadeAlpha(hideState.quietFade()) }
     val exclusion = remember { DockletDragExclusion() }
     val pressScale = remember { Animatable(1f) }
     val bodyGestures = rememberDockletCardGestures(
@@ -88,6 +90,7 @@ fun DockletCard(
         pressScale = pressScale,
         exclusion = exclusion,
         lobe = false,
+        hideState = hideState,
         onOpenRequest = onOpenRequest,
         onCloseRequest = onCloseRequest,
         onKeyboardRequest = onKeyboardRequest,
@@ -98,6 +101,7 @@ fun DockletCard(
         pressScale = pressScale,
         exclusion = exclusion,
         lobe = true,
+        hideState = hideState,
         onOpenRequest = onOpenRequest,
         onCloseRequest = onCloseRequest,
         onKeyboardRequest = onKeyboardRequest,
@@ -125,6 +129,7 @@ fun DockletCard(
                     open = false,
                     closeLabel = closeLabel,
                     iconColor = lobeIconColor,
+                    iconAlpha = iconAlpha,
                     onClose = onCloseRequest,
                     anchor = lobeAnchor,
                 )
@@ -147,6 +152,7 @@ fun DockletCard(
                         open = state.isOpen,
                         closeLabel = closeLabel,
                         iconColor = lobeIconColor,
+                        iconAlpha = iconAlpha,
                         onClose = onCloseRequest,
                         anchor = {},
                     )
@@ -170,6 +176,7 @@ fun DockletCard(
                     open = state.isOpen,
                     closeLabel = closeLabel,
                     iconColor = lobeIconColor,
+                    iconAlpha = iconAlpha,
                     onClose = onCloseRequest,
                     anchor = lobeAnchor,
                 )
@@ -333,6 +340,7 @@ private fun DockletCardRestPreview() {
                 onCloseRequest = {},
                 onKeyboardRequest = {},
                 lobeAnchor = {},
+                hideState = rememberDockletHideState {},
             ) {}
         }
     }

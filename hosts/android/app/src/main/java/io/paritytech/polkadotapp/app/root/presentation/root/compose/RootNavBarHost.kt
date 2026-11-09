@@ -24,6 +24,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
     val tabWarnings by viewModel.tabWarnings.collectAsStateWithLifecycle()
     val openApps by viewModel.openApps.collectAsStateWithLifecycle()
     val tooltipVisible by viewModel.isScannerTooltipVisible.collectAsStateWithLifecycle()
+    val dockletTip by viewModel.dockletTip.collectAsStateWithLifecycle()
 
     RootNavBarOverlay(
         hidden = hidden,
@@ -35,9 +36,14 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
         chainsHealth = chainsHealth,
         scannerTooltipVisible = tooltipVisible,
         openScanPanelRequests = viewModel.scanPanelOpenRequests,
+        dockletTip = dockletTip,
+        dockletInputs = viewModel.dockletInputs,
         backdropSource = backdropSource,
         onTabSelected = viewModel::onTabSelected,
         onScannerTooltipDismiss = viewModel::dismissScannerTooltip,
+        onDockletHidden = viewModel::onDockletHidden,
+        takeSessionPeek = viewModel::takeSessionPeek,
+        onDockletTipDismiss = viewModel::dismissDockletTip,
         onAppClick = viewModel::onAppClick,
         onAppClose = viewModel::onAppClose,
         onOffset = viewModel::setBarOffset,

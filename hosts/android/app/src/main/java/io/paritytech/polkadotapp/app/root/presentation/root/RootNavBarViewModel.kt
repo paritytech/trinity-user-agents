@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.app.root.presentation.root
 
 import androidx.compose.ui.unit.Dp
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.app.root.domain.main.DockletHideCause
+import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
@@ -40,6 +42,7 @@ class RootNavBarViewModel @Inject constructor(
     private val bottomNavHeightProvider: BottomNavHeightProvider,
     private val tabSelection: BottomTabSelection,
     scanPanelRequests: ScanPanelRequests,
+    dockletInputEvents: DockletInputEvents,
 ) : BaseViewModel() {
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
     val hidden: StateFlow<Boolean> = tabBarVisibilityHolder.hidden
@@ -56,6 +59,13 @@ class RootNavBarViewModel @Inject constructor(
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
 
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
+
+    val dockletInputs: SharedFlow<DockletInput> = dockletInputEvents.events
+
+    val dockletTip: StateFlow<DockletTip?>
+        field = MutableStateFlow(null)
+
+    private var sessionPeekShown = false
 
     // Selecting a tab always lands on Main (bringing the user there if needed).
     fun onTabSelected(tab: BottomTab) {
@@ -78,6 +88,22 @@ class RootNavBarViewModel @Inject constructor(
 
     fun setBarHeight(value: Dp) {
         bottomNavHeightProvider.set(value)
+    }
+
+    fun onDockletHidden(cause: DockletHideCause) {
+        val tip = interactor.dockletTipFor(cause) ?: return
+        dockletTip.value = tip
+        interactor.markDockletTipShown(tip)
+    }
+
+    fun dismissDockletTip() {
+        dockletTip.value = null
+    }
+
+    fun takeSessionPeek(): Boolean {
+        val peek = !sessionPeekShown
+        sessionPeekShown = true
+        return peek
     }
 
     fun dismissScannerTooltip() {

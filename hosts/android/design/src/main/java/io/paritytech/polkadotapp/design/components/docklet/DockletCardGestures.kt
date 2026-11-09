@@ -29,6 +29,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
 @Composable
@@ -38,6 +39,7 @@ internal fun rememberDockletCardGestures(
     pressScale: Animatable<Float, AnimationVector1D>,
     exclusion: DockletDragExclusion,
     lobe: Boolean,
+    hideState: DockletHideState,
     onOpenRequest: (DockletStep) -> Unit,
     onCloseRequest: () -> Unit,
     onKeyboardRequest: () -> Unit,
@@ -47,11 +49,11 @@ internal fun rememberDockletCardGestures(
     val currentOpenRequest by rememberUpdatedState(onOpenRequest)
     val currentCloseRequest by rememberUpdatedState(onCloseRequest)
     val currentKeyboardRequest by rememberUpdatedState(onKeyboardRequest)
-    val placement = remember { CardPlacement() }
+    val placement = remember { DockletPlacement() }
 
     return Modifier
         .onGloballyPositioned { placement.coordinates = it }
-        .pointerInput(state, exclusion, lobe) {
+        .pointerInput(state, exclusion, lobe, hideState) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 val atRest = !state.isOpen
@@ -67,10 +69,16 @@ internal fun rememberDockletCardGestures(
                     press?.let { scope.pressOut(pressScale, it) }
                     press = null
                 }
-                fun rootOf(local: Offset) = placement.coordinates?.takeIf { it.isAttached }?.localToRoot(local) ?: local
-                val downRoot = rootOf(down.position)
+                val downRoot = placement.rootOf(down.position)
                 val velocity = VelocityTracker().apply { addPosition(down.uptimeMillis, downRoot) }
                 var dragging = false
+                var hiding = false
+                var direction = DockletDirection.Undecided
+                if (atRest && hideState.isMoving) {
+                    hiding = true
+                    endPress()
+                    hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
+                }
                 var moved = 0f
                 var amount = 0f
                 val travelUp = (latestFrames().rest.top - latestFrames().step2.top)
@@ -81,6 +89,17 @@ internal fun rememberDockletCardGestures(
                     while (true) {
                         val change = awaitPointerEvent(pass).changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) {
+                            if (atRest && direction == DockletDirection.Undecided && !hiding) {
+                                val upRoot = placement.rootOf(change.position)
+                                val delta = upRoot - downRoot
+                                moved = max(moved, delta.getDistance())
+                                if (DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false) == DockletDirection.Sideways) {
+                                    hiding = true
+                                    endPress()
+                                    hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
+                                }
+                            }
+                            if (hiding) hideState.moveHide(dockletPoint(placement.rootOf(change.position)), change.uptimeMillis.milliseconds)
                             released = DockletGestures.isRelease(change.isConsumed, ownsGesture, dragging)
                             if (ownsGesture || dragging) change.consume()
                             break
@@ -89,17 +108,29 @@ internal fun rememberDockletCardGestures(
                             endPress()
                             return@awaitEachGesture
                         }
-                        val changeRoot = rootOf(change.position)
+                        val changeRoot = placement.rootOf(change.position)
                         velocity.addPosition(change.uptimeMillis, changeRoot)
                         val delta = changeRoot - downRoot
                         moved = max(moved, delta.getDistance())
                         if (atRest) {
                             val upward = (-delta.y).toDp()
-                            if (!dragging && DockletGestures.swipeUpStarted(DpOffset(delta.x.toDp(), delta.y.toDp()))) {
-                                dragging = true
-                                endPress()
-                                state.startSwipeUp()
+                            if (direction == DockletDirection.Undecided && !hiding) {
+                                direction = DockletGestures.direction(
+                                    drag = DpOffset(delta.x.toDp(), delta.y.toDp()),
+                                    settling = hideState.isMoving,
+                                )
+                                if (direction == DockletDirection.Vertical && delta.y < 0f) {
+                                    dragging = true
+                                    endPress()
+                                    state.startSwipeUp()
+                                }
+                                if (direction == DockletDirection.Sideways) {
+                                    hiding = true
+                                    endPress()
+                                    hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
+                                }
                             }
+                            if (hiding) hideState.moveHide(dockletPoint(changeRoot), change.uptimeMillis.milliseconds)
                             if (dragging) {
                                 amount = DockletGestures.swipeProgress(upward, travelUp)
                                 state.dragSwipe(amount)
@@ -118,6 +149,7 @@ internal fun rememberDockletCardGestures(
                         if (dragging || ownsGesture) change.consume()
                     }
                 } finally {
+                    if (hiding && !released) hideState.cancelDrag()
                     if (dragging && !released) {
                         state.releaseSwipeUp(0f, 0f, travelUp, onOpened = {}, onKeyboardRequest = {})
                         state.releaseSwipeDown(0f, 0f, travelDown) {}
@@ -126,6 +158,7 @@ internal fun rememberDockletCardGestures(
                 val speed = velocity.calculateVelocity().y.toDp().value
                 endPress()
                 when {
+                    hiding -> if (released) hideState.releaseHide()
                     atRest && dragging -> state.releaseSwipeUp(
                         swipeProgress = amount,
                         upwardDpPerSecond = if (released) -speed else 0f,
@@ -207,10 +240,6 @@ private fun DockletDragExclusion.contains(coordinates: LayoutCoordinates?, local
     val area = bounds ?: return false
     val layout = coordinates?.takeIf { it.isAttached } ?: return false
     return area.contains(layout.localToRoot(local))
-}
-
-private class CardPlacement {
-    var coordinates: LayoutCoordinates? = null
 }
 
 private class PressStart(val at: TimeSource.Monotonic.ValueTimeMark, val job: Job)
