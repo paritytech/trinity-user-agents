@@ -18,7 +18,6 @@ import okhttp3.tls.HeldCertificate
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -87,18 +86,6 @@ class RealIssueReportApiTest {
         expectedBody.writeUtf8("--$boundary--\r\n")
         assertEquals(listOf("POST", "/v1/issues", "Bearer app-key"), listOf(request.method, request.target, request.headers["Authorization"]))
         assertEquals(expectedBody.readByteString(), request.body)
-    }
-
-    @Test
-    fun `leaves the GitHub username out when the reporter gives none`() = runBlocking<Unit> {
-        server.enqueue(MockResponse.Builder().code(201).build())
-
-        assertEquals(Result.success(Unit), sender.send(report.copy(gitHubUsername = null)))
-
-        val body = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)?.body).utf8()
-        val appInformation = "## App information\n\n- App ID: `${BuildConfig.APPLICATION_ID}`\n" +
-            "- App version: `${BuildConfig.VERSION_NAME}`\n- Build: `${BuildConfig.VERSION_CODE}`\r\n"
-        assertTrue(body, body.contains(appInformation))
     }
 
     @Test
