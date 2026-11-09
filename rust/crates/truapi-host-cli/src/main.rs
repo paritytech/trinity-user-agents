@@ -2769,7 +2769,7 @@ async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> R
 			Ok(format!("Cancel of {intent}: {outcome}"))
 		},
 		FundingCommand::Sessions => {
-			let lines: Vec<String> = funding_host::pushed_sessions()
+			let lines: Vec<String> = funding_host::sessions(runtime)
 				.into_iter()
 				.map(|(intent, status)| format!("{intent} {status}"))
 				.collect();

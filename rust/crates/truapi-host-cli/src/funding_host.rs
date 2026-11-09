@@ -39,10 +39,8 @@ use std::{
 	sync::{Arc, Mutex, Weak},
 };
 
-use futures::{
-	channel::mpsc,
-	stream::{self, BoxStream, StreamExt},
-};
+use futures::stream::{self, BoxStream, StreamExt};
+use tokio::sync::watch;
 use truapi::{
 	FundingFeed, SigningHostRuntime,
 	host_logic::{
@@ -139,10 +137,9 @@ pub struct CliFundingHost {
 	runtime: Weak<SigningHostRuntime>,
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
-	/// What the core last offered each open overlay.
-	options: Mutex<HashMap<String, FundingOptions>>,
-	/// Where each open overlay takes the quote lists the core pushes.
-	quote_lists: Mutex<HashMap<String, mpsc::UnboundedSender<FundingQuoteList>>>,
+	/// Bumped on every quote list the core pushes, so an overlay waiting on
+	/// its quotes reads the core's latest list again.
+	quotes_pushed: watch::Sender<u64>,
 }
 
 impl CliFundingHost {
@@ -175,8 +172,7 @@ impl CliFundingHost {
 			transcript,
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
-			options: Mutex::new(HashMap::new()),
-			quote_lists: Mutex::new(HashMap::new()),
+			quotes_pushed: watch::Sender::new(0),
 		});
 		runtime.set_funding_feed(host.clone());
 		runtime.set_funding_platform(host);
@@ -233,20 +229,12 @@ impl CliFundingHost {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 
-	fn lock_options(&self) -> std::sync::MutexGuard<'_, HashMap<String, FundingOptions>> {
-		self.options.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-	}
-
 	/// What session `intent`'s overlay offers once the user takes its
 	/// defaults: the core's default rail and, for crypto, the first token it
 	/// lists. The core answers a selection with the options it leads to
 	/// before `select_funding_options` returns.
-	fn select_defaults(
-		&self,
-		runtime: &SigningHostRuntime,
-		intent: &str,
-	) -> Option<FundingOptions> {
-		let offered = self.lock_options().get(intent).cloned()?;
+	fn select_defaults(runtime: &SigningHostRuntime, intent: &str) -> Option<FundingOptions> {
+		let offered = runtime.funding_options(intent)?;
 		let rail = offered.default_rail;
 		let token = match rail {
 			FundingRail::Crypto => offered.tokens.first().cloned(),
@@ -256,13 +244,7 @@ impl CliFundingHost {
 			intent,
 			FundingSelection { rail, asset: token, network: None, country: None, currency: None },
 		);
-		self.lock_options().get(intent).cloned()
-	}
-
-	fn lock_quote_lists(
-		&self,
-	) -> std::sync::MutexGuard<'_, HashMap<String, mpsc::UnboundedSender<FundingQuoteList>>> {
-		self.quote_lists.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+		runtime.funding_options(intent)
 	}
 
 	/// Ask for session `intent`'s quotes and wait for the first list in
@@ -273,21 +255,23 @@ impl CliFundingHost {
 		intent: &str,
 		ask: FundingQuoteAsk,
 	) -> Vec<FundingQuoteRow> {
-		let (lists, mut received) = mpsc::unbounded();
-		self.lock_quote_lists().insert(intent.to_string(), lists);
+		let mut pushed = self.quotes_pushed.subscribe();
 		let request_id = runtime.request_funding_quotes(intent, ask);
-		let mut rows = Vec::new();
-		while let Some(list) = received.next().await {
-			if list.request_id != request_id {
-				continue;
+		loop {
+			let rows = runtime
+				.funding_quotes(intent)
+				.filter(|list| list.request_id == request_id)
+				.map(|list| list.rows);
+			if let Some(rows) = rows &&
+				!rows.iter().any(|row| matches!(row.state, FundingQuoteState::Pending))
+			{
+				return rows;
 			}
-			rows = list.rows;
-			if !rows.iter().any(|row| matches!(row.state, FundingQuoteState::Pending)) {
-				break;
+			// The sender lives as long as `self`.
+			if pushed.changed().await.is_err() {
+				return Vec::new();
 			}
 		}
-		self.lock_quote_lists().remove(intent);
-		rows
 	}
 }
 
@@ -334,17 +318,14 @@ pub fn answer_frame(intent: &str, outcome: FundingFrameOutcome) -> bool {
 	lock_frames().remove(intent).is_some_and(|answer| answer.send(outcome).is_ok())
 }
 
-/// The latest status the core pushed for each session this run, by intent,
-/// as a host keeps what it is pushed rather than reading it back.
-static PUSHED: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
-
-/// Each session the core pushed this run, with its latest status.
-pub fn pushed_sessions() -> Vec<(String, String)> {
-	PUSHED
-		.lock()
-		.unwrap_or_else(std::sync::PoisonError::into_inner)
-		.iter()
-		.map(|(intent, line)| (intent.clone(), line.clone()))
+/// Each session the core holds in full, newest opened first, with where it
+/// stands now.
+pub fn sessions(runtime: &SigningHostRuntime) -> Vec<(String, String)> {
+	let now = truapi::current_unix_millis();
+	runtime
+		.funding_entries()
+		.into_iter()
+		.map(|entry| (entry.session.intent.clone(), format!("{:?}", entry.session.status(now))))
 		.collect()
 }
 
@@ -365,10 +346,8 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 
 #[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
-	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
-		if let Some(lists) = self.lock_quote_lists().get(&intent) {
-			let _ = lists.unbounded_send(quotes);
-		}
+	fn funding_quotes_changed(&self, _intent: String, _quotes: FundingQuoteList) {
+		self.quotes_pushed.send_modify(|pushed| *pushed = pushed.wrapping_add(1));
 	}
 
 	async fn present_funding(
@@ -385,7 +364,7 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let options = self.select_defaults(&runtime, &session.intent);
+		let options = Self::select_defaults(&runtime, &session.intent);
 		let candidates: Vec<ProductId> = options
 			.iter()
 			.flat_map(|options| &options.candidates)
@@ -395,7 +374,6 @@ impl FundingPlatform for CliFundingHost {
 			Some(ask) => self.answered_quotes(&runtime, &session.intent, ask).await,
 			None => Vec::new(),
 		};
-		self.lock_options().remove(&session.intent);
 		let mut chosen = None;
 		for row in &rows {
 			let FundingQuoteState::Quoted { quote } = &row.state else {
@@ -452,13 +430,8 @@ impl FundingPlatform for CliFundingHost {
 		context: FundingFrameContext,
 	) -> Result<FundingFrameOutcome, GenericError> {
 		let (link, finished) = match target {
-			// The core sets `app_path` for every App route.
 			FundingFrameTarget::App { route } => (
-				format!(
-					"{APP_GATEWAY}/{}{}",
-					provider.product_id,
-					context.app_path.unwrap_or(route)
-				),
+				format!("{APP_GATEWAY}/{}{route}", provider.product_id),
 				FundingFrameOutcome::Closed,
 			),
 			FundingFrameTarget::Page { url, return_url } => {
@@ -542,23 +515,12 @@ impl FundingFeed for CliFundingHost {
 			"amount": amount.map(|amount| amount.to_string()),
 			"progress": progress,
 		}));
-		let line = match (&progress, amount) {
-			(Some(progress), _) => format!("{tag} {progress}"),
-			(None, Some(amount)) => format!("{tag} {amount}"),
-			(None, None) => tag.to_string(),
-		};
-		PUSHED
-			.lock()
-			.unwrap_or_else(std::sync::PoisonError::into_inner)
-			.insert(intent.clone(), line);
 		self.ask_about_offer(intent, session.as_ref());
 	}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
-	fn funding_options_changed(&self, intent: String, options: FundingOptions) {
-		self.lock_options().insert(intent, options);
-	}
+	fn funding_options_changed(&self, _intent: String, _options: FundingOptions) {}
 }
 
 /// Top-up and payment engines over a ledger file: every top-up claims in full

@@ -904,7 +904,7 @@ pub const HELP_TEXT: &str = "\
 /funding cancel <intent> cancel a funding session
 /funding close <intent>  close the provider screen open for a session
 /funding returned <intent> <url> answer it with the URL its page returned to
-/funding sessions       list funding sessions pushed this run
+/funding sessions       list funding sessions the core holds
 /funding history        list ended funding sessions
 /help                   show this help
 /clear                  clear the visible transcript
