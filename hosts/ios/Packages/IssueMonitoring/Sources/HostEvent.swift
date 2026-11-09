@@ -8,16 +8,33 @@ public enum HostEventValue: Sendable, Equatable {
     case boolean(Bool)
 }
 
-/// A native host lifecycle event: tags are indexed, extras are not.
+/// A native host event: tags are indexed, extras are not, and `fingerprint` is
+/// what the reporting backend groups on, so one name stays one group.
 public struct HostEvent: Sendable, Equatable {
     public let name: String
+    public let level: HostLogLevel
+    public let fingerprint: [String]
     public let tags: [String: String]
     public let extras: [String: HostEventValue]
+    public let counters: [String: Int]
 
-    public init(name: String, tags: [String: String], extras: [String: HostEventValue]) {
+    /// `fingerprint` defaults to the name alone, which is the grouping every
+    /// lifecycle event wants. An event passes its own only to keep a grouping
+    /// that a name would not reproduce.
+    public init(
+        name: String,
+        level: HostLogLevel = .info,
+        fingerprint: [String]? = nil,
+        tags: [String: String],
+        extras: [String: HostEventValue],
+        counters: [String: Int] = [:]
+    ) {
         self.name = name
+        self.level = level
+        self.fingerprint = fingerprint ?? [name]
         self.tags = tags
         self.extras = extras
+        self.counters = counters
     }
 
     /// An event carrying the fields every host event shares; `tags` and `extras` add its own.
@@ -25,8 +42,11 @@ public struct HostEvent: Sendable, Equatable {
         name: String,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int,
+        level: HostLogLevel = .info,
+        fingerprint: [String]? = nil,
         tags: [String: String] = [:],
-        extras: [String: HostEventValue] = [:]
+        extras: [String: HostEventValue] = [:],
+        counters: [String: Int] = [:]
     ) -> HostEvent {
         var sharedTags = tags
         sharedTags["host.app_variant"] = origin.appVariant
@@ -37,7 +57,14 @@ public struct HostEvent: Sendable, Equatable {
         sharedExtras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
         sharedExtras["event.monotonic_ms"] = .integer(monotonicMilliseconds)
 
-        return HostEvent(name: name, tags: sharedTags, extras: sharedExtras)
+        return HostEvent(
+            name: name,
+            level: level,
+            fingerprint: fingerprint,
+            tags: sharedTags,
+            extras: sharedExtras,
+            counters: counters
+        )
     }
 
     /// The event for the app process finishing launch.

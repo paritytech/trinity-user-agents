@@ -72,11 +72,16 @@ public enum IssueMonitoringFactory {
     }
 
     /// Reports through the SDK `IssueMonitoringServiceProtocol.setup()` started; a no-op until then and in Release.
+    ///
+    /// An issue leaves as a host event, so it carries the same origin tags as
+    /// every other host event and reaches the backend through one sender.
     public static func createReporter() -> IssueReporting {
-        #if SENTRY_ENABLED
-            SentryIssueReporter()
-        #else
-            NoopIssueReporter()
-        #endif
+        guard isReportingSupported else { return NoopIssueReporter() }
+
+        return HostEventIssueReporter(
+            recorder: createHostEventRecorder(),
+            origin: .current,
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds
+        )
     }
 }
