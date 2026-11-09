@@ -2898,7 +2898,7 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	let intent = cancelled_session(&services, &tasks);
+	let intent = ended_session(&services, &tasks);
 	let announced_on_resume = || {
 		platform.announced.lock().expect("announced mutex poisoned").clear();
 		services.resume_funding();
@@ -2914,17 +2914,31 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
 }
 
-/// Opens a funding session and cancels it, returning its intent. The session
-/// is left ended but not acknowledged by the host, which is what a resume
-/// announces.
+/// Opens a funding session and ends it as declined, returning its intent.
+/// The session is left ended but not acknowledged by the host, which is what
+/// a resume announces.
 ///
 /// Opening also schedules an expiry task that sleeps until the session's
 /// deadline. It is discarded, so a test running the held tasks never waits on it.
-fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
+fn ended_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
+	let intent = opened_session(services, tasks);
+	let declined = crate::host_logic::funding::FundingStage::Failed {
+		reason: v01::FundingFailure::Declined,
+		settled_at_ms: crate::current_unix_millis(),
+	};
+	assert!(
+		futures::executor::block_on(services.settle_funding_for_test(&intent, declined))
+			.expect("ended")
+	);
+	intent
+}
+
+/// Opens a funding session the host owns, returning its intent.
+fn opened_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
 	// The overlay runs on a task of its own, which these held tasks run.
-	let intent = std::thread::scope(|scope| {
+	std::thread::scope(|scope| {
 		let opened = scope.spawn(|| futures::executor::block_on(opening));
 		while !opened.is_finished() {
 			futures::executor::block_on(tasks.run());
@@ -2933,12 +2947,27 @@ fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> Stri
 		opened.join().expect("opening thread")
 	})
 	.expect("opened")
-	.intent;
+	.intent
+}
+
+// A cancel that moved nothing has nothing to tell the user, so the core
+// acknowledges it as it ends and history leaves it out.
+#[test]
+fn a_cancel_that_moved_nothing_is_acknowledged_and_left_out_of_history() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = opened_session(&services, &tasks);
 	assert_eq!(
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
 		CancelOutcome::Ended
 	);
-	intent
+
+	let owed = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	assert_eq!((owed, services.funding().history()), (false, Vec::new()));
 }
 
 // The host's session views read what the core has loaded, so a resume that
@@ -2952,7 +2981,7 @@ fn funding_resume_is_retried_until_storage_recovers() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	let intent = cancelled_session(&services, &tasks);
+	let intent = ended_session(&services, &tasks);
 	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
 	let reopened = funding_services_on(&db, tasks.spawner());
 	assert!(reopened.funding().install_platform(platform.clone()));
