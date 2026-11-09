@@ -626,3 +626,120 @@ fn storage_keys_have_the_expected_layout() {
 	assert_eq!(dispatcher_address_key().len(), 32);
 	assert_eq!(timestamp_now_key().len(), 32);
 }
+
+/// A personhood name's reservation queue, scripted: the entries from the
+/// front, and `MAX_QUEUE_STEPS_PER_CALL` where the controller has it.
+struct ScriptedQueue {
+	entries: Vec<([u8; 20], u64)>,
+	max_steps: Option<u64>,
+}
+
+const QUEUE_HEAD: u64 = 7;
+const DURATION: u64 = 1_000;
+const NOW: u64 = 10_000;
+const LIVE: u64 = NOW - 10;
+const EXPIRED: u64 = NOW - DURATION - 1;
+const CLAIMANT: [u8; 20] = [0xc1; 20];
+const OTHER: [u8; 20] = [0x07; 20];
+const LEFT: [u8; 20] = [0u8; 20];
+
+#[async_trait::async_trait]
+impl DotnsTransport for ScriptedQueue {
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		panic!("unscripted storage read {}", hex::encode(key));
+	}
+
+	async fn view(
+		&mut self,
+		_dest: &[u8; 20],
+		input: Vec<u8>,
+	) -> Result<Vec<u8>, EvmContractError> {
+		let labelhash = B256::from(keccak_256(b"george"));
+		if let Some(call) = decoded::<DotnsPopController::reservationMetaCall>(&input) {
+			assert_eq!(call.labelhash, labelhash);
+			let tail = QUEUE_HEAD + u64::try_from(self.entries.len()).expect("small queue");
+			returns::<DotnsPopController::reservationMetaCall>(
+				DotnsPopController::reservationMetaReturn { head: QUEUE_HEAD, tail },
+			)
+		} else if decoded::<DotnsPopController::reservationDurationCall>(&input).is_some() {
+			returns::<DotnsPopController::reservationDurationCall>(DURATION)
+		} else if decoded::<DotnsPopController::MAX_QUEUE_STEPS_PER_CALLCall>(&input).is_some() {
+			match self.max_steps {
+				Some(steps) => {
+					returns::<DotnsPopController::MAX_QUEUE_STEPS_PER_CALLCall>(U256::from(steps))
+				},
+				None => view_reverted(),
+			}
+		} else if let Some(call) = decoded::<DotnsPopController::reservationEntryCall>(&input) {
+			assert_eq!(call.labelhash, labelhash);
+			let position = usize::try_from(call.index - QUEUE_HEAD).expect("small queue");
+			let (owner, joined_at) = self.entries[position];
+			returns::<DotnsPopController::reservationEntryCall>(
+				DotnsPopController::reservationEntryReturn {
+					entryOwner: Address::from(owner),
+					joinedAt: joined_at,
+				},
+			)
+		} else {
+			panic!("unscripted view {}", hex::encode(input));
+		}
+	}
+}
+
+/// A claim the queue refuses reverts, and the revert discards the clearing it
+/// did, so the caller has to know before submitting: who holds the name, or
+/// that the queue must be cleared first. An active user behind expired entries
+/// still holds it.
+#[test]
+fn claim_blocker_follows_the_controller_queue_rule() {
+	let run = |entries: Vec<([u8; 20], u64)>, max_steps: Option<u64>| {
+		futures::executor::block_on(claim_blocker(
+			&mut ScriptedQueue { entries, max_steps },
+			&[0xc0; 20],
+			"george",
+			&CLAIMANT,
+			NOW,
+		))
+		.expect("scripted queue")
+	};
+	let dead = |count| vec![(OTHER, EXPIRED); count];
+
+	assert_eq!(run(vec![], Some(4)), None);
+	assert_eq!(run(vec![(CLAIMANT, LIVE)], Some(4)), None);
+	assert_eq!(run([dead(4), vec![(CLAIMANT, LIVE)]].concat(), Some(4)), None);
+	assert_eq!(
+		run([dead(5), vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+		Some(ClaimBlocker::ClearFirst { dead: 5 })
+	);
+	assert_eq!(
+		run(vec![(OTHER, EXPIRED), (LEFT, 0), (OTHER, LIVE), (CLAIMANT, LIVE)], Some(4)),
+		Some(ClaimBlocker::HeldBy(OTHER))
+	);
+	// An emptied entry is dead even while its `joinedAt` is live.
+	assert_eq!(
+		run([vec![(LEFT, LIVE); 5], vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+		Some(ClaimBlocker::ClearFirst { dead: 5 })
+	);
+	// The claim stops at the claimant's own reservation, so nothing behind it counts.
+	assert_eq!(run([vec![(CLAIMANT, LIVE)], dead(5)].concat(), Some(4)), None);
+	assert_eq!(run(vec![(CLAIMANT, LIVE), (OTHER, LIVE)], Some(4)), None);
+	assert_eq!(run(dead(4), Some(4)), None);
+	assert_eq!(run(dead(5), Some(4)), Some(ClaimBlocker::ClearFirst { dead: 5 }));
+	assert_eq!(run(vec![(CLAIMANT, NOW - DURATION)], Some(4)), None);
+	// dotNS 1.0.0 has no step limit: the claim clears every dead entry itself.
+	assert_eq!(run([dead(9), vec![(CLAIMANT, LIVE)]].concat(), None), None);
+	assert_eq!(run(dead(9), None), None);
+	assert_eq!(
+		run([dead(9), vec![(OTHER, LIVE), (CLAIMANT, LIVE)]].concat(), None),
+		Some(ClaimBlocker::HeldBy(OTHER))
+	);
+}
+
+/// The clearing call targets `expireReservation(string)` with the bare label.
+#[test]
+fn expire_reservation_call_encodes_the_label() {
+	let call =
+		DotnsPopController::expireReservationCall::abi_decode(&expire_reservation_call("george"))
+			.expect("expireReservation calldata");
+	assert_eq!(call.label, "george");
+}
