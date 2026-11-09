@@ -373,7 +373,7 @@ closed it because the payment moved, `.dismissed` when the user closed it and
 `.returned(url:)` when the page navigated to the request's `return_url`.
 
 `fundingEntries()` lists every session the core announced with its progress,
-and `fundingActivity()` the CASH card's in-flight and history rows. Ended
+and `fundingHistory()` the ended ones as summaries, each with how it ended. Ended
 sessions keep being handed over on each resume until the host records them
 with `acknowledgeFundingShown(intents:)`, which it calls only while the
 history is on screen. `setFundingProviderConfig(publishedNames:bundled:)`
