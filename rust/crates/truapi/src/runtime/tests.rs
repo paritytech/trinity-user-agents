@@ -3469,6 +3469,69 @@ fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
 	);
 }
 
+// A card selection without an asset gets the countries of the fiat asset the
+// core resolves for it, so the host need not send that asset back first.
+#[test]
+fn a_selection_without_an_asset_goes_by_the_resolved_one() {
+	let services = funding_services();
+	let germany_only =
+		RAMP_MANIFEST.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
+	offer_provider(&services, "ramp.dot", &germany_only);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = Arc::new(GatedFundingPlatform {
+		answer: Mutex::new(Some(answered)),
+		told: AtomicBool::new(false),
+		options: Mutex::new(Vec::new()),
+	});
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				Some(20_000_000),
+			))
+		}
+	});
+	let pushes = || platform.options.lock().expect("options mutex poisoned").clone();
+	wait_until(|| !pushes().is_empty(), "options before the overlay");
+	let intent = pushes()[0].0.clone();
+	let options_for = |asset: Option<&str>| {
+		services.select_funding_options(
+			&intent,
+			crate::host_logic::funding_providers::FundingSelection {
+				rail: v01::FundingRail::Card,
+				asset: asset.map(str::to_string),
+				network: None,
+				country: None,
+				currency: None,
+			},
+		);
+		pushes()
+			.pop()
+			.map(|(_, options)| (options.asset, options.countries, options.limits))
+	};
+
+	let resolved = options_for(None);
+	let picked = options_for(Some("EUR"));
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	assert!(opening.join().expect("opening thread").is_err(), "dismissed");
+
+	assert_eq!(resolved, picked);
+	assert_eq!(
+		resolved.map(|(asset, countries, _)| (
+			asset,
+			countries.into_iter().map(|country| country.country).collect::<Vec<_>>()
+		)),
+		Some((Some("EUR".to_string()), vec!["DE".to_string()]))
+	);
+}
+
 // The request answers while the overlay is still up, and the product hears
 // how the user left it on the session's stream: a dismissed session ends as
 // cancelled and is not left presenting.
