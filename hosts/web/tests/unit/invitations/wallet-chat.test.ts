@@ -4,18 +4,22 @@ import type { HostDelivery } from "../../../src/invitations/ports.js";
 import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import { asProductId } from "@parity/truapi";
 import {
-  NOVA_NEEDS_SETTLEMENT,
   WalletChat,
-  novaNotificationSettled,
   type WalletChatDeps,
   type WalletRequestsSession,
 } from "../../../src/invitations/wallet-chat.js";
-import { novaChat } from "../../../tools/chat/nova.js";
 import {
+  conversationAllowance,
   networkCosts,
   networkDelivery,
   type WalletDelivery,
 } from "../../../src/invitations/wallet-delivery.js";
+import type { ClaimedAccount } from "../../../src/platform/allowance-finality.js";
+import {
+  PROVISIONAL_MS,
+  type AllowanceGuard,
+} from "../../../src/platform/allowance-usable.js";
+import { finalizedGuard, usable } from "../../support/allowance.js";
 import { devWalletDelivery } from "../../../tools/demos/wallet-deliveries.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import {
@@ -99,6 +103,7 @@ function session(): WalletRequestsSession {
     openStatementStore: never,
     claimNotificationAccount: never,
     claimProductStatementAccount: never,
+    usableAllowance: finalizedGuard,
   };
 }
 
@@ -152,18 +157,23 @@ describe("a wallet's Contact Chat", () => {
   });
 });
 
-/** A finality guard held until the test releases it, with the claims it was asked about. */
+/** A guard held until the test answers, with the claims it was asked about. */
 function heldGuard() {
-  const asked: StatementAccountClaim[] = [];
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => (release = resolve));
+  const asked: ClaimedAccount[] = [];
+  const waits: ("finalized" | undefined)[] = [];
+  let answer!: (usableAt: "best" | "finalized") => void;
+  const gate = new Promise<"best" | "finalized">(
+    (resolve) => (answer = resolve),
+  );
   return {
     asked,
-    release,
-    guard: (claim: StatementAccountClaim) => {
+    waits,
+    answer,
+    guard: (async (claim, request) => {
       asked.push(claim);
-      return gate;
-    },
+      waits.push(request?.wait);
+      return usable(claim, await gate);
+    }) satisfies AllowanceGuard,
   };
 }
 
@@ -178,92 +188,113 @@ async function settledYet(promise: Promise<unknown>): Promise<boolean> {
   return settled;
 }
 
-describe("a wallet's chat products' finality guard", () => {
-  // A node evicts statements whose allowance is only in a best block, so an
-  // account that posts before its claim is final loses what it posted.
-  test("holds a conversation account until its guard resolves, and Contact Chat's claim answer alone is enough", async () => {
-    const claim: StatementAccountClaim = {
-      account: "0xaccount",
-      period: 1,
-      outcome: "registered",
-      seq: 3,
-      collection: "People",
-    };
+describe("a wallet's conversation accounts", () => {
+  const claim: StatementAccountClaim = {
+    account: "0xaccount",
+    period: 1,
+    outcome: "registered",
+    seq: 3,
+    collection: "People",
+    blockHash: "0xb10c",
+  };
+  const DAY_END = 2 * 86_400_000;
+
+  /** The answer of a conversation allowance whose guard answers `usableAt`, at `now`. */
+  async function allowed(
+    usableAt: "best" | "finalized",
+    now: number,
+    known = true,
+  ) {
+    const held = heldGuard();
+    const seen: string[] = [];
     const claimed: boolean[] = [];
     const answering: WalletRequestsSession = {
       ...session(),
       claimProductStatementAccount: async (_product, _index, submit) => {
         claimed.push(submit);
-        return claim;
+        return known ? claim : { ...claim, blockHash: undefined };
       },
+      usableAllowance: held.guard,
     };
-    const network = networkDelivery({ log: () => {} });
-    const held = heldGuard();
-    const allowed = network
-      .allowance(answering, held.guard)!
-      .allow(asProductId("chat.paseo"), new Uint8Array(4));
-    expect(await settledYet(allowed)).toBe(false);
-    expect({ claimed, asked: held.asked }).toEqual({
+    const allowing = conversationAllowance(
+      answering,
+      true,
+      (usable) => void seen.push(usable.usableAt),
+      () => now,
+    ).allow(asProductId("chat.paseo"), new Uint8Array(4));
+    const heldBack = !(await settledYet(allowing));
+    held.answer(usableAt);
+    const answer = await allowing;
+    expect(held.waits).toEqual(["finalized"]);
+    return { heldBack, claimed, asked: held.asked, seen, answer };
+  }
+
+  // A conversation account posts only once the network's rule lets it.
+  test("waits for the session's guard before it answers, and tells the spec where the account became usable", async () => {
+    expect(await allowed("finalized", 86_400_000)).toEqual({
+      heldBack: true,
       claimed: [true],
       asked: [claim],
+      seen: ["finalized"],
+      answer: { account: "0xaccount", until: DAY_END },
     });
-    held.release();
-    expect((await allowed).account).toBe("0xaccount");
-
-    const unguarded = network
-      .allowance(answering, null)!
-      .allow(asProductId("chat.paseo"), new Uint8Array(4));
-    expect(await settledYet(unguarded)).toBe(true);
   });
 
-  test("holds a Nova notification account until the spec's guard resolves, and refuses without one", async () => {
-    const held = heldGuard();
-    const account = new Uint8Array(32).fill(7);
-    const waiting = novaNotificationSettled(held.guard)(account, {
-      period: 2,
-      seq: 5,
+  // Usable at a best block is not final: whoever keeps the answer asks again
+  // once the claim's finality is known, rather than at the end of the day.
+  test("finalized allowance without a known final inclusion hash never gets a full-day lease", async () => {
+    const now = 86_400_000 + 3_600_000;
+    expect((await allowed("finalized", now, false)).answer).toEqual({
+      account: "0xaccount",
+      until: now + PROVISIONAL_MS,
     });
-    expect(await settledYet(waiting)).toBe(false);
-    expect(held.asked).toEqual([
-      {
-        account: bytesToHex(account),
-        period: 2,
-        outcome: "registered",
-        seq: 5,
-        collection: "People",
+    expect(
+      (await allowed("finalized", DAY_END - 1_000, false)).answer.until,
+    ).toBe(DAY_END);
+  });
+});
+
+describe("a wallet's allowance waits", () => {
+  // A wait, and the check behind a post, must not outlive the wallet that
+  // claimed: the next wallet's session is not theirs to read for.
+  test("stop when the wallet signs out", async () => {
+    let scoped: WalletRequestsSession | null = null;
+    const delivery: WalletDelivery = {
+      ...networkDelivery({ log: () => {} }),
+      hostDelivery: () => quietDelivery,
+      allowance: (session) => {
+        scoped = session;
+        return undefined;
       },
-    ]);
-    held.release();
-    await waiting;
-
-    await expect(
-      novaNotificationSettled(null)(account, { period: 2, seq: 5 }),
-    ).rejects.toThrow(NOVA_NEEDS_SETTLEMENT);
-  });
-
-  test("keeps Nova Chat off, claiming nothing, for a spec with no guard", async () => {
-    const claims: string[] = [];
-    const { chat, log } = walletChat(undefined, [
-      { ...novaChat(async () => {}), allowanceSettled: null },
-    ]);
+    };
+    const signals: (AbortSignal | undefined)[] = [];
+    const { chat } = walletChat(delivery);
     chat.setWallet({
       ...session(),
-      claimNotificationAccount: (target) => {
-        claims.push(bytesToHex(target));
-        return new Promise(() => {});
-      },
-      claimProductStatementAccount: (product) => {
-        claims.push(product);
-        return new Promise(() => {});
+      usableAllowance: async (claim, request) => {
+        signals.push(request?.signal);
+        return usable(claim);
       },
     });
-    const off = `Nova Chat stays off: ${NOVA_NEEDS_SETTLEMENT}`;
-    for (let wait = 0; wait < 50 && !log.includes(off); wait += 1)
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    expect({ off: log.includes(off), claims }).toEqual({
-      off: true,
-      claims: [],
-    });
+    await scoped!.usableAllowance({ account: "0xaccount", period: 1, seq: 0 });
+    const signal = signals[0]!;
+    expect(signal.aborted).toBe(false);
+    const deadline = new AbortController();
+    await scoped!.usableAllowance(
+      { account: "0xaccount", period: 1, seq: 0 },
+      { signal: deadline.signal },
+    );
+    expect(signals[1]!.aborted).toBe(false);
+    deadline.abort();
+    expect(signals[1]!.aborted).toBe(true);
+    expect(signal.aborted).toBe(false);
+    const another = new AbortController();
+    await scoped!.usableAllowance(
+      { account: "0xaccount", period: 1, seq: 0 },
+      { signal: another.signal },
+    );
     chat.setWallet(null);
+    expect(signal.aborted).toBe(true);
+    expect(signals[2]!.aborted).toBe(true);
   });
 });

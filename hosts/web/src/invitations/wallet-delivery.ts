@@ -1,4 +1,7 @@
-import type { StatementAccountClaim } from "@parity/truapi-host/web";
+import {
+  PROVISIONAL_MS,
+  type UsableAllowance,
+} from "../platform/allowance-usable.js";
 import type { InvitationObserver } from "./observer.js";
 import type { ConversationAllowance, HostDelivery } from "./ports.js";
 import { StatementStoreDelivery } from "./statement-delivery.js";
@@ -34,14 +37,17 @@ export interface WalletDelivery {
   hostDelivery(session: WalletRequestsSession, self: string): HostDelivery;
   /**
    * The allowance of a chat product's conversation accounts, or undefined
-   * when this delivery gives none. `settled` holds an account's first post
-   * until its claim is final; null: the claim's answer is enough.
+   * when this delivery gives none. `seen` is told where each account became
+   * usable.
    */
   allowance(
     session: WalletRequestsSession,
-    settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
+    seen: AllowanceSeen | null,
   ): ConversationAllowance | undefined;
 }
+
+/** Told where a claimed account became usable, for a developer view or a test. */
+export type AllowanceSeen = (usable: UsableAllowance) => void;
 
 /** What a wallet's chat product spends of the person's allowance, and what it exposes, for the host's prompts. */
 export interface ChatCosts {
@@ -107,6 +113,7 @@ export function statementStoreDelivery(
     openStore: () => session.openStatementStore(),
     claim: (target, submitClaim) =>
       session.claimNotificationAccount(target, submitClaim),
+    guard: session.usableAllowance,
     submit,
     now: () => Date.now(),
     schedule: (task, delayMs) => {
@@ -123,14 +130,18 @@ export function statementStoreDelivery(
  * a general Statement Store slot of the wallet's personhood for the UTC day,
  * which the core claims for the product's own account at the index it names.
  * With `submit` false the runtime only says whether it would accept the
- * claim and nothing is submitted, so a message fails and says so. `settled`
- * holds the account until its claim is final; null: the claim's answer is
- * enough.
+ * claim and nothing is submitted, so a message fails and says so.
+ *
+ * Product-signed keys wait for finalized allowance: the host cannot replace
+ * a key statement lost after a reorg. Only a known inclusion block proved
+ * on finalized ancestry grants a full-day lease. An unknown block proves
+ * allowance alone and grants at most {@link PROVISIONAL_MS}.
  */
 export function conversationAllowance(
   session: WalletRequestsSession,
   submit: boolean,
-  settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
+  seen: AllowanceSeen | null,
+  now: () => number = Date.now,
 ): ConversationAllowance {
   return {
     async allow(product, index) {
@@ -143,10 +154,17 @@ export function conversationAllowance(
         throw new Error(
           `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
         );
-      if (settled !== null) await settled(claim);
+      // The host cannot replace product-signed keys evicted after a reorg.
+      const usable = await session.usableAllowance(claim, {
+        wait: "finalized",
+      });
+      seen?.(usable);
+      const dayEnd = (claim.period + 1) * 86_400_000;
       return {
         account: claim.account,
-        until: (claim.period + 1) * 86_400_000,
+        until: usable.claimFinal
+          ? dayEnd
+          : Math.min(dayEnd, now() + PROVISIONAL_MS),
       };
     },
   };
@@ -166,7 +184,6 @@ export function networkDelivery(deps: NetworkDeliveryDeps): WalletDelivery {
     novaProblem: null,
     costs: networkCosts,
     hostDelivery: (session) => statementStoreDelivery(session, true, deps),
-    allowance: (session, settled) =>
-      conversationAllowance(session, true, settled),
+    allowance: (session, seen) => conversationAllowance(session, true, seen),
   };
 }

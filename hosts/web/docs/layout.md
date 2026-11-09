@@ -25,7 +25,8 @@ parts of `src/app/`: `prompt.ts` and `avatar-color.ts`.
   - Chain reads: `people-chain.ts`, `chain-directory.ts` (chat keys, usernames, owners), `scale-reader.ts`,
     `subscription.ts`.
   - Statement Store: `statement.ts`, `statement-store.ts`, `statement-observer.ts`, `allowance-finality.ts` (grant
-    reads, and the wait until a claim's allowance is final).
+    reads, and the wait until a claim's allowance is final), `allowance-usable.ts` (each network's posting rule, and the
+    wait until a claimed account may post), `guarded-post.ts` (a statement the host posts after a claim).
   - Other: `core-worker.ts` (the core's Web Worker), `activity.ts`, `codec.ts`, `crypto.ts`.
 - `chat/`: `provider.ts`, `inbox.ts`, `screen.ts`, `tabs.ts`, `conversation-view.ts`, `call-view.ts`.
   - TrUAPI Chat: `product-chat.ts`, `product-room-provider.ts`, `worker/product-storage.ts`.
@@ -56,8 +57,8 @@ The developer tools, in every build.
 - `mount.ts`, `viewport.ts`, `dock-resize.ts`: the inspector mount and the Preview tab.
 - `inspector/frame-tap.ts`: TrUAPI frames to the debugger.
 - `activity/`, `workers/`, `chat/`, `products/`: those inspector views. `chat/` also holds the Chat tab (`products.ts`)
-  and Kettle Chat's product and its finality guard (`kettle.ts`, over `src/platform/allowance-finality.ts`), which only
-  the dev server and a build with `WEB_SIGNING_KETTLE_CHAT=1` load.
+  and Kettle Chat's product and the record of where its accounts became usable, for its live test (`kettle.ts`), which
+  only the dev server and a build with `WEB_SIGNING_KETTLE_CHAT=1` load.
 - `statements/`: `ledger.ts`, `decode.ts`, `topics.ts`, `actions.ts` (grant read), `evidence.ts`, `transport.ts`
   (wording per People backend), `ui.ts`, `view.ts`.
 - `demos/`: dev server only, left out of a build: `dev-tools.ts`, `local-demo-route.ts` (loopback check),

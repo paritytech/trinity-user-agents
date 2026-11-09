@@ -41,6 +41,10 @@ describe("NETWORKS", () => {
         contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
       },
       identityBackend: "https://identity.dotspark.app",
+      bestBlockPosting: {
+        peopleGenesis:
+          "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
+      },
     });
   });
 
@@ -76,6 +80,7 @@ describe("NETWORKS", () => {
         contentGateway: "https://previewnet.substrate.dev",
       },
       identityBackend: "https://identity-previewnet.dotspark.app",
+      bestBlockPosting: null,
     });
   });
 

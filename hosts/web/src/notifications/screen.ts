@@ -55,7 +55,7 @@ export interface SentRequest {
 export type SentStatus =
   /** Posted: it waits for the recipient's answer. */
   | { tag: "waiting" }
-  /** The host is posting it now, such as while its claim becomes final. */
+  /** The host is posting it now, such as while its claim's allowance becomes usable. */
   | { tag: "posting" }
   /** A try to post it failed, and the host tries again by itself. */
   | { tag: "retrying"; reason: string }

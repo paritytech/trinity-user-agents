@@ -38,6 +38,8 @@ import {
 import { MemoryStatementStore } from "../../support/statement-memory.js";
 import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
 import { MemoryStorage, settle } from "../../support/test-support.js";
+import type { AllowanceGuard } from "../../../src/platform/allowance-usable.js";
+import { usable } from "../../support/allowance.js";
 
 /**
  * Two or three users' hosts over one in-memory Statement Store, with the
@@ -90,6 +92,20 @@ class Chain {
   readonly claims: { account: string; submit: boolean }[] = [];
   /** When set, every claim fails with it, as when no slot is free. */
   refusal: string | null = null;
+  /** Where the guard lets an account post, and why its claim did not become final behind a best-block post, or null. */
+  usableAt: "best" | "finalized" = "finalized";
+  notFinal: string | null = null;
+  checkedNode = true;
+  /** When set, a guard asked for the finalized head fails with it. */
+  finalRefusal: string | null = null;
+  /** When set, the guard answers only once it settles. */
+  gate: Promise<void> | null = null;
+  /** What the guard was asked: the account, and the finalized head when asked for it. */
+  readonly guarded: string[] = [];
+  /** The next submits of a registered account that the node answers `noAllowance`, as before it saw the claim. */
+  lagging = 0;
+  /** Every statement submitted, in order, `noAllowance` answers included. */
+  readonly submits: string[] = [];
 
   constructor(private readonly clock: Clock) {}
 
@@ -119,14 +135,38 @@ class Chain {
     };
   };
 
+  readonly guard: AllowanceGuard = async (claim, request = {}) => {
+    this.guarded.push(
+      request.wait === undefined
+        ? claim.account
+        : `${claim.account} at the finalized head`,
+    );
+    await this.gate;
+    if (request.wait === "finalized" && this.finalRefusal !== null)
+      throw new Error(this.finalRefusal);
+    return usable(
+      claim,
+      request.wait ?? this.usableAt,
+      Promise.resolve(this.notFinal),
+    );
+  };
+
   store(): StatementStoreLike {
     const inner = this.memory.connect();
     return {
       ...inner,
+      supportsBestBlockPosting: async () => this.checkedNode,
       submit: async (encoded) => {
+        this.submits.push(toHex(encoded));
         const signer = toHex(decodeStatement(encoded).signer);
         if (this.registered.get(signer) !== periodOf(this.clock.now()))
           return { status: "rejected", reason: "noAllowance" };
+        if (this.lagging > 0) {
+          this.lagging -= 1;
+          return { status: "rejected", reason: "noAllowance" };
+        }
+        if (this.memory.submitted.some((held) => equalBytes(held, encoded)))
+          return { status: "known" };
         return inner.submit(encoded);
       },
     };
@@ -182,6 +222,7 @@ class Actor {
         entropy: testUserEntropy(this.user),
         openStore: async () => this.chain.store(),
         claim: this.chain.claim,
+        guard: this.chain.guard,
         submit: this.submit,
         now: this.clock.now,
         schedule: this.clock.schedule,
@@ -523,5 +564,169 @@ describe("the network delivery", () => {
     expect(alice.service.outbox.get(handle)!.context.returnRoute).toBe(
       DAY_INBOX_ROUTE,
     );
+  });
+});
+
+describe("the network delivery's allowance wait", () => {
+  const signers = () =>
+    new Set(chain.posted().map((statement) => toHex(statement.signer)));
+
+  test("an unchecked submit connection forces finalized posting even when a different read connection supports best", async () => {
+    chain.checkedNode = false;
+    chain.usableAt = "best";
+    const alice = new Actor(ALICE, chain, clock);
+    await invite(alice, BOB);
+    expect(
+      chain.guarded.map((entry) => entry.endsWith("finalized head")),
+    ).toEqual([true]);
+    expect(chain.submits).toHaveLength(1);
+    alice.service.stop();
+  });
+
+  test("one replacement preserves the payload and receiver dedupe, without spending a second slot", async () => {
+    chain.usableAt = "best";
+    chain.notFinal = "claim orphaned";
+    let received = 0;
+    const delivery = new StatementStoreDelivery({
+      network: NETWORK,
+      entropy: testUserEntropy(ALICE),
+      openStore: async () => chain.store(),
+      claim: chain.claim,
+      guard: chain.guard,
+      submit: true,
+      now: clock.now,
+      schedule: clock.schedule,
+      log: () => {},
+    });
+    delivery.listen({
+      request: () => {
+        received += 1;
+      },
+      reply: () => {},
+      posting: () => {},
+    });
+    delivery.postRequest(personOf(BOB).identity, "logical-request", "0x010203");
+    await settle();
+    expect([chain.submits.length, chain.claims.length, received]).toEqual([
+      2, 1, 1,
+    ]);
+    const [first, next] = chain.posted();
+    expect({
+      ...next!,
+      expiry: first!.expiry,
+      signature: first!.signature,
+    }).toEqual(first!);
+    delivery.close();
+  });
+
+  test("duplicate publish calls share one attempt and an older day's final callback cannot downgrade the new post", async () => {
+    const finals: ((why: string | null) => void)[] = [];
+    const problems: (string | null)[] = [];
+    const delivery = new StatementStoreDelivery({
+      network: NETWORK,
+      entropy: testUserEntropy(ALICE),
+      openStore: async () => chain.store(),
+      claim: chain.claim,
+      guard: async (claim) =>
+        usable(claim, "best", new Promise((resolve) => finals.push(resolve))),
+      submit: true,
+      now: clock.now,
+      schedule: clock.schedule,
+      log: () => {},
+    });
+    delivery.listen({
+      request: () => {},
+      reply: () => {},
+      posting: (_id, problem) => problems.push(problem),
+    });
+    delivery.postRequest(personOf(BOB).identity, "logical-request", "0x010203");
+    delivery.postRequest(personOf(BOB).identity, "logical-request", "0x010203");
+    await settle();
+    expect(chain.claims).toHaveLength(1);
+    await clock.advance(DAY);
+    expect(chain.claims).toHaveLength(2);
+    finals[0]!("old claim orphaned");
+    await settle();
+    expect(problems).toEqual([]);
+    expect(chain.submits).toHaveLength(2);
+    finals[1]!(null);
+    delivery.close();
+  });
+
+  // On a best-block network the account posts before its claim is final; a
+  // node behind the claim's block answers noAllowance until it sees it.
+  test("posts once the guard lets the account, and sends the same bytes again while the node does not see the claim", async () => {
+    chain.usableAt = "best";
+    chain.lagging = 2;
+    const alice = new Actor(ALICE, chain, clock);
+    const handle = await invite(alice, BOB);
+    await clock.advance(4_000);
+
+    expect({
+      guarded: chain.guarded.length,
+      submits: chain.submits.length,
+      sameBytes: new Set(chain.submits).size,
+      posts: chain.posted().length,
+      paused: alice.paused(handle),
+    }).toEqual({
+      guarded: 1,
+      submits: 3,
+      sameBytes: 1,
+      posts: 1,
+      paused: null,
+    });
+  });
+
+  test("an unconfirmed post can recover later against final allowance with one fresh outer statement and no new claim", async () => {
+    chain.usableAt = "best";
+    chain.notFinal = "its allowance was not final after 180 s";
+    chain.finalRefusal = "the People chain could not be read";
+    const alice = new Actor(ALICE, chain, clock);
+    const handle = await invite(alice, BOB);
+    const paused = alice.paused(handle);
+    chain.notFinal = null;
+    chain.finalRefusal = null;
+    await clock.advance(RETRY_MS);
+
+    expect({
+      paused,
+      after: alice.paused(handle),
+      claims: chain.claims.map((claim) => claim.account),
+      guarded: chain.guarded.map((entry) => entry.endsWith("finalized head")),
+      submits: chain.submits.length,
+      sameBytes: new Set(chain.submits).size,
+      signers: signers().size,
+    }).toEqual({
+      paused:
+        "posted at a best block, but its allowance was not final after 180 s; the People chain could not be read.",
+      after: null,
+      claims: [chain.claims[0]!.account],
+      guarded: [false, true, true],
+      submits: 2,
+      sameBytes: 2,
+      signers: 1,
+    });
+    const [first, replacement] = chain.posted();
+    expect({
+      ...replacement!,
+      expiry: first!.expiry,
+      signature: first!.signature,
+    }).toEqual(first!);
+    expect(replacement!.expiry).toBe(first!.expiry + 1n);
+  });
+
+  test("a request withdrawn while its account waits is never submitted", async () => {
+    let open!: () => void;
+    chain.gate = new Promise((resolve) => (open = resolve));
+    const alice = new Actor(ALICE, chain, clock);
+    const handle = await invite(alice, BOB);
+    ok(await alice.call({ call: "cancel", handle }));
+    open();
+    await settle();
+
+    expect({ guarded: chain.guarded.length, submits: chain.submits }).toEqual({
+      guarded: 1,
+      submits: [],
+    });
   });
 });

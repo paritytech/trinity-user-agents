@@ -149,6 +149,11 @@ import { StatementLedger } from "../tools/statements/ledger.js";
 import { peopleTransport } from "../tools/statements/transport.js";
 import type { PeopleAccess } from "./platform/allowance-finality.js";
 import {
+  peopleAllowanceGuard,
+  postingRule,
+  type PostingRule,
+} from "./platform/allowance-usable.js";
+import {
   observeStatements,
   type TrafficSource,
 } from "./platform/statement-observer.js";
@@ -186,6 +191,24 @@ const runningBackends: Record<ChainRole, ChainBackend> = chainBackends(
   activeNetwork,
   savedChainBackends(sessionStorage, activeNetwork.id),
 );
+
+/** When a Statement Store account may post after its claim, on the People chain this tab reaches. */
+function currentPostingRule(): PostingRule {
+  return peopleAccess === null
+    ? { wait: "finalized", why: "the People chain is not connected" }
+    : postingRule(activeNetwork, runningBackends.people, peopleAccess.genesis);
+}
+
+/**
+ * Every post after a claim waits on this: conversation accounts, and the
+ * notification accounts of host requests and Nova Chat. The backup does not
+ * ({@link backupNetwork}): it always waits for the finalized head.
+ */
+const usableAllowance = peopleAllowanceGuard({
+  people: () => peopleAccess,
+  rule: currentPostingRule,
+  log: (line) => linesFor("host")(line),
+});
 
 /**
  * What the inspector's Statements view knows: Statement Store traffic, claims
@@ -498,10 +521,7 @@ const walletChat = new WalletChat({
   ...(chatModality === null
     ? {}
     : {
-        products: chatModality.walletProducts(
-          () => peopleAccess,
-          devSession?.probe,
-        ),
+        products: chatModality.walletProducts(devSession?.probe),
       }),
 });
 /** Contact Chat in this tab: the invitation demo's test user's, or the signed-in wallet's. */
@@ -850,7 +870,12 @@ function coreRuntime(): WorkerPairingHostRuntime {
   return runtime;
 }
 
-/** What the backup does on the network: the core claims and stores, the host reads and posts. */
+/**
+ * What the backup does on the network: the core claims and stores, the host
+ * reads and posts. Its pointer posts only once its account's allowance holds
+ * at the finalized head, whatever the network's posting rule: recovery reads
+ * it, and nothing keeps it up behind the post.
+ */
 const backupNetwork: BackupNetwork = {
   claimSlot: () => coreRuntime().claimBackupStatementAccount(true),
   settled: async (claim) => {
@@ -1479,6 +1504,8 @@ function syncWalletSession(account: ConnectedAccount | null): void {
           openStatementStore: async () =>
             new StatementStore(
               await access.chain.connect(hexToBytes(access.genesis.people)),
+              undefined,
+              activeNetwork.bestBlockPosting?.peopleGenesis,
             ),
           claimNotificationAccount: (target, submit) => {
             const current = runtime;
@@ -1508,6 +1535,7 @@ function syncWalletSession(account: ConnectedAccount | null): void {
                     ),
                 );
           },
+          usableAllowance,
         },
   );
   sessionMembers.sync(
@@ -2287,6 +2315,12 @@ async function boot(): Promise<void> {
   const connection = observed("core");
   chainAccess = observed("host");
   peopleAccess = { chain: guarded.chain, genesis: guarded.genesis.people };
+  const rule = currentPostingRule();
+  log(
+    rule.wait === "best"
+      ? `Statement Store posts: an account posts once its claim's block has a child at the best block (${rule.why}); finality is checked behind each post.`
+      : `Statement Store posts: an account posts once its allowance holds at the finalized head (${rule.why}).`,
+  );
   activity.record({
     category: "network",
     action: "Chains connected",

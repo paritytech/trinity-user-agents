@@ -38,6 +38,14 @@ import {
   isStored,
   type StatementStoreLike,
 } from "../platform/statement-store.js";
+import type { AllowanceGuard } from "../platform/allowance-usable.js";
+import { FINALITY_TIMEOUT_MS } from "../platform/allowance-finality.js";
+import { abortion } from "../platform/people-chain.js";
+import {
+  postWhenUsable,
+  submitUntilAllowed,
+  type FinalOutcome,
+} from "../platform/guarded-post.js";
 import type { ContactChatHost } from "./contact-chat-host.js";
 import type { AcceptPrompt, SendPrompt } from "./invitation-service.js";
 import type { ConversationAllowance, Product } from "./ports.js";
@@ -56,8 +64,9 @@ import type { IdentityProblem } from "./published-keys.js";
  * after Send, an acceptance only after Accept. Each is posted once, signed by
  * a notification account the core registers for the day
  * (`//chat-request//<id>//<period>`, `//chat-accept//<id>//<period>`, as the
- * apps derive them). A pending request's acceptance is read on the identity
- * route the same way.
+ * apps derive them), once that account may post by the network's rule
+ * (`../platform/guarded-post.ts`). A pending request's acceptance is read on
+ * the identity route the same way.
  *
  * Nova Chat's worker gets the rest over `nova-chat/1`
  * (`../chat/nova-chat/contract.ts`): it knows people by contact handle, reads
@@ -103,7 +112,7 @@ export interface NovaChatHostOptions {
   ): NotificationSigner;
   /**
    * Register `account` to post one statement today; answers a line for the
-   * log, and the claim's slot for {@link notificationSettled}, or throws why
+   * log, and the claim's slot for {@link notificationGuard}, or throws why
    * not. The same account on the same day claims nothing new.
    */
   claimNotification(
@@ -116,20 +125,11 @@ export interface NovaChatHostOptions {
     blockHash?: string;
   }>;
   /**
-   * Resolves once `account`'s allowance holds at the People chain's
-   * finalized head, or rejects saying why not. A node evicts statements whose
-   * allowance is only in a best block. A store that keeps a statement on
-   * the claim's answer alone resolves at once.
+   * Resolves once a claimed notification account may post, by the
+   * network's rule: at a best block after its claim, or at the finalized
+   * head; rejects saying why not.
    */
-  notificationSettled(
-    account: Uint8Array,
-    claim: {
-      period: number;
-      seq: number;
-      collection?: string;
-      blockHash?: string;
-    },
-  ): Promise<void>;
+  notificationGuard: AllowanceGuard;
   /** The allowance of the worker's conversation accounts. */
   accounts: ConversationAllowance;
   confirmSend(prompt: SendPrompt): Promise<boolean>;
@@ -152,6 +152,7 @@ interface Outgoing {
   createdAt: number;
   /** Why it is not posted, or null once it is. A request not posted is posted again at the next start. */
   problem: string | null;
+  attemptsLeft?: number;
 }
 
 /**
@@ -172,6 +173,17 @@ interface Saved {
   declined?: string[];
   /** The conversation account's index per peer: the first the worker named, the only one it may use. */
   indexes?: { [peer: PeerId]: string };
+  posts?: Record<string, CachedPost>;
+}
+
+interface CachedPost {
+  period: number;
+  bytes: string;
+  claim?: { seq: number; collection?: string; blockHash?: string };
+  needsFinal?: boolean;
+  renewed?: boolean;
+  /** Only explicitly provisional submissions are checked again after restart. */
+  confirmation?: { until: number; submitted: boolean };
 }
 
 const INBOX_PREFIX = "nova-chat:";
@@ -252,8 +264,10 @@ export function startNovaChatHost(
       return () => clearTimeout(timer);
     });
   const retries = new Map<PeerId, () => void>();
-  /** Requests whose post runs now: the claim, the finality wait and the submit. */
+  /** Requests whose post runs now: the claim, the allowance wait and the submit. */
   const inFlight = new Set<Outgoing>();
+  const requestAttempts = new Map<Outgoing, symbol>();
+  const confirmations = new Map<Outgoing, AbortController>();
   /** Sends the user agreed to in New chat, by person, until the product's request spends them. */
   const agreed = new Map<PeerId, Agreed>();
   /** Closes the host's open prompts once it stops. */
@@ -261,6 +275,7 @@ export function startNovaChatHost(
   /** Posts run one at a time, so two never race for one notification slot. */
   let posting: Promise<unknown> = Promise.resolve();
   let indexes: { [peer: PeerId]: string } = {};
+  let posts: Record<string, CachedPost> = {};
 
   // Every effect after an await checks the host still runs: a host stopped by
   // a sign-out or a wallet switch must not write over the next one's state
@@ -274,6 +289,7 @@ export function startNovaChatHost(
         outgoing,
         declined,
         indexes,
+        posts,
       } satisfies Saved),
     );
   try {
@@ -287,6 +303,33 @@ export function startNovaChatHost(
       );
       indexes = saved.indexes ?? {};
       declined = saved.declined ?? [];
+      posts = saved.posts ?? {};
+      let pausedInvalid = false;
+      for (const item of outgoing) {
+        const invalidBudget =
+          Object.hasOwn(item, "attemptsLeft") &&
+          (typeof item.attemptsLeft !== "number" ||
+            !Number.isInteger(item.attemptsLeft) ||
+            item.attemptsLeft < 0 ||
+            item.attemptsLeft > POST_ATTEMPTS);
+        const cached = posts[`chat-request:${item.requestId}`];
+        const pending = cached?.confirmation;
+        const invalidConfirmation =
+          pending !== undefined &&
+          (!Number.isSafeInteger(pending?.until) ||
+            pending.until <= 0 ||
+            typeof pending.submitted !== "boolean");
+        if (!invalidBudget && !invalidConfirmation) continue;
+        item.attemptsLeft = 0;
+        item.problem =
+          "Paused: invalid saved retry budget or confirmation. Cancel this request to start another.";
+        if (cached !== undefined) {
+          cached.needsFinal = true;
+          delete cached.confirmation;
+        }
+        pausedInvalid = true;
+      }
+      if (pausedInvalid) save();
     }
   } catch {
     options.log(
@@ -327,47 +370,159 @@ export function startNovaChatHost(
 
   /**
    * Sign `statement` with the notification account of `kind` for
-   * `requestId` and today, claimed for today, and submit it once its
-   * allowance is final. The account is the same for every try of one request
+   * `requestId` and today, claimed for today, and submit it once that
+   * account may post. The account is the same for every try of one request
    * on one day (the apps' `//chat-request//<id>//<period>`,
    * `//chat-accept//<id>//<period>`, with the peer's request id for an
    * acceptance), so a try again claims no new slot. Posts run one at a time.
    * `unwanted` says why the post is no longer wanted, or null; it is asked
-   * before the claim and again before the submit.
+   * before each step. Answers how the post ends once its claim's finality is
+   * known, for a post that went at a best block.
    */
   const postAs = (
     kind: "chat-request" | "chat-accept",
     requestId: string,
     statement: Statement,
     unwanted: () => string | null = () => null,
-  ): Promise<void> => {
-    const check = () => {
-      if (state !== "running") throw new Error(`${product.name} stopped`);
-      const why = unwanted();
-      if (why !== null) throw new Error(why);
-    };
+  ): Promise<{ final: Promise<FinalOutcome> }> => {
     const run = async () => {
       if (store === null) throw new Error("the Statement Store is not open");
-      check();
       const period = claimPeriod(now());
       const signer = options.notificationSigner(kind, requestId, period);
-      const claim = await options.claimNotification(signer.public, period);
-      options.log(
-        `${product.name}: ${kind} ${requestId.slice(0, 8)}… ${claim.line}`,
+      const account = bytesToHex(signer.public);
+      const key = `${kind}:${requestId}`;
+      let cached = posts[key];
+      if (cached !== undefined && cached.period !== period)
+        throw new Error("the day changed; this post needs a new user action");
+      if (cached === undefined) {
+        cached = {
+          period,
+          bytes: bytesToHex(
+            encodeSigned(statement, signer.public, signer.sign),
+          ),
+        };
+        posts[key] = cached;
+        save();
+      }
+      let postingStore: StatementStoreLike | null = null;
+      const posted = await postWhenUsable(
+        {
+          claim: async () => {
+            if (cached.needsFinal && cached.claim === undefined)
+              throw new Error(
+                "the original claim answer is missing; no recovery claim was submitted",
+              );
+            if (cached.claim !== undefined)
+              return {
+                account,
+                period,
+                ...cached.claim,
+                ...(cached.needsFinal ? { blockHash: undefined } : {}),
+              };
+            const claim = await options.claimNotification(
+              signer.public,
+              period,
+            );
+            options.log(
+              `${product.name}: ${kind} ${requestId.slice(0, 8)}… ${claim.line}`,
+            );
+            cached.claim = claim;
+            save();
+            return { account, period, ...claim };
+          },
+          bytes: hexToBytes(cached.bytes),
+          sign: cached.renewed ? undefined : signer.sign,
+          retryUnconfirmed: cached.needsFinal,
+          replaced: (bytes) => {
+            cached.bytes = bytesToHex(bytes);
+            cached.renewed = true;
+            save();
+          },
+          submit: (bytes) => {
+            if (postingStore === null)
+              throw new Error("the Statement Store is not open");
+            return postingStore.submit(bytes).then((result) => {
+              if (isStored(result) && cached.confirmation !== undefined) {
+                cached.confirmation.submitted = true;
+                save();
+              }
+              return result;
+            });
+          },
+          unwanted: () =>
+            state !== "running"
+              ? `${product.name} stopped`
+              : claimPeriod(now()) !== period
+                ? "the day changed"
+                : unwanted(),
+        },
+        {
+          guard: async (claim, request) => {
+            postingStore = store;
+            if (postingStore === null)
+              throw new Error("the Statement Store is not open");
+            const checked =
+              kind !== "chat-accept" &&
+              request?.wait !== "finalized" &&
+              (await postingStore.supportsBestBlockPosting?.()) === true;
+            const usable = await options.notificationGuard(claim, {
+              ...request,
+              signal: prompts.signal,
+              ...(!checked ||
+              cached.needsFinal ||
+              cached.confirmation !== undefined
+                ? { wait: "finalized" }
+                : {}),
+            });
+            if (usable.usableAt === "best") {
+              cached.confirmation ??= {
+                until: Math.min(
+                  now() + FINALITY_TIMEOUT_MS,
+                  (period + 1) * 86_400_000,
+                  Number(statement.expiry >> 32n) * 1000,
+                ),
+                submitted: false,
+              };
+              save();
+            }
+            return usable;
+          },
+          sleep: (ms) => new Promise((resolve) => schedule(resolve, ms)),
+          now,
+        },
       );
-      await options.notificationSettled(signer.public, { period, ...claim });
-      check();
-      const result = await store.submit(
-        encodeSigned(statement, signer.public, signer.sign),
-      );
+      const { result } = posted;
       if (!isStored(result))
         throw new Error(
           `the Statement Store answered ${result.status}${result.reason === undefined ? "" : ` (${result.reason})`}`,
         );
+      return {
+        final: posted.final.then((outcome) => {
+          if (outcome.tag === "unconfirmed") {
+            cached.needsFinal = true;
+            save();
+          }
+          return outcome;
+        }),
+      };
     };
     const next = posting.then(run, run);
     posting = next.catch(() => {});
     return next;
+  };
+
+  /** What a post that went at a best block came to, for the log; the problem it leaves, or null. */
+  const afterFinal = (what: string, outcome: FinalOutcome): string | null => {
+    if (outcome.tag === "final" || state !== "running") return null;
+    if (outcome.tag === "reposted") {
+      options.log(
+        `${product.name}: ${what} was posted again, once its account held at the finalized head: ${outcome.why}.`,
+      );
+      return null;
+    }
+    const problem = `Posted at a best block, but ${outcome.why}.`;
+    options.log(`${product.name}: ${what}: ${problem}`);
+    return problem;
   };
 
   // ---- Incoming requests ----------------------------------------------------------
@@ -443,6 +598,7 @@ export function startNovaChatHost(
     )
       return;
     if (boundary.state(peer) === "incoming") boundary.decline(peer);
+    delete posts[`chat-accept:${requestId}`];
     declined = [...declined, `${peer}:${requestId}`].slice(-DECLINED_MAX);
     save();
     tell(peer);
@@ -472,6 +628,11 @@ export function startNovaChatHost(
           const result = boundary.openAcceptance(peer, statement);
           if (isRefused(result)) continue;
           options.log(`${product.name}: your request was accepted.`);
+          for (const item of outgoing.filter((item) => item.peer === peer)) {
+            confirmations.get(item)?.abort();
+            delete posts[`chat-request:${item.requestId}`];
+            requestAttempts.delete(item);
+          }
           outgoing = outgoing.filter((item) => item.peer !== peer);
           save();
           acceptanceWatches.get(peer)?.();
@@ -569,9 +730,9 @@ export function startNovaChatHost(
     sentChanged();
     watchAcceptance(peer);
     tell(peer);
-    // The finality wait can outlast the product's start query, so the
+    // The allowance wait can outlast the product's start query, so the
     // request is answered once it is kept, and Sent shows how its post goes.
-    void postRequest(item, POST_ATTEMPTS).catch((error: unknown) =>
+    void postRequest(item).catch((error: unknown) =>
       options.log(`${product.name}: ${errorText(error)}`),
     );
     return { ok: true };
@@ -580,10 +741,11 @@ export function startNovaChatHost(
   /**
    * Post `item`'s request, built again with the same id, so a try again on
    * the same day signs with the same notification account and claims no new
-   * slot. A failed try is tried again after {@link RETRY_MS} while `attempts`
-   * last; then it waits, paused, until the host starts again.
+   * slot. A failed try is tried again after {@link RETRY_MS} while attempts
+   * last, including across restarts; then it waits, paused.
    */
-  async function postRequest(item: Outgoing, attempts: number): Promise<void> {
+  async function postRequest(item: Outgoing): Promise<void> {
+    if (inFlight.has(item)) return;
     retries.get(item.peer)?.();
     retries.delete(item.peer);
     if (state !== "running" || !outgoing.includes(item)) return;
@@ -592,30 +754,27 @@ export function startNovaChatHost(
       save();
       return sentChanged();
     }
+    const cached = posts[`chat-request:${item.requestId}`];
+    const confirming = cached?.confirmation !== undefined;
+    if (!confirming && (item.attemptsLeft ?? POST_ATTEMPTS) === 0) return;
+    if (!confirming)
+      item.attemptsLeft = (item.attemptsLeft ?? POST_ATTEMPTS) - 1;
+    save();
     inFlight.add(item);
+    const attempt = Symbol();
+    requestAttempts.set(item, attempt);
     sentChanged();
-    try {
-      const built = await boundary.request(hexToBytes(item.peer as HexString), {
-        requestId: item.requestId,
-        nowMs: now(),
-        expiry: expiryAt(now()),
-        welcome: item.welcome,
-      });
-      if (isRefused(built)) throw new Error(built.refused);
-      await postAs("chat-request", item.requestId, built.statement, () =>
-        !outgoing.includes(item)
-          ? "the request was cancelled"
-          : blocked(item.peer)
-            ? "You blocked this person."
-            : null,
-      );
-      if (state !== "running") return;
-      item.problem = null;
-      options.log(`${product.name}: your request is posted.`);
-    } catch (error) {
-      if (state !== "running") return;
+    const failed = (error: unknown) => {
+      if (
+        state !== "running" ||
+        !outgoing.includes(item) ||
+        requestAttempts.get(item) !== attempt
+      )
+        return;
       const again =
-        attempts > 1 && outgoing.includes(item) && !blocked(item.peer);
+        (item.attemptsLeft ?? 0) > 0 &&
+        !blocked(item.peer) &&
+        claimPeriod(now()) === claimPeriod(item.createdAt);
       item.problem = again
         ? `Not posted yet, trying again in ${RETRY_MS / 1000} s: ${errorText(error)}`
         : `Not posted: ${errorText(error)}`;
@@ -623,13 +782,168 @@ export function startNovaChatHost(
       if (again)
         retries.set(
           item.peer,
-          schedule(() => void postRequest(item, attempts - 1), RETRY_MS),
+          schedule(() => void postRequest(item), RETRY_MS),
         );
+      const current = posts[`chat-request:${item.requestId}`];
+      if (current?.confirmation !== undefined) {
+        current.needsFinal = true;
+        delete current.confirmation;
+      }
+      save();
+      sentChanged();
+    };
+    try {
+      if (claimPeriod(now()) !== claimPeriod(item.createdAt)) {
+        item.attemptsLeft = 0;
+        throw new Error("the request's day ended; cancel it to start another");
+      }
+      if (confirming) {
+        await confirmRequest(item, cached);
+        return;
+      }
+      const built = await boundary.request(hexToBytes(item.peer as HexString), {
+        requestId: item.requestId,
+        nowMs: now(),
+        expiry: expiryAt(now()),
+        welcome: item.welcome,
+      });
+      if (isRefused(built)) throw new Error(built.refused);
+      const posted = await postAs(
+        "chat-request",
+        item.requestId,
+        built.statement,
+        () =>
+          !outgoing.includes(item)
+            ? "the request was cancelled"
+            : blocked(item.peer)
+              ? "You blocked this person."
+              : null,
+      );
+      if (state !== "running") return;
+      item.problem = null;
+      options.log(`${product.name}: your request is posted.`);
+      void posted.final.then((outcome) => {
+        const late = afterFinal("your request", outcome);
+        if (
+          state !== "running" ||
+          !outgoing.includes(item) ||
+          requestAttempts.get(item) !== attempt
+        )
+          return;
+        if (late !== null) failed(late);
+        else {
+          const current = posts[`chat-request:${item.requestId}`];
+          if (current !== undefined) delete current.confirmation;
+          save();
+        }
+      });
+    } catch (error) {
+      failed(error);
     } finally {
       inFlight.delete(item);
+      sentChanged();
     }
     save();
     sentChanged();
+
+    async function confirmRequest(
+      item: Outgoing,
+      cached: CachedPost,
+    ): Promise<void> {
+      const pending = cached.confirmation!;
+      const statement = decodeStatement(hexToBytes(cached.bytes));
+      const check = () => {
+        if (state !== "running" || !outgoing.includes(item))
+          throw new Error("the request was cancelled");
+        if (blocked(item.peer)) throw new Error("You blocked this person.");
+        if (claimPeriod(now()) !== cached.period) {
+          item.attemptsLeft = 0;
+          throw new Error("the request's day ended");
+        }
+        if (now() >= Number(statement.expiry >> 32n) * 1000) {
+          item.attemptsLeft = 0;
+          throw new Error("the statement has expired");
+        }
+      };
+      check();
+      if (now() >= pending.until) {
+        item.attemptsLeft = 0;
+        throw new Error(
+          "the saved finality deadline ended; cancel the request to start another",
+        );
+      }
+      if (cached.claim?.blockHash === undefined)
+        throw new Error("the saved inclusion block is missing");
+      const stop = new AbortController();
+      confirmations.set(item, stop);
+      const signal = AbortSignal.any([prompts.signal, stop.signal]);
+      const cancel = schedule(() => stop.abort(), pending.until - now());
+      const { aborted, release } = abortion(signal);
+      let inclusionFinal = false;
+      try {
+        const account = bytesToHex(statement.signer);
+        const confirmed = await Promise.race([
+          options.notificationGuard(
+            { account, period: cached.period, ...cached.claim },
+            { wait: "finalized", signal },
+          ),
+          aborted,
+        ]);
+        check();
+        if (!confirmed.claimFinal)
+          throw new Error("the saved inclusion block is not finalized");
+        if (now() >= pending.until)
+          throw new Error("the saved finality deadline ended");
+        inclusionFinal = true;
+        if (!pending.submitted) {
+          item.problem = NOT_POSTED;
+          delete cached.confirmation;
+          save();
+          // A crash before the submit answer permits only an identical-byte retry.
+          if (store === null)
+            throw new Error("the Statement Store is not open");
+          const connection = store;
+          const sent = await submitUntilAllowed(
+            {
+              bytes: hexToBytes(cached.bytes),
+              submit: (bytes) => connection.submit(bytes),
+              unwanted: () => {
+                try {
+                  check();
+                  signal.throwIfAborted();
+                  return null;
+                } catch (error) {
+                  return errorText(error);
+                }
+              },
+            },
+            (ms) => new Promise((resolve) => schedule(resolve, ms)),
+          );
+          if (!isStored(sent.result))
+            throw new Error(
+              `the Statement Store answered ${sent.result.status}`,
+            );
+        }
+        check();
+        item.problem = null;
+        delete cached.confirmation;
+        save();
+      } catch (error) {
+        check();
+        if (signal.aborted || now() >= pending.until) {
+          item.attemptsLeft = 0;
+          throw new Error(
+            "the saved finality deadline ended; cancel the request to start another",
+          );
+        }
+        if (!inclusionFinal) cached.needsFinal = true;
+        throw error;
+      } finally {
+        cancel();
+        release();
+        confirmations.delete(item);
+      }
+    }
   }
 
   const call = async (message: NovaCall): Promise<NovaResult> => {
@@ -769,7 +1083,11 @@ export function startNovaChatHost(
     stopRequests = unsubscribe;
     for (const item of outgoing) {
       watchAcceptance(item.peer);
-      if (item.problem !== null) void postRequest(item, POST_ATTEMPTS);
+      if (
+        item.problem !== null ||
+        posts[`chat-request:${item.requestId}`]?.confirmation !== undefined
+      )
+        void postRequest(item);
     }
   };
 
@@ -848,7 +1166,13 @@ export function startNovaChatHost(
     });
     if (isRefused(statement)) throw new Error(statement.refused);
     try {
-      await postAs("chat-accept", theirs, statement);
+      const posted = await postAs("chat-accept", theirs, statement);
+      const outcome = await posted.final;
+      const late = afterFinal(
+        `the acceptance of ${item.sender.name}'s request`,
+        outcome,
+      );
+      if (late !== null) throw new Error(late);
     } catch (error) {
       // Not posted: the request stays pending, and Accept may be tried again.
       throw new Error(`The acceptance was not posted: ${errorText(error)}`);
@@ -858,6 +1182,7 @@ export function startNovaChatHost(
         `${product.name} stopped before the acceptance was kept.`,
       );
     boundary.accepted(peer);
+    delete posts[`chat-accept:${theirs}`];
     save();
     options.notifications.accept(item.id);
     options.log(`${product.name}: you accepted ${item.sender.name}'s request.`);
@@ -921,7 +1246,7 @@ export function startNovaChatHost(
         startListeners.add(listener);
         return () => startListeners.delete(listener);
       },
-      // The user decides before the worker is asked: the finality wait and
+      // The user decides before the worker is asked: the allowance wait and
       // the prompt are both longer than the start's time limit allows.
       confirm: async (account, welcome) => {
         const peer = account.toLowerCase();
@@ -986,6 +1311,11 @@ export function startNovaChatHost(
       if (!id.startsWith(SENT_PREFIX)) return false;
       const peer = id.slice(SENT_PREFIX.length);
       if (!boundary.withdraw(peer)) return false;
+      for (const item of outgoing.filter((item) => item.peer === peer)) {
+        confirmations.get(item)?.abort();
+        delete posts[`chat-request:${item.requestId}`];
+        requestAttempts.delete(item);
+      }
       outgoing = outgoing.filter((item) => item.peer !== peer);
       retries.get(peer)?.();
       retries.delete(peer);

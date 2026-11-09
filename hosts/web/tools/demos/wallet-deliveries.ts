@@ -55,8 +55,8 @@ export function devWalletDelivery(
           messages: null,
         }),
         hostDelivery: (session) => statementStoreDelivery(session, false, deps),
-        allowance: (session, settled) =>
-          conversationAllowance(session, false, settled),
+        allowance: (session, seen) =>
+          conversationAllowance(session, false, seen),
       };
     case "local":
       return {
@@ -81,8 +81,8 @@ export function devWalletDelivery(
           chat: `${CHAT_ACCOUNT_COST} Only validated: nothing is submitted or sent.`,
           messages: null,
         }),
-        allowance: (session, settled) =>
-          conversationAllowance(session, false, settled),
+        allowance: (session, seen) =>
+          conversationAllowance(session, false, seen),
       };
   }
 }

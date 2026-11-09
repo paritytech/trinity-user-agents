@@ -123,6 +123,18 @@ export interface NetworkConfig {
    * for a personhood proof. Null where the environment names none.
    */
   identityBackend: string | null;
+  /**
+   * The People chain whose Statement Store accounts may post once their
+   * claim's block has a child at the best block, rather than once their
+   * allowance holds at the finalized head (`allowance-usable.ts`). Null: they
+   * wait for the finalized head.
+   *
+   * Set only for a People chain whose RPC nodes were checked to keep a
+   * statement whose allowance is not final yet (polkadot-sdk #13437). The
+   * genesis only permits a candidate. Each best-block read must also verify
+   * the actual RPC connection's genesis, version and required methods.
+   */
+  bestBlockPosting: { peopleGenesis: string } | null;
 }
 
 /** Every network this host can be configured for, by id. */
@@ -155,6 +167,11 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
     },
     identityBackend: "https://identity.dotspark.app",
+    // This genesis is a candidate; the connected node must pass the RPC identity check.
+    bestBlockPosting: {
+      peopleGenesis:
+        "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
+    },
   },
   previewnet: {
     id: "previewnet",
@@ -184,6 +201,8 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       contentGateway: "https://previewnet.substrate.dev",
     },
     identityBackend: "https://identity-previewnet.dotspark.app",
+    // Its People node (1.24.3, 2026-09-16) predates #13437.
+    bestBlockPosting: null,
   },
 };
 

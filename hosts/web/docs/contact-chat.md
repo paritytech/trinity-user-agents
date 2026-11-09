@@ -99,6 +99,48 @@ Both prompts show one line about daily slots and public messages. It opens the d
 - A failed post fails its messages. Contact Chat adds the core's reason. The message's own "Not sent" line has none,
   because the draft contract carries none.
 
+### Allowance wait
+
+Host requests and Nova requests use the guarded posting rule (`src/platform/allowance-usable.ts`). Conversation
+accounts, Nova acceptances and Backup always wait for finalized allowance. Identity and contact security reads stay
+finalized.
+
+- A node accepts a statement against the account's allowance at its own best block. Since polkadot-sdk #13437 its
+  periodic limit check takes the larger of the best and the finalized allowance; before, it evicted against the
+  finalized one alone, so a post made before the claim was final could be accepted and then dropped.
+- **Best block.** Paseo Next v2 over RPC is a candidate, not a network-wide guarantee. Both the allowance reader and
+  the exact submit connection must report the pinned People genesis, SDK `1.25.1-4a0cc2e7449` and required RPC methods.
+  A reconnect cannot silently move the post to an unchecked socket.
+  Unknown versions, missing methods, wrong genesis and failed checks use finalized allowance. An account posts once the core registered it just now, verified the
+  slot at the claim's block, and that block has a child at the best block that holds the allowance (at most 30 s, then
+  the finalized wait). An account registered before waits for the finalized head.
+- **Finalized head.** Everywhere else, and on the light client: PreviewNet, whose People node predates #13437. Read
+  every 3 s, at most 180 s.
+- **Behind a best-block post.** A bounded finalized watch verifies the inclusion block's canonical ancestry, not just
+  a positive grant left from yesterday. It stops when the wallet signs out or switches. An unconfirmed post can make
+  one higher-expiry replacement after the same account has finalized allowance. It keeps the same account, channel,
+  topics and encrypted payload. Receiver deduplication ignores the new outer proof. Recovery never submits another
+  claim: the same account does not prove that another claim would spend no slot after a reorg. With no finalized
+  allowance it stays unconfirmed and visible. Later retries can wait again, but create at most one replacement.
+- **Conversation accounts.** The host never holds a conversation's signed statements: the product signs and submits them
+  through the core. Their first keys cannot safely rely on a provisional lease alone, so these accounts wait for
+  finalized allowance. A known inclusion block must be on finalized ancestry for a full-day lease. An unknown hash
+  proves only finalized allowance and gives a lease of at most 180 s. Renewal does not retransmit a statement. What a
+  product posts again is its own:
+  - Kettle Chat (kettle-core `4d0764d`, default timings) posts its keys again every 10 min, and a group outbox that is
+    not acknowledged again after 10 s, doubling to 5 min. Each is a new statement, not the same bytes.
+  - Nova Chat posts the messages still unacknowledged again once its allowance answer ends, as a new statement.
+  - Contact Chat posts nothing again by itself. A statement lost after it was accepted comes back only with the next
+    message, whose post carries the recent window.
+- **Same bytes.** Ordinary retries preserve signed bytes; a node that answers `noAllowance` gets the same bytes
+  again, 2 s apart, 6 submits at most. A product's own posts go through the core, which does the same 11 times. Nothing
+  else is tried again, and an uncertain claim is never followed by a claim for another account.
+- **Evicted hashes.** SDK `4a0cc2e7449` bans evicted hashes from network resubmission for up to 48 h or their expiry.
+  Local resubmission does not guarantee regossip to those peers. Only deliberate unconfirmed-claim recovery changes
+  the outer expiry and proof. `knownExpired` is not accepted; `known` is not recipient acknowledgement.
+- Not covered: the People collators and the nodes the Nova apps use were not checked; a node that accepted a statement
+  does not show that anyone received it.
+
 ## Diagnostics (draft)
 
 - The worker reports each conversation to its host, for the [Chat view](inspector.md#chat). A report holds the protocol,
@@ -164,12 +206,12 @@ outboxes, end-to-end encrypted.
 - The setup payloads carry only the conversation account: `0x4b06` and 32 bytes. Bob replies on Accept, then starts his
   node, which posts his key package. Alice, after the authenticated reply, completes the request at once, shows the
   request's message as sending and the chat as "Setting up the encrypted chat", then makes the group with that first
-  message (or the first one she writes) once her node starts. If her allowance does not finalize in time, the message
-  fails with the reason and Retry tries again; the request stays completed. A request sent with no message leaves her
-  chat setting up once her node runs, saying "Write a message to start the encrypted chat": Kettle makes the group with
-  a first message, never with the node. Either side's chat is set up, and says so once, only when its direct group is
-  made, joined or restored. Each side keeps only the direct group of the two conversation accounts, made by the peer (or
-  by itself, on reload), and leaves any other.
+  message (or the first one she writes) once her node starts. If her allowance does not become usable in time, the
+  message fails with the reason and Retry tries again; the request stays completed. A request sent with no message
+  leaves her chat setting up once her node runs, saying "Write a message to start the encrypted chat": Kettle makes the
+  group with a first message, never with the node. Either side's chat is set up, and says so once, only when its direct
+  group is made, joined or restored. Each side keeps only the direct group of the two conversation accounts, made by the
+  peer (or by itself, on reload), and leaves any other.
 - **Writing before the group.** Bob may write, and Retry a failed message, while he waits for Alice's Welcome. Kettle
   Chat holds those messages, shown as sending and kept across a reload, and hands none to Kettle until Bob joined that
   group: a send before then would make a second group of his own. Once he joined, it sends them in the order written,
@@ -179,11 +221,8 @@ outboxes, end-to-end encrypted.
   conversation account: the side that sent it refuses an Accept of the other's, and the other side accepts it and
   withdraws its own at the host, so it is not posted again. A request the host answers after a newer one replaced it is
   withdrawn too. A conversation that starts again removes its old account's sealed Kettle state and keeps its history.
-- **Finality guard.** For a signed-in wallet, each conversation account posts only once its allowance holds at the
-  People chain's finalized head (`tools/chat/kettle.ts`, read every 3 s, at most 180 s). A node accepts a statement
-  against the allowance at its best block but checks it at the finalized block later, so a statement posted in between
-  may be accepted and then evicted. This guard is Kettle Chat's only; Contact Chat's first post after `chatAccount` has
-  the same exposure.
+- **Allowance wait.** For a signed-in wallet, each conversation account posts only once it may post by the network's
+  posting rule ([Allowance wait](#allowance-wait)), as Contact Chat's do.
 - **Storage.** Both live in the product's TrUAPI storage, which this host keeps in the browser's `localStorage`, under
   the wallet, the network and the product. The history and the conversations (`kettle-chat:record:v1`) are plain JSON;
   Kettle's MLS state (`kettle-chat:node:<index>:…`) is sealed with ChaCha20-Poly1305 under a key from the product's

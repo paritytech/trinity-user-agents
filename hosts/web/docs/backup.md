@@ -46,7 +46,8 @@ permission answers), preferences (dock, recents, chain choices) and a product fr
 4. The core stores the sealed snapshot on Bulletin under the host's backup Bulletin account. It claims long-term storage
    first when that account's authorization cannot hold it. The host reads the bytes back from the gateway.
 5. The core claims a general Statement Store slot for the host's backup statement account. The host waits until the
-   allowance holds at the finalized head (`src/platform/allowance-finality.ts`).
+   allowance holds at the finalized head (`src/platform/allowance-finality.ts`), on every network: it does not post at a
+   best block, as chat accounts may ([Allowance wait](contact-chat.md#allowance-wait)).
 6. The host posts a pointer: one statement signed by the backup statement account, on a channel and topic derived from
    the wallet's backup keys. Its sealed data names the snapshot's Bulletin key, its revision, its digest and when it was
    taken. Its expiry lapses 14 days after the snapshot was taken, with the revision in the low 32 bits, and is always

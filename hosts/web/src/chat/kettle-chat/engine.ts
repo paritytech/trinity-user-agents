@@ -1000,7 +1000,7 @@ export class KettleChat implements ConversationEngine {
     const account = await setup;
     if (account === null) return;
     // The host holds an Accept only briefly, and the account's allowance may
-    // take longer to finalize: reply first, then start the node, whose key
+    // take longer to become usable: reply first, then start the node, whose key
     // package the sender's node waits for.
     const result = await this.deps.requests.call({
       call: "reply",

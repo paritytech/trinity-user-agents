@@ -38,9 +38,11 @@ import type { InvitationObserver } from "./observer.js";
 import type { Product } from "./ports.js";
 import { ownIdentityProblem } from "./published-keys.js";
 import { WalletIdentityAuth } from "./wallet-auth.js";
+import type { AllowanceGuard } from "../platform/allowance-usable.js";
 import {
   CHAT_ACCOUNT_COST,
   conversationAllowance,
+  type AllowanceSeen,
   type ChatCosts,
   type WalletDelivery,
 } from "./wallet-delivery.js";
@@ -84,11 +86,10 @@ export interface ChatProductSpec {
   /** Query parameters of its worker's page: the settings the host passes it. */
   workerParams?: Readonly<Record<string, string>>;
   /**
-   * Resolves once a conversation account's claim holds at the People chain's
-   * finalized head, or rejects saying why not. Null: the claim's answer is
-   * enough, as for Contact Chat. Nova Chat does not run without one.
+   * Told where each of its accounts became usable, conversation accounts
+   * and Nova Chat's notification accounts alike. Absent: nobody is.
    */
-  allowanceSettled: ((claim: StatementAccountClaim) => Promise<void>) | null;
+  allowanceSeen?: AllowanceSeen;
   /**
    * How it sets up chats. Absent: the host request service
    * (`host-requests/1`). `nova`: the official Nova apps' own chat requests,
@@ -103,43 +104,7 @@ export const CONTACT_CHAT: ChatProductSpec = {
   workerPath: CONTACT_CHAT_PATH,
   lists: "contact-chat",
   messagesEncrypted: false,
-  allowanceSettled: null,
 };
-
-/** Why Nova Chat stays off for a spec with no finality guard. */
-export const NOVA_NEEDS_SETTLEMENT =
-  "Nova Chat posts only once a claim holds at the finalized head, and this host gave it no way to wait for that.";
-
-/**
- * A Nova notification account's wait, through `settled`: the same guard as
- * the conversation accounts', since its allowance is read the same way.
- * Null rejects, saying so, and submits nothing.
- */
-export function novaNotificationSettled(
-  settled: ((claim: StatementAccountClaim) => Promise<void>) | null,
-): (
-  account: Uint8Array,
-  claim: {
-    period: number;
-    seq: number;
-    collection?: string;
-    blockHash?: string;
-  },
-) => Promise<void> {
-  return (account, claim) =>
-    settled === null
-      ? Promise.reject(new Error(NOVA_NEEDS_SETTLEMENT))
-      : settled({
-          account: bytesToHex(account),
-          period: claim.period,
-          outcome: "registered",
-          seq: claim.seq,
-          collection: claim.collection ?? "People",
-          ...(claim.blockHash === undefined
-            ? {}
-            : { blockHash: claim.blockHash }),
-        });
-}
 
 /** A wallet session the core reports, as Contact Chat's requests need it. */
 export interface WalletRequestsSession {
@@ -164,6 +129,13 @@ export interface WalletRequestsSession {
     index: Uint8Array,
     submit: boolean,
   ): Promise<StatementAccountClaim>;
+  /**
+   * Wait until a claimed account may post, by the network's posting rule
+   * (`../platform/allowance-usable.ts`). Every post after a claim waits on
+   * it: conversation accounts, and the notification accounts of host
+   * requests and of Nova Chat.
+   */
+  usableAllowance: AllowanceGuard;
 }
 
 /** What the host lends a worker frame of one product over one port. */
@@ -344,6 +316,8 @@ export class WalletChat {
   /** Contact Chat as the page uses it, for the wallet signed in now. */
   readonly owner: ContactChatOwner;
   private current: { key: string; chats: RunningChat[] } | null = null;
+  /** Aborts when the wallet's session ends, which stops its allowance waits. */
+  private session = new AbortController();
   private readonly sentListeners = new Set<() => void>();
   private stopSent = () => {};
 
@@ -386,11 +360,13 @@ export class WalletChat {
     this.stopSent();
     this.stopSent = () => {};
     for (const chat of this.current?.chats ?? []) chat.host.stop();
+    this.session.abort();
+    this.session = new AbortController();
     this.current = null;
     this.sentChanged();
     if (session === null || key === null || this.products().length === 0)
       return;
-    const chats = this.start(session);
+    const chats = this.start(this.scoped(session, this.session.signal));
     if (chats.length === 0) return;
     this.current = { key, chats };
     const stops = chats.map((chat) =>
@@ -399,6 +375,24 @@ export class WalletChat {
     this.stopSent = () => stops.forEach((stop) => stop());
     for (const chat of chats)
       void chat.host.start().then(() => this.sentChanged());
+  }
+
+  /** `session` whose allowance waits stop once `signal` aborts. */
+  private scoped(
+    session: WalletRequestsSession,
+    signal: AbortSignal,
+  ): WalletRequestsSession {
+    return {
+      ...session,
+      usableAllowance: (claim, request) =>
+        session.usableAllowance(claim, {
+          ...request,
+          signal:
+            request?.signal === undefined
+              ? signal
+              : AbortSignal.any([signal, request.signal]),
+        }),
+    };
   }
 
   private sentChanged(): void {
@@ -457,7 +451,7 @@ export class WalletChat {
     const self = bytesToHex(keys.chatPublic);
     return this.products().map((spec, index) => {
       const costs = delivery.costs(spec.messagesEncrypted);
-      const accounts = delivery.allowance(session, spec.allowanceSettled);
+      const accounts = delivery.allowance(session, spec.allowanceSeen ?? null);
       if (spec.setup === "nova")
         return {
           workerPath: spec.workerPath,
@@ -510,8 +504,7 @@ export class WalletChat {
    * Nova Chat for `session`: the official Nova apps' chat requests, sealed
    * and opened by the wallet's keys in the host, read and posted on the
    * network's Statement Store. It does not run over a delivery that says
-   * why it cannot ({@link WalletDelivery.novaProblem}), nor for a spec with
-   * no finality guard.
+   * why it cannot ({@link WalletDelivery.novaProblem}).
    */
   private startNova(
     session: WalletRequestsSession,
@@ -521,9 +514,7 @@ export class WalletChat {
   ): ContactChatHost {
     const { deps } = this;
     const { submits: submit } = deps.delivery;
-    const novaProblem =
-      deps.delivery.novaProblem ??
-      (spec.allowanceSettled === null ? NOVA_NEEDS_SETTLEMENT : null);
+    const novaProblem = deps.delivery.novaProblem;
     const product = spec.product(session.networkSuffix);
     const chatKeyOf = async (account: Uint8Array) =>
       (await lookupChatIdentity(session.directory, account))?.chatKey ?? null;
@@ -582,8 +573,22 @@ export class WalletChat {
             : { blockHash: claim.blockHash }),
         };
       },
-      notificationSettled: novaNotificationSettled(spec.allowanceSettled),
-      accounts: conversationAllowance(session, submit, spec.allowanceSettled),
+      notificationGuard: async (claim, request) => {
+        const usable = await session.usableAllowance(claim, {
+          ...request,
+          wording: {
+            account: "Nova Chat's account",
+            retry: "it may be tried again",
+          },
+        });
+        spec.allowanceSeen?.(usable);
+        return usable;
+      },
+      accounts: conversationAllowance(
+        session,
+        submit,
+        spec.allowanceSeen ?? null,
+      ),
       confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
       confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
       showChat: deps.showChat,

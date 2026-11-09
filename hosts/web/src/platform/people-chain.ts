@@ -193,6 +193,26 @@ interface RpcMessage {
   params?: { subscription?: string; result?: Record<string, unknown> };
 }
 
+/**
+ * A promise that rejects once `signal` aborts, for a read to race, and the
+ * way to stop listening. Never settles without a signal.
+ */
+export function abortion(signal: AbortSignal | undefined): {
+  aborted: Promise<never>;
+  release(): void;
+} {
+  let release = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    if (signal === undefined) return;
+    const stop = () => reject(new Error("the read was stopped"));
+    if (signal.aborted) return stop();
+    signal.addEventListener("abort", stop, { once: true });
+    release = () => signal.removeEventListener("abort", stop);
+  });
+  aborted.catch(() => {});
+  return { aborted, release: () => release() };
+}
+
 /** Follow-up reads: each gets the values of every round so far and names the next keys. */
 export type FollowUp = (rounds: (HexString | null)[][]) => HexString[];
 
@@ -203,7 +223,8 @@ const storageRequestId = (round: number): number =>
 /**
  * Read `keys` at the newest finalized block of the chain behind `connection`,
  * with `chainHead_v1`. Closes the connection when done, and rejects when the
- * chain stops following, refuses the read or takes longer than `timeoutMs`.
+ * chain stops following, refuses the read, takes longer than `timeoutMs` or
+ * `signal` aborts.
  *
  * Each of `followUps` runs after the round before it, on the same follow
  * subscription and the same block, so a key that depends on an earlier value
@@ -216,6 +237,7 @@ export async function readStorageValues(
   timeoutMs: number = READ_TIMEOUT_MS,
   followUps: FollowUp[] = [],
   chainName = "People",
+  signal?: AbortSignal,
 ): Promise<{
   blockHash: HexString;
   values: (HexString | null)[];
@@ -334,10 +356,12 @@ export async function readStorageValues(
     throw new Error("the connection closed before the chain answered");
   };
 
+  const { aborted, release } = abortion(signal);
   try {
-    return await Promise.race([run(), timeout]);
+    return await Promise.race([run(), timeout, aborted]);
   } finally {
     clearTimeout(timer);
+    release();
     if (subscription !== undefined)
       try {
         call(4, "chainHead_v1_unfollow", [subscription]);

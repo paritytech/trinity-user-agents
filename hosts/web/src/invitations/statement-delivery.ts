@@ -4,11 +4,12 @@ import { deriveHardSecret } from "./chat-keys.js";
 import {
   decodeStatement,
   encodeSigned,
-  statementHash,
   verifyStatement,
 } from "../platform/statement.js";
 import type { StatementStoreLike } from "../platform/statement-store.js";
 import { isStored } from "../platform/statement-store.js";
+import type { AllowanceGuard } from "../platform/allowance-usable.js";
+import { postWhenUsable, type FinalOutcome } from "../platform/guarded-post.js";
 import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import type { DeliveryReceiver, HostDelivery, IdentityKeys } from "./ports.js";
 import { digest, fromHex, toHex } from "./sealing.js";
@@ -27,7 +28,10 @@ import { digest, fromHex, toHex } from "./sealing.js";
  * statement of at most {@link NOTIFICATION_DATA_MAX_BYTES} of data, and the
  * node checks that allowance; this host never signs a post with the user's
  * identity account. The same post on the same day derives the same account,
- * so posting it again after a restart claims nothing new.
+ * so posting it again after a restart claims nothing new. A post waits until
+ * its account may post by the network's rule, and keeps one signed
+ * statement per day, so ordinary retries send the same bytes
+ * (`../platform/guarded-post.ts`).
  *
  * While this host runs, a request is posted again each new day, until it is
  * withdrawn, and a reply until its `until`. A post this delivery cannot keep
@@ -51,9 +55,9 @@ export const RETRY_MS = 15 * 60_000;
 /** The return route of every request: the day inbox. */
 export const DAY_INBOX_ROUTE = "day-inbox:draft-1";
 /**
- * Statements already handed on, by hash, so the store's replay of one is not
- * opened again. A post posted again is a new statement, from another
- * account, and is handed on: a recipient answers it. Bounded.
+ * Payloads already handed on, by signer and encrypted data, so an outer
+ * proof replacement is not opened twice. A new day's account still reaches
+ * the receiver, which answers it. Bounded.
  */
 const SEEN_MAX = 2048;
 
@@ -66,6 +70,8 @@ export interface StatementDeliveryOptions {
   openStore(): Promise<StatementStoreLike>;
   /** Register, or with `submit` false only validate, `account` for today. */
   claim(account: Uint8Array, submit: boolean): Promise<NotificationClaim>;
+  /** When a claimed account may post, by the network's rule. */
+  guard: AllowanceGuard;
   /** Whether claims and statements are submitted, or claims only validated. */
   submit: boolean;
   now(): number;
@@ -119,6 +125,16 @@ interface Post {
   /** The day it was last posted on. */
   posted: number | null;
   problem: string | null;
+  /** The statement signed for this post on `period`, which every try that day sends. */
+  signed?: {
+    period: number;
+    bytes: Uint8Array;
+    claim?: NotificationClaim;
+    renewed?: boolean;
+  };
+  needsFinal?: boolean;
+  attempt?: symbol;
+  publishing?: boolean;
 }
 
 export class StatementStoreDelivery implements HostDelivery {
@@ -263,7 +279,9 @@ export class StatementStoreDelivery implements HostDelivery {
         continue;
       }
       if (!verifyStatement(statement)) continue;
-      const hash = toHex(statementHash(encoded));
+      const hash = toHex(
+        digest("day-inbox-payload", statement.signer, statement.data),
+      );
       if (this.seen.has(hash)) continue;
       if (this.seen.size >= SEEN_MAX) this.seen.clear();
       this.seen.add(hash);
@@ -309,7 +327,7 @@ export class StatementStoreDelivery implements HostDelivery {
   /** Post `id` on today's inbox, unless it is already, through a claimed notification account. */
   private async publish(id: string): Promise<void> {
     const post = this.posts.get(id);
-    if (this.closed || post === undefined) return;
+    if (this.closed || post === undefined || post.publishing) return;
     const now = this.options.now();
     if (now >= post.until) {
       this.posts.delete(id);
@@ -332,7 +350,15 @@ export class StatementStoreDelivery implements HostDelivery {
       period,
     });
     const { submit } = this.options;
-    try {
+    const attempt = Symbol();
+    post.attempt = attempt;
+    post.publishing = true;
+    const claimed = async () => {
+      if (post.signed?.period === period && post.signed.claim !== undefined)
+        return {
+          ...post.signed.claim,
+          ...(post.needsFinal ? { blockHash: undefined } : {}),
+        };
       // One claim at a time, so two posts never race for one slot.
       const claim = await this.serially(() =>
         this.options.claim(account.public, submit),
@@ -340,31 +366,92 @@ export class StatementStoreDelivery implements HostDelivery {
       this.options.log(
         `Post ${id.slice(2, 10)}: notification account ${toHex(account.public).slice(0, 10)}… ${claim.outcome} for day ${claim.period}, slot ${claim.seq}${claim.collection === undefined ? "" : ` of ${claim.collection}`}${claim.blockHash === undefined ? "" : ` in block ${claim.blockHash}`}.`,
       );
-      if (this.posts.get(id) !== post) return;
       if (claim.period !== period)
-        return this.report(id, post, "the day changed while it was claimed.");
-      if (!submit)
+        throw new Error("the day changed while it was claimed.");
+      if (post.signed?.period === period) post.signed.claim = claim;
+      return claim;
+    };
+    try {
+      if (!submit) {
+        const claim = await claimed();
+        if (this.posts.get(id) !== post) return;
         return this.report(
           id,
           post,
           `not posted: claims are only validated. Today's claim would take slot ${claim.seq} of ${claim.collection ?? "a collection"}.`,
         );
-      const store = await this.openStore();
-      const statement = encodeSigned(
+      }
+      // Ordinary retries keep the proof, including after a lost submit answer.
+      if (post.signed?.period !== period) {
+        post.needsFinal = false;
+        post.signed = {
+          period,
+          bytes: encodeSigned(
+            {
+              expiry: postExpiry(period, now),
+              channel: null,
+              topics: [inboxTopic(this.options.network, period)],
+              data,
+            },
+            account.public,
+            account.sign,
+          ),
+        };
+      }
+      let postingStore: StatementStoreLike | undefined;
+      const posted = await postWhenUsable(
         {
-          expiry: postExpiry(period, now),
-          channel: null,
-          topics: [inboxTopic(this.options.network, period)],
-          data,
+          claim: async () => ({
+            account: toHex(account.public),
+            ...(await claimed()),
+          }),
+          bytes: post.signed.bytes,
+          sign: post.signed.renewed ? undefined : account.sign,
+          retryUnconfirmed: post.needsFinal,
+          replaced: (bytes) => {
+            post.signed = { ...post.signed!, bytes, renewed: true };
+          },
+          submit: async (bytes) => {
+            if (postingStore === undefined)
+              throw new Error("the posting connection is not open");
+            return postingStore.submit(bytes);
+          },
+          unwanted: () =>
+            this.closed ||
+            this.posts.get(id) !== post ||
+            post.attempt !== attempt
+              ? "the post was withdrawn"
+              : periodOf(this.options.now()) !== period
+                ? "the day changed"
+                : this.options.now() >= post.until
+                  ? "the post has expired"
+                  : null,
         },
-        account.public,
-        account.sign,
+        {
+          guard: async (claim, request) => {
+            postingStore = await this.openStore();
+            const checked =
+              request?.wait !== "finalized" &&
+              (await postingStore.supportsBestBlockPosting?.()) === true;
+            return this.options.guard(claim, {
+              ...request,
+              ...(!checked ? { wait: "finalized" } : {}),
+              wording: {
+                account: "The post's notification account",
+                retry: "it is tried again later",
+              },
+            });
+          },
+          sleep: (ms) =>
+            new Promise((resolve) => this.options.schedule(resolve, ms)),
+          now: this.options.now,
+        },
       );
-      const result = await store.submit(statement);
+      const { result } = posted;
       this.options.log(
-        `Post ${id.slice(2, 10)}: the Statement Store answered ${result.status}${result.reason === undefined ? "" : ` (${result.reason})`} for ${data.length} bytes.`,
+        `Post ${id.slice(2, 10)}: the Statement Store answered ${result.status}${result.reason === undefined ? "" : ` (${result.reason})`} for ${data.length} bytes${posted.submits > 1 ? `, at submit ${posted.submits}` : ""}.`,
       );
-      if (this.posts.get(id) !== post) return;
+      if (this.posts.get(id) !== post || post.attempt !== attempt) return;
       if (!isStored(result))
         return this.report(
           id,
@@ -373,14 +460,51 @@ export class StatementStoreDelivery implements HostDelivery {
         );
       post.posted = period;
       this.report(id, post, null);
+      void posted.final.then((outcome) =>
+        this.settle(id, post, period, attempt, outcome),
+      );
     } catch (error) {
-      if (this.posts.get(id) === post)
+      if (this.posts.get(id) === post && post.attempt === attempt)
         this.report(
           id,
           post,
           error instanceof Error ? error.message : String(error),
         );
+    } finally {
+      if (post.attempt === attempt) post.publishing = false;
     }
+  }
+
+  /**
+   * What a post that went at a best block came to once its claim's finality
+   * was known. One whose claim did not become final, even after the one
+   * recovery, counts as not posted today. A later retry requires finalized
+   * allowance and can create at most one outer replacement.
+   */
+  private settle(
+    id: string,
+    post: Post,
+    period: number,
+    attempt: symbol,
+    outcome: FinalOutcome,
+  ): void {
+    if (
+      outcome.tag === "final" ||
+      this.closed ||
+      this.posts.get(id) !== post ||
+      post.attempt !== attempt
+    )
+      return;
+    if (outcome.tag === "reposted") {
+      this.options.log(
+        `Post ${id.slice(2, 10)}: posted again once its account held at the finalized head: ${outcome.why}.`,
+      );
+      return;
+    }
+    if (post.posted !== period) return;
+    post.posted = null;
+    post.needsFinal = true;
+    this.report(id, post, `posted at a best block, but ${outcome.why}.`);
   }
 
   private observe(event: InvitationEvent): void {

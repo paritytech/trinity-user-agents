@@ -1,7 +1,6 @@
 import "./products.css";
 import { ask } from "../../src/app/prompt.js";
-import type { PeopleAccess } from "../statements/actions.js";
-import { KETTLE_CHAT_FACTS, finalizedAllowance, kettleChat } from "./kettle.js";
+import { KETTLE_CHAT_FACTS, kettleChat, recordAllowances } from "./kettle.js";
 import { NOVA_CHAT_FACTS, novaChat } from "./nova.js";
 import {
   BAD_RELAY_URL,
@@ -464,13 +463,12 @@ export interface ChatModality {
   /** Kettle Chat's iroh relays, or null: off. */
   kettleIroh: IrohRelays | null;
   /**
-   * The signed-in wallet's chat products. Kettle Chat waits for each
-   * conversation account's claim to finalize at the People chain read
-   * through `people`. `probe` may start a product's worker with its test
-   * probe; absent, none has one.
+   * The signed-in wallet's chat products. Kettle Chat and Nova Chat record
+   * where each of their accounts became usable, for their live tests.
+   * `probe` may start a product's worker with its test probe; absent, none
+   * has one.
    */
   walletProducts(
-    people: () => PeopleAccess | null,
     probe?: (key: ChatProductKey, spec: ChatProductSpec) => ChatProductSpec,
   ): readonly ChatProductSpec[];
   /** Show in the Chat tab the state of the chat products the page runs. */
@@ -503,24 +501,15 @@ export function startChatModality(deps: {
   return {
     keys,
     kettleIroh: iroh,
-    walletProducts: (people, probe = (_key, spec) => spec) =>
+    walletProducts: (probe = (_key, spec) => spec) =>
       keys.map((key) =>
         probe(
           key,
           key === "contact-chat"
             ? CONTACT_CHAT
             : key === "kettle-chat"
-              ? kettleChat(finalizedAllowance(people, deps.log), iroh)
-              : novaChat(
-                  finalizedAllowance(people, deps.log, {
-                    product: "Nova Chat",
-                    record: "__novaAllowances",
-                    wording: {
-                      account: "Nova Chat's account",
-                      retry: "it may be tried again",
-                    },
-                  }),
-                ),
+              ? kettleChat(recordAllowances("__kettleAllowances"), iroh)
+              : novaChat(recordAllowances("__novaAllowances")),
         ),
       ),
     follow: (running) => tab.follow(running),

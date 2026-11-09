@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import {
   untilFinalizedAllowance,
+  finalizedOrWhyNot,
+  readClaimGrant,
+  connectAllowanceRead,
   type FinalizedAllowanceOptions,
   type Grant,
 } from "../../../src/platform/allowance-finality.js";
@@ -15,6 +18,39 @@ const CLAIM: StatementAccountClaim = {
   blockHash: `0x${"0c".repeat(32)}`,
 };
 const GRANT = { maxCount: 2, maxSize: 512_000 };
+
+test("session end cancels a pending connection and closes it if it arrives late", async () => {
+  let answer!: (
+    connection: import("@parity/truapi-host").JsonRpcConnection,
+  ) => void;
+  let closed = false;
+  const session = new AbortController();
+  const opening = connectAllowanceRead(
+    {
+      genesis: "0x00",
+      chain: {
+        connect: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      },
+    },
+    session.signal,
+  );
+  session.abort();
+  await expect(opening).rejects.toThrow("stopped");
+  answer({
+    send: () => {
+      throw new Error("no read after session end");
+    },
+    async *responses() {},
+    close: () => {
+      closed = true;
+    },
+  });
+  await Promise.resolve();
+  expect(closed).toBe(true);
+});
 
 /** Options whose reads answer `answers` in turn, the last one ever after, on a clock that each sleep moves. */
 function scripted(
@@ -43,11 +79,53 @@ function scripted(
 }
 
 describe("waiting for a conversation account's allowance at the finalized head", () => {
+  test("yesterday's positive grant cannot prove today's known claim finalized, and a reorg stops the watch", async () => {
+    let reads = 0;
+    const { options } = scripted([GRANT], {
+      requireClaimFinality: true,
+      read: async () => ({
+        block: "0xf1",
+        grant: GRANT,
+        claimFinal: false,
+        claimLost: ++reads === 2,
+      }),
+    });
+    expect(await finalizedOrWhyNot(CLAIM, options)).toMatchObject({
+      ended: false,
+      why: expect.stringContaining("not on finalized ancestry"),
+    });
+    expect(reads).toBe(2);
+  });
+
+  test("an unknown inclusion hash proves only finalized allowance, never claim finality", async () => {
+    const { options } = scripted([GRANT]);
+    expect(
+      await untilFinalizedAllowance(
+        { ...CLAIM, blockHash: undefined },
+        options,
+      ),
+    ).toMatchObject({ claimFinal: false });
+  });
+
+  test("a session ended during a positive read cannot settle successfully", async () => {
+    let running = true;
+    const { options } = scripted([GRANT], {
+      running: () => running,
+      read: async () => {
+        running = false;
+        return { block: "0xf1", grant: GRANT };
+      },
+    });
+    expect(await finalizedOrWhyNot(CLAIM, options)).toMatchObject({
+      ended: true,
+    });
+  });
   test("resolves at the first finalized read that holds the allowance, after the reads that did not", async () => {
     const { options } = scripted([null, new Error("socket closed"), GRANT]);
     expect(await untilFinalizedAllowance(CLAIM, options)).toEqual({
       account: CLAIM.account,
       claimBlock: CLAIM.blockHash,
+      claimFinal: false,
       seq: 4,
       collection: "LitePeople",
       finalizedBlock: "0xf3",
@@ -98,4 +176,51 @@ describe("waiting for a conversation account's allowance at the finalized head",
       "The session ended before the chat's allowance was final.",
     );
   });
+});
+
+test("RPC finality checks the canonical hash at the claim height against a newer finalized block", async () => {
+  for (const canonical of [CLAIM.blockHash!, "0xother"]) {
+    const sent: { method: string; params: unknown[] }[] = [];
+    let closed = false;
+    const read = await readClaimGrant(
+      {
+        genesis: `0x${"01".repeat(32)}`,
+        chain: {
+          connect: async () => ({
+            send: (text) => {
+              sent.push(JSON.parse(text));
+            },
+            async *responses() {
+              for (const message of [
+                { id: 1, result: "0xfinal" },
+                { id: 2, result: { number: "0x10" } },
+                { id: 3, result: { number: "0x20" } },
+                { id: 4, result: canonical },
+                { id: 5, result: "0x0100000000280000" },
+              ])
+                yield JSON.stringify(message);
+            },
+            close: () => {
+              closed = true;
+            },
+          }),
+        },
+      },
+      CLAIM.account,
+      CLAIM.blockHash!,
+    );
+    expect(read).toEqual({
+      block: "0xfinal",
+      grant: { maxCount: 1, maxSize: 10_240 },
+      claimFinal: canonical === CLAIM.blockHash,
+      claimLost: canonical !== CLAIM.blockHash,
+    });
+    expect(
+      sent.find((call) => call.method === "state_getStorage")?.params[1],
+    ).toBe("0xfinal");
+    expect(
+      sent.find((call) => call.method === "chain_getBlockHash")?.params,
+    ).toEqual(["0x10"]);
+    expect(closed).toBe(true);
+  }
 });

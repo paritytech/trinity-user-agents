@@ -14,6 +14,7 @@ import {
   type DevDeliveryMode,
 } from "../../../../tools/demos/wallet-deliveries.js";
 import { memoryDirectory } from "../../../support/statement-memory.js";
+import { finalizedGuard } from "../../../support/allowance.js";
 
 /**
  * The deliveries the Developer section may hand a wallet's chat in place of
@@ -50,6 +51,7 @@ function session(submits: boolean[]): WalletRequestsSession {
         collection: "People",
       } satisfies StatementAccountClaim;
     },
+    usableAllowance: finalizedGuard,
   };
 }
 

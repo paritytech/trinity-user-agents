@@ -56,7 +56,7 @@ import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
   openSimulatedStatementStore,
   simulatedAllowance,
-  simulatedSettled,
+  simulatedGuard,
   simulatedStatements,
 } from "./kettle-demo.js";
 import { novaChat } from "../chat/nova.js";
@@ -439,7 +439,7 @@ function startTestUser(
         }
       : {
           key,
-          spec: kettleChat(simulatedSettled, deps.kettleIroh),
+          spec: kettleChat(null, deps.kettleIroh),
           outbox: "kettle-chat-outbox",
           received: "kettle-chat-received",
           // Only Kettle Chat posts here, to the simulated Statement Store.
@@ -452,7 +452,7 @@ function startTestUser(
    * conversation account's allowance.
    */
   const novaOf = (index: number): RunningChat => {
-    const spec = withWorkerProbe("nova-chat", novaChat(simulatedSettled));
+    const spec = withWorkerProbe("nova-chat", novaChat(null));
     const entropy = testUserEntropy(self);
     const chatKeyOf = async (account: Uint8Array) =>
       (await lookupChatIdentity(directory, account))?.chatKey ?? null;
@@ -494,7 +494,7 @@ function startTestUser(
           line: "simulated: nothing was claimed in the invitation demo.",
           seq: 0,
         }),
-        notificationSettled: simulatedSettled,
+        notificationGuard: simulatedGuard,
         accounts: simulatedAllowance(() => core, deps.log),
         confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
         confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),

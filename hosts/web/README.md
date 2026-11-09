@@ -94,6 +94,11 @@ Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
 
 ## Chat
 
+Host requests can use guarded best-block posting on a verified Paseo People RPC connection. Conversation accounts,
+Nova acceptances and Backup wait for finalized allowance. See [Allowance wait](docs/contact-chat.md#allowance-wait).
+Nova request confirmations resume after restart within their saved deadline and retry budget. See [Nova Chat](docs/nova-chat.md).
+Malformed saved retry budgets pause only the affected request, without new claims or automatic retries.
+
 - The Chat screen shows product rooms (TrUAPI Chat from product workers) and chat products over a draft bridge. It also
   holds the Inbox. See [docs/chat.md](docs/chat.md) and [docs/contacts.md](docs/contacts.md).
 - **Contact Chat** is a chat product worker that the host ships and runs for every signed-in wallet, a prototype. Find a

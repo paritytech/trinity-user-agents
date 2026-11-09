@@ -33,6 +33,7 @@ import { NotificationStore } from "../../../../src/notifications/notifications.j
 import { MemoryStatementStore } from "../../../support/statement-memory.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import { A, B, chatKeys, hex } from "./fixtures.js";
+import { finalizedGuard, usable } from "../../../support/allowance.js";
 
 /**
  * Nova Chat's host side (`src/invitations/nova-chat-host.ts`) and worker
@@ -178,7 +179,7 @@ function startUser(
       };
     },
     claimNotification: async () => ({ line: "claimed in the test", seq: 0 }),
-    notificationSettled: async () => {},
+    notificationGuard: finalizedGuard,
     accounts: {
       allow: async (_product, index) => ({
         account: bytesToHex(sr25519.getPublicKey(accountAt(bytesToHex(index)))),
@@ -414,8 +415,10 @@ describe("New chat through the draft bridge, when the prompt and the finality wa
           claims.push(bytesToHex(account));
           return { line: "claimed in the test", seq: 0 };
         },
-        notificationSettled: () =>
-          new Promise((resolve) => setTimeout(resolve, FINAL_AFTER_MS)),
+        notificationGuard: (claim) =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve(usable(claim)), FINAL_AFTER_MS),
+          ),
       });
       await a.host.start();
       await a.session.run();

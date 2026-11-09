@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import { asProductId } from "@parity/truapi";
-import { bytesToHex, type HexString } from "@parity/truapi/scale";
+import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import { utf8 } from "../../../../src/platform/codec.js";
 import {
   blake2b256,
@@ -36,6 +36,8 @@ import {
   boundaryB,
   chatKeys,
 } from "./fixtures.js";
+import { usable } from "../../../support/allowance.js";
+import type { AllowanceGuard } from "../../../../src/platform/allowance-usable.js";
 
 /**
  * Nova Chat's host side alone (`src/invitations/nova-chat-host.ts`): when it
@@ -75,16 +77,33 @@ interface Harness {
   blocked: string[];
   claims: string[];
   submits: Uint8Array[];
+  attempted: Uint8Array[];
   /** Tasks the host scheduled, run by hand. */
   scheduled: (() => void)[];
-  settle: { gate: Promise<void> | null };
+  settle: Settle;
   maxClaimsInFlight: () => number;
+}
+
+/** The allowance guard's answers: when, where, and what its check behind a post says. */
+interface Settle {
+  gate: Promise<void> | null;
+  usableAt: "best" | "finalized";
+  notFinal: string | null;
+  /** When set, a guard asked for the finalized head fails with it. */
+  finalRefusal: string | null;
+  /** What the guard was asked: `rule`, or the finalized head. */
+  asked: string[];
+  final: Promise<string | null> | null;
 }
 
 function startA(
   store: MemoryStatementStore,
   options: {
     refuseSubmits?: number;
+    uncertainSubmits?: number;
+    now?: () => number;
+    guard?: AllowanceGuard;
+    claimBlock?: string;
     /** Fail this many claims, after recording the account each was for. */
     failClaims?: number;
     claimMs?: number;
@@ -101,19 +120,34 @@ function startA(
   const blocked: string[] = [];
   const claims: string[] = [];
   const submits: Uint8Array[] = [];
+  const attempted: Uint8Array[] = [];
   const scheduled: (() => void)[] = [];
-  const settle = { gate: null as Promise<void> | null };
+  const settle: Settle = {
+    gate: null,
+    usableAt: "finalized",
+    notFinal: null,
+    finalRefusal: null,
+    asked: [],
+    final: null,
+  };
   let inFlight = 0;
   let maxInFlight = 0;
   let refuse = options.refuseSubmits ?? 0;
   let failClaims = options.failClaims ?? 0;
+  let uncertain = options.uncertainSubmits ?? 0;
   const connect = (): StatementStoreLike => {
     const inner = store.connect();
     return {
       ...inner,
+      supportsBestBlockPosting: async () => true,
       subscribe: inner.subscribe.bind(inner),
       close: inner.close.bind(inner),
       submit: async (encoded) => {
+        attempted.push(encoded);
+        if (uncertain > 0) {
+          uncertain -= 1;
+          throw new Error("submit answer lost");
+        }
         if (refuse > 0) {
           refuse -= 1;
           return { status: "rejected", reason: "test" };
@@ -125,6 +159,7 @@ function startA(
   };
   const host = startNovaChatHost({
     product,
+    now: options.now,
     storageKey: "nova-chat:A",
     boundary: new NovaBoundary(A, async (identity) => {
       await options.keysGate;
@@ -159,9 +194,20 @@ function startA(
         failClaims -= 1;
         throw new Error(CONNECTION_LOST);
       }
-      return { line: "claimed", seq: 1 };
+      return { line: "claimed", seq: 1, blockHash: options.claimBlock };
     },
-    notificationSettled: () => settle.gate ?? Promise.resolve(),
+    notificationGuard: async (claim, request = {}) => {
+      await (settle.gate ?? Promise.resolve());
+      settle.asked.push(request.wait ?? "rule");
+      if (options.guard !== undefined) return options.guard(claim, request);
+      if (request.wait === "finalized" && settle.finalRefusal !== null)
+        throw new Error(settle.finalRefusal);
+      return usable(
+        claim,
+        request.wait ?? settle.usableAt,
+        settle.final ?? Promise.resolve(settle.notFinal),
+      );
+    },
     accounts: {
       allow: async () => ({ account: "0x00", until: Date.now() + 86_400_000 }),
     },
@@ -171,7 +217,10 @@ function startA(
     log: () => {},
     schedule: (task) => {
       scheduled.push(task);
-      return () => {};
+      return () => {
+        const index = scheduled.indexOf(task);
+        if (index >= 0) scheduled.splice(index, 1);
+      };
     },
   });
   const channel = new MessageChannel();
@@ -183,6 +232,7 @@ function startA(
     blocked,
     claims,
     submits,
+    attempted,
     scheduled,
     settle,
     maxClaimsInFlight: () => maxInFlight,
@@ -222,6 +272,94 @@ async function bAsks(store: MemoryStatementStore, requestId: string) {
 }
 
 describe("posting requests and acceptances", () => {
+  test("a failed finalized acceptance stays incoming and pending, then retries without a new claim or proof", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    a.settle.usableAt = "best";
+    a.settle.finalRefusal = "claim not on finalized ancestry";
+    await a.host.start();
+    await bAsks(store, "b-final-fail");
+    await tick();
+    const item = a.notifications.list()[0]!;
+    await expect(a.host.accept(item)).rejects.toThrow(
+      "not on finalized ancestry",
+    );
+    expect(a.notifications.get(item.id)?.state.tag).toBe("pending");
+    expect(await a.port.call({ call: "list" })).toMatchObject({
+      ok: true,
+      value: [{ state: "incoming" }],
+    });
+    expect(a.attempted).toHaveLength(0);
+    a.settle.finalRefusal = null;
+    await a.host.accept(item);
+    expect(a.claims).toHaveLength(1);
+    expect(a.notifications.get(item.id)?.state.tag).toBe("accepted");
+    a.host.stop();
+  });
+
+  test("a lost submit answer preserves exact bytes across restart instead of generating another invitation", async () => {
+    const store = new MemoryStatementStore();
+    const first = startA(store, { uncertainSubmits: 1 });
+    await first.host.start();
+    await first.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: "hello",
+    });
+    await until(() => first.scheduled.length === 1);
+    first.host.stop();
+    const next = startA(store);
+    await next.host.start();
+    await until(() => next.submits.length === 1);
+    expect(next.attempted[0]).toEqual(first.attempted[0]);
+    expect(next.claims).toHaveLength(0);
+    next.host.stop();
+  });
+
+  test("late request failures stop after five attempts without spending another claim", async () => {
+    const a = startA(new MemoryStatementStore());
+    a.settle.usableAt = "best";
+    a.settle.notFinal = "claim orphaned";
+    a.settle.finalRefusal = "no finalized grant";
+    await a.host.start();
+    await a.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: null,
+    });
+    for (let attempt = 1; attempt < 5; attempt++) {
+      await until(() => a.scheduled.length === 1);
+      a.scheduled.shift()!();
+      await tick();
+    }
+    await until(() => a.host.sent()[0]?.status.tag === "paused");
+    expect([a.claims.length, a.submits.length, a.scheduled.length]).toEqual([
+      1, 1, 0,
+    ]);
+    a.host.stop();
+  });
+
+  test("a request's recovery timer cannot claim on a later day", async () => {
+    let now = Date.now();
+    const a = startA(new MemoryStatementStore(), {
+      uncertainSubmits: 1,
+      now: () => now,
+    });
+    await a.host.start();
+    await a.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: null,
+    });
+    await until(() => a.scheduled.length === 1);
+    now += 86_400_000;
+    a.scheduled.shift()!();
+    await until(() => a.host.sent()[0]?.status.tag === "paused");
+    expect(a.claims).toHaveLength(1);
+    expect(a.attempted).toHaveLength(1);
+    a.host.stop();
+  });
+
   test("a request is answered once it is kept, and submitted only once its notification account's allowance is final", async () => {
     const store = new MemoryStatementStore();
     const a = startA(store);
@@ -247,6 +385,77 @@ describe("posting requests and acceptances", () => {
     expect(a.submits).toHaveLength(1);
     expect(a.claims).toHaveLength(1);
     expect(a.host.sent()).toMatchObject([{ status: { tag: "waiting" } }]);
+    a.host.stop();
+  });
+
+  test("an unconfirmed best-block request gets one fresh outer proof after finalized allowance without another claim", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    a.settle.usableAt = "best";
+    a.settle.notFinal = "its allowance was not final after 180 s";
+    await a.host.start();
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    await until(() => a.submits.length === 2);
+    await tick(50);
+    expect({
+      claims: a.claims.length,
+      sameAccount:
+        bytesToHex(decodeStatement(a.submits[1]!).signer) === a.claims[0],
+      asked: a.settle.asked,
+      sameBytes: bytesToHex(a.submits[1]!) === bytesToHex(a.submits[0]!),
+    }).toEqual({
+      claims: 1,
+      sameAccount: true,
+      asked: ["rule", "finalized"],
+      sameBytes: false,
+    });
+    const [first, replacement] = a.submits.map(decodeStatement);
+    expect({
+      ...replacement!,
+      expiry: first!.expiry,
+      signature: first!.signature,
+    }).toEqual(first!);
+    expect(a.host.sent()).toMatchObject([{ status: { tag: "waiting" } }]);
+    a.host.stop();
+  });
+
+  test("when that recovery fails too, Sent says the request went at a best block and its claim is not final", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    a.settle.usableAt = "best";
+    a.settle.notFinal = "its allowance was not final after 180 s";
+    a.settle.finalRefusal = "the People chain could not be read";
+    await a.host.start();
+    await a.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: null,
+    });
+    await until(() => a.host.sent()[0]?.status.tag === "retrying");
+    expect(a.host.sent()).toMatchObject([
+      {
+        status: {
+          tag: "retrying",
+          reason: expect.stringContaining(
+            "Posted at a best block, but its allowance was not final",
+          ),
+        },
+      },
+    ]);
+    expect([a.submits.length, a.claims.length]).toEqual([1, 1]);
+    a.settle.finalRefusal = null;
+    a.scheduled.shift()!();
+    await until(() => a.host.sent()[0]?.status.tag === "waiting");
+    expect([a.submits.length, a.claims.length]).toEqual([2, 1]);
+    expect(bytesToHex(decodeStatement(a.submits[0]!).data)).toBe(
+      bytesToHex(decodeStatement(a.submits[1]!).data),
+    );
     a.host.stop();
   });
 
@@ -345,8 +554,7 @@ describe("posting requests and acceptances", () => {
     expect(a.scheduled).toHaveLength(1);
     a.scheduled.shift()!();
     await until(() => a.submits.length === 1);
-    expect(a.claims).toHaveLength(2);
-    expect(a.claims[1]).toBe(a.claims[0]!);
+    expect(a.claims).toHaveLength(1);
     expect(a.host.sent()).toMatchObject([{ status: { tag: "waiting" } }]);
     a.host.stop();
   });
@@ -410,8 +618,9 @@ describe("posting requests and acceptances", () => {
     await expect(a.host.accept(item)).rejects.toThrow("not posted");
     expect(a.notifications.get(item.id)?.state.tag).toBe("pending");
     await a.host.accept(item);
-    expect(a.claims).toHaveLength(2);
-    expect(a.claims[1]).toBe(a.claims[0]!);
+    expect(a.claims).toHaveLength(1);
+    expect(a.settle.asked).toEqual(["finalized", "finalized"]);
+    expect(a.attempted[1]).toEqual(a.attempted[0]);
     const signer = sr25519.getPublicKey(
       sr25519.secretFromSeed(
         blake2b256(
@@ -592,6 +801,486 @@ describe("a copy of the host's state taken at any write", () => {
       );
       restored.host.stop();
     }
+  });
+});
+
+describe("an unfinished provisional request after restart", () => {
+  const NOW = Date.UTC(2026, 10, 9, 12);
+  const BLOCK = `0x${"0c".repeat(32)}`;
+  const savedState = () =>
+    JSON.parse(localStorage.getItem("nova-chat:A")!) as {
+      outgoing: {
+        requestId: string;
+        problem: string | null;
+        attemptsLeft: number;
+      }[];
+      posts: Record<
+        string,
+        {
+          period: number;
+          bytes: string;
+          confirmation?: { until: number; submitted: boolean };
+          claim: { seq: number; blockHash: string };
+          renewed?: boolean;
+        }
+      >;
+    };
+  async function provisional() {
+    const store = new MemoryStatementStore();
+    const writes: string[] = [];
+    const storage = localStorage as MemoryStorage;
+    const write = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => {
+      write(key, value);
+      if (key === "nova-chat:A") writes.push(value);
+    };
+    const first = startA(store, { now: () => NOW, claimBlock: BLOCK });
+    first.settle.usableAt = "best";
+    let finish!: (why: string | null) => void;
+    first.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await first.host.start();
+    await first.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: "hello",
+    });
+    await until(() => first.host.sent()[0]?.status.tag === "waiting");
+    first.host.stop();
+    storage.setItem = write;
+    const saved = savedState();
+    const key = `chat-request:${saved.outgoing[0]!.requestId}`;
+    expect(saved.posts[key]).toMatchObject({
+      claim: { blockHash: BLOCK },
+      confirmation: { until: NOW + 180_000, submitted: true },
+    });
+    return { store, first, finish, key, writes };
+  }
+
+  test("malformed saved budgets pause only this request, preserve its public context and ciphertext, and never autorun", async () => {
+    const { store, finish, key } = await provisional();
+    const original = savedState();
+    const invalid: unknown[] = [
+      -1,
+      0.5,
+      NaN,
+      Infinity,
+      "NaN",
+      "5",
+      null,
+      {},
+      [],
+      true,
+      6,
+      1e30,
+    ];
+    for (const attemptsLeft of invalid)
+      for (const provisional of [true, false]) {
+        const saved = structuredClone(original);
+        const outgoing = {
+          ...saved.outgoing[0]!,
+          attemptsLeft,
+          problem: provisional ? null : "retry failed",
+        };
+        if (!provisional) delete saved.posts[key]!.confirmation;
+        localStorage.setItem(
+          "nova-chat:A",
+          JSON.stringify({ ...saved, outgoing: [outgoing] }),
+        );
+        const next = startA(store, { now: () => NOW + 20_000 });
+        await next.host.start();
+        await tick();
+        expect(next.host.sent()).toMatchObject([
+          {
+            status: {
+              tag: "paused",
+              reason: expect.stringContaining(
+                "invalid saved retry budget or confirmation",
+              ),
+            },
+          },
+        ]);
+        expect([
+          next.settle.asked.length,
+          next.claims.length,
+          next.attempted.length,
+          next.scheduled.length,
+        ]).toEqual([0, 0, 0, 0]);
+        const paused = savedState();
+        expect(paused.outgoing[0]!.attemptsLeft).toBe(0);
+        expect(paused.posts[key]).toMatchObject({
+          bytes: original.posts[key]!.bytes,
+          claim: original.posts[key]!.claim,
+          needsFinal: true,
+        });
+        expect(paused.posts[key]!.confirmation).toBeUndefined();
+        const {
+          outgoing: _outgoing,
+          posts: _posts,
+          ...unrelated
+        } = JSON.parse(localStorage.getItem("nova-chat:A")!);
+        const {
+          outgoing: _originalOutgoing,
+          posts: _originalPosts,
+          ...originalUnrelated
+        } = original;
+        expect(unrelated).toEqual(originalUnrelated);
+        next.host.stop();
+        const again = startA(store, { now: () => NOW + 30_000 });
+        await again.host.start();
+        await tick();
+        expect([
+          again.settle.asked.length,
+          again.claims.length,
+          again.scheduled.length,
+        ]).toEqual([0, 0, 0]);
+        again.host.stop();
+      }
+    finish(null);
+  });
+
+  test("valid zero and maximum saved budgets keep exactly their remaining retries", async () => {
+    const { store, finish, key } = await provisional();
+    const original = savedState();
+    for (const attemptsLeft of [0, 5]) {
+      const saved = structuredClone(original);
+      saved.outgoing[0]!.attemptsLeft = attemptsLeft;
+      saved.outgoing[0]!.problem = "no finalized allowance";
+      delete saved.posts[key]!.confirmation;
+      localStorage.setItem("nova-chat:A", JSON.stringify(saved));
+      const next = startA(store, {
+        now: () => NOW + 20_000,
+        guard: async () => {
+          throw new Error("no finalized allowance");
+        },
+      });
+      await next.host.start();
+      for (let used = 1; used <= attemptsLeft; used++) {
+        await until(
+          () =>
+            next.settle.asked.length === used &&
+            next.host.sent()[0]?.status.tag ===
+              (used < attemptsLeft ? "retrying" : "paused"),
+        );
+        expect(savedState().outgoing[0]!.attemptsLeft).toBe(
+          attemptsLeft - used,
+        );
+        if (used < attemptsLeft) next.scheduled.shift()!();
+      }
+      await tick();
+      expect([
+        next.settle.asked.length,
+        next.claims.length,
+        next.attempted.length,
+        next.scheduled.length,
+      ]).toEqual([attemptsLeft, 0, 0, 0]);
+      expect(next.host.sent()[0]?.status.tag).toBe("paused");
+      expect(savedState().outgoing[0]!.problem).not.toContain("invalid saved");
+      next.host.stop();
+    }
+    finish(null);
+  });
+
+  test("invalid saved confirmation deadlines cannot bypass the bounded watch", async () => {
+    const { store, finish, key } = await provisional();
+    const original = savedState();
+    for (const until of [NaN, Infinity, null, "later", -1, 0.5, 1e30]) {
+      const saved = structuredClone(original);
+      saved.posts[key]!.confirmation = {
+        ...saved.posts[key]!.confirmation!,
+        until: until as number,
+      };
+      localStorage.setItem("nova-chat:A", JSON.stringify(saved));
+      const next = startA(store, { now: () => NOW + 20_000 });
+      await next.host.start();
+      await tick();
+      expect(next.host.sent()).toMatchObject([
+        {
+          status: {
+            tag: "paused",
+            reason: expect.stringContaining(
+              "invalid saved retry budget or confirmation",
+            ),
+          },
+        },
+      ]);
+      expect([
+        next.settle.asked.length,
+        next.claims.length,
+        next.attempted.length,
+        next.scheduled.length,
+      ]).toEqual([0, 0, 0, 0]);
+      next.host.stop();
+    }
+    finish(null);
+  });
+
+  test("a crash before the provisional submit answer retries only the identical signed ciphertext after confirmation", async () => {
+    const { store, first, finish, key, writes } = await provisional();
+    const beforeAnswer = writes.find(
+      (text) =>
+        JSON.parse(text).posts?.[key]?.confirmation?.submitted === false,
+    )!;
+    expect(beforeAnswer).toBeDefined();
+    localStorage.setItem("nova-chat:A", beforeAnswer);
+    const next = startA(store, {
+      now: () => NOW + 20_000,
+      uncertainSubmits: 1,
+    });
+    await next.host.start();
+    await until(() => next.host.sent()[0]?.status.tag === "retrying");
+    expect(next.attempted).toEqual(first.attempted);
+    expect(next.claims).toHaveLength(0);
+    expect(next.settle.asked).toEqual(["finalized"]);
+    next.scheduled.shift()!();
+    await until(() => next.host.sent()[0]?.status.tag === "waiting");
+    expect(next.attempted).toEqual([first.attempted[0]!, first.attempted[0]!]);
+    expect(savedState().posts[key]?.renewed).toBeUndefined();
+    expect(savedState().posts[key]?.confirmation).toBeUndefined();
+    expect(next.host.sent()[0]?.status.tag).toBe("waiting");
+    next.host.stop();
+    finish(null);
+  });
+
+  test("an old Waiting record without an explicit pending confirmation is never assumed provisional", async () => {
+    const { store, finish, key } = await provisional();
+    const saved = savedState();
+    delete saved.posts[key]!.confirmation;
+    localStorage.setItem("nova-chat:A", JSON.stringify(saved));
+    const next = startA(store, { now: () => NOW + 20_000 });
+    await next.host.start();
+    await tick();
+    expect([
+      next.settle.asked.length,
+      next.claims.length,
+      next.attempted.length,
+    ]).toEqual([0, 0, 0]);
+    expect(next.host.sent()[0]?.status.tag).toBe("waiting");
+    next.host.stop();
+    finish(null);
+  });
+
+  test("resumes the known inclusion watch without reposting, then saves confirmation and leaves confirmed Waiting alone", async () => {
+    const { store, first, finish, key } = await provisional();
+    const next = startA(store, { now: () => NOW + 20_000 });
+    await next.host.start();
+    await until(() => savedState().posts[key]?.confirmation === undefined);
+    expect(next.settle.asked).toEqual(["finalized"]);
+    expect([next.claims.length, next.attempted.length]).toEqual([0, 0]);
+    expect(next.host.sent()[0]?.status.tag).toBe("waiting");
+    const confirmed = localStorage.getItem("nova-chat:A");
+    finish("claim lost after old tab closed");
+    await tick();
+    expect(localStorage.getItem("nova-chat:A")).toBe(confirmed);
+    expect(first.attempted).toHaveLength(1);
+    next.host.stop();
+    const last = startA(store, { now: () => NOW + 40_000 });
+    await last.host.start();
+    await tick();
+    expect([
+      last.settle.asked.length,
+      last.claims.length,
+      last.attempted.length,
+    ]).toEqual([0, 0, 0]);
+    last.host.stop();
+  });
+
+  test("a reorg resumes bounded recovery with one replacement, the same ciphertext and recipient dedupe, never another claim", async () => {
+    const { store, first, finish, key } = await provisional();
+    const checks: (string | undefined)[] = [];
+    const next = startA(store, {
+      now: () => NOW + 20_000,
+      guard: async (claim) => {
+        checks.push(claim.blockHash);
+        if (claim.blockHash !== undefined)
+          throw new Error("claim not on finalized ancestry");
+        return usable(claim);
+      },
+    });
+    await next.host.start();
+    await until(() => next.host.sent()[0]?.status.tag === "retrying");
+    expect(next.scheduled).toHaveLength(1);
+    next.scheduled.shift()!();
+    await until(() => next.host.sent()[0]?.status.tag === "waiting");
+    expect(checks).toEqual([BLOCK, undefined]);
+    expect([next.claims.length, next.attempted.length]).toEqual([0, 1]);
+    const original = decodeStatement(first.attempted[0]!);
+    const replacement = decodeStatement(next.attempted[0]!);
+    expect({
+      ...replacement,
+      expiry: original.expiry,
+      signature: original.signature,
+    }).toEqual(original);
+    expect(replacement.expiry).toBe(original.expiry + 1n);
+    expect(savedState().posts[key]).toMatchObject({ renewed: true });
+    expect(savedState().posts[key]?.confirmation).toBeUndefined();
+    const receiver = boundaryB();
+    expect(await receiver.openRequest(original)).toMatchObject({
+      duplicate: false,
+    });
+    expect(await receiver.openRequest(replacement)).toMatchObject({
+      duplicate: true,
+    });
+    next.host.stop();
+    finish(null);
+  });
+
+  test("absent finalized allowance stays visible and keeps its attempt budget across repeated restarts", async () => {
+    const { store, finish } = await provisional();
+    for (let remaining = 4; remaining >= 0; remaining--) {
+      const next = startA(store, {
+        now: () => NOW + 20_000,
+        guard: async () => {
+          throw new Error("no finalized allowance");
+        },
+      });
+      await next.host.start();
+      await until(
+        () =>
+          next.host.sent()[0]?.status.tag ===
+          (remaining > 0 ? "retrying" : "paused"),
+      );
+      expect(savedState().outgoing[0]!.attemptsLeft).toBe(remaining);
+      expect(savedState().outgoing[0]!.problem).toContain(
+        "no finalized allowance",
+      );
+      expect([next.claims.length, next.attempted.length]).toEqual([0, 0]);
+      next.host.stop();
+    }
+    const paused = startA(store, { now: () => NOW + 20_000 });
+    await paused.host.start();
+    await tick();
+    expect([
+      paused.settle.asked.length,
+      paused.attempted.length,
+      paused.scheduled.length,
+    ]).toEqual([0, 0, 0]);
+    paused.host.stop();
+    finish(null);
+  });
+
+  test("elapsed deadlines, later days, expired bytes and blocked people cannot resume network work", async () => {
+    const { store, finish, key } = await provisional();
+    const original = localStorage.getItem("nova-chat:A")!;
+    for (const reason of ["deadline", "day", "expiry", "block"]) {
+      localStorage.setItem("nova-chat:A", original);
+      if (reason === "expiry") {
+        const saved = savedState();
+        const cached = saved.posts[key]!;
+        const secret = sr25519.secretFromSeed(
+          blake2b256(
+            utf8(
+              `chat-request/${saved.outgoing[0]!.requestId}/${cached.period}`,
+            ),
+          ),
+        );
+        const statement = decodeStatement(hexToBytes(cached.bytes));
+        cached.bytes = bytesToHex(
+          encodeSigned(
+            {
+              ...statement,
+              expiry: BigInt(Math.floor((NOW - 1_000) / 1000)) << 32n,
+            },
+            statement.signer,
+            (payload) => sr25519.sign(secret, payload),
+          ),
+        );
+        localStorage.setItem("nova-chat:A", JSON.stringify(saved));
+      }
+      const next = startA(store, {
+        now: () =>
+          NOW +
+          (reason === "deadline"
+            ? 180_001
+            : reason === "day"
+              ? 86_400_000
+              : 20_000),
+      });
+      if (reason === "block") next.blocked.push(B_PEER);
+      await next.host.start();
+      await until(() => next.host.sent()[0]?.status.tag !== "waiting");
+      await tick();
+      expect([
+        next.settle.asked.length,
+        next.claims.length,
+        next.attempted.length,
+      ]).toEqual([0, 0, 0]);
+      expect(savedState().outgoing[0]!.problem).not.toBeNull();
+      next.host.stop();
+    }
+    finish(null);
+  });
+
+  test("the original remaining deadline aborts a resumed read without extending on restart", async () => {
+    const { store, finish, key } = await provisional();
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    let now = NOW + 170_000;
+    const next = startA(store, {
+      now: () => now,
+      guard: async (claim, request) => {
+        signal = request?.signal;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return usable(claim);
+      },
+    });
+    await next.host.start();
+    await until(() => signal !== undefined);
+    expect(savedState().posts[key]!.confirmation!.until).toBe(NOW + 180_000);
+    now = NOW + 180_001;
+    next.scheduled.shift()!();
+    await until(() => next.host.sent()[0]?.status.tag === "paused");
+    expect(signal!.aborted).toBe(true);
+    expect(next.attempted).toHaveLength(0);
+    expect(next.claims).toHaveLength(0);
+    const terminal = localStorage.getItem("nova-chat:A");
+    release();
+    await tick();
+    expect(localStorage.getItem("nova-chat:A")).toBe(terminal);
+    next.host.stop();
+    finish(null);
+  });
+
+  test("session end, cancel and block during a resumed read prevent recovery and stale writes", async () => {
+    const { store, finish } = await provisional();
+    const original = localStorage.getItem("nova-chat:A")!;
+    for (const reason of ["stop", "cancel", "block"]) {
+      localStorage.setItem("nova-chat:A", original);
+      let signal: AbortSignal | undefined;
+      let fail!: () => void;
+      const next = startA(store, {
+        now: () => NOW + 20_000,
+        guard: async (_claim, request) => {
+          signal = request?.signal;
+          await new Promise<void>((_, reject) => {
+            fail = () => reject(new Error("claim lost"));
+          });
+          throw new Error("unreachable");
+        },
+      });
+      await next.host.start();
+      await until(() => signal !== undefined);
+      if (reason === "stop") next.host.stop();
+      if (reason === "cancel") next.host.cancel(next.host.sent()[0]!.id);
+      if (reason === "block") next.blocked.push(B_PEER);
+      const before = localStorage.getItem("nova-chat:A");
+      fail();
+      await tick();
+      expect([
+        next.claims.length,
+        next.attempted.length,
+        next.scheduled.length,
+      ]).toEqual([0, 0, 0]);
+      if (reason !== "block") {
+        expect(signal!.aborted).toBe(true);
+        expect(localStorage.getItem("nova-chat:A")).toBe(before);
+      } else expect(next.host.sent()[0]?.status.tag).toBe("paused");
+      next.host.stop();
+    }
+    finish(null);
   });
 });
 

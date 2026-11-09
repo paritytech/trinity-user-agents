@@ -18,11 +18,18 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
   client, checks each request (statement proof, inner signature, identity proof against the sender's on-chain chat key)
   and lists it in the Inbox. It sends a request only after **Send** and an acceptance only after **Accept**.
 - Each is signed by a notification account the core registers for the day: the apps' `//chat-request//<id>//<day>` and
-  `//chat-accept//<their id>//<day>`. A wallet posts only once that account's allowance holds at the People chain's
-  finalized head, as Kettle Chat waits for its accounts: a node drops a statement whose allowance is only in a best
-  block.
-- Claims run one at a time. A request that failed is tried up to five times, 30 s apart, and again at the next start; an
-  Accept may be pressed again. A try on the same day reuses the account and claims no new slot.
+  `//chat-accept//<their id>//<day>`. Requests use the guarded posting rule. Acceptances always wait for finalized
+  allowance before posting, so a failed wait or submit leaves the request pending and Accept can be tried again
+  ([Allowance wait](contact-chat.md#allowance-wait)).
+- Claims run one at a time. Failed requests, including late finality failures, retry up to five times, 30 s apart,
+  then pause visibly. Retries keep the signed statement and successful claim answer across restart. Unconfirmed claims
+  can recover only against finalized allowance, without another claim, with at most one higher-expiry outer proof
+  over the same encrypted payload. No automatic retry crosses the request's day. Accept may be pressed again after a
+  failure, using the same bytes and account.
+- A provisional request saves its unfinished confirmation, signed ciphertext, public claim context and original
+  deadline before submission. Restart checks that inclusion block without another claim or post. A failed check can
+  recover within the saved retry budget; a confirmed request stays Waiting without reposting. An elapsed deadline
+  pauses visibly instead of starting another wait. Older Waiting records without this marker are left alone.
 - New chat asks **Send** before the worker is asked to start, so the prompt does not count against the start's 30 s. The
   worker's `request` spends that consent, for the same person and first message, while New chat waits; otherwise the
   host asks again. A sign-out or a wallet switch closes the prompt as a Cancel.

@@ -1,5 +1,6 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { JsonRpcConnection } from "@parity/truapi-host";
+import { checkedPostingNode } from "./allowance-usable.js";
 
 /**
  * The People chain's statement store over one JSON-RPC connection:
@@ -24,6 +25,8 @@ export interface SubmitResult {
 
 /** A statement store a client subscribes to and submits to: {@link StatementStore}, or a stand-in. */
 export interface StatementStoreLike {
+  /** Check the actual submit connection, not another node behind the same endpoint. Absent means unknown. */
+  supportsBestBlockPosting?(): Promise<boolean>;
   subscribe(
     filter: TopicFilter,
     onStatements: (statements: Uint8Array[]) => void,
@@ -34,11 +37,9 @@ export interface StatementStoreLike {
   readonly closed: Promise<void>;
 }
 
-/** Whether the answer counts as posted here: `new`, `known` or `knownExpired`. Over the light client, not proof a peer stored it. */
+/** Whether the answer counts as held here: `new` or `known`. Not recipient delivery proof. */
 export const isStored = (result: SubmitResult): boolean =>
-  result.status === "new" ||
-  result.status === "known" ||
-  result.status === "knownExpired";
+  result.status === "new" || result.status === "known";
 
 interface RpcMessage {
   id?: number;
@@ -94,6 +95,7 @@ export class StatementStore {
   constructor(
     private readonly connection: JsonRpcConnection,
     private readonly tap?: RpcTap,
+    private readonly postingGenesis?: string,
   ) {
     void this.pump().finally(() => this.markClosed());
   }
@@ -131,17 +133,50 @@ export class StatementStore {
     this.pending.clear();
   }
 
-  private call(method: string, params: unknown[]): Promise<unknown> {
+  private call(
+    method: string,
+    params: unknown[],
+    timeoutMs?: number,
+  ): Promise<unknown> {
     if (this.isClosed)
       return Promise.reject(new Error("the statement store is closed"));
     const id = this.nextId++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const answer = new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
+      if (timeoutMs !== undefined)
+        timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error("the node identity read timed out"));
+        }, timeoutMs);
     });
     const request = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     this.tap?.("out", request);
-    this.connection.send(request);
-    return answer;
+    try {
+      this.connection.send(request);
+    } catch (error) {
+      const waiting = this.pending.get(id);
+      this.pending.delete(id);
+      waiting?.reject(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    return answer.finally(() => clearTimeout(timer));
+  }
+
+  /** Verify this store's own connection before a best-block post. Unknown or unsupported nodes fail closed. */
+  async supportsBestBlockPosting(): Promise<boolean> {
+    if (this.postingGenesis === undefined) return false;
+    try {
+      const [genesis, version, methods] = await Promise.all([
+        this.call("chain_getBlockHash", [0], 5_000),
+        this.call("system_version", [], 5_000),
+        this.call("rpc_methods", [], 5_000),
+      ]);
+      return checkedPostingNode(this.postingGenesis, genesis, version, methods);
+    } catch {
+      return false;
+    }
   }
 
   /**

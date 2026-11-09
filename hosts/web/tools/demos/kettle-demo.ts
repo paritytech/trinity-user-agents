@@ -1,4 +1,5 @@
 import { createClient, createTransport } from "@parity/truapi";
+import type { AllowanceGuard } from "../../src/platform/allowance-usable.js";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { ConversationAllowance } from "../../src/invitations/ports.js";
@@ -82,9 +83,23 @@ const endOfDay = (nowMs: number) =>
 
 /**
  * The simulated Statement Store keeps a statement as soon as the claim
- * answered, so a notification account's allowance settles at once.
+ * answered, and nothing is claimed on a chain, so a notification account
+ * may post at once. Simulated: no block was read.
  */
-export const simulatedSettled = (): Promise<void> => Promise.resolve();
+export const simulatedGuard: AllowanceGuard = async (claim) => ({
+  account: claim.account,
+  seq: claim.seq,
+  collection: claim.collection,
+  claimBlock: claim.blockHash,
+  claimFinal: claim.blockHash !== undefined,
+  running: () => true,
+  usableAt: "finalized",
+  block: "simulated",
+  grant: { maxCount: 1, maxSize: 10_240 },
+  why: "the simulated Statement Store keeps every statement",
+  waitedMs: 0,
+  final: Promise.resolve(null),
+});
 
 /**
  * A simulated conversation allowance: the account comes from the core, as

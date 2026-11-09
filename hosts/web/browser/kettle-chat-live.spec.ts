@@ -166,19 +166,21 @@ async function restored(page: Page, account: "alice" | "bob"): Promise<void> {
     .waitFor({ state: "attached" });
 }
 
+/** Where the host's allowance guard let one account post (`tools/chat/kettle.ts`). */
 interface Settled {
   account: string;
   claimBlock?: string;
   seq: number;
-  collection: string;
-  finalizedBlock: string;
+  collection?: string;
+  usableAt: "best" | "finalized";
+  block: string;
+  finalizedBlock?: string;
   grant: { maxCount: number; maxSize: number };
   waitedMs: number;
-  reads: number;
   at: string;
 }
 
-/** What the host's finality guard saw for each conversation account it let post. */
+/** What the host's allowance guard saw for each conversation account it let post. */
 const allowancesOf = (page: Page) =>
   page.evaluate(
     () =>
@@ -398,7 +400,7 @@ suite("Kettle Chat between test accounts on Paseo Next v2", () => {
           "4d0764d526e5e32dfc611323e5fa522651f864e6",
           6,
         ]);
-        // The finality guard must be on in both tabs before anything is spent.
+        // The allowance guard's record must be on in both tabs before anything is spent.
         for (const page of [alice, bob])
           expect(
             await page.evaluate(() =>
@@ -408,7 +410,7 @@ suite("Kettle Chat between test accounts on Paseo Next v2", () => {
               ),
             ),
           ).toBe(true);
-        mark("both signed in, Kettle Chat running, finality guard on");
+        mark("both signed in, Kettle Chat running, allowance guard recorded");
 
         await sendChatRequest(alice, "testbob.10", texts.welcome);
         mark("request sent");
@@ -436,7 +438,7 @@ suite("Kettle Chat between test accounts on Paseo Next v2", () => {
         await allowStatements(alice);
 
         // The first message shows at once; the chat is set up once the
-        // finality guard let her node start.
+        // allowance guard let her node start.
         await bubble(alice, texts.welcome).waitFor();
         await alice
           .locator(".chat-system", { hasText: "The encrypted chat is set up" })
