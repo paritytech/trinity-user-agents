@@ -93,23 +93,6 @@ struct FundingScreenTests {
     }
 
     @Test
-    func theFeeBreakdownAddsUpToWhatTheUserPays() {
-        let quote = FundingQuote(
-            quoteId: "q",
-            sendAmount: "5010",
-            receiveAmount: "50000000",
-            providerFee: "10",
-            networkFee: "50",
-            etaSecs: nil,
-            expiresAt: nil,
-            assetDecimals: 2
-        )
-
-        #expect(FundingFeesView.net(quote) == 4_950)
-        #expect(FundingFeesView.net(quote) + FundingFeesView.totalFee(quote) == 5_010)
-    }
-
-    @Test
     func theKeypadEditsADollarAmountOfAtMostTwoDecimals() {
         let apply = { (key: FundingKeypad.Key, text: String) in FundingKeypad.apply(key, to: text) }
 

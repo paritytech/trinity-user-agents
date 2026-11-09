@@ -12,6 +12,8 @@ protocol FundingFlowServiceProtocol: Sendable {
     func quotes(intent: String) -> FundingQuoteList?
     func session(intent: String) -> FundingSession?
     func progress(intent: String) -> FundingProgress?
+    /// The summary of session `intent` once it ended, with how it ended.
+    func summary(intent: String) -> FundingSessionSummary?
 
     /// Tells the core what the user picked, and returns what the core offers
     /// for it, which it answers inline.
@@ -50,6 +52,10 @@ actor FundingFlowService: FundingFlowServiceProtocol {
 
     nonisolated func progress(intent: String) -> FundingProgress? {
         runtime.fundingProgress(intent: intent)
+    }
+
+    nonisolated func summary(intent: String) -> FundingSessionSummary? {
+        runtime.fundingHistory().first { $0.intent == intent }
     }
 
     func select(_ selection: FundingSelection, intent: String) -> FundingOptions? {

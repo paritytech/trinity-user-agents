@@ -18,8 +18,9 @@ protocol FundingOverlayEnvironment: AnyObject {
 
     /// Presents over whatever is on screen; false when nothing is.
     func present(_ controller: UIViewController) -> Bool
-    /// The provider product's page at `route`, as the app shows products.
-    func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController?
+    /// The provider product's page at `path` inside its App, as the app
+    /// shows products.
+    func providerPage(providerId: ProductId, path: String, title: String) -> UIViewController?
     /// Whether the provider product ships an App; true when that cannot be
     /// told, so its page is tried as before.
     func providerHasApp(providerId: ProductId) async -> Bool
@@ -55,9 +56,10 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget
+        target: FundingFrameTarget,
+        context: FundingFrameContext
     ) async -> FundingFrameOutcome {
-        await frame(providerId: providerId, intent: intent, target: target)
+        await frame(providerId: providerId, intent: intent, target: target, context: context)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
@@ -68,7 +70,7 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         await hasApp(providerId: providerId)
     }
 
-    func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
+    func fundingSessionChanged(intent: String) {
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
     }
 
@@ -76,8 +78,8 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         Task { @MainActor in coordinator?.optionsChanged(intent: intent) }
     }
 
-    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
-        Task { @MainActor in coordinator?.quotesChanged(intent: intent, quotes: quotes) }
+    func fundingQuotesChanged(intent: String) {
+        Task { @MainActor in coordinator?.quotesChanged(intent: intent) }
     }
 
     func workerCrashing(productId: ProductId) {
@@ -125,11 +127,21 @@ private extension AppFundingOverlay {
     }
 
     @MainActor
-    func frame(providerId: ProductId, intent: String, target: FundingFrameTarget) async -> FundingFrameOutcome {
+    func frame(
+        providerId: ProductId,
+        intent: String,
+        target: FundingFrameTarget,
+        context: FundingFrameContext
+    ) async -> FundingFrameOutcome {
         guard let coordinator else { return .dismissed }
         switch target {
         case let .app(route):
-            return await coordinator.presentFrame(providerId: providerId, intent: intent, route: route)
+            return await coordinator.presentFrame(
+                providerId: providerId,
+                intent: intent,
+                path: context.appPath ?? route,
+                awaitsUserTransfer: context.awaitsUserTransfer
+            )
         case let .page(url, returnUrl):
             return await coordinator.presentPage(providerId: providerId, intent: intent, url: url, returnUrl: returnUrl)
         }
@@ -141,15 +153,13 @@ private extension AppFundingOverlay {
 @MainActor
 final class FundingOverlayCoordinator {
     private weak var runtime: FundingRuntime?
-    private let book: FundingSessionBook
     private let environment: FundingOverlayEnvironment
     private var flows: [String: FundingFlowModel] = [:]
     private var frames: [String: FundingProviderFrameController] = [:]
     private var pages: [String: FundingWebPageController] = [:]
 
-    init(runtime: FundingRuntime, environment: FundingOverlayEnvironment, book: FundingSessionBook = .shared) {
+    init(runtime: FundingRuntime, environment: FundingOverlayEnvironment) {
         self.runtime = runtime
-        self.book = book
         self.environment = environment
     }
 
@@ -181,7 +191,7 @@ final class FundingOverlayCoordinator {
     /// still waits on one, or an ended one on its ended screen.
     func reopen(intent: String) {
         guard flows[intent] == nil,
-              let session = book.session(intent: intent),
+              let session = runtime?.fundingSession(intent: intent),
               let model = makeModel(intent: intent, direction: session.direction, amount: session.amount)
         else { return }
 
@@ -195,16 +205,19 @@ final class FundingOverlayCoordinator {
         }
     }
 
-    /// An ended session the core did not push this run is drawn from its
-    /// history record.
+    /// An ended session the core no longer holds is drawn from its summary
+    /// in the core's history.
     func showEnded(_ record: FundingRecord) {
-        if book.session(intent: record.intent) != nil {
+        if runtime?.fundingSession(intent: record.intent) != nil {
             reopen(intent: record.intent)
             return
         }
+        guard let summary = runtime?.fundingHistory().first(where: { $0.intent == record.intent }),
+              let ended = FundingEndedSession(summary: summary)
+        else { return }
 
         let sheet = FundingEndedSheetController(
-            ended: FundingEndedSession(record: record),
+            ended: ended,
             cash: environment.cash,
             branding: environment.branding
         )
@@ -261,14 +274,18 @@ final class FundingOverlayCoordinator {
     }
 
     /// Answers `.dismissed` and takes the frame down if the core stops
-    /// waiting first.
-    func presentFrame(providerId: ProductId, intent: String, route: String) async -> FundingFrameOutcome {
+    /// waiting first. A session waiting on the user's own transfer offers to
+    /// say the funds were sent.
+    func presentFrame(
+        providerId: ProductId,
+        intent: String,
+        path: String,
+        awaitsUserTransfer: Bool
+    ) async -> FundingFrameOutcome {
         let brand = await environment.branding.brand(for: providerId)
         guard !Task.isCancelled,
-              let page = environment.providerPage(providerId: providerId, route: route, title: brand.name)
+              let page = environment.providerPage(providerId: providerId, path: path, title: brand.name)
         else { return .dismissed }
-
-        let rail = flows[intent]?.rail ?? book.session(intent: intent)?.choice?.rail ?? .card
 
         let presented = Presented<FundingProviderFrameController>()
         return await withTaskCancellationHandler {
@@ -276,7 +293,7 @@ final class FundingOverlayCoordinator {
                 let frame = FundingProviderFrameController(
                     providerId: providerId,
                     page: page,
-                    showsSentFunds: rail == .bank
+                    showsSentFunds: awaitsUserTransfer
                 ) { [weak self] outcome in
                     if let self, frames[intent] === presented.controller {
                         frames[intent] = nil
@@ -328,9 +345,6 @@ final class FundingOverlayCoordinator {
 
     func sessionChanged(intent: String) {
         flows[intent]?.refreshSession()
-        if let frame = frames[intent], book.paymentMoved(intent: intent) {
-            frame.finish(.closed)
-        }
         if flows[intent] != nil {
             acknowledgeShown(intent: intent)
         }
@@ -349,8 +363,8 @@ final class FundingOverlayCoordinator {
         flows[intent]?.refreshOptions()
     }
 
-    func quotesChanged(intent: String, quotes: FundingQuoteList) {
-        flows[intent]?.receive(quotes: quotes)
+    func quotesChanged(intent: String) {
+        flows[intent]?.refreshQuotes()
     }
 }
 
@@ -365,7 +379,7 @@ private extension FundingOverlayCoordinator {
                 amount: amount,
                 cash: environment.cash
             ),
-            service: FundingFlowService(runtime: runtime, book: book, branding: environment.branding),
+            service: FundingFlowService(runtime: runtime, branding: environment.branding),
             logger: Logger.shared
         )
         if direction == .out {
@@ -416,7 +430,7 @@ private extension FundingOverlayCoordinator {
     /// An ended session on screen has told the user how it went.
     func acknowledgeShown(intent: String) {
         guard let runtime else { return }
-        Task { [book] in await book.acknowledgeShown(intent: intent, runtime: runtime) }
+        Task { await runtime.acknowledgeShown(intent: intent, logger: Logger.shared) }
     }
 
     /// A new session the same way, opened once the sheet before it is gone.

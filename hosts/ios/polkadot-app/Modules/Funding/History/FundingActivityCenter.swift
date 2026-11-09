@@ -21,16 +21,11 @@ final class FundingActivityCenter {
     private(set) var justFinished: [String: Date] = [:]
 
     private var records: [String: FundingRecord] = [:]
-    private let book: FundingSessionBook
     private var historyShown = 0
     private var refreshTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
     private var longerTask: Task<Void, Never>?
     private var needsRefresh = false
-
-    init(book: FundingSessionBook = .shared) {
-        self.book = book
-    }
 
     /// The runtime is built off the main thread, so it and its overlay are
     /// handed over through a lock rather than through the main actor.
@@ -120,9 +115,13 @@ private extension FundingActivityCenter {
     }
 
     func reload() async {
-        let sessions = book.entries()
+        let runtime = runtime
+        var sessions: [FundingBookEntry] = []
+        if let runtime {
+            sessions = await Task.detached { runtime.fundingEntries() }.value
+        }
 
-        let moving = sessions.filter(\.isInFlight)
+        let moving = sessions.filter(\.progress.status.isInFlight)
         justFinished = Self.finished(
             before: inFlight.map(\.id),
             after: moving.map(\.session.intent),
@@ -132,12 +131,11 @@ private extension FundingActivityCenter {
         inFlight = moving
             .map { FundingActivityItem(session: $0.session, progress: $0.progress) }
             .sorted { $0.date > $1.date }
-        scheduleTakingLonger(moving.compactMap(\.progress?.longerAtMs))
+        scheduleTakingLonger(moving.compactMap(\.progress.longerAtMs))
 
         let ended = sessions
-            .filter { !$0.isInFlight }
+            .filter { !$0.progress.status.isInFlight }
             .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
-        let runtime = runtime
         var summaries: [FundingSessionSummary] = []
         if let runtime {
             summaries = await Task.detached { runtime.fundingHistory() }.value
@@ -150,8 +148,10 @@ private extension FundingActivityCenter {
         history = records.filter { !$0.isCancelledUnpaid }.map(FundingActivityItem.init(record:))
 
         guard historyShown > 0, let runtime else { return }
-        for record in records {
-            await book.acknowledgeShown(intent: record.intent, runtime: runtime)
+        do {
+            try await runtime.acknowledgeFundingShown(intents: records.map(\.intent))
+        } catch {
+            Logger.shared.error("[funding] acknowledging the shown history failed: \(error)")
         }
     }
 

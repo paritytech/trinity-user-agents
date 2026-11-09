@@ -22,22 +22,6 @@ struct FundingFeesView: View {
     }
 }
 
-extension FundingFeesView {
-    static func totalFee(_ quote: FundingQuote) -> Decimal {
-        (Decimal(string: quote.providerFee) ?? 0) + (Decimal(string: quote.networkFee) ?? 0)
-    }
-
-    /// What the user pays before fees, in the unit of `sendAmount`: the
-    /// amount and the fees add up to the total shown under them.
-    static func net(_ quote: FundingQuote) -> Decimal {
-        max(0, (Decimal(string: quote.sendAmount) ?? 0) - totalFee(quote))
-    }
-
-    static func units(_ value: Decimal) -> U128 {
-        NSDecimalNumber(decimal: value).stringValue
-    }
-}
-
 private extension FundingFeesView {
     /// Fees are counted in what the user pays: the ask's asset for value in,
     /// the balance for value out.
@@ -48,16 +32,20 @@ private extension FundingFeesView {
         return model.cash.label(units: units)
     }
 
+    /// The amounts are the core's: what the user pays before fees, which with
+    /// the fees adds up to the total under them, and a withdrawal's total
+    /// rounded up to the cent so it never under-states the cost.
     func breakdown(_ quote: FundingQuote) -> some View {
-        let total = Self.totalFee(quote)
+        let fees = fundingFeeBreakdown(quote: quote, direction: model.direction)
+        let total = model.direction == .out ? fees.totalFeeRoundedUp : fees.totalFee
 
         return VStack(spacing: DSSpacings.small) {
-            feeText(Self.units(Self.net(quote)), of: quote).map { line(String(localized: .Funding.feesAmount), $0) }
+            feeText(fees.net, of: quote).map { line(String(localized: .Funding.feesAmount), $0) }
             feeText(quote.providerFee, of: quote).map { line(String(localized: .Funding.feesProvider), $0) }
             feeText(quote.networkFee, of: quote).map { line(String(localized: .Funding.feesNetwork), $0) }
             line(String(localized: .Funding.feesSwapping), String(localized: .Funding.feesVariable))
             Divider().overlay(Color.strokePrimary)
-            feeText(Self.units(total), of: quote).map { line(String(localized: .Funding.feesTotal), $0) }
+            feeText(total, of: quote).map { line(String(localized: .Funding.feesTotal), $0) }
             Divider().overlay(Color.strokePrimary)
 
             if let pay = feeText(quote.sendAmount, of: quote) {
@@ -73,7 +61,7 @@ private extension FundingFeesView {
                 .padding(.top, DSSpacings.small)
             }
 
-            if let rate = rate(quote) {
+            if let rate = rate(fees, of: quote) {
                 line(String(localized: .Funding.feesRate), rate, emphasized: false)
             }
         }
@@ -88,12 +76,10 @@ private extension FundingFeesView {
     }
 
     /// What one CASH is worth in the provider-side asset, net of fees as the
-    /// amount line above it.
-    func rate(_ quote: FundingQuote) -> String? {
-        let net = Self.units(Self.net(quote))
-        let providerUnits = model.direction == .in ? net : quote.receiveAmount
-        guard let providerSide = model.quoteUnit(quote).decimal(providerUnits),
-              let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : net),
+    /// amount line above it: the core's ratio of provider-side to CASH units.
+    func rate(_ fees: FundingFeeBreakdown, of quote: FundingQuote) -> String? {
+        guard let providerSide = model.quoteUnit(quote).decimal(fees.rateNum),
+              let cashSide = model.cash.decimal(fees.rateDen),
               cashSide > 0
         else { return nil }
 

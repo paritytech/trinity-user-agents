@@ -74,7 +74,7 @@ final class FundingWebPageController: UIViewController {
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        origin.host = FundingReturnURL.displayOrigin(of: url)
+        origin.host = Self.originLabel(of: url)
         secureObservation = webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refreshSecurity() }
         }
@@ -92,7 +92,7 @@ final class FundingWebPageController: UIViewController {
     /// commits, never while a slower one is still loading over the old page.
     private func showCommittedPage() {
         if let committed = webView.url {
-            origin.host = FundingReturnURL.displayOrigin(of: committed)
+            origin.host = Self.originLabel(of: committed)
         }
         refreshSecurity()
     }
@@ -128,13 +128,15 @@ extension FundingWebPageController: WKNavigationDelegate {
         }
 
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
-        if isMainFrame, let returnURL, FundingReturnURL.matches(target, returnURL: returnURL) {
+        if isMainFrame, let returnURL,
+           fundingPageMatchesReturn(url: target.absoluteString, returnUrl: returnURL.absoluteString) {
             decisionHandler(.cancel)
             finish(.returned(url: target.absoluteString))
             return
         }
 
-        decisionHandler(FundingReturnURL.allowsNavigation(to: target, mainFrame: isMainFrame) ? .allow : .cancel)
+        let allowed = fundingPageAllowsNavigation(url: target.absoluteString, isMainFrame: isMainFrame)
+        decisionHandler(allowed ? .allow : .cancel)
     }
 
     func webView(_: WKWebView, didCommit _: WKNavigation!) {
@@ -161,7 +163,7 @@ extension FundingWebPageController: WKUIDelegate {
     ) -> WKWebView? {
         if navigationAction.targetFrame == nil,
            let target = navigationAction.request.url,
-           FundingReturnURL.allowsNavigation(to: target, mainFrame: true) {
+           fundingPageAllowsNavigation(url: target.absoluteString, isMainFrame: true) {
             webView.load(navigationAction.request)
         }
         return nil
@@ -176,70 +178,21 @@ extension FundingWebPageController: WKUIDelegate {
         type _: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        let isPageOrigin = origin.protocol == "https"
-            && webView.url?.scheme == "https"
-            && webView.url?.host?.lowercased() == origin.host.lowercased()
-        decisionHandler(isPageOrigin ? .grant : .deny)
+        let port = origin.port == 0 ? "" : ":\(origin.port)"
+        let requester = "\(origin.protocol)://\(origin.host)\(port)"
+        let allowed = webView.url.map {
+            fundingPageAllowsMedia(pageUrl: $0.absoluteString, origin: requester)
+        } ?? false
+        decisionHandler(allowed ? .grant : .deny)
     }
 }
 
-/// How a funding page's address is read: whether navigation reached the
-/// return URL, and the origin the bar shows.
-enum FundingReturnURL {
-    /// Whether `url` is `returnURL`: the same scheme, host, port and path,
-    /// whatever its query or fragment.
-    static func matches(_ url: URL, returnURL: URL) -> Bool {
-        guard let candidate = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let target = URLComponents(url: returnURL, resolvingAgainstBaseURL: false),
-              let scheme = candidate.scheme?.lowercased(),
-              let host = candidate.host?.lowercased()
-        else { return false }
-
-        return scheme == target.scheme?.lowercased()
-            && host == target.host?.lowercased()
-            && port(of: candidate) == port(of: target)
-            && path(of: candidate) == path(of: target)
-    }
-
-    /// Whether a frame may load `url`. The page itself loads only https; a
-    /// frame inside it may also hold the inert documents a page builds for
-    /// itself (`about:`, `blob:`, `data:`).
-    static func allowsNavigation(to url: URL, mainFrame: Bool) -> Bool {
-        switch url.scheme?.lowercased() {
-        case "https": true
-        case "about",
-             "blob",
-             "data": !mainFrame
-        default: false
-        }
-    }
-
-    /// The host, with its port when it is not the scheme's default.
-    static func displayOrigin(of url: URL) -> String {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let host = components.host
-        else { return url.absoluteString }
-
-        guard let port = components.port, port != defaultPort(for: components.scheme) else { return host }
-        return "\(host):\(port)"
-    }
-}
-
-private extension FundingReturnURL {
-    static func port(of components: URLComponents) -> Int? {
-        components.port ?? defaultPort(for: components.scheme)
-    }
-
-    static func defaultPort(for scheme: String?) -> Int? {
-        switch scheme?.lowercased() {
-        case "https": 443
-        case "http": 80
-        default: nil
-        }
-    }
-
-    static func path(of components: URLComponents) -> String {
-        components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+private extension FundingWebPageController {
+    /// The bar's label for `url`'s origin, as the core reads it: the host,
+    /// with its port when it is not the scheme's default.
+    static func originLabel(of url: URL) -> String {
+        guard let origin = fundingPageOrigin(url: url.absoluteString) else { return url.absoluteString }
+        return origin.port.map { "\(origin.host):\($0)" } ?? origin.host
     }
 }
 

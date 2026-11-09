@@ -1,52 +1,40 @@
 import Foundation
 import TrUAPIHost
 
-/// An ended session as its detail screen draws it: its record, plus the quote
-/// and the steps the core reported when it pushed the session this run.
-/// Without them the steps are rebuilt from the outcome.
+/// An ended session as its detail screen draws it: its record, with the
+/// core's view of how it ended, plus the quote and the steps the core
+/// reported while it still holds the session. Without them the steps are the
+/// direction's milestones.
 struct FundingEndedSession: Equatable {
-    enum Outcome: Equatable {
-        case succeeded
-        case failed(FundingFailure)
-        case payoutFailed(reason: String)
-    }
-
-    /// Where a released outbound session's payout stands.
-    enum PayoutState: Equatable {
-        case pending
-        case paidOut
-        case failed
-    }
-
     let record: FundingRecord
+    /// The core's summary, whose `ended` says how the session ended.
+    let summary: FundingSessionSummary
     var quote: FundingQuote?
     var reportedSteps: [FundingProgressStep]?
 }
 
 extension FundingEndedSession {
-    init?(session: FundingSession, progress: FundingProgress?) {
-        guard let record = FundingRecord(session: session, progress: progress) else { return nil }
-        self.init(record: record, quote: session.choice?.quote, reportedSteps: progress?.steps)
+    /// The detail of an ended session from its summary in the core's
+    /// history, with the session and progress while the core holds them.
+    init?(summary: FundingSessionSummary, session: FundingSession? = nil, progress: FundingProgress? = nil) {
+        guard summary.ended.outcome != .open,
+              let record = FundingRecord(summary: summary, network: progress?.deposit?.network)
+        else { return nil }
+
+        self.init(
+            record: record,
+            summary: summary,
+            quote: session?.choice?.quote ?? summary.choice?.quote,
+            reportedSteps: progress?.steps
+        )
     }
 
     var direction: FundingDirection {
         record.direction
     }
 
-    var outcome: Outcome {
-        switch record.outcome {
-        case .delivered:
-            return .succeeded
-        case .released:
-            if case let .failed(reason) = record.payout { return .payoutFailed(reason: reason) }
-            return .succeeded
-        case .refunded:
-            return .failed(.refunded)
-        case .cancelled:
-            return .failed(.cancelled)
-        case let .failed(failure):
-            return .failed(failure)
-        }
+    var outcome: FundingEndedOutcome {
+        summary.ended.outcome
     }
 
     var succeeded: Bool {
@@ -56,9 +44,7 @@ extension FundingEndedSession {
     /// The CASH that moved, or for a session that did not go through, the
     /// CASH it was for.
     var cashAmount: U128? {
-        record.settledAmount ?? record.requestedAmount ?? quote.map { quote in
-            direction == .in ? quote.receiveAmount : quote.sendAmount
-        }
+        summary.ended.cashAmount
     }
 
     /// What the user paid for value in, or receives for value out, in the
@@ -75,63 +61,51 @@ extension FundingEndedSession {
 
     /// The CASH asked for, when the CASH that moved differs from it.
     var differingRequestedAmount: U128? {
-        guard let requested = record.requestedAmount, let settled = record.settledAmount,
-              Decimal(string: requested) != Decimal(string: settled)
-        else { return nil }
-        return requested
+        summary.ended.differingRequested
     }
 
     /// The payout state of value out that the provider released.
-    var payoutState: PayoutState? {
-        guard direction == .out, record.outcome == .released else { return nil }
-        switch record.payout {
-        case .paidOut: return .paidOut
-        case .failed: return .failed
-        case nil: return .pending
-        }
+    var payoutState: FundingPayoutState? {
+        summary.ended.payoutState
     }
 
     var steps: [FundingStep] {
         reportedSteps?.map(\.step) ?? Self.steps(direction: direction)
     }
 
-    /// The milestone the session stopped on: the first one a failed session
-    /// did not reach, or Sent when the payout failed.
+    /// The dot of the milestone the core says the session stopped on.
     var stoppedAt: Int? {
-        switch outcome {
-        case .succeeded:
-            nil
-        case .payoutFailed:
-            steps.firstIndex(of: .sent) ?? steps.indices.last
-        case .failed:
-            firstUnreached ?? steps.firstIndex(of: .received)
-        }
+        summary.ended.stoppedAt.flatMap { steps.firstIndex(of: $0) }
     }
 
-    /// The milestone a released withdrawal waits on: the first one the
+    /// The dot a released withdrawal waits on: the first milestone the
     /// provider has not reached, which is the payout.
     var waitingAt: Int? {
         guard payoutState == .pending else { return nil }
-        return firstUnreached ?? steps.firstIndex(of: .sent)
+        return reportedSteps?.firstIndex { $0.reachedAtMs == nil } ?? steps.firstIndex(of: .sent)
     }
 
     /// The card or bank turned the payment down.
     var isDeclined: Bool {
-        outcome == .failed(.declined)
+        outcome == .failed(reason: .declined)
     }
 }
 
 private extension FundingEndedSession {
-    var firstUnreached: Int? {
-        reportedSteps?.firstIndex { $0.reachedAtMs == nil }
-    }
-
     /// The milestones the core reports for a session of this direction, for
-    /// a record drawn from the core's summary.
+    /// a session it no longer holds.
     static func steps(direction: FundingDirection) -> [FundingStep] {
         switch direction {
         case .out: [.started, .received, .sent]
         case .in: [.started, .received, .added]
         }
+    }
+}
+
+extension FundingDeposit {
+    /// The crypto network a deposit is made on.
+    var network: String? {
+        guard case let .crypto(_, network, _, _, _, _, _, _) = self else { return nil }
+        return network
     }
 }

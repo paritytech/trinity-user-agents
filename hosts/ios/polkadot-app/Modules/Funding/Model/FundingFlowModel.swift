@@ -56,6 +56,8 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     private(set) var isAnsweringOffer = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
+    /// The session's summary once it ended, with the core's view of how.
+    private(set) var summary: FundingSessionSummary?
 
     /// Answers the core's `present_funding`; called once.
     var onOutcome: ((FundingPresentOutcome) -> Void)?
@@ -344,6 +346,7 @@ extension FundingFlowModel {
     func refreshSession() {
         session = service.session(intent: intent)
         progress = service.progress(intent: intent)
+        summary = session?.stage.isOpen == false ? service.summary(intent: intent) : nil
     }
 
     /// The core pushed what the overlay offers again: its providers, and the
