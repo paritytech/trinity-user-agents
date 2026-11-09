@@ -24,7 +24,8 @@ const PRODUCT_ID_PARAM: &str = "product_id";
 /// A `localhost` identifier holds the core's development wildcard, and a named
 /// product id gives the page that product's accounts and storage, so hosts
 /// produce one only in development builds.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct DevServerProduct {
 	/// Identifier the product runs under: the `product_id` the address names,
 	/// otherwise `localhost` or `localhost:<port>`.
@@ -36,8 +37,9 @@ pub struct DevServerProduct {
 }
 
 /// Why an address does not open as a development product.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
-#[uniffi(flat_error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), uniffi(flat_error))]
 pub enum DevServerError {
 	/// Not `localhost` or a loopback or private IPv4 address over `http`.
 	#[error(
@@ -92,7 +94,7 @@ impl FromStr for DevServerProduct {
 }
 
 /// Parses a development product address for native hosts.
-#[uniffi::export]
+#[cfg_attr(not(target_arch = "wasm32"), uniffi::export)]
 pub fn parse_dev_server(address: String) -> Result<DevServerProduct, DevServerError> {
 	address.parse()
 }
