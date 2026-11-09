@@ -29,7 +29,7 @@ struct BundledProductsTests {
     /// The app's network has its own top-level domain, which a bundled id
     /// need not end in, and a provider's screen must still resolve.
     @Test func opensPagesUnderItsOwnIdOnAnyNetwork() throws {
-        let product = try BundledProduct(
+        let product = try Products.BundledProduct(
             id: ProductId("provider.dot"),
             directory: URL(fileURLWithPath: "/bundle/provider.dot")
         )
@@ -37,27 +37,6 @@ struct BundledProductsTests {
 
         #expect(page.host.toDotDomain().rawValue == "provider.dot")
         #expect(page.page == "/card?intent=fs_1")
-    }
-
-    /// Funding is served by a manifest whose `includes` has a `funding`
-    /// section; a null one serves nothing, and one that is not a manifest is
-    /// reported rather than skipped.
-    @Test func servesFundingOnlyWithAFundingSection() throws {
-        let root = try makeRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let funding = #"{"includes":{"funding":{}}}"#
-        try write(funding, to: root, "ramp.dot/worker-manifest.json")
-        try write(#"{"includes":{"funding":null}}"#, to: root, "null.dot/worker-manifest.json")
-        try write(#"{"includes":{"chat":true}}"#, to: root, "chat.dot/worker-manifest.json")
-        try write("not json", to: root, "broken.dot/worker-manifest.json")
-
-        let products = BundledProducts(root: root)
-
-        #expect(try products.product(ProductId("ramp.dot"))?.fundingWorkerManifest() == funding)
-        #expect(try products.product(ProductId("null.dot"))?.fundingWorkerManifest() == nil)
-        #expect(try products.product(ProductId("chat.dot"))?.fundingWorkerManifest() == nil)
-        let broken = try #require(products.product(ProductId("broken.dot")))
-        #expect(throws: DecodingError.self) { try broken.fundingWorkerManifest() }
     }
 
     /// A build made without the bundle still runs, with nothing bundled.

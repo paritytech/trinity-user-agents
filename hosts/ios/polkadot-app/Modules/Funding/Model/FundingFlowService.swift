@@ -6,9 +6,10 @@ import TrUAPIHost
 protocol FundingFlowServiceProtocol: Sendable {
     var branding: FundingProviderBranding { get }
 
-    /// What the core last pushed for session `intent`: what its overlay
-    /// offers, the session, and the session's progress.
+    /// What the core holds for session `intent`: what its overlay offers,
+    /// the latest quote list, the session, and the session's progress.
     func options(intent: String) -> FundingOptions?
+    func quotes(intent: String) -> FundingQuoteList?
     func session(intent: String) -> FundingSession?
     func progress(intent: String) -> FundingProgress?
 
@@ -29,29 +30,31 @@ protocol FundingFlowServiceProtocol: Sendable {
 actor FundingFlowService: FundingFlowServiceProtocol {
     nonisolated let branding: FundingProviderBranding
     private nonisolated let runtime: FundingRuntime
-    private nonisolated let book: FundingSessionBook
 
-    init(runtime: FundingRuntime, book: FundingSessionBook, branding: FundingProviderBranding) {
+    init(runtime: FundingRuntime, branding: FundingProviderBranding) {
         self.runtime = runtime
-        self.book = book
         self.branding = branding
     }
 
     nonisolated func options(intent: String) -> FundingOptions? {
-        book.options(intent: intent)
+        runtime.fundingOptions(intent: intent)
+    }
+
+    nonisolated func quotes(intent: String) -> FundingQuoteList? {
+        runtime.fundingQuotes(intent: intent)
     }
 
     nonisolated func session(intent: String) -> FundingSession? {
-        book.session(intent: intent)
+        runtime.fundingSession(intent: intent)
     }
 
     nonisolated func progress(intent: String) -> FundingProgress? {
-        book.progress(intent: intent)
+        runtime.fundingProgress(intent: intent)
     }
 
     func select(_ selection: FundingSelection, intent: String) -> FundingOptions? {
         runtime.selectFundingOptions(intent: intent, selection: selection)
-        return book.options(intent: intent)
+        return runtime.fundingOptions(intent: intent)
     }
 
     func requestQuote(_ ask: FundingQuoteAsk, intent: String) -> UInt64 {

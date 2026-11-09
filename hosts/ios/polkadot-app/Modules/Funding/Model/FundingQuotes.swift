@@ -20,6 +20,12 @@ final class FundingQuotes {
     private(set) var bestProviderId: ProductId?
     /// When the core asks every provider again, and the prices on screen change.
     private(set) var refreshAt: Date?
+    /// The core's latest list for the ask, with what the providers' refusals
+    /// say about it.
+    private(set) var list: FundingQuoteList?
+    /// Set from the moment the selection is reported for an ask until the
+    /// core's first list for it is shown, or the ask turned out unchanged.
+    private(set) var isAwaiting = false
 
     /// Called after a list for the latest ask is shown.
     @ObservationIgnored var onShown: (() -> Void)?
@@ -37,14 +43,34 @@ final class FundingQuotes {
         self.clock = clock
     }
 
-    /// Asks every provider in `providerIds` for `newAsk`, and shows them all
-    /// pending until the core's list for it arrives.
-    func request(_ newAsk: FundingQuoteAsk, from providerIds: [ProductId]) {
+    /// An ask is on its way: no list counts as answering it until
+    /// ``askIfNew(_:)``.
+    func awaitAsk() {
+        isAwaiting = true
+    }
+
+    /// Asks for `newAsk` unless it is the one already asked, whose list then
+    /// stands.
+    func askIfNew(_ newAsk: FundingQuoteAsk?) {
+        guard let newAsk, newAsk != ask else {
+            isAwaiting = false
+            onShown?()
+            return
+        }
+
+        request(newAsk)
+    }
+
+    /// Asks the providers the core picks for `newAsk`, showing none until the
+    /// core's list for it arrives.
+    func request(_ newAsk: FundingQuoteAsk) {
         ask = newAsk
         refreshAt = nil
         bestProviderId = nil
-        rows = Dictionary(uniqueKeysWithValues: providerIds.map { ($0, .pending) })
+        rows = [:]
         order = []
+        list = nil
+        isAwaiting = true
         let askNumber = request.ask()
         coreCalls.run { [intent] service in
             await service.requestQuote(newAsk, intent: intent)
@@ -61,6 +87,8 @@ final class FundingQuotes {
         order = []
         bestProviderId = nil
         ask = nil
+        list = nil
+        isAwaiting = false
         request.drop()
     }
 
@@ -74,6 +102,8 @@ final class FundingQuotes {
         order = quotes.rows.map(\.providerId)
         bestProviderId = quotes.best
         refreshAt = Date(milliseconds: quotes.refreshAtMs)
+        list = quotes
+        isAwaiting = false
         onShown?()
     }
 

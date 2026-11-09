@@ -104,5 +104,6 @@ protocol FundingFlowModelProtocol: AnyObject, Observation.Observable {
     func resume(_ session: FundingSession)
     func refreshSession()
     func refreshOptions()
+    func refreshQuotes()
     func receive(quotes: FundingQuoteList)
 }

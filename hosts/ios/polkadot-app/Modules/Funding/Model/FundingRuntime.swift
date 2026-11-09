@@ -2,9 +2,15 @@ import Foundation
 import TrUAPIHost
 
 /// The part of the runtime the funding screens drive. The core owns every
-/// session and pushes what the screens draw: the screens report what the user
-/// picked, price the session and hand it to a provider.
+/// session and keeps what the screens draw: it says when something changed,
+/// and the screens read it back here, report what the user picked, price the
+/// session and hand it to a provider.
 protocol FundingRuntime: AnyObject, Sendable {
+    func fundingSession(intent: String) -> FundingSession?
+    func fundingProgress(intent: String) -> FundingProgress?
+    func fundingOptions(intent: String) -> FundingOptions?
+    func fundingQuotes(intent: String) -> FundingQuoteList?
+    func fundingEntries() -> [FundingBookEntry]
     func selectFundingOptions(intent: String, selection: FundingSelection)
     @discardableResult
     func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64
@@ -12,30 +18,23 @@ protocol FundingRuntime: AnyObject, Sendable {
     func cancelFunding(intent: String) async throws -> CancelOutcome
     func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
     func fundingHistory() -> [FundingSessionSummary]
-    func acknowledgeFundingSession(intent: String) async throws -> Bool
+    @discardableResult
+    func acknowledgeFundingShown(intents: [String]) async throws -> [String]
     func openFunding(direction: FundingDirection, amount: U128?) async throws -> String?
 }
 
 extension TrUAPIHostRuntime: FundingRuntime {}
 
-extension FundingRail {
-    static let displayOrder: [FundingRail] = [.crypto, .card, .bank]
-
-    /// The first rail in display order a candidate routes, card when none does.
-    static func `default`(candidates: [FundingCandidate], direction: FundingDirection) -> FundingRail {
-        displayOrder.first { rail in
-            candidates.contains { $0.serves(rail: rail, direction: direction) }
-        } ?? .card
-    }
-}
-
-extension FundingCandidate {
-    func routes(rail: FundingRail, direction: FundingDirection) -> [FundingRoute] {
-        routes.filter { $0.rail == rail && $0.directions.contains(direction) }
-    }
-
-    func serves(rail: FundingRail, direction: FundingDirection) -> Bool {
-        !routes(rail: rail, direction: direction).isEmpty
+extension FundingRuntime {
+    /// Tells the core the user was shown how session `intent` went. Only an
+    /// ended session the core still hands over is acknowledged; a failure is
+    /// logged, and the session comes through again on the next resume.
+    func acknowledgeShown(intent: String, logger: LoggerProtocol) async {
+        do {
+            try await acknowledgeFundingShown(intents: [intent])
+        } catch {
+            logger.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
+        }
     }
 }
 
@@ -43,11 +42,6 @@ extension FundingQuoteState {
     var quote: FundingQuote? {
         guard case let .quoted(quote) = self else { return nil }
         return quote
-    }
-
-    var refusal: FundingQuoteRefusal? {
-        guard case let .unavailable(.refused(reason)) = self else { return nil }
-        return reason
     }
 
     var isPending: Bool {

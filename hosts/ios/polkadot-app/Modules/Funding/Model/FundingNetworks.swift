@@ -1,16 +1,23 @@
 import DesignSystem
 import SwiftUI
+import TrUAPIHost
 
 /// How a crypto network id from a provider's routes is shown. The ids are the
-/// lowercase names the core uses (`polkadot` is Asset Hub); an id this table
-/// does not know is shown capitalised. The tints are each network's and
-/// token's own brand colour, which the design system has no token for; an
-/// unknown one takes the design system's tertiary colour.
+/// lowercase names the core uses (`polkadot` is Asset Hub), and the name is
+/// the one the core gives it. The tints are each network's and token's own
+/// brand colour, which the design system has no token for; an unknown one
+/// takes the design system's tertiary colour.
 struct FundingNetwork: Identifiable, Hashable {
     let id: String
+    let name: String
 
-    var name: String {
-        Self.names[id] ?? id.capitalized
+    init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    init(id: String) {
+        self.init(id: id, name: fundingNetworkName(id: id))
     }
 
     var tint: Color {
@@ -38,14 +45,6 @@ struct FundingToken: Identifiable, Hashable {
 }
 
 private extension FundingNetwork {
-    static let names: [String: String] = [
-        "polkadot": "Polkadot",
-        "bitcoin": "Bitcoin",
-        "ethereum": "Ethereum",
-        "tron": "Tron",
-        "solana": "Solana"
-    ]
-
     static let tints: [String: Color] = [
         "polkadot": Color(red: 0.9, green: 0.0, blue: 0.48),
         "bitcoin": Color(red: 0.97, green: 0.58, blue: 0.1),
