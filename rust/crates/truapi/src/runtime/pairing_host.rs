@@ -28,7 +28,7 @@ use super::{
 use crate::{
 	chain_runtime::ChainRuntime,
 	host_internal::{
-		extrinsic::build_local_transaction,
+		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
 		sso_messages::{ProductRequest, RingVrfError},
 		transaction::sign_extrinsic_payload,
 	},
@@ -523,15 +523,17 @@ impl PairingHost {
 			//
 			// The failure is not prompt: an unreachable genesis holds the
 			// metadata read until its deadline.
-			return Ok(build_local_transaction(
-				&self.chain,
-				&keypair,
-				payload.genesis_hash,
-				&payload.call_data,
-				&payload.extensions,
-				payload.tx_ext_version,
-			)
-			.await?);
+			let metadata = local_transaction_metadata(&self.chain, payload.genesis_hash).await?;
+			return Ok(latest::HostCreateTransactionResponse {
+				transaction: build_signed_transaction(
+					&Sr25519Signer::from_keypair(&keypair),
+					payload.genesis_hash,
+					&payload.call_data,
+					&payload.extensions,
+					payload.tx_ext_version,
+					metadata,
+				)?,
+			});
 		}
 		self.remote_create_transaction(cx, &session, request).await
 	}

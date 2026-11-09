@@ -63,7 +63,6 @@ use truapi::{
 };
 
 use crate::{
-	NetworkConfig,
 	platform::{ApprovalPolicy, CliPlatform},
 	terminal_ui::UiHandle,
 	transcript::Transcript,
@@ -103,6 +102,7 @@ pub async fn offer_providers(
 			product_id,
 			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
 			origin: FundingProviderOrigin::Published,
+			has_app: None,
 		});
 	}
 	runtime
@@ -158,13 +158,11 @@ pub struct CliFundingHost {
 impl CliFundingHost {
 	/// Serve funding on `runtime`, asking `user`, with the providers, worker
 	/// scripts and files the environment names. Worker output goes to `ui`
-	/// when the host runs one. The payment ledger moves no real funds, so it
-	/// is refused on a network whose identities are real.
+	/// when the host runs one.
 	pub fn install(
 		runtime: &Arc<SigningHostRuntime>,
 		user: Arc<CliPlatform>,
 		ui: Option<UiHandle>,
-		network: &NetworkConfig,
 	) -> anyhow::Result<()> {
 		let mut workers = HashMap::new();
 		for (provider, script) in provider_entries() {
@@ -193,12 +191,6 @@ impl CliFundingHost {
 		runtime.set_funding_feed(host.clone());
 		runtime.set_funding_platform(host);
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
-			anyhow::ensure!(
-				network.disposable_identities,
-				"{} holds real identities, so TRUAPI_FUNDING_LEDGER, which credits and pays \
-				 without moving funds, is only available on test network presets",
-				network.id
-			);
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
 			runtime.set_payment_platform(payments);
@@ -421,6 +413,7 @@ impl FundingPlatform for CliFundingHost {
 		provider: &ProductContext,
 		intent: String,
 		target: FundingFrameTarget,
+		_context: truapi::platform::FundingFrameContext,
 	) -> Result<FundingFrameOutcome, GenericError> {
 		let (link, finished) = match target {
 			FundingFrameTarget::App { route } => {
