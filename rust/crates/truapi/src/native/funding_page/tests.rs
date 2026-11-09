@@ -13,9 +13,12 @@ fn a_return_url_matches_by_scheme_host_port_and_path() {
 		("not a url", false),
 	];
 	for (url, matches) in cases {
-		assert_eq!(FundingPagePolicy::matches_return(url, expected), matches, "{url}");
+		assert_eq!(funding_page_matches_return(url.into(), expected.into()), matches, "{url}");
 	}
-	assert!(FundingPagePolicy::matches_return("https://pay.example", "https://pay.example/"));
+	assert!(funding_page_matches_return(
+		"https://pay.example".into(),
+		"https://pay.example/".into()
+	));
 }
 
 // Divergence "Page sub-frame about:/blob:/data:": allowed, in sub-frames
@@ -34,14 +37,14 @@ fn a_page_navigates_on_https_and_builds_sub_frames_itself() {
 		("javascript:alert(1)", false, false),
 	];
 	for (url, main, allowed) in cases {
-		assert_eq!(FundingPagePolicy::allows_navigation(url, main), allowed, "{url} main={main}");
+		assert_eq!(funding_page_allows_navigation(url.into(), main), allowed, "{url} main={main}");
 	}
 }
 
 #[test]
 fn an_origin_is_normalised() {
 	assert_eq!(
-		FundingPagePolicy::origin("https://Pay.Example:443/x"),
+		funding_page_origin("https://Pay.Example:443/x".into()),
 		Some(FundingPageOrigin {
 			scheme: "https".to_string(),
 			host: "pay.example".to_string(),
@@ -49,10 +52,10 @@ fn an_origin_is_normalised() {
 		})
 	);
 	assert_eq!(
-		FundingPagePolicy::origin("https://pay.example:8443/").map(|o| o.port),
+		funding_page_origin("https://pay.example:8443/".into()).map(|o| o.port),
 		Some(Some(8443))
 	);
-	assert_eq!(FundingPagePolicy::origin("about:blank"), None);
+	assert_eq!(funding_page_origin("about:blank".into()), None);
 }
 
 // Divergence "Media grant": only the on-screen page's own origin.
@@ -67,7 +70,7 @@ fn media_goes_only_to_the_page_on_screen() {
 		("http://kyc.example", false),
 	];
 	for (origin, allowed) in cases {
-		assert_eq!(FundingPagePolicy::allows_media(page, origin), allowed, "{origin}");
+		assert_eq!(funding_page_allows_media(page.into(), origin.into()), allowed, "{origin}");
 	}
-	assert!(!FundingPagePolicy::allows_media("http://kyc.example/", "http://kyc.example"));
+	assert!(!funding_page_allows_media("http://kyc.example/".into(), "http://kyc.example".into()));
 }

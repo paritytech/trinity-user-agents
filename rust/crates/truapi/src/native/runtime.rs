@@ -53,7 +53,6 @@ use super::{
 	errors::{HostRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
 	executor::shared_native_executor,
-	funding_book::{FundingBookEntry, FundingSessionBook},
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
@@ -81,9 +80,6 @@ pub struct NativeTrUApiHostRuntime {
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
-	/// The funding state the host reads back, kept once funding callbacks
-	/// are installed.
-	funding_book: Arc<FundingSessionBook>,
 	/// The core database directory, which holds the funding resume marker.
 	database_directory: std::path::PathBuf,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
@@ -91,25 +87,6 @@ pub struct NativeTrUApiHostRuntime {
 }
 
 impl NativeTrUApiHostRuntime {
-	/// The funding activity with the sessions history leaves out.
-	fn funding_activity_view(&self) -> crate::host_logic::funding_activity::ActivityView {
-		let now_ms = crate::current_unix_millis();
-		let funding = self.runtime.services().funding();
-		self.funding_book.activity(
-			|| {
-				funding
-					.announced()
-					.into_iter()
-					.map(|session| {
-						let progress = session.progress(now_ms);
-						(session, progress)
-					})
-					.collect()
-			},
-			|| funding.history(),
-		)
-	}
-
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
@@ -216,7 +193,6 @@ impl NativeTrUApiHostRuntime {
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
 			pocket,
-			funding_book: Arc::default(),
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
 		}))
@@ -342,7 +318,6 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
 		let platform = Arc::new(FundingCallbackPlatform {
 			funding: callbacks,
-			book: self.funding_book.clone(),
 			database_directory: self.database_directory.clone(),
 		});
 		self.runtime.set_funding_feed(platform.clone()) &&
@@ -360,13 +335,13 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.open_funding(direction, amount).await?)
 	}
 
-	/// Funding session `intent` as the core holds it in full, `None` once
-	/// only its summary is kept or for no such session.
+	/// Funding session `intent` as the core holds it in full; see
+	/// [`SigningHostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
 	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.runtime.services().funding().get(&intent)
+		self.runtime.funding_session(&intent)
 	}
 
 	/// Funding session `intent`'s progress now, while the core holds it in
@@ -375,8 +350,7 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		intent: String,
 	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.funding_session(intent)
-			.map(|session| session.progress(crate::current_unix_millis()))
+		self.runtime.funding_progress(&intent)
 	}
 
 	/// What funding session `intent`'s overlay offers, while it is up.
@@ -384,95 +358,43 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		intent: String,
 	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
-		self.funding_book.options(&intent)
+		self.runtime.funding_options(&intent)
 	}
 
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
-		self.funding_book.quotes(&intent)
+		self.runtime.funding_quotes(&intent)
 	}
 
-	/// Every funding session the host has heard of that the core holds in
-	/// full, with its progress now, newest opened first.
-	pub fn funding_entries(&self) -> Vec<FundingBookEntry> {
-		let now_ms = crate::current_unix_millis();
-		let mut entries: Vec<FundingBookEntry> = self
-			.runtime
-			.services()
-			.funding()
-			.announced()
-			.into_iter()
-			.map(|session| FundingBookEntry { progress: session.progress(now_ms), session })
-			.collect();
-		entries.sort_by_key(|entry| core::cmp::Reverse(entry.session.opened_at_ms));
-		entries
-	}
-
-	/// The ended funding sessions the host has not acknowledged.
-	pub fn funding_unacknowledged(&self) -> Vec<String> {
-		self.funding_book.unacknowledged()
-	}
-
-	/// Whether a provider still works on any funding session; `None` until
-	/// funding resumed.
-	pub fn funding_in_progress(&self) -> Option<bool> {
-		self.funding_book.in_progress()
-	}
-
-	/// Whether funding session `intent`'s payment moved: it ended, or it
-	/// reached a step past Started. `false` for a session the core does not
-	/// hold.
-	pub fn funding_payment_moved(&self, intent: String) -> bool {
-		self.runtime.services().funding().payment_moved(&intent)
+	/// The funding sessions the host has heard of that the core holds in
+	/// full, with their progress now, newest opened first.
+	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+		self.runtime.funding_entries()
 	}
 
 	/// The user's funding activity: sessions in flight and the history of
-	/// ended ones, worked out again only once a session changed.
+	/// ended ones.
 	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
-		self.funding_activity_view().activity
+		self.runtime.funding_activity()
 	}
 
 	/// Acknowledge that the user saw how the ended funding sessions
-	/// `intents` went, and with them the ended sessions history leaves out,
-	/// so none is owed to the host again. Answers the sessions acknowledged.
+	/// `intents` went; see [`SigningHostRuntime::acknowledge_funding_shown`].
 	pub async fn acknowledge_funding_shown(
 		&self,
 		intents: Vec<String>,
 	) -> Result<Vec<String>, HostRejection> {
-		let unacknowledged = self.funding_book.unacknowledged();
-		let hidden = self
-			.funding_activity_view()
-			.hidden
-			.into_iter()
-			.filter(|intent| unacknowledged.contains(intent));
-		let mut acknowledged = Vec::new();
-		for intent in intents.into_iter().chain(hidden) {
-			if acknowledged.contains(&intent) {
-				continue;
-			}
-			if self.runtime.acknowledge_funding_session(&intent).await? {
-				acknowledged.push(intent.clone());
-			}
-			self.funding_book.acknowledged(&intent);
-		}
-		Ok(acknowledged)
+		Ok(self.runtime.acknowledge_funding_shown(intents).await?)
 	}
 
-	/// Offer the funding providers the host's remote configuration lists by
-	/// product name, then the `bundled` ones it does not name. Names that are
-	/// not product ids are skipped and logged, and a call listing what the
-	/// last one listed changes nothing, so the host calls it on every
-	/// configuration refresh.
+	/// Offer the funding providers the remote configuration names, then the
+	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
 		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), HostRejection> {
-		Ok(self
-			.runtime
-			.services()
-			.set_funding_provider_config(published_names, bundled)
-			.map_err(v01::GenericError::from)?)
+		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
