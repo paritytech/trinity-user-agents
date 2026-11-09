@@ -21,6 +21,7 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -58,32 +59,30 @@ class FundingActivityCenter @Inject constructor(
      * built, so the core stops pushing it on resume.
      */
     fun observe(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.activity) { sessions, _ -> sessions.values }
+        combine(runtime.sessions, runtime.history) { sessions, history -> sessions.values to history }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-            .map { sessions -> reloadMutex.withLock { reload(sessions) } }
+            .map { (sessions, history) -> reloadMutex.withLock { reload(sessions, history) } }
 
     /** The ended session [intent] as the user is shown it, or `null` when the core holds no ended session by that id. */
     suspend fun ended(intent: String): FundingRecord? =
-        runtime.history()
-            .logFailure("Funding history read failed")
+        runtime.summary(intent)
+            .logFailure("Funding summary read failed")
             .getOrNull()
-            ?.firstOrNull { it.intent == intent }
             ?.let(FundingRecord::of)
 
-    private suspend fun reload(sessions: Collection<FundingBookEntry>): FundingActivity {
+    private suspend fun reload(sessions: Collection<FundingBookEntry>, history: List<FundingSessionSummary>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
         val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
 
-        val records = runtime.history()
-            .logFailure("Funding history read failed")
-            .getOrDefault(emptyList())
+        val records = history
             .filter { it.intent !in inFlightIds }
             .mapNotNull(FundingRecord::of)
 
         acknowledgeEnded(entries)
-        acknowledgeShown(records.mapTo(mutableSetOf()) { it.intent })
+        // A session the core holds in full is acknowledged by its entry above.
+        acknowledgeShown(records.mapTo(mutableSetOf()) { it.intent } - entries.mapTo(mutableSetOf()) { it.session.intent })
 
         return FundingActivity(
             inFlight = inFlight,
@@ -108,9 +107,11 @@ class FundingActivityCenter @Inject constructor(
     private suspend fun acknowledgeShown(intents: Set<String>) {
         val fresh = intents - acknowledgedSummaries
         if (fresh.isEmpty()) return
-        runtime.acknowledgeShown(fresh.toList())
-            .logFailure("Funding acknowledgement failed")
-            .onSuccess { acknowledgedSummaries += fresh }
+        fresh.forEach { intent ->
+            runtime.acknowledge(intent)
+                .logFailure("Funding acknowledgement failed")
+                .onSuccess { acknowledgedSummaries += intent }
+        }
     }
 
     /** The row of a session the core still has in progress, or `null` once its status is final. */

@@ -22,8 +22,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProduct
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstPartyOrigin
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -59,10 +60,8 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted private val navigationPolicy: NavigationPolicy,
     @Assisted private val allowIframes: Boolean,
     @Assisted private val scope: CoroutineScope,
-    /** A product the app ships, whose pages are served from its own files under its own id, with no dotNS read. */
-    @Assisted private val bundledProduct: BundledProduct?,
-    @Assisted private val fixedProductId: ProductId?,
-    @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
+    /** Where the product runs from, decided when it opened; `null` reads it off each URL as a published one. */
+    @Assisted private val source: ProductSource?,
     @Assisted private val servedExecutable: ExecutableKind,
     @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
@@ -73,19 +72,19 @@ class BrowserWebViewProvider @AssistedInject constructor(
             navigationPolicy: NavigationPolicy,
             allowIframes: Boolean,
             scope: CoroutineScope,
-            bundledProduct: BundledProduct? = null,
-            fixedProductId: ProductId? = null,
-            @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
+            source: ProductSource? = null,
             servedExecutable: ExecutableKind = ExecutableKind.APP,
             @Assisted("waitForInitialTheme") waitForInitialTheme: Boolean = false,
         ): BrowserWebViewProvider
     }
 
-    // A product the app ships, or a page served from a debug loopback url, has no dotNS host to read its product
-    // from; a bundled id need not even end in the network's TLD. The id stays fixed across navigations, so a debug
-    // page that navigates to another product's page runs that page as the debug product.
+    private val fixedProductId = source?.fixedProductId
+    private val firstPartyOrigin = source?.firstPartyOrigin
+
+    // A bundled or dev server page has no dotNS host to read its product from. The id stays fixed across
+    // navigations, so a debug page that navigates to another product's page runs that page as the debug product.
     override val callingProductIdProvider: CallingProductIdProvider =
-        (bundledProduct?.id ?: fixedProductId)?.let(::FixedProductId) ?: UrlDerivedProductId(dotNsTldProvider) {
+        fixedProductId?.let(::FixedProductId) ?: UrlDerivedProductId(dotNsTldProvider) {
             accessWebView(WebView::getUrl)
         }
 
@@ -93,23 +92,20 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
 
-    private val bundledContent = bundledProduct?.let {
-        BundledProductContent.app(it, bundledProducts, frameEmbeddingResponseHeaders(allowIframes))
+    private val bundledContent = (source as? ProductSource.Bundled)?.let {
+        BundledProductContent.app(it.entry, bundledProducts, frameEmbeddingResponseHeaders(allowIframes))
     }
 
-    // No dotNS load reports progress for a bundled page or one served from a loopback url, so its own load does.
+    // No dotNS load reports progress for a bundled or dev server page, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
 
     /** Load progress of the domain the WebView is currently resolving content for. */
     val loadProgress: Flow<DotNsLoadProgress> =
-        if (bundledContent != null || fixedProductId != null) servedPageProgress else contentLoader.loadProgress
+        if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
 
     val isPageRevealed = MutableStateFlow(!waitForInitialTheme)
 
-    private val permissionClient = webViewPermissionClientFactory.create(
-        callingProductIdProvider,
-        firstPartyOrigin = bundledContent?.let { "https://${it.host}" } ?: firstPartyOrigin,
-    )
+    private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
         logPrefix = "Browser: $initialUrl",
         callingProductIdProvider = callingProductIdProvider,
@@ -219,7 +215,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
 
         override fun onPageFinished(view: WebView, url: String?) {
             innerClient.onPageFinished(view, url)
-            if (bundledContent != null || fixedProductId != null) servedPageProgress.value = DotNsLoadProgress.Completed
+            if (fixedProductId != null) servedPageProgress.value = DotNsLoadProgress.Completed
             notifyOnPageFinished()
             if (waitForInitialTheme) {
                 view.postDelayed({ reveal(view) }, THEME_READY_FALLBACK.inWholeMilliseconds)

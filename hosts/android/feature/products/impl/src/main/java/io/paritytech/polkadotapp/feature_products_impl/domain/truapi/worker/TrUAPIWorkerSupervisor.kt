@@ -6,8 +6,9 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.workerScriptUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -62,6 +64,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
+    private val productSources: ProductSources,
     private val bundledProducts: BundledProducts,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
@@ -134,18 +137,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val bundled = bundledProducts.product(productId)?.takeIf(bundledProducts::hasWorker)
-        val (scriptUrl, includesChat) = if (bundled != null) {
-            bundled.workerScriptUrl to bundledProducts.includesChat(bundled)
+        val source = productSources.of(productId.value)
+        val (scriptUrl, includesChat) = if (source is ProductSource.Bundled) {
+            if (!source.entry.hasWorker) return Result.failure(IllegalStateException("Bundled ${productId.value} ships no Worker"))
+            source.entry.workerScriptUrl to bundledProducts.includesChat(source.entry)
         } else {
             val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
             resolved.scriptUrl to resolved.includesChat
         }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
         val workerScript = WorkerScript.of(scriptUrl)
-        val bundledContent = bundled?.let { BundledProductContent.worker(it, bundledProducts) }
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, bundledContent), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, source), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {

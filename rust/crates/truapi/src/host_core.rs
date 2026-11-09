@@ -807,6 +807,14 @@ impl SigningHostRuntime {
 		self.services.funding().history()
 	}
 
+	/// Ended funding session `intent`'s summary, held in full or compacted.
+	pub fn funding_summary(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().summary(intent)
+	}
+
 	/// Funding session `intent` as the core holds it in full.
 	///
 	/// `None` once only its summary is kept, or for no such session.
@@ -844,25 +852,6 @@ impl SigningHostRuntime {
 	/// full, with their progress now, newest opened first.
 	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
 		self.services.funding().entries(crate::current_unix_millis())
-	}
-
-	/// The user's funding activity: sessions in flight and the history of
-	/// ended ones.
-	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
-		self.services.funding().activity_view().activity
-	}
-
-	/// Acknowledge that the user saw how the ended funding sessions
-	/// `intents` went.
-	///
-	/// Ended sessions history leaves out are acknowledged with them. Returns
-	/// the sessions acknowledged.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_shown"))]
-	pub async fn acknowledge_funding_shown(
-		&self,
-		intents: Vec<String>,
-	) -> Result<Vec<String>, v01::GenericError> {
-		Ok(self.services.acknowledge_funding_shown(intents).await?)
 	}
 
 	/// Offer the funding providers the remote configuration names, then the
