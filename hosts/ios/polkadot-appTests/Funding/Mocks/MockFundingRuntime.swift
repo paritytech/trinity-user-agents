@@ -25,7 +25,6 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     init(
         candidates: [FundingCandidate]? = nil,
         rails: [FundingRail] = [.crypto, .card, .bank],
-        defaultRail: FundingRail = .card,
         detectedCountry: String? = nil
     ) {
         let options = candidates.map { candidates in
@@ -35,7 +34,6 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
                 limits: FundingAmountLimits(min: "10000000", max: nil),
                 networks: [],
                 rails: rails,
-                defaultRail: defaultRail,
                 asset: nil,
                 tokens: ["USDC"],
                 detectedCountry: detectedCountry
@@ -116,11 +114,19 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { state.withLock { $0.history } }
+    func fundingSummary(intent: String) -> FundingSessionSummary? {
+        state.withLock { $0.history.first { $0.intent == intent } }
+    }
+
+    func fundingSessionOpen(intent: String) -> Bool {
+        state.withLock { $0.sessions[intent].map { $0.session.stage.isOpen } ?? false }
+    }
+
     func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }
 
-    func acknowledgeFundingShown(intents: [String]) async throws -> [String] {
-        state.withLock { $0.acknowledged.append(contentsOf: intents) }
-        return intents
+    func acknowledgeFundingSession(intent: String) async throws -> Bool {
+        state.withLock { $0.acknowledged.append(intent) }
+        return true
     }
 }
 

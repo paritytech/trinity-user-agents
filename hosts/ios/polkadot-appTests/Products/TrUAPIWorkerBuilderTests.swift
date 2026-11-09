@@ -25,10 +25,10 @@ struct TrUAPIWorkerBuilderTests {
         let bundled = BundledProducts(root: root)
         let builder = makeBuilder(loader: loader, resolver: resolver, bundled: bundled)
 
-        let product = try #require(bundled.product(id))
+        let entry = try #require(bundled.entries.first)
         let (source, files) = try await builder.workerSource(for: id)
 
-        #expect(source == .bundled(product))
+        #expect(source == .bundled(entry))
         #expect(files.load(for: id, relativePath: "worker/index.js") == Data("export {}".utf8))
         #expect(loader.openedWorkerIds.isEmpty)
         #expect(resolver.resolvedNames.isEmpty)

@@ -24,10 +24,27 @@ struct FundingCash: Equatable {
         Decimal.fromSubstrateAmount(balance, precision: precision)
     }
 
-    /// `value` in CASH units, as the core reads an amount: rounded down, so
-    /// the host never asks for more than the user has; nil when negative.
+    /// `value` in CASH units, rounded down, so the host never asks for more
+    /// than the user has; nil when negative.
     func units(_ value: Decimal) -> U128? {
-        fundingUnits(text: NSDecimalNumber(decimal: value).stringValue, decimals: UInt8(clamping: precision))
+        guard value >= 0 else { return nil }
+
+        var scaled = value * Self.scale(precision)
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &scaled, 0, .down)
+        return NSDecimalNumber(decimal: rounded).stringValue
+    }
+
+    /// `text`, a typed amount with `.` as its separator, in CASH units; nil
+    /// unless it is digits with at most one `.`.
+    func units(text: String) -> U128? {
+        guard text.contains(where: \.isASCIIDigit),
+              text.allSatisfy({ $0.isASCIIDigit || $0 == "." }),
+              text.filter({ $0 == "." }).count <= 1,
+              let value = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))
+        else { return nil }
+
+        return units(value)
     }
 
     /// "$50.20" for a dollar-pegged asset, with cents only when there are any.
@@ -71,6 +88,10 @@ extension Decimal {
         NSDecimalRound(&result, &source, scale, mode)
         return result
     }
+}
+
+private extension Character {
+    var isASCIIDigit: Bool { isASCII && isNumber }
 }
 
 private extension String? {

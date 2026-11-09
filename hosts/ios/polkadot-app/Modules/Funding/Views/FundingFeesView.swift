@@ -32,15 +32,12 @@ private extension FundingFeesView {
         return model.cash.label(units: units)
     }
 
-    /// The amounts are the core's: what the user pays before fees, which with
-    /// the fees adds up to the total under them, and a withdrawal's total
-    /// rounded up to the cent so it never under-states the cost.
     func breakdown(_ quote: FundingQuote) -> some View {
-        let fees = fundingFeeBreakdown(quote: quote, direction: model.direction)
-        let total = fees.totalFee
+        let fees = FundingFees(quote: quote, direction: model.direction, cashPrecision: model.cash.precision)
+        let total = fees.total.units
 
         return VStack(spacing: DSSpacings.small) {
-            feeText(fees.net, of: quote).map { line(String(localized: .Funding.feesAmount), $0) }
+            feeText(fees.net.units, of: quote).map { line(String(localized: .Funding.feesAmount), $0) }
             feeText(quote.providerFee, of: quote).map { line(String(localized: .Funding.feesProvider), $0) }
             feeText(quote.networkFee, of: quote).map { line(String(localized: .Funding.feesNetwork), $0) }
             line(String(localized: .Funding.feesSwapping), String(localized: .Funding.feesVariable))
@@ -76,10 +73,10 @@ private extension FundingFeesView {
     }
 
     /// What one CASH is worth in the provider-side asset, net of fees as the
-    /// amount line above it: the core's ratio of provider-side to CASH units.
-    func rate(_ fees: FundingFeeBreakdown, of quote: FundingQuote) -> String? {
-        guard let providerSide = model.quoteUnit(quote).decimal(fees.rateNum),
-              let cashSide = model.cash.decimal(fees.rateDen),
+    /// amount line above it.
+    func rate(_ fees: FundingFees, of quote: FundingQuote) -> String? {
+        guard let providerSide = model.quoteUnit(quote).decimal(fees.rateNum.units),
+              let cashSide = model.cash.decimal(fees.rateDen.units),
               cashSide > 0
         else { return nil }
 
@@ -97,5 +94,45 @@ private extension FundingFeesView {
                 .typography(emphasized ? .bodyLargeEmphasized : .bodyLarge)
                 .foregroundStyle(emphasized ? Color.fgPrimary : Color.fgSecondary)
         }
+    }
+}
+
+/// What a quote's fees come to, in the unit of `sendAmount`: what the user
+/// pays less the fees, which with them adds up to the total, and the fees
+/// together. A withdrawal's are charged in CASH and shown rounded up to the
+/// cent, so the cost is never under-stated. The rate sets the provider's
+/// asset against CASH, net of fees.
+struct FundingFees: Equatable {
+    let net: Decimal
+    let total: Decimal
+    /// The provider's asset, in its smallest unit, per ``rateDen`` CASH units.
+    let rateNum: Decimal
+    let rateDen: Decimal
+
+    init(quote: FundingQuote, direction: FundingDirection, cashPrecision: Int16) {
+        let fees = Decimal(units: quote.providerFee) + Decimal(units: quote.networkFee)
+        let receive = Decimal(units: quote.receiveAmount)
+        net = max(0, Decimal(units: quote.sendAmount) - fees)
+        switch direction {
+        case .in:
+            total = fees
+            rateNum = net
+            rateDen = receive
+        case .out:
+            let cent = FundingCash.scale(max(cashPrecision - 2, 0))
+            total = (fees / cent).fundingRounded(scale: 0, mode: .up) * cent
+            rateNum = receive
+            rateDen = net
+        }
+    }
+}
+
+private extension Decimal {
+    init(units: U128) {
+        self = Decimal(string: units) ?? 0
+    }
+
+    var units: U128 {
+        NSDecimalNumber(decimal: self).stringValue
     }
 }

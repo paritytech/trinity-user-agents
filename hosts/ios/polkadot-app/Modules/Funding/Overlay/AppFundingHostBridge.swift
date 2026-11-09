@@ -42,12 +42,9 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     /// Product `productId`'s worker keeps crashing while the core restarts it.
     func workerCrashing(productId: ProductId)
 
-    /// Shows session `intent` again after the user left it running.
+    /// Shows session `intent` again: one the user left running, or an ended
+    /// one on its detail screen.
     func reopen(intent: String)
-
-    /// Shows an ended session's detail screen, from the session the core
-    /// pushed this run or else from its history record.
-    func showEnded(_ record: FundingRecord)
 
     /// Shows the sessions in flight in `direction`, with a way to start
     /// another.

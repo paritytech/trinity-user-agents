@@ -89,10 +89,6 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         Task { @MainActor in coordinator?.reopen(intent: intent) }
     }
 
-    func showEnded(_ record: FundingRecord) {
-        Task { @MainActor in coordinator?.showEnded(record) }
-    }
-
     func showPending(direction: FundingDirection) {
         Task { @MainActor in coordinator?.showPending(direction: direction) }
     }
@@ -185,12 +181,16 @@ final class FundingOverlayCoordinator {
         }
     }
 
-    /// Shows a session the core holds: one the user left running on its
-    /// progress screen, with the provider's screen over it while the provider
-    /// still waits on one, or an ended one on its ended screen.
+    /// Shows a session again: one still open on its progress screen, with the
+    /// provider's screen over it while the provider still waits on one, or an
+    /// ended one on its detail screen.
     func reopen(intent: String) {
-        guard flows[intent] == nil,
-              let session = runtime?.fundingSession(intent: intent),
+        guard flows[intent] == nil else { return }
+        guard runtime?.fundingSessionOpen(intent: intent) == true else {
+            showEnded(intent: intent)
+            return
+        }
+        guard let session = runtime?.fundingSession(intent: intent),
               let model = makeModel(intent: intent, direction: session.direction, amount: session.amount)
         else { return }
 
@@ -204,15 +204,16 @@ final class FundingOverlayCoordinator {
         }
     }
 
-    /// An ended session the core no longer holds is drawn from its summary
-    /// in the core's history.
-    func showEnded(_ record: FundingRecord) {
-        if runtime?.fundingSession(intent: record.intent) != nil {
-            reopen(intent: record.intent)
-            return
-        }
-        guard let summary = runtime?.fundingHistory().first(where: { $0.intent == record.intent }),
-              let ended = FundingEndedSession(summary: summary)
+    /// An ended session, drawn from its summary in the core's history, with
+    /// the steps the core reported while it still holds the session.
+    func showEnded(intent: String) {
+        guard let runtime,
+              let summary = runtime.fundingSummary(intent: intent),
+              let ended = FundingEndedSession(
+                  summary: summary,
+                  session: runtime.fundingSession(intent: intent),
+                  progress: runtime.fundingProgress(intent: intent)
+              )
         else { return }
 
         let sheet = FundingEndedSheetController(
@@ -221,9 +222,11 @@ final class FundingOverlayCoordinator {
             branding: environment.branding
         )
         sheet.onStartOver = { [weak self, weak sheet] in
-            sheet?.dismissIfPresented { self?.startOver(direction: record.direction) }
+            sheet?.dismissIfPresented { self?.startOver(direction: summary.direction) }
         }
-        _ = environment.present(sheet)
+        if environment.present(sheet) {
+            acknowledgeShown(intent: intent)
+        }
     }
 
     func providerHasApp(providerId: ProductId) async -> Bool {
