@@ -166,3 +166,20 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
 }
+
+/// An all-zero Asset Hub is not a way to say the stack has none: the core
+/// would wait on a chain no host can dial. Such a stack leaves the role out.
+#[test]
+fn an_all_zero_genesis_hash_is_refused() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: Some([0; 32]),
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+
+	assert_eq!(
+		Stack::new("paseo".into(), "paseo".into(), chains, true),
+		Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub })
+	);
+}
