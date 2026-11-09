@@ -24,7 +24,7 @@ use truapi_provider::{
 	ChainHealth, ChainLifecycle, ChainPhase, ChainSource, EmbeddedChainProvider, StallReason,
 };
 
-use crate::network::{ChainEndpoint, NetworkConfig};
+use crate::network::{ChainEndpoint, Stack};
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -53,57 +53,40 @@ pub enum ChainBackend {
 /// Chain provider shared by the host runtime, dotNS reads and Bulletin
 /// preimage lookups.
 ///
-/// Routing is the same on both backends. Every role the network serves (People,
-/// Bulletin and Asset Hub) is routed to its own chain, and the test switch also
-/// routes endpoints the network carries without serving them. The all-zero SSO
+/// Routing is the same on both backends. Each role the network serves (People,
+/// Bulletin and Asset Hub) is routed to its own chain. The all-zero SSO
 /// sentinel and any other genesis are answered by People.
 pub struct CliChainProvider {
-	network: NetworkConfig,
-	live_chain_routing: bool,
+	people_genesis: [u8; 32],
+	routed_endpoints: Vec<ChainEndpoint>,
 	backend: Backend,
 }
 
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the network; see [`light_client`].
-	LightClient,
+	/// The process's light client for the network with this product
+	/// namespace; see [`light_client`].
+	LightClient(String),
 }
 
 impl CliChainProvider {
-	/// Reads the test switch from the `E2E_LIVE_CHAIN` environment variable.
-	pub fn new(network: &NetworkConfig) -> Self {
-		let live_chain_routing = std::env::var("E2E_LIVE_CHAIN").as_deref() == Ok("1");
-		Self::with_live_chain_routing(network, live_chain_routing)
-	}
-
-	fn with_live_chain_routing(network: &NetworkConfig, live_chain_routing: bool) -> Self {
-		let backend = match network.chain_backend {
+	/// A provider for `network`'s chains over its chain backend.
+	pub fn new(network: &Stack) -> Self {
+		let routed_endpoints: Vec<ChainEndpoint> = network.chains().iter().cloned().collect();
+		let backend = match network.chain_backend() {
 			ChainBackend::Rpc => Backend::Rpc(Box::new(
-				routed_endpoints(network, live_chain_routing)
+				routed_endpoints
+					.iter()
 					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
-						let url = endpoint
-							.ws
-							.parse()
-							.expect("chain URLs are validated when the network config is resolved");
+						let url = endpoint.ws.parse().expect("invalid chain URL in the stack");
 						builder.chain(endpoint.genesis, ChainSource::rpc_node(url))
 					})
 					.build(),
 			)),
-			ChainBackend::LightClient => Backend::LightClient,
+			ChainBackend::LightClient => Backend::LightClient(network.namespace().to_owned()),
 		};
-		Self { network: *network, live_chain_routing, backend }
-	}
-
-	/// A provider for `endpoint` alone, over RPC, so a check reaches exactly the
-	/// URL it names on the transport the routed chains use.
-	pub fn for_endpoint(network: &NetworkConfig, endpoint: &'static ChainEndpoint) -> Self {
-		let alone = NetworkConfig {
-			live_chain_endpoints: std::slice::from_ref(endpoint),
-			chain_backend: ChainBackend::Rpc,
-			..*network
-		};
-		Self::with_live_chain_routing(&alone, true)
+		Self { people_genesis: network.genesis().people, routed_endpoints, backend }
 	}
 
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`
@@ -115,8 +98,10 @@ impl CliChainProvider {
 	/// long sync would run into that deadline.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
-		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
-			wait_until_synced(&*light_client(self.network.id)?, chain.genesis).await?;
+		if let (Backend::LightClient(network_id), Some(chain)) =
+			(&self.backend, self.chain_for(genesis_hash))
+		{
+			wait_until_synced(&*light_client(network_id)?, chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -124,50 +109,21 @@ impl CliChainProvider {
 
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
 	/// People's, and none when People is not routed either.
-	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
-		let routed = |genesis| {
-			routed_endpoints(&self.network, self.live_chain_routing)
-				.find(move |endpoint| endpoint.genesis == genesis)
-		};
-		routed(genesis_hash).or_else(|| routed(self.network.people_genesis))
-	}
-
-	/// Whether a genesis is routed to its own chain rather than to People.
-	///
-	/// Test-only because production has no reason to care: `chain_for` resolves
-	/// either way. A test does, since People is the fallback, so asserting on the
-	/// resolved URL cannot tell a routed People from a dropped one.
-	#[cfg(test)]
-	fn routes(&self, genesis_hash: &[u8; 32]) -> bool {
-		self.chain_for(*genesis_hash)
-			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
+	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&ChainEndpoint> {
+		let routed =
+			|genesis| self.routed_endpoints.iter().find(|endpoint| endpoint.genesis == genesis);
+		routed(genesis_hash).or_else(|| routed(self.people_genesis))
 	}
 
 	/// Where requests for `genesis_hash` go, for messages: the URL of the RPC
-	/// node it routes to, or the light client. A test asserts a routing override
-	/// through it, since an override written to the wrong field compiles,
-	/// changes nothing, and is invisible in timings.
-	pub fn location(&self, genesis_hash: [u8; 32]) -> &'static str {
+	/// node it routes to, or the light client.
+	pub fn location(&self, genesis_hash: [u8; 32]) -> &str {
 		match (&self.backend, self.chain_for(genesis_hash)) {
 			(_, None) => "unrouted",
-			(Backend::Rpc(_), Some(endpoint)) => endpoint.ws,
-			(Backend::LightClient, Some(_)) => "light client",
+			(Backend::Rpc(_), Some(endpoint)) => &endpoint.ws,
+			(Backend::LightClient(_), Some(_)) => "light client",
 		}
 	}
-}
-
-/// The endpoints routed to their own chain.
-fn routed_endpoints(
-	network: &NetworkConfig,
-	live_chain_routing: bool,
-) -> impl Iterator<Item = &'static ChainEndpoint> {
-	// People remains the fallback for the SSO sentinel. Bulletin backs preimage
-	// submission and Asset Hub backs PGAS claims, so all three are host
-	// dependencies and must never be gated by the product-facing Chain/* switch.
-	network
-		.live_chain_endpoints
-		.iter()
-		.filter(move |endpoint| endpoint.required_for_host || live_chain_routing)
 }
 
 #[async_trait::async_trait]
@@ -183,15 +139,16 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient => light_client(self.network.id)?.connect(chain).await,
+			Backend::LightClient(network_id) => light_client(network_id)?.connect(chain).await,
 		}
 	}
 }
 
 /// The process's light client for `network`, its chains kept running between
 /// uses. Shared, because each `EmbeddedChainProvider` runs its own smoldot.
-fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
-	static CLIENTS: Mutex<BTreeMap<&str, Arc<EmbeddedChainProvider>>> = Mutex::new(BTreeMap::new());
+fn light_client(network: &str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
+	static CLIENTS: Mutex<BTreeMap<String, Arc<EmbeddedChainProvider>>> =
+		Mutex::new(BTreeMap::new());
 
 	let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
 	if let Some(client) = clients.get(network) {
@@ -199,7 +156,7 @@ fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, Pro
 	}
 	let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
 	let client = Arc::new(builder.keep_chains_running().build());
-	clients.insert(network, Arc::clone(&client));
+	clients.insert(network.to_owned(), Arc::clone(&client));
 	Ok(client)
 }
 

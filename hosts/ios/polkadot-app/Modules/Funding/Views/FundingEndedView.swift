@@ -227,7 +227,8 @@ private extension FundingEndedView {
     /// The failed step, named for what went wrong on it.
     func stoppedTitle(_ step: FundingStep) -> String {
         switch ended.outcome {
-        case .succeeded:
+        case .open,
+             .succeeded:
             return title(step)
         case .payoutFailed:
             return String(localized: .Funding.activityPayoutFailed)
@@ -244,7 +245,8 @@ private extension FundingEndedView {
     /// Why it did not go through, under the steps.
     var note: String {
         switch ended.outcome {
-        case .succeeded:
+        case .open,
+             .succeeded:
             return ""
         case let .payoutFailed(reason):
             if let refunded = ended.record.refundedAmount.flatMap({ cash.label(units: $0) }) {

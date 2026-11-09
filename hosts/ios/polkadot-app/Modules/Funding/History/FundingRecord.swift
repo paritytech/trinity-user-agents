@@ -77,8 +77,8 @@ extension FundingRecord {
 
 extension FundingRecord {
     /// The record for an ended session from its summary in the core's
-    /// history.
-    init?(summary: FundingSessionSummary) {
+    /// history; `network` is the one the provider named for the deposit.
+    init?(summary: FundingSessionSummary, network: String? = nil) {
         guard let settled = Settled(stage: summary.stage, status: summary.status) else { return nil }
 
         intent = summary.intent
@@ -93,7 +93,7 @@ extension FundingRecord {
         }
         paidAsset = summary.choice?.asset
         paidDecimals = summary.choice?.quote.assetDecimals
-        paidNetwork = summary.choice?.network
+        paidNetwork = network ?? summary.choice?.network
         outcome = settled.outcome
         payout = summary.payout.map(Payout.init)
         refundedAmount = summary.refunded
@@ -138,13 +138,6 @@ private extension Settled {
         case let .failed(reason): reason == .refunded ? .refunded : .failed(reason)
         default: nil
         }
-    }
-}
-
-private extension FundingDeposit {
-    var network: String? {
-        guard case let .crypto(_, network, _, _, _, _, _, _) = self else { return nil }
-        return network
     }
 }
 

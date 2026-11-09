@@ -36,16 +36,6 @@ public struct BundledProduct: Hashable, Sendable {
         return fileManager.contents(atPath: url.path).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    /// The Worker manifest it ships when that manifest serves Funding, read
-    /// the way a published manifest's `includes` is. Throws when the manifest
-    /// it ships cannot be read as one.
-    public func fundingWorkerManifest(fileManager: FileManager = .default) throws -> String? {
-        guard let manifest = workerManifest(fileManager: fileManager) else { return nil }
-
-        let dto = try JSONDecoder().decode(ExecutableManifestDTO.self, from: Data(manifest.utf8))
-        return dto.includes?.contains(.funding) == true ? manifest : nil
-    }
-
     /// Whether it ships a Worker.
     public func hasWorker(fileManager: FileManager = .default) -> Bool {
         fileManager.fileExists(atPath: directory.appendingPathComponent(workerEntryRelativePath).path)
@@ -68,17 +58,20 @@ public struct BundledProduct: Hashable, Sendable {
 
 /// The products shipped under one root directory, one subdirectory each.
 public struct BundledProducts: Sendable {
+    /// The directory the products are read from; nil for a build that ships
+    /// none.
+    public let root: URL?
     private let products: [ProductId: BundledProduct]
 
     /// A build that ships none.
-    public static let none = BundledProducts(products: [:])
+    public static let none = BundledProducts(root: nil, products: [:])
 
     /// Every product under `root`. A missing root ships none.
     public init(root: URL?, fileManager: FileManager = .default) {
         guard let root,
               let names = try? fileManager.contentsOfDirectory(atPath: root.path)
         else {
-            self.init(products: [:])
+            self.init(root: nil, products: [:])
             return
         }
 
@@ -93,10 +86,11 @@ public struct BundledProducts: Sendable {
 
             products[id] = BundledProduct(id: id, directory: directory)
         }
-        self.init(products: products)
+        self.init(root: root, products: products)
     }
 
-    private init(products: [ProductId: BundledProduct]) {
+    private init(root: URL?, products: [ProductId: BundledProduct]) {
+        self.root = root
         self.products = products
     }
 

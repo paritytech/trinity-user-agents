@@ -369,56 +369,38 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// Show `target` for provider `providerId`'s session `intent` in a frame
     /// the host owns, and report how it closed. A page is a checked https
     /// URL: show its origin, and answer `.returned` when it reaches its
-    /// return URL.
+    /// return URL. `context` carries what the core knows of the session the
+    /// frame is for. The core closes the frame itself, through
+    /// ``closeProviderFrame(providerId:intent:)``, once the payment moved.
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget
+        target: FundingFrameTarget,
+        context: FundingFrameContext
     ) async throws -> FundingFrameOutcome
 
-    /// Session `intent` changed: its status, the session as the core now
-    /// holds it (its choice, cancel offer and amounts) and the progress the
-    /// host draws, so the host keeps the latest of each and never reads them
-    /// back. Every session in flight, and every ended one not yet
-    /// acknowledged, comes through again when funding resumes. `session` and
-    /// `progress` are `nil` once the core keeps only the session's summary.
-    /// Called inline, so hand it off rather than drawing here.
-    func fundingSessionChanged(
-        intent: String,
-        status: HostFundingStatusSubscribeItem,
-        session: FundingSession?,
-        progress: FundingProgress?
-    )
-
-    /// Close the frame ``presentProviderFrame(providerId:intent:target:)``
-    /// shows for provider `providerId`'s session `intent`, answering that call
+    /// Close the frame
+    /// ``presentProviderFrame(providerId:intent:target:context:)`` shows for
+    /// provider `providerId`'s session `intent`, answering that call
     /// `.closed`, and show the session sheet in its place. Does nothing when
     /// no frame is open for it. Called inline.
     func closeProviderFrame(providerId: ProductId, intent: String)
 
     /// Whether provider `providerId` ships an App, so an App route of its can
-    /// be shown in ``presentProviderFrame(providerId:intent:target:)``. A
-    /// provider without one shows only external pages.
+    /// be shown in ``presentProviderFrame(providerId:intent:target:context:)``.
+    /// A provider without one shows only external pages.
     func providerHasApp(providerId: ProductId) async -> Bool
 
-    /// Whether a provider still works on any session: once funding resumes,
-    /// and again whenever it changes. A host that keeps it starts funding at
-    /// its next launch. Called inline.
-    func fundingInProgressChanged(_ inProgress: Bool)
-
-    /// What session `intent`'s overlay offers: its providers, and the
-    /// countries and amount range for the selection reported with
-    /// ``TrUAPIHostRuntime/selectFundingOptions(intent:selection:)``. Sent
-    /// before `presentFunding` is called, after each selection and after
-    /// each quote list. Called inline.
-    func fundingOptionsChanged(intent: String, options: FundingOptions)
-
-    /// The quote list requested with
-    /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
-    /// provider answers, and each time the core asks every provider again
-    /// at `refreshAtMs`, each row keeping its answer until the provider
-    /// answers again. Called inline.
-    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
+    /// What the core holds about session `intent` changed: `kind` says
+    /// which, and the host reads it back from the runtime, as
+    /// ``TrUAPIHostRuntime/fundingSession(intent:)``,
+    /// ``TrUAPIHostRuntime/fundingOptions(intent:)`` or
+    /// ``TrUAPIHostRuntime/fundingQuotes(intent:)``. `intent` is `nil` for
+    /// `.inProgress`, which concerns every session. Every session in flight,
+    /// and every ended one not yet acknowledged, comes through again when
+    /// funding resumes. Called inline, so hand it off rather than drawing
+    /// here.
+    func fundingChanged(intent: String?, kind: FundingChangeKind)
 
     /// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
     /// coarse location when already permitted, then the SIM or network
@@ -700,20 +682,17 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget
+        target: FundingFrameTarget,
+        context: FundingFrameContext
     ) async throws -> FundingFrameOutcome {
         try await withHostRejection {
-            try await bridge.presentProviderFrame(providerId: providerId, intent: intent, target: target)
+            try await bridge.presentProviderFrame(
+                providerId: providerId,
+                intent: intent,
+                target: target,
+                context: context
+            )
         }
-    }
-
-    func fundingSessionChanged(
-        intent: String,
-        status: HostFundingStatusSubscribeItem,
-        session: FundingSession?,
-        progress: FundingProgress?
-    ) {
-        bridge.fundingSessionChanged(intent: intent, status: status, session: session, progress: progress)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
@@ -724,16 +703,8 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         await bridge.providerHasApp(providerId: providerId)
     }
 
-    func fundingInProgressChanged(inProgress: Bool) {
-        bridge.fundingInProgressChanged(inProgress)
-    }
-
-    func fundingOptionsChanged(intent: String, options: FundingOptions) {
-        bridge.fundingOptionsChanged(intent: intent, options: options)
-    }
-
-    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
-        bridge.fundingQuotesChanged(intent: intent, quotes: quotes)
+    func fundingChanged(intent: String?, kind: FundingChangeKind) {
+        bridge.fundingChanged(intent: intent, kind: kind)
     }
 
     func detectedCountry() async -> String? {
@@ -1206,14 +1177,57 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.acknowledgeFundingSession(intent: intent)
     }
 
+    /// Session `intent` as the core holds it, `nil` once only its summary
+    /// is kept. Read it on ``FundingHostBridge/fundingChanged(intent:kind:)``.
+    public func fundingSession(intent: String) -> FundingSession? {
+        inner.fundingSession(intent: intent)
+    }
+
+    /// The progress the host draws for session `intent`.
+    public func fundingProgress(intent: String) -> FundingProgress? {
+        inner.fundingProgress(intent: intent)
+    }
+
+    /// What session `intent`'s overlay offers for the selection last
+    /// reported, `nil` once the overlay closed.
+    public func fundingOptions(intent: String) -> FundingOptions? {
+        inner.fundingOptions(intent: intent)
+    }
+
+    /// The latest quote list for session `intent`.
+    public func fundingQuotes(intent: String) -> FundingQuoteList? {
+        inner.fundingQuotes(intent: intent)
+    }
+
+    /// Every session the core announced, with its progress, newest first.
+    public func fundingEntries() -> [FundingBookEntry] {
+        inner.fundingEntries()
+    }
+
+    /// Record that the history showing `intents` is on screen, so the core
+    /// stops handing their endings over on each resume. Call it only while
+    /// the history is actually shown. Answers the sessions acknowledged.
+    @discardableResult
+    public func acknowledgeFundingShown(intents: [String]) async throws -> [String] {
+        try await inner.acknowledgeFundingShown(intents: intents)
+    }
+
     /// Replace the funding providers this host ships, each with its Worker
     /// manifest JSON.
     public func setFundingProviders(_ providers: [FundingProviderEntry]) throws {
         try inner.setFundingProviders(providers: providers)
     }
 
-    /// Ask every provider to price `ask` for session `intent`. The list
-    /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
+    /// Offer the providers the remote configuration names, in order, then
+    /// the `bundled` ones it does not name. Call it on every remote config
+    /// refresh: a call listing what the last one did changes nothing.
+    public func setFundingProviderConfig(publishedNames: [String], bundled: [FundingProviderEntry]) throws {
+        try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: bundled)
+    }
+
+    /// Ask every provider routing the ask's rail to price `ask` for session
+    /// `intent`. The list is read with ``fundingQuotes(intent:)`` on
+    /// ``FundingHostBridge/fundingChanged(intent:kind:)``
     /// and is asked for again every minute until the session is handed to a
     /// provider, ends or leaves the overlay, or another ask replaces it.
     /// Returns the request id every list of this request carries; show only
@@ -1225,8 +1239,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report the rail, asset, network and country the user has picked in
     /// session `intent`'s overlay, whenever one changes. The countries and
-    /// amount range for it arrive through
-    /// ``FundingHostBridge/fundingOptionsChanged(intent:options:)``. Ignored
+    /// amount range for it are read with ``fundingOptions(intent:)`` on
+    /// ``FundingHostBridge/fundingChanged(intent:kind:)``. Ignored
     /// once the overlay has closed.
     public func selectFundingOptions(intent: String, selection: FundingSelection) {
         inner.selectFundingOptions(intent: intent, selection: selection)

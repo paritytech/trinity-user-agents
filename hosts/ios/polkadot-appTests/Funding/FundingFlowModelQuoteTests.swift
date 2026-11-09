@@ -4,12 +4,13 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-/// The provider list follows the core's quote list: every funding provider is
-/// asked, and a route only orders the list.
+/// The overlay draws what the core decides: the providers it asked in its
+/// order, the rails it offers, the asset an ask names and why an amount
+/// cannot go ahead.
 @MainActor
 struct FundingFlowModelQuoteTests {
     @Test
-    func aProviderThatQuotesWithoutAMatchingRouteIsListedAndSelectable() async throws {
+    func theListFollowsTheCoresQuoteList() async throws {
         let runtime = MockFundingRuntime(candidates: [
             candidate("routed", routes: [route(.card)]),
             candidate("unrouted", routes: [])
@@ -32,10 +33,27 @@ struct FundingFlowModelQuoteTests {
     }
 
     @Test
-    func cardAndBankAreOfferedWithoutRoutesAndCryptoNeedsOne() {
-        let model = makeModel(MockFundingRuntime(candidates: [candidate("unrouted", routes: [])]))
+    func offersTheRailsTheCoreRoutesAndStartsOnItsDefault() {
+        let model = makeModel(MockFundingRuntime(
+            candidates: [candidate("unrouted", routes: [])],
+            rails: [.crypto, .card],
+            defaultRail: .crypto
+        ))
 
-        #expect(model.availableRails == [.card, .bank])
+        #expect(model.availableRails == [.crypto, .card])
+        #expect(model.rail == .crypto)
+    }
+
+    @Test
+    func theTypedAmountIsReadAsTheCoreReadsIt() {
+        let model = makeModel(MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]))
+
+        model.amountText = "50.1234567"
+        #expect(model.amountUnits == "50123456")
+
+        model.amountText = "5x"
+        #expect(model.amountUnits == nil)
+        #expect(model.amount == 0)
     }
 
     @Test
@@ -44,7 +62,7 @@ struct FundingFlowModelQuoteTests {
         model.selectRail(.card)
 
         model.amountText = "5"
-        #expect(model.amountIssue == .belowMinimum(10))
+        #expect(model.amountIssue == .belowMinimum(min: "10000000"))
 
         model.amountText = "10"
         #expect(model.amountIssue == nil)
@@ -89,24 +107,39 @@ struct FundingFlowModelQuoteTests {
     /// Lists can reach the overlay before the core's id for their ask does:
     /// none is shown until the id comes back, and then only the latest ask's.
     @Test
-    func listsArrivingBeforeTheirAsksIdShowOnlyTheLatestAsk() async throws {
+    func listsArrivingBeforeTheirAsksIdShowOnlyTheLatestAsk() {
+        var request = FundingQuoteRequest()
+        _ = request.ask()
+        let latest = request.ask()
+
+        let earlyLatest = request.shows(quotes(2, [], best: nil))
+        let earlyEarlier = request.shows(quotes(1, [], best: nil))
+        let kept = request.take(2, ofAsk: latest)
+        let latestShown = request.shows(quotes(2, [], best: nil))
+        let earlierShown = request.shows(quotes(1, [], best: nil))
+
+        #expect(!earlyLatest && !earlyEarlier)
+        #expect(kept?.requestId == 2)
+        #expect(latestShown)
+        #expect(!earlierShown)
+    }
+
+    @Test
+    func everyProviderRefusingTheAmountIsItsIssue() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let model = makeModel(runtime)
         model.selectRail(.card)
         model.amountText = "50"
         model.continueFromAmount()
-        model.back()
-        model.amountText = "60"
-        model.continueFromAmount()
-
-        model.receive(quotes: quotes(2, [("routed", quote("new", send: "1"))], best: "routed"))
-        model.receive(quotes: quotes(1, [("routed", quote("old", send: "1"))], best: "routed"))
-        #expect(model.selectedQuote == nil)
-
         await model.settled()
 
-        #expect(runtime.asks.count == 2)
-        #expect(model.selectedQuote?.quoteId == "new")
+        var list = quotes(runtime.lastRequestId, [], best: nil)
+        list.amount = "50000000"
+        list.issue = .aboveMaximum(max: "40000000")
+        model.receive(quotes: list)
+
+        #expect(model.amountIssue == .aboveMaximum(max: "40000000"))
+        #expect(model.unavailableIssue == nil)
     }
 
     /// The core keeps refreshing the last ask after the user changes rail;
@@ -197,7 +230,7 @@ struct FundingFlowModelQuoteTests {
     }
 
     @Test
-    func choosingACountryReportsItsCurrency() async throws {
+    func choosingACountryReportsItsCurrencyAndAsksForTheCoresAsset() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("unrouted", routes: [])])
         let model = makeModel(runtime)
         model.path.append(.country)
@@ -211,7 +244,9 @@ struct FundingFlowModelQuoteTests {
 
         let reported = runtime.selections.filter { $0.country == "US" }
         #expect(!reported.isEmpty)
-        #expect(reported.allSatisfy { $0.asset == "USD" })
+        #expect(reported.allSatisfy { $0.currency == "USD" })
+        #expect(reported.allSatisfy { $0.asset == nil })
+        #expect(runtime.asks.first?.asset == "EUR")
         #expect(runtime.asks.last?.asset == "USD")
     }
 
@@ -243,7 +278,7 @@ private extension FundingFlowModelQuoteTests {
                 amount: nil,
                 cash: FundingCash(symbol: "CASH", precision: 6)
             ),
-            service: FundingFlowService(runtime: runtime, book: runtime.book, branding: branding),
+            service: FundingFlowService(runtime: runtime, branding: branding),
             logger: MockLogger(),
             clock: ImmediateClock()
         )
@@ -272,13 +307,16 @@ private extension FundingFlowModelQuoteTests {
     func quotes(
         _ requestId: UInt64,
         _ rows: [(provider: String, quote: FundingQuote)],
-        best: String
+        best: String?
     ) -> FundingQuoteList {
         FundingQuoteList(
             requestId: requestId,
             rows: rows.map { FundingQuoteRow(providerId: provider($0.provider), state: .quoted(quote: $0.quote)) },
-            best: provider(best),
-            refreshAtMs: 0
+            best: best.map(provider),
+            refreshAtMs: 0,
+            amount: "0",
+            refusal: nil,
+            issue: nil
         )
     }
 

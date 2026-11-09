@@ -115,25 +115,27 @@ private extension FundingAmountView {
     func message(for issue: FundingAmountIssue) -> String {
         switch issue {
         case let .belowMinimum(minimum):
-            String(localized: .Funding.errorMinimum(amount: model.cash.label(minimum)))
+            String(localized: .Funding.errorMinimum(amount: model.cash.label(units: minimum) ?? ""))
         case let .aboveMaximum(maximum):
-            String(localized: .Funding.errorMaximum(amount: model.cash.label(maximum)))
+            String(localized: .Funding.errorMaximum(amount: model.cash.label(units: maximum) ?? ""))
         case .notEnoughBalance:
             String(localized: .Funding.errorNotEnough(symbol: model.cash.symbol))
         }
     }
 }
 
-/// Crypto, Card and Bank, as pills. A rail no provider serves for this
+/// Crypto, Card and Bank, as pills. A rail the core does not offer for this
 /// direction is shown but cannot be picked.
 struct FundingRailTabs: View {
+    private static let order: [FundingRail] = [.crypto, .card, .bank]
+
     let selected: FundingRail
     let available: Set<FundingRail>
     let onSelect: (FundingRail) -> Void
 
     var body: some View {
         HStack(spacing: DSSpacings.small) {
-            ForEach(FundingRail.displayOrder, id: \.self) { rail in
+            ForEach(Self.order, id: \.self) { rail in
                 tab(rail)
             }
         }

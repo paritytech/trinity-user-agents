@@ -10,9 +10,9 @@ import UIKit
 /// The session is already running, so leaving the screen only hides it. A
 /// provider takes a frame that answers before the user acted on it as the user
 /// giving up, so a hidden frame stays unanswered and the CASH card can show it
-/// again. It answers `Closed` when the user says they sent a bank transfer,
-/// or once the host sees the provider's part done, the payment seen or the
-/// session over, and `Dismissed` only when it could not be shown at all.
+/// again. It answers `Closed` when the user says they sent the transfer the
+/// session waits on, or when the core closes it once the payment moved, and
+/// `Dismissed` only when it could not be shown at all.
 final class FundingProviderFrameController: UIViewController {
     let providerId: ProductId
     private let page: UIViewController

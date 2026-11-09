@@ -42,6 +42,7 @@ use parity_scale_codec::{Decode, Encode};
 
 pub mod api;
 mod dotns_name;
+pub mod markers;
 mod product_id;
 pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
@@ -868,8 +869,6 @@ mod interrupt;
 pub mod logging;
 
 #[cfg(feature = "runtime")]
-pub mod markers;
-#[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
 mod protocol_error;
@@ -993,8 +992,9 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingBookEntry, FundingFeed,
+	MAX_PAIRING_METADATA_CHARS, PairedSsoPeer, PairingProposal, PairingProposalMetadata,
+	ResponderExit,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

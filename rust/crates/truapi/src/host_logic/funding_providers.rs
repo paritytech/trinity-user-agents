@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// A provider the host offers, as the host supplies it.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
@@ -30,6 +30,41 @@ pub struct FundingProviderEntry {
 	pub worker_manifest: Option<String>,
 	/// Where the provider's Worker manifest comes from.
 	pub origin: FundingProviderOrigin,
+	/// Whether the provider ships an App, when the host knows, as for one
+	/// it bundles. `None` leaves the core to ask the host when an App route
+	/// is shown.
+	pub has_app: Option<bool>,
+}
+
+/// The providers the host offers from its remote configuration's
+/// `published_names`, in order and each once, then the `bundled` ones the
+/// configuration does not name, with the names that are not product ids.
+pub fn provider_config(
+	published_names: &[String],
+	bundled: Vec<FundingProviderEntry>,
+) -> (Vec<FundingProviderEntry>, Vec<String>) {
+	let mut entries: Vec<FundingProviderEntry> = Vec::new();
+	let mut invalid = Vec::new();
+	for name in published_names {
+		let Ok(product_id) = name.trim().parse::<ProductId>() else {
+			invalid.push(name.clone());
+			continue;
+		};
+		if entries.iter().all(|entry| entry.product_id != product_id) {
+			entries.push(FundingProviderEntry {
+				product_id,
+				worker_manifest: None,
+				origin: FundingProviderOrigin::Published,
+				has_app: None,
+			});
+		}
+	}
+	for entry in bundled {
+		if entries.iter().all(|known| known.product_id != entry.product_id) {
+			entries.push(entry);
+		}
+	}
+	(entries, invalid)
 }
 
 /// Where the core reads a provider's Worker manifest.
@@ -301,6 +336,9 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 /// in either direction: $10. It is the floor of every [`FundingAmountLimits`].
 pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
 
+/// Decimals of the CASH balance every funding amount in balance units is in.
+pub const CASH_DECIMALS: u8 = 6;
+
 /// The amounts a session can take on one rail, asset, network and country,
 /// across every provider, as their refusals showed: the smallest amount
 /// some provider takes, and the largest. A provider whose limit is unknown
@@ -422,6 +460,10 @@ pub struct FundingSelection {
 	pub network: Option<String>,
 	/// The ISO 3166-1 alpha-2 code the user picked, or `None` for none yet.
 	pub country: Option<String>,
+	/// The ISO 4217 code of the picked country's currency, which the host
+	/// reads from its locale data. A card or bank ask names it when a
+	/// provider takes it.
+	pub currency: Option<String>,
 }
 
 /// What a session's overlay offers: the providers it can be handed to, and
@@ -433,7 +475,7 @@ pub struct FundingOptions {
 	/// The providers the session can be handed to.
 	pub candidates: Vec<FundingCandidate>,
 	/// What the core knows about each country for the selection's rail and
-	/// asset. Empty until an asset is picked.
+	/// `asset`. Empty while there is no `asset`.
 	pub countries: Vec<FundingCountry>,
 	/// The amounts the selection takes across every provider. The minimum
 	/// is never below [`FUNDING_MIN_AMOUNT`].
@@ -442,6 +484,24 @@ pub struct FundingOptions {
 	/// declares takes, for the network picker: for the picked asset, or the
 	/// widest range across the network's assets before one is picked.
 	pub networks: Vec<FundingNetworkLimits>,
+	/// The rails a session can use: those some candidate routes, crypto
+	/// first, then card, then bank.
+	pub rails: Vec<FundingRail>,
+	/// The default rail: the first of `rails`, or card when none is
+	/// routed.
+	pub default_rail: FundingRail,
+	/// The asset an ask for the selection names, which `countries`, `limits`
+	/// and `networks` go by: the picked asset, else for card or bank the
+	/// user's currency when a provider takes it, else the first fiat one
+	/// lists. `None` before a selection, and for crypto before a token is
+	/// picked.
+	pub asset: Option<String>,
+	/// For crypto, the tokens a session can use on the picked network, or
+	/// on any before one is picked, each once in the order first listed.
+	pub tokens: Vec<String>,
+	/// The country the device is likely in, as the core last detected it
+	/// within the hour.
+	pub detected_country: Option<String>,
 }
 
 /// The amounts one network takes for a crypto selection.

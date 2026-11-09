@@ -27,7 +27,7 @@ struct FundingHistoryTests {
         let record = try #require(FundingRecord(summary: summary("old", settledAtMs: 1_000)))
         let item = FundingActivityItem(record: record)
 
-        let ended = FundingEndedSession(record: record)
+        let ended = try #require(FundingEndedSession(summary: summary("old", settledAtMs: 1_000)))
 
         #expect(record.providerId == provider)
         #expect(record.rail == .crypto)
@@ -45,22 +45,30 @@ struct FundingHistoryTests {
         let cancelled = try #require(FundingRecord(
             summary: withdrawal(status: .cancelled(refunded: "40000000"), payout: nil, refunded: "40000000")
         ))
-        let payoutFailed = try #require(FundingRecord(
-            summary: withdrawal(
-                status: .payoutFailed(refunded: "50000000"),
-                payout: .failed(reason: "rejected"),
-                refunded: "50000000"
-            )
-        ))
-        let sent = try #require(FundingRecord(
-            summary: withdrawal(status: .paidOutAfterCancel, payout: .paidOut, refunded: nil)
-        ))
+        let payoutFailedSummary = withdrawal(
+            status: .payoutFailed(refunded: "50000000"),
+            payout: .failed(reason: "rejected"),
+            refunded: "50000000",
+            outcome: .payoutFailed(reason: "rejected"),
+            payoutState: .failed,
+            stoppedAt: .sent
+        )
+        let payoutFailed = try #require(FundingRecord(summary: payoutFailedSummary))
+        let sentSummary = withdrawal(
+            status: .paidOutAfterCancel,
+            payout: .paidOut,
+            refunded: nil,
+            payoutState: .paidOut
+        )
+        let sent = try #require(FundingRecord(summary: sentSummary))
 
         #expect(FundingActivityItem(record: cancelled).status == .cancelled(refunded: "40000000"))
         #expect(FundingActivityItem(record: payoutFailed).status == .payoutFailed(refunded: "50000000"))
-        #expect(FundingEndedSession(record: payoutFailed).outcome == .payoutFailed(reason: "rejected"))
+        let payoutFailedDetail = try #require(FundingEndedSession(summary: payoutFailedSummary))
+        #expect(payoutFailedDetail.outcome == .payoutFailed(reason: "rejected"))
+        #expect(payoutFailedDetail.stoppedAt == 2)
         #expect(FundingActivityItem(record: sent).status == .sent)
-        #expect(FundingEndedSession(record: sent).payoutState == .paidOut)
+        #expect(FundingEndedSession(summary: sentSummary)?.payoutState == .paidOut)
     }
 
     @Test
@@ -96,15 +104,13 @@ struct FundingCloseFrameTests {
     @Test
     func closingTheFrameAnswersClosedAndShowsTheSessionSheet() async throws {
         let environment = WindowEnvironment()
-        let book = FundingSessionBook(logger: MockLogger())
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
-        let coordinator = FundingOverlayCoordinator(
-            runtime: MockFundingRuntime(),
-            environment: environment,
-            book: book
-        )
+        let runtime = MockFundingRuntime()
+        runtime.hold(session("intent", stage: .open))
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
-        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
+        let answer = Task {
+            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
+        }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
         coordinator.closeFrame(providerId: provider, intent: "intent")
@@ -116,15 +122,13 @@ struct FundingCloseFrameTests {
     @Test
     func anotherProvidersCloseLeavesTheFrameOpen() async throws {
         let environment = WindowEnvironment()
-        let book = FundingSessionBook(logger: MockLogger())
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
-        let coordinator = FundingOverlayCoordinator(
-            runtime: MockFundingRuntime(),
-            environment: environment,
-            book: book
-        )
+        let runtime = MockFundingRuntime()
+        runtime.hold(session("intent", stage: .open))
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
-        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
+        let answer = Task {
+            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
+        }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
         try coordinator.closeFrame(providerId: ProductId("other.dot"), intent: "intent")
@@ -157,11 +161,25 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         payout: nil,
         refunded: nil,
         transactionId: "tx",
-        reference: "ref"
+        reference: "ref",
+        ended: .init(
+            outcome: .succeeded,
+            payoutState: nil,
+            cashAmount: "50000000",
+            differingRequested: nil,
+            stoppedAt: nil
+        )
     )
 }
 
-private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded: U128?) -> FundingSessionSummary {
+private func withdrawal(
+    status: FundingStatus,
+    payout: FundingPayout?,
+    refunded: U128?,
+    outcome: FundingEndedOutcome = .succeeded,
+    payoutState: FundingPayoutState? = nil,
+    stoppedAt: FundingStep? = nil
+) -> FundingSessionSummary {
     FundingSessionSummary(
         intent: "out",
         ownerProductId: nil,
@@ -175,7 +193,14 @@ private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded:
         payout: payout,
         refunded: refunded,
         transactionId: nil,
-        reference: nil
+        reference: nil,
+        ended: .init(
+            outcome: outcome,
+            payoutState: payoutState,
+            cashAmount: "50000000",
+            differingRequested: nil,
+            stoppedAt: stoppedAt
+        )
     )
 }
 
@@ -282,7 +307,8 @@ struct FundingReopenTests {
     func anEndedSessionIsAcknowledgedOnceItsSheetIsShown() async throws {
         let environment = WindowEnvironment()
         let runtime = MockFundingRuntime()
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+        runtime.hold(session("intent", stage: delivered(2_000)))
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         coordinator.reopen(intent: "intent")
 
@@ -295,19 +321,14 @@ struct FundingReopenTests {
         let environment = WindowEnvironment()
         environment.presents = false
         let runtime = MockFundingRuntime()
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+        runtime.hold(session("intent", stage: delivered(2_000)))
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         coordinator.reopen(intent: "intent")
         try await Task.sleep(for: .milliseconds(200))
 
         #expect(environment.presented.isEmpty)
         #expect(runtime.acknowledged.isEmpty)
-    }
-
-    private func endedBook() -> FundingSessionBook {
-        let book = FundingSessionBook(logger: MockLogger())
-        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
-        return book
     }
 }
 
@@ -317,11 +338,7 @@ struct FundingWorkerCrashingTests {
     @Test
     func aCrashingProviderIsNamedOverWhateverIsOnScreen() async {
         let environment = WindowEnvironment()
-        let coordinator = FundingOverlayCoordinator(
-            runtime: MockFundingRuntime(),
-            environment: environment,
-            book: FundingSessionBook(logger: MockLogger())
-        )
+        let coordinator = FundingOverlayCoordinator(runtime: MockFundingRuntime(), environment: environment)
 
         await coordinator.workerCrashing(productId: try! ProductId("ramp.dot"))
 

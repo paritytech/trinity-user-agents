@@ -4,8 +4,9 @@ import TrUAPIHost
 /// What a quote's `send_amount` (In) or `receive_amount` (Out) is counted in:
 /// the asset the ask named, in its smallest unit.
 ///
-/// The decimals come from the quote or deposit that names the asset; an ISO
-/// 4217 code is set as currency, anything else as a crypto amount.
+/// The decimals come from the quote or deposit that names the asset; a code
+/// the core counts as fiat is set as currency, anything else as a crypto
+/// amount.
 struct FundingAssetUnit: Equatable {
     let code: String
     let decimals: Int16
@@ -15,7 +16,7 @@ struct FundingAssetUnit: Equatable {
         let upper = code.uppercased()
         self.code = upper
         self.decimals = Int16(decimals)
-        isFiat = Self.isoCurrencyCodes.contains(upper)
+        isFiat = fundingAssetIsFiat(code: upper)
     }
 
     /// Nil when `units` is not a number.
@@ -48,8 +49,6 @@ struct FundingAssetUnit: Equatable {
 }
 
 private extension FundingAssetUnit {
-    static let isoCurrencyCodes = Set(Locale.Currency.isoCurrencies.map(\.identifier))
-
     static func plain(_ value: Decimal, maximumDigits: Int, minimumDigits: Int = 0) -> String {
         let formatter = FundingNumberFormatters.decimal(
             minimumDigits: min(minimumDigits, maximumDigits),

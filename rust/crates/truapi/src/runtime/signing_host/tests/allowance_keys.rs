@@ -167,12 +167,10 @@ fn an_existing_allowance_is_served_without_touching_the_ring() {
 	// unbounded test would hang instead of reporting. The bound is generous
 	// because it is catching a hang, not asserting latency.
 	let allocation = futures::executor::block_on(async {
-		let session = signing_host.current_session().unwrap();
+		let session = signing_host.wallet.current_session().unwrap();
 		let product_id = ProductId::for_test(PRODUCT_ID);
 		futures::select! {
-			result = super::super::allowance::allocate_statement_store_allowance(
-				&signing_host.services,
-				&signing_host,
+			result = signing_host.wallet.allocate_statement_store_allowance(
 				&session,
 				&product_id,
 				OnExistingAllowancePolicy::Ignore,

@@ -9,20 +9,20 @@ enum FundingConfig {
         static let providers = "providers"
     }
 
-    /// The configured provider names, in the published order without
-    /// repeats. An entry that is not a name is skipped and logged, so one
-    /// typo does not take the other providers down with it.
+    /// The configured provider names, in the published order. An entry that
+    /// is not text is skipped and logged, so one typo does not take the other
+    /// providers down with it; the core drops repeats and names that are not
+    /// product ids.
     static func providers(in json: [String: Any]?, logger: LoggerProtocol?) -> [String] {
         guard let names = json?[Key.providers] as? [Any] else { return [] }
 
-        var seen = Set<String>()
         return names.compactMap { name in
             guard let name = name as? String, !name.isEmpty else {
                 logger?.error("funding_config lists a provider that is not a name: \(name)")
                 return nil
             }
 
-            return seen.insert(name).inserted ? name : nil
+            return name
         }
     }
 }

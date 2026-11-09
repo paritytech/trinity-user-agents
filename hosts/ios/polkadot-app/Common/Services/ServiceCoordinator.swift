@@ -19,6 +19,7 @@ import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
 import DesignSystem
+import TrUAPIHost
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
@@ -322,10 +323,10 @@ extension ServiceCoordinator {
         truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
 
         // The core resumes funding when it starts; start it now, with payments
-        // attached, if a provider was still working on a session when the app
-        // last ran. The core says again whether one still is, so a launch with
-        // nothing left stops starting it.
-        if SettingsManager.shared.isFundingInProgress {
+        // attached, if the core says a provider was still working on a session
+        // when the app last ran.
+        if let directory = try? TrUAPIHostRuntimeProvider.coreDatabaseDirectory(),
+           fundingResumePending(databaseDirectory: directory) {
             Task.detached {
                 do {
                     _ = try truapiRuntimeProvider.sharedRuntime()

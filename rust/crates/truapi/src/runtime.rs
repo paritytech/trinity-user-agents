@@ -64,10 +64,10 @@ use std::{
 
 pub use actions::ActionChannel;
 use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::{FundingFeed, FundingProviderLink};
+pub use funding::{FundingBookEntry, FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -1702,13 +1702,31 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
-				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
-					!platform.provider_has_app(&self.connection.product).await
-				{
-					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					let has_app = match services.funding_providers().has_app(&provider.product_id) {
+						Some(has_app) => has_app,
+						None => platform.provider_has_app(provider).await,
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
 				}
+				let session = services.funding().get(&intent);
+				let direction = session
+					.as_ref()
+					.map_or(latest::FundingDirection::In, |session| session.direction);
+				let rail = session
+					.as_ref()
+					.and_then(|session| session.choice.as_ref().map(|choice| choice.rail))
+					.or_else(|| {
+						services.funding().selection(&intent).map(|selection| selection.rail)
+					});
+				let context = crate::host_logic::funding_view::frame_context(direction, rail);
+				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
-					.present_provider_frame(&self.connection.product, intent, target)
+					.present_provider_frame(provider, intent, target, context)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })

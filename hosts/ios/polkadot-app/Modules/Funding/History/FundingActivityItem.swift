@@ -89,48 +89,15 @@ private extension FundingRecord.Outcome {
 }
 
 extension FundingStatus {
-    /// Still moving: the CASH card lists it under In progress, and the host
-    /// keeps it out of its own history until it is not.
+    /// Still moving, as the core says: the CASH card lists it under In
+    /// progress, and the host keeps it out of its own history until it is not.
     var isInFlight: Bool {
-        switch self {
-        case .waitingForTransfer,
-             .waitingForPayment,
-             .waitingForDeposit,
-             .convertingToCash,
-             .addingToBalance,
-             .transactionInitiated,
-             .convertingTo,
-             .preparingPayout,
-             .retrying,
-             .retryingPayout,
-             .takingLonger,
-             .cancelRequested,
-             .cancelOffered,
-             .cancelRefused,
-             .cancelling:
-            true
-        case .toppedUp,
-             .sent,
-             .paidOutAfterCancel,
-             .refunded,
-             .payoutFailed,
-             .failed,
-             .cancelled:
-            false
-        }
+        fundingStatusInFlight(status: self)
     }
 
-    /// Slower than it should be, which the row draws in amber.
+    /// Slower than it should be, as the core says, which the row draws in
+    /// amber.
     var isDelayed: Bool {
-        switch self {
-        case .retrying,
-             .retryingPayout,
-             .takingLonger,
-             .cancelOffered,
-             .cancelRefused:
-            true
-        default:
-            false
-        }
+        fundingStatusDelayed(status: self)
     }
 }

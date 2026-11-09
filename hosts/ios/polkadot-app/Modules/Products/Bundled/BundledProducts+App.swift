@@ -14,21 +14,28 @@ extension BundledProducts {
         #endif
     }()
 
-    /// The bundled products that serve Funding, as the core takes them: the
-    /// manifest the app ships is the one it goes by, with no dotNS read. A
-    /// product whose manifest cannot be read is left out and logged.
-    func fundingProviders(logger: LoggerProtocol) -> [FundingProviderEntry] {
-        all.compactMap { product in
-            guard product.hasWorker() else { return nil }
+    /// The bundled products that serve Funding, as the core finds them in
+    /// the bundle: each Worker whose shipped manifest includes Funding, with
+    /// that manifest and whether it ships an App. The core logs and leaves
+    /// out a manifest it cannot read.
+    func fundingProviders() -> [FundingProviderEntry] {
+        guard let root else { return [] }
 
-            do {
-                guard let manifest = try product.fundingWorkerManifest() else { return nil }
+        return bundledFundingProviders(root: root.path, reader: FileBundleReader())
+    }
+}
 
-                return FundingProviderEntry(productId: product.id, workerManifest: manifest, origin: .bundled)
-            } catch {
-                logger.error("[funding] bundled \(product.id.rawValue) ships an unreadable worker manifest: \(error)")
-                return nil
-            }
-        }
+/// The app's bundle as the core reads it, by file path.
+private final class FileBundleReader: BundleReader {
+    func list(dir: String) -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+    }
+
+    func exists(path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path)
+    }
+
+    func readText(path: String) -> String? {
+        FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
     }
 }

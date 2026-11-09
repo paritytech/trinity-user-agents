@@ -24,12 +24,10 @@ struct FundingCash: Equatable {
         Decimal.fromSubstrateAmount(balance, precision: precision)
     }
 
-    /// Rounds down, so the host never asks for more than the user typed.
-    func units(_ value: Decimal) -> U128 {
-        var scaled = value * Self.scale(precision)
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &scaled, 0, .down)
-        return NSDecimalNumber(decimal: max(rounded, 0)).stringValue
+    /// `value` in CASH units, as the core reads an amount: rounded down, so
+    /// the host never asks for more than the user has; nil when negative.
+    func units(_ value: Decimal) -> U128? {
+        fundingUnits(text: NSDecimalNumber(decimal: value).stringValue, decimals: UInt8(clamping: precision))
     }
 
     /// "$50.20" for a dollar-pegged asset, with cents only when there are any.

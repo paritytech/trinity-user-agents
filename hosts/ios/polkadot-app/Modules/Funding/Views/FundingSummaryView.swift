@@ -201,9 +201,9 @@ private extension FundingSummaryView {
 
         switch model.unavailableIssue {
         case let .belowMinimum(minimum):
-            return String(localized: .Funding.errorMinimum(amount: model.cash.label(minimum)))
+            return String(localized: .Funding.errorMinimum(amount: model.cash.label(units: minimum) ?? ""))
         case let .aboveMaximum(maximum):
-            return String(localized: .Funding.errorMaximum(amount: model.cash.label(maximum)))
+            return String(localized: .Funding.errorMaximum(amount: model.cash.label(units: maximum) ?? ""))
         case .notEnoughBalance,
              nil:
             return model.quoteFailureText ?? String(localized: .Funding.errorNoProvider)

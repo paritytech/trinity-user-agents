@@ -34,10 +34,16 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     var toast: String?
 
     private(set) var candidates: [FundingCandidate]
+    /// The rails the core says a provider routes, in its order.
+    private(set) var rails: [FundingRail]
+    /// The asset the core says an ask for the reported selection names.
+    private(set) var offeredAsset: String?
+    /// The tokens the core says a crypto session can use on the picked network.
+    private(set) var tokenSymbols: [String] = []
     /// The amounts the core says the reported selection takes across every provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
-    /// The same for each network a crypto route declares, by network id.
-    private(set) var networkLimits: [String: FundingAmountLimits] = [:]
+    /// The same for each network a crypto route declares.
+    private(set) var networkLimits: [FundingNetworkLimits] = []
     /// What the core knows about each country on the reported rail and asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]
     /// The country the device is set to, which the country list leads with.
@@ -50,6 +56,8 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     private(set) var isAnsweringOffer = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
+    /// The session's summary once it ended, with the core's view of how.
+    private(set) var summary: FundingSessionSummary?
 
     /// Answers the core's `present_funding`; called once.
     var onOutcome: ((FundingPresentOutcome) -> Void)?
@@ -76,6 +84,8 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     @ObservationIgnored private var hasLeft = false
     /// The selection the core was last told of.
     @ObservationIgnored private var reportedSelection: FundingSelection?
+    /// Set once the user picked a country, which detection then leaves alone.
+    @ObservationIgnored private var hasPickedCountry = false
 
     var branding: FundingProviderBranding {
         service.branding
@@ -99,10 +109,11 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         amountText = context.amount.flatMap { context.cash.decimal($0) }.map(Self.text(for:)) ?? ""
 
         let options = service.options(intent: context.intent)
-        let candidates = options?.candidates ?? []
-        self.candidates = candidates
-        rail = .default(candidates: candidates, direction: context.direction)
-        detectedCountry = FundingCountries.localeRegion().flatMap { FundingCountries.country(code: $0) }
+        candidates = options?.candidates ?? []
+        rails = options?.rails ?? []
+        rail = options?.defaultRail ?? .card
+        detectedCountry = (options?.detectedCountry ?? FundingCountries.localeRegion())
+            .flatMap { FundingCountries.country(code: $0) }
         country = detectedCountry
         quotes.onShown = { [weak self] in self?.startIfQuoted() }
         if let options {
@@ -122,6 +133,7 @@ extension FundingFlowModel {
         rail = newRail
         network = nil
         asset = nil
+        offeredAsset = nil
         quotes.drop()
         reportSelection()
         amountChanged()
@@ -163,6 +175,7 @@ extension FundingFlowModel {
     }
 
     func chooseCountry(_ newCountry: PaymentCountry) {
+        hasPickedCountry = true
         country = newCountry
         path.removeLast()
         reportSelection()
@@ -333,12 +346,18 @@ extension FundingFlowModel {
     func refreshSession() {
         session = service.session(intent: intent)
         progress = service.progress(intent: intent)
+        summary = session?.stage.isOpen == false ? service.summary(intent: intent) : nil
     }
 
     /// The core pushed what the overlay offers again: its providers, and the
     /// countries and amounts for the reported selection.
     func refreshOptions() {
         apply(service.options(intent: intent))
+    }
+
+    /// The core changed the quote list: show it when it answers the latest ask.
+    func refreshQuotes() {
+        service.quotes(intent: intent).map { receive(quotes: $0) }
     }
 
     /// Takes the core's quote list when it answers the latest ask. The core
@@ -412,7 +431,7 @@ private extension FundingFlowModel {
     /// Starts the session the deposit screen is waiting on, once every
     /// provider answered.
     func startIfQuoted() {
-        guard startsWhenQuoted, path.last == .deposit, !isStarting, !hasStarted,
+        guard startsWhenQuoted, path.last == .deposit, !isStarting, !hasStarted, !quotes.isAwaiting,
               !rows.isEmpty, !rows.values.contains(where: \.isPending)
         else { return }
 
@@ -426,13 +445,28 @@ private extension FundingFlowModel {
         guard let options else { return }
 
         candidates = options.candidates
+        rails = options.rails
+        offeredAsset = options.asset
+        tokenSymbols = options.tokens
         countrySupport = Dictionary(
             options.countries.map { ($0.country.uppercased(), $0.support) }
         ) { _, latest in latest }
         limits = options.limits
-        networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
+        networkLimits = options.networks
         brands.load(candidates.map(\.providerId))
+        takeDetectedCountry(options.detectedCountry)
         reportSelection()
+    }
+
+    /// The core's detection of the user's country leads the country list,
+    /// and is the one paid from until the user picks one.
+    func takeDetectedCountry(_ code: String?) {
+        guard let code, code != detectedCountry?.code,
+              let detected = FundingCountries.country(code: code)
+        else { return }
+
+        detectedCountry = detected
+        if !hasPickedCountry { country = detected }
     }
 
     /// Tells the core the rail, asset, network and country on screen when
@@ -440,9 +474,10 @@ private extension FundingFlowModel {
     func reportSelection() {
         let selection = FundingSelection(
             rail: rail,
-            asset: askedAsset,
+            asset: rail == .crypto ? asset : nil,
             network: rail == .crypto ? network : nil,
-            country: country?.code
+            country: country?.code,
+            currency: country?.currencyCode
         )
         guard !hasStarted, selection != reportedSelection else { return }
 
@@ -454,13 +489,12 @@ private extension FundingFlowModel {
         }
     }
 
-    /// Asks every provider to quote what is on screen, unless they were
-    /// asked exactly that last. The core is told of the selection first.
+    /// Asks the providers to quote what is on screen, unless they were
+    /// asked exactly that last. The core is told of the selection first, and
+    /// the ask names the asset it offers for that selection.
     func requestQuote() {
-        guard let newAsk = currentAsk(), newAsk != quotes.ask else { return }
-
-        startsWhenQuoted = false
         reportSelection()
-        quotes.request(newAsk, from: candidates.map(\.providerId))
+        quotes.awaitAsk()
+        coreCalls.run { _ in } then: { [weak self] _ in self.map { $0.quotes.askIfNew($0.currentAsk()) } }
     }
 }
