@@ -16,7 +16,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -67,10 +67,11 @@ class PocketViewModelTest {
         coEvery { resolveUrl() } answers { Result.success(collectiblesPage) }
     }
 
+    private val hostSession = mockk<SpaHostSession>(relaxed = true)
     private val spaHost: SpaHost = mockk {
         every {
             context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(any(), any()) }
-        } returns mockk<SpaHostSession>(relaxed = true)
+        } returns hostSession
     }
 
     // One dispatcher for the screen's own scope and for the pool its card list is assembled on, so
@@ -80,7 +81,7 @@ class PocketViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private val dispatchers = TestCoroutineDispatchers(testDispatcher)
 
-    private val cardOpenRequests = PocketCardOpenRequests()
+    private val cardRequests = PocketCardRequests()
 
     // The card list is shared eagerly in the view model's own scope, which outlives the test unless
     // it is cancelled.
@@ -92,7 +93,7 @@ class PocketViewModelTest {
         tokenAmountFormatter = mockk(relaxed = true),
         collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
-        cardOpenRequests = cardOpenRequests,
+        cardRequests = cardRequests,
         spaHost = spaHost,
     ).also { created += it }
 
@@ -264,6 +265,90 @@ class PocketViewModelTest {
     }
 
     @Test
+    fun `a close request takes Pocket from the open card back to its list`() = runTest(testDispatcher) {
+        val viewModel = createViewModel()
+        viewModel.selectCard(settledCards(viewModel).single())
+        advanceUntilIdle()
+
+        cardRequests.requestClose()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.List)
+    }
+
+    @Test
+    fun `a close sent before Pocket is shown does not close the card a link opens later`() = runTest(testDispatcher) {
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
+        cardRequests.requestClose()
+        cardRequests.requestOpen(productCard("loyalty").key)
+
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
+    }
+
+    @Test
+    fun `a close before the collection loads drops the card a link asked for`() = runTest(testDispatcher) {
+        val collection = MutableStateFlow(emptyList<PocketCard>())
+        every { interactor.observeProductCards() } returns collection
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        cardRequests.requestOpen(productCard("loyalty").key)
+
+        cardRequests.requestClose()
+        collection.value = listOf(productCard("loyalty"))
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is PocketScreenState.List)
+    }
+
+    @Test
+    fun `a close request closes the book, so Pocket comes back on its list`() = runTest(testDispatcher) {
+        withCollectiblesPage()
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.openCollectibles()
+        advanceUntilIdle()
+
+        cardRequests.requestClose()
+        advanceUntilIdle()
+
+        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
+        assertNull(viewModel.collectiblesProduct.value)
+    }
+
+    @Test
+    fun `a close request takes down the open product card's page`() = runTest(testDispatcher) {
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(card)
+        viewModel.hostExpandedProduct(card)
+
+        cardRequests.requestClose()
+        advanceUntilIdle()
+
+        assertNull(viewModel.shownProduct.value)
+        verify(exactly = 1) { hostSession.pauseConnections() }
+    }
+
+    @Test
+    fun `a close request with nothing open leaves the held page alone`() = runTest(testDispatcher) {
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(card)
+        viewModel.hostExpandedProduct(card)
+        viewModel.dismissCard()
+
+        cardRequests.requestClose()
+        advanceUntilIdle()
+
+        verify(exactly = 1) { hostSession.pauseConnections() }
+    }
+
+    @Test
     fun `a back on the list leaves the list as it is`() = runTest(testDispatcher) {
         withCollectiblesPage()
         val viewModel = createViewModel()
@@ -393,7 +478,7 @@ class PocketViewModelTest {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(emptyList<PocketCard>())
         every { interactor.observeProductCards() } returns collection
-        cardOpenRequests.request(card.key)
+        cardRequests.requestOpen(card.key)
 
         val viewModel = createViewModel()
         advanceUntilIdle()
@@ -404,7 +489,7 @@ class PocketViewModelTest {
 
         val opened = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:loyalty", opened.selectedCard.id)
-        assertNull(cardOpenRequests.requested.value)
+        assertNull(cardRequests.requested.value)
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist
@@ -415,7 +500,7 @@ class PocketViewModelTest {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(listOf(card))
         every { interactor.observeProductCards() } returns collection
-        cardOpenRequests.request(card.key)
+        cardRequests.requestOpen(card.key)
 
         val viewModel = createViewModel()
         advanceUntilIdle()
@@ -444,7 +529,7 @@ class PocketViewModelTest {
         advanceUntilIdle()
         assertNotNull(viewModel.shownProduct.value)
 
-        cardOpenRequests.request(linked.key)
+        cardRequests.requestOpen(linked.key)
         advanceUntilIdle()
 
         val shown = viewModel.state.value as PocketScreenState.CardDetails
@@ -467,7 +552,7 @@ class PocketViewModelTest {
         runCurrent()
         assertEquals(PocketScreenState.Collectibles, viewModel.state.value)
 
-        cardOpenRequests.request(linked.key)
+        cardRequests.requestOpen(linked.key)
         advanceUntilIdle()
         assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
         assertNull(viewModel.collectiblesProduct.value)
@@ -485,14 +570,14 @@ class PocketViewModelTest {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(listOf(card))
         every { interactor.observeProductCards() } returns collection
-        cardOpenRequests.request(card.key, "open=scratch")
+        cardRequests.requestOpen(card.key, "open=scratch")
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
         viewModel.hostExpandedProduct(uiCard)
         assertEquals("${card.key.launchUrl()}&open=scratch", viewModel.shownProduct.value?.url)
 
-        cardOpenRequests.request(card.key, "open=prizes")
+        cardRequests.requestOpen(card.key, "open=prizes")
         advanceUntilIdle()
         assertEquals("${card.key.launchUrl()}&open=prizes", viewModel.shownProduct.value?.url)
 
