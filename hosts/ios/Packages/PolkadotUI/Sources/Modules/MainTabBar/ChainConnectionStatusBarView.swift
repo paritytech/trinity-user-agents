@@ -21,7 +21,7 @@ public struct ChainConnectionStatusBarView: View, Hashable {
 
     private static let bottomSpacing: CGFloat = 8
 
-    private static var bottomPadding: CGFloat {
+    public static var bottomPadding: CGFloat {
         guard #available(iOS 26.0, *) else { return 0 }
 
         let topInset = UIWindow.keyWindow?.safeAreaInsets.top ?? 0
@@ -30,7 +30,7 @@ public struct ChainConnectionStatusBarView: View, Hashable {
         return surplus > bottomSpacing ? bottomSpacing : 0
     }
 
-    private static var horizontalPadding: CGFloat {
+    public static var horizontalPadding: CGFloat {
         guard #available(iOS 26.0, *) else { return 6 }
 
         let topInset = UIWindow.keyWindow?.safeAreaInsets.top ?? 0

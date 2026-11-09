@@ -4,11 +4,10 @@ import android.net.Uri
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler.Companion.APP_SCHEME
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler.Companion.WEB_HTTPS_SCHEME
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler.Companion.WEB_HTTP_SCHEME
-import io.paritytech.polkadotapp.common.utils.DOT_WEB_MIRROR_SUFFIXES
-import io.paritytech.polkadotapp.common.utils.isDotWebMirrorHost
-import io.paritytech.polkadotapp.common.utils.toCanonicalDotHost
+import uniffi.truapi.parseProductShareHost
+import uniffi.truapi.productShareHosts
 
-private val BARE_DEEPLINK_HOSTS = DOT_WEB_MIRROR_SUFFIXES.map { it.removePrefix(".") }.toSet()
+private val BARE_DEEPLINK_HOSTS = productShareHosts().toSet()
 
 private fun webDeeplinkHostOrNull(scheme: String?, host: String?): String? =
     host?.takeIf { scheme == WEB_HTTPS_SCHEME || scheme == WEB_HTTP_SCHEME }
@@ -42,7 +41,5 @@ internal fun bareHostDeeplinkAction(scheme: String?, host: String?, pathSegments
 
 internal fun dotProductHost(scheme: String?, host: String?): String? {
     val webHost = webDeeplinkHostOrNull(scheme, host) ?: return null
-    if (!isDotWebMirrorHost(webHost)) return null
-
-    return webHost.toCanonicalDotHost()
+    return parseProductShareHost(webHost)?.value
 }

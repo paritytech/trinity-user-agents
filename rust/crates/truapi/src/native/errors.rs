@@ -28,66 +28,42 @@ impl From<HostRejection> for v01::GenericError {
 	}
 }
 
-impl From<uniffi::UnexpectedUniFFICallbackError> for HostRejection {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		HostRejection::Rejected { reason: err.reason }
-	}
+/// Maps an undeclared foreign exception onto each error's own unknown
+/// variant.
+///
+/// Foreign callbacks that throw an undeclared exception land here; without
+/// these conversions UniFFI panics, which `panic = "abort"` turns into a
+/// process abort. The host's own message is bounded before it is kept, so
+/// every later line that renders this error, and the product it is returned
+/// to, get a string that is already one line and already short. A conversion
+/// added later carries that without being asked to.
+///
+/// The variant is named rather than written out, so take care adding a target
+/// whose unknown variant is not the only one carrying a `reason`.
+macro_rules! from_undeclared_host_error {
+	($($target:ty => $variant:ident),+ $(,)?) => {
+		$(
+			impl From<::uniffi::UnexpectedUniFFICallbackError> for $target {
+				fn from(err: ::uniffi::UnexpectedUniFFICallbackError) -> Self {
+					::tracing::warn!(
+						error = stringify!($target),
+						reason = %$crate::logging::HostText::new(&err.reason),
+						"host callback threw an undeclared error; reporting it as a rejection"
+					);
+					Self::$variant { reason: $crate::logging::bound_host_text(&err.reason) }
+				}
+			}
+		)+
+	};
 }
 
-// Foreign callbacks that throw an undeclared exception land here; without these
-// conversions UniFFI panics, which `panic = "abort"` turns into a process abort.
-impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostLocalStorageReadError {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		v01::HostLocalStorageReadError::Unknown { reason: err.reason }
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentError {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		v01::HostPaymentError::Unknown { reason: err.reason }
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentTopUpError {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		v01::HostPaymentTopUpError::Unknown { reason: err.reason }
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentBalanceSubscribeError {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		v01::HostPaymentBalanceSubscribeError::Unknown { reason: err.reason }
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostNavigateToError {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host callback threw an undeclared error; reporting it as a rejection"
-		);
-		v01::HostNavigateToError::Unknown { reason: err.reason }
-	}
+from_undeclared_host_error! {
+	HostRejection => Rejected,
+	v01::HostLocalStorageReadError => Unknown,
+	crate::latest::HostPaymentError => Unknown,
+	crate::latest::HostPaymentTopUpError => Unknown,
+	crate::latest::HostPaymentBalanceSubscribeError => Unknown,
+	crate::latest::HostNavigateToError => Unknown,
 }
 
 impl From<v01::GenericError> for HostRejection {
@@ -98,7 +74,7 @@ impl From<v01::GenericError> for HostRejection {
 
 /// Rejection of a card face, read from its declared JSON or from the bytes a
 /// host kept.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeRendererError {
 	/// The text is not a renderer tree in the shape the protocol describes.
 	#[error("{reason}")]
@@ -125,7 +101,7 @@ pub enum NativeRendererError {
 ///
 /// [`ChatFieldError`] names its field with a `&'static str`, which has no
 /// UniFFI representation, so the field name travels inside the message.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeChatFieldError {
 	/// The field was refused; `reason` names the field and why.
 	#[error("{reason}")]

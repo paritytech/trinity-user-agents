@@ -34,6 +34,18 @@ public extension DotnsGatewayPallet {
         public var chatKey: Data? {
             lite?.chat?.wrappedValue
         }
+
+        public func listedLabel(among labels: Set<Data>, assigned: Set<Data>) -> Data? {
+            if let full = full?.label {
+                let cachedLabels = [full, lite?.label].compactMap { $0 }
+                return cachedLabels.contains(where: labels.contains) ? full : nil
+            }
+            guard let lite = lite?.label else {
+                return nil
+            }
+            let upgraded = assigned.subtracting([lite]).min { $0.lexicographicallyPrecedes($1) }
+            return upgraded ?? (labels.contains(lite) ? lite : nil)
+        }
     }
 
     /// One account's name record together with the account it was read for.

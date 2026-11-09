@@ -5,6 +5,10 @@ import UIKit
 /// A pass-through window pinned to the top of the screen for notices that must stay visible over
 /// whatever the app presents.
 final class TopNoticeWindow: UIWindow {
+    enum Insets {
+        static let top: CGFloat = 24
+    }
+
     private let hostingController: UIHostingController<AnyView> = {
         let controller = UIHostingController(rootView: AnyView(EmptyView()))
         controller.sizingOptions = [.intrinsicContentSize]
@@ -61,7 +65,7 @@ private extension TopNoticeWindow {
 
         hostingController.view.backgroundColor = .clear
         hostingController.view.snp.makeConstraints { make in
-            make.top.equalTo(rootViewController.view.safeAreaLayoutGuide.snp.top).offset(20)
+            make.top.equalTo(rootViewController.view.safeAreaLayoutGuide.snp.top).offset(Insets.top)
             make.leading.equalToSuperview().offset(UIConstants.horizontalInsetMedium)
             make.trailing.equalToSuperview().inset(UIConstants.horizontalInsetMedium)
         }

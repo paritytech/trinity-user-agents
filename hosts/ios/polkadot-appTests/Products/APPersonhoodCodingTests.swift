@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import SubstrateSdk
@@ -12,8 +13,9 @@ struct APPersonhoodCodingTests {
     @Test("Alias request encodes at ContentV1 index 3 with the RFC field order")
     func aliasRequestMessageRoundtrip() throws {
         let request = PolkadotHostRemoteMessage.AliasRequest(
-            callingProductId: "caller.product",
-            context: ProductProofContext(productId: "target.product", suffix: .index(0)),
+            callingProductId: try! ProductId("caller.product.dot"),
+            keyHandle: RingVrfKeyHandle(productId: try! ProductId("peopl.dot"), index: .index(1)),
+            context: ProductProofContext(productId: try! ProductId("target.product.dot"), suffix: .index(0)),
             ring: RingLocation(chainId: Data.random(of: 32)!, junctions: [.palletInstance(1)])
         )
 
@@ -26,6 +28,7 @@ struct APPersonhoodCodingTests {
         }
 
         #expect(decodedRequest.callingProductId == request.callingProductId)
+        #expect(decodedRequest.keyHandle == request.keyHandle)
         #expect(decodedRequest.context == request.context)
         #expect(decodedRequest.ring == request.ring)
     }
@@ -52,8 +55,9 @@ struct APPersonhoodCodingTests {
     @Test("Create proof request encodes at ContentV1 index 12")
     func createProofRequestMessageRoundtrip() throws {
         let request = PolkadotHostRemoteMessage.CreateProofRequest(
-            callingProductId: "caller.product",
-            context: ProductProofContext(productId: "target.product", suffix: .index(1)),
+            callingProductId: try! ProductId("caller.product.dot"),
+            keyHandle: RingVrfKeyHandle(productId: try! ProductId("peopl.dot"), index: .index(1)),
+            context: ProductProofContext(productId: try! ProductId("target.product.dot"), suffix: .index(1)),
             ring: RingLocation(
                 chainId: Data.random(of: 32)!,
                 junctions: [.collectionId(Data.random(of: 32)!)]
@@ -70,6 +74,7 @@ struct APPersonhoodCodingTests {
         }
 
         #expect(decodedRequest.callingProductId == request.callingProductId)
+        #expect(decodedRequest.keyHandle == request.keyHandle)
         #expect(decodedRequest.context == request.context)
         #expect(decodedRequest.ring == request.ring)
         #expect(decodedRequest.message == request.message)
@@ -162,12 +167,12 @@ struct APPersonhoodCodingTests {
     @Test("ProductProofContext decodes an index suffix from the product wire JSON")
     func productProofContextJsonDecoding() throws {
         let json = """
-        { "productId": "test.product", "suffix": 7 }
+        { "productId": "test.product.dot", "suffix": 7 }
         """
 
         let decoded = try JSONDecoder().decode(ProductProofContext.self, from: Data(json.utf8))
 
-        #expect(decoded.productId == "test.product")
+        #expect(decoded.productId.rawValue == "test.product.dot")
         #expect(decoded.suffix == .index(7))
     }
 
@@ -175,7 +180,7 @@ struct APPersonhoodCodingTests {
     func productProofContextRawSuffixJsonDecoding() throws {
         let raw = Data.random(of: 32)!
         let json = """
-        { "productId": "test.product", "suffix": "\(raw.toHex(includePrefix: true))" }
+        { "productId": "test.product.dot", "suffix": "\(raw.toHex(includePrefix: true))" }
         """
 
         let decoded = try JSONDecoder().decode(ProductProofContext.self, from: Data(json.utf8))
@@ -186,7 +191,7 @@ struct APPersonhoodCodingTests {
     @Test("ProductProofContext rejects raw suffixes that are not 32 bytes")
     func productProofContextShortRawSuffixFails() throws {
         let json = """
-        { "productId": "test.product", "suffix": "0x0102" }
+        { "productId": "test.product.dot", "suffix": "0x0102" }
         """
 
         #expect(throws: (any Error).self) {

@@ -1,3 +1,5 @@
+import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/index.ts";
+
 // Cross-product ring-VRF signing against a real signing-host CLI.
 //
 // The sibling of `cross-product-storage-e2e.ts`, for the `context` scope. One
@@ -35,9 +37,9 @@
 //   sign-again      dim2.paseo signs once more, so a refusal above cannot be
 //                   the registration having gone.
 
-const OWNER = "peopl.paseo";
-const GRANTED = "dim2.paseo";
-const UNTRUSTED = "stash.paseo";
+const OWNER = asProductId("peopl.paseo");
+const GRANTED = asProductId("dim2.paseo");
+const UNTRUSTED = asProductId("stash.paseo");
 
 /// "pop:polkadot.network/people-lite", hex.
 const PEOPLE_LITE_COLLECTION_ID =
@@ -73,7 +75,7 @@ function refusalTag(error: unknown): string | null {
   return domain.value?.value?.tag ?? null;
 }
 
-function expectProduct(expected: string): void {
+function expectProduct(expected: ProductId): void {
   if (host.productId !== expected) {
     throw new Error(
       `phase expects --product-id ${expected}, host serves ${host.productId}`,

@@ -17,7 +17,7 @@ use crate::{
 
 /// Signing operations.
 #[wire_trait(id = 13)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Signing: Send + Sync {
 	/// Construct a transaction for a product account.
 	///
@@ -41,6 +41,12 @@ pub trait Signing: Send + Sync {
 	/// contact matches, refuses the whole call as `UnknownContact` rather than
 	/// signing something that names somebody else. A call paying nobody from
 	/// the picker leaves it empty.
+	///
+	/// Fails as `ChainUnavailable` when the chain stays unreachable, such as
+	/// during a halt. Nothing was signed, so the call can be retried. Bound the
+	/// attempts, and expect a confirmed call to prompt again. When the paired
+	/// wallet builds the transaction, it reports this only if it answers
+	/// through the TrUAPI core. Other and older wallets report it as `Unknown`.
 	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();

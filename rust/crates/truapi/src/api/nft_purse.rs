@@ -36,7 +36,7 @@ use crate::{
 /// operation returns once it is registered under the product's idempotency
 /// key, and `observe_operation_status` follows it.
 #[wire_trait(id = 26)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait NftPurse: Send + Sync {
 	/// Create a purse owned by the calling product.
 	///

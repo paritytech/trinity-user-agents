@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
 import {
+  asProductId,
+  type ProductId,
   type ProductAccountId,
   type TrUApiClient,
 } from "../../../../js/packages/truapi/src/index.ts";
@@ -22,7 +24,7 @@ import { createFrameProviderFactory } from "./ws-provider.ts";
 /// signing with `PermissionDenied`). Use `console.log` / `throw` for the rest.
 export interface HostContext {
   /** The product id this host serves (its `--product-id`). */
-  productId: string;
+  productId: ProductId;
   /** A product account id for `derivationIndex` (default 0) under this product. */
   productAccount(index?: number): ProductAccountId;
 }
@@ -46,7 +48,7 @@ function requireEnv(name: string): string {
 
 async function main() {
   const frameUrl = requireEnv("TRUAPI_FRAME_URL");
-  const productId = requireEnv("TRUAPI_PRODUCT_ID");
+  const productId = asProductId(requireEnv("TRUAPI_PRODUCT_ID"));
   const scriptPath = requireEnv("TRUAPI_SCRIPT");
   const connection = createHostConnection(
     frameUrl,

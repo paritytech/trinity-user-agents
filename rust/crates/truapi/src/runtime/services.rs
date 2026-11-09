@@ -61,6 +61,12 @@ pub struct RuntimeServices {
 	/// Host Pocket adapter, installed once at startup by a host with a Pocket
 	/// surface. Unset leaves every product Pocket call `Unsupported`.
 	pocket_platform: OnceLock<Arc<dyn PocketPlatform>>,
+	/// Funding sessions shared by every product runtime of this host.
+	funding: Arc<crate::runtime::funding::FundingRegistry>,
+	/// Funding providers the host offers, kept current against dotNS.
+	funding_providers: crate::runtime::funding_providers::FundingProviders,
+	/// Recent funding quote answers and the quotes each session was offered.
+	funding_quotes: crate::runtime::funding_quotes::FundingQuotes,
 	/// Host top-up engine, installed once at startup by a host that claims
 	/// funds into the balance. Unset leaves every top-up `Unsupported`.
 	top_up_platform: OnceLock<Arc<dyn TopUpPlatform>>,
@@ -68,8 +74,6 @@ pub struct RuntimeServices {
 	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
 	/// The host's balance view, once installed.
 	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
-	/// Funding sessions shared by every product runtime of this host.
-	funding: Arc<crate::runtime::funding::FundingRegistry>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
@@ -154,6 +158,24 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
+	/// The host reports that `product_id`'s worker stopped without being
+	/// asked to. While something holds it, it is started again once the
+	/// ledger's backoff for its run of crashes has passed.
+	pub fn worker_exited(self: &Arc<Self>, product_id: &crate::platform::ProductId) {
+		let Some(wait_ms) = self.worker_ledger.exited(product_id, crate::current_unix_millis())
+		else {
+			return;
+		};
+		let services = Arc::downgrade(self);
+		let product_id = product_id.clone();
+		(self.spawner)(Box::pin(async move {
+			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
+			if let Some(services) = services.upgrade() {
+				services.worker_ledger.restart(&product_id);
+			}
+		}));
+	}
+
 	/// Build role-neutral runtime services from the platform, the host
 	/// identity reported to products, the People-chain genesis hash used by
 	/// statement-store backed protocols, the Bulletin-chain genesis hash used
@@ -170,6 +192,27 @@ impl RuntimeServices {
 		asset_hub_chain_genesis_hash: [u8; 32],
 		spawner: Spawner,
 	) -> Arc<Self> {
+		Self::with_chat_platform(
+			platform,
+			host_info,
+			people_chain_genesis_hash,
+			bulletin_chain_genesis_hash,
+			asset_hub_chain_genesis_hash,
+			spawner,
+			None,
+		)
+	}
+
+	/// Same as [`Self::new`], with the host's chat adapter installed.
+	pub fn with_chat_platform(
+		platform: Arc<dyn Platform>,
+		host_info: HostInfo,
+		people_chain_genesis_hash: [u8; 32],
+		bulletin_chain_genesis_hash: [u8; 32],
+		asset_hub_chain_genesis_hash: [u8; 32],
+		spawner: Spawner,
+		chat_platform: Option<Arc<dyn ChatPlatform>>,
+	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
 		let statement_store = StatementStoreRpc::new(
@@ -181,13 +224,17 @@ impl RuntimeServices {
 		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
 		let bulletin =
 			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
-		Arc::new(Self {
+		// The funding registry follows sessions through the services it
+		// belongs to, so it is built holding them.
+		Arc::new_cyclic(|services| Self {
 			platform,
 			host_info,
-			chat_platform: None,
+			chat_platform,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
-			funding: Default::default(),
+			funding: Arc::new(crate::runtime::funding::FundingRegistry::new(services.clone())),
+			funding_providers: Default::default(),
+			funding_quotes: Default::default(),
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
@@ -228,33 +275,6 @@ impl RuntimeServices {
 			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
 		})
-	}
-
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
-		platform: Arc<dyn Platform>,
-		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
-		spawner: Spawner,
-		chat_platform: Option<Arc<dyn ChatPlatform>>,
-	) -> Arc<Self> {
-		let services = Self::new(
-			platform,
-			host_info,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			spawner,
-		);
-		let Some(chat_platform) = chat_platform else {
-			return services;
-		};
-		let mut services = Arc::try_unwrap(services)
-			.unwrap_or_else(|_| unreachable!("services are not shared before this point"));
-		services.chat_platform = Some(chat_platform);
-		Arc::new(services)
 	}
 
 	/// Install the host's live OS permission-status adapter.
@@ -300,10 +320,23 @@ impl RuntimeServices {
 		&self.funding
 	}
 
+	/// The funding providers the host offers.
+	pub fn funding_providers(&self) -> &crate::runtime::funding_providers::FundingProviders {
+		&self.funding_providers
+	}
+
+	/// Recent quote answers and the quotes each session was offered.
+	pub fn funding_quotes(&self) -> &crate::runtime::funding_quotes::FundingQuotes {
+		&self.funding_quotes
+	}
+
 	/// Install the host's top-up engine. Set-once; returns whether this call
 	/// installed it.
 	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.top_up_platform.set(platform).is_ok()
+		let installed = self.top_up_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's top-up engine, when one is installed.
@@ -314,7 +347,10 @@ impl RuntimeServices {
 	/// Install the host's payment engine. Set-once; returns whether this
 	/// call installed it.
 	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.payment_platform.set(platform).is_ok()
+		let installed = self.payment_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's payment engine, when one is installed.
@@ -399,13 +435,13 @@ impl RuntimeServices {
 		self.device_pairing_observer.get().cloned()
 	}
 
-	/// Install the core database.
+	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn install_core_db(&self, db: Db) -> bool {
-		self.core_db.set(db).is_ok()
+		self.core_db.set(db.clone()).is_ok() && self.funding.install_db(db)
 	}
 
 	/// The core database.

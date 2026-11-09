@@ -1,5 +1,292 @@
 # @parity/truapi
 
+## 0.30.0
+
+### Major Changes
+
+- c38ac5b: `truapi-host --network pcf-devnet` runs against PCF's devnet on Paseo, read from the descriptor PCF signs. It
+  is a test network like `paseo-next-v2` and `previewnet`, on Polkadot's `dot` TLD.
+
+  `--network polkadot` is removed, and with it the restrictions it carried: every network now allows the account store,
+  auto-accept, `dev`, `--product-config` and `attest`. Forks of Polkadot run, with Polkadot's genesis hashes and the
+  `dot` TLD. An endpoint with one of Polkadot's genesis hashes is compared with real Polkadot, whose signed descriptor
+  the release ships, by block hash at the lower of the two finalized blocks, and the command stops when it serves
+  Polkadot itself or when it, or every Polkadot node, does not answer. A `--stack` with the id `polkadot` is refused,
+  and a `polkadot-fork` stack runs under its own namespace.
+
+- c38ac5b: `truapi-host` takes every network from a stack descriptor: a built-in one through `--network`, any other
+  through `--stack` or `HOST_CLI_STACK`. A fork or a local network is a `--stack` descriptor, for example a local file
+  whose `rpc` and `dub` URLs are `ws://` and `http://` on loopback.
+  - `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS`, `HOST_CLI_IDENTITY_BACKEND_BASE`,
+    `HOST_CLI_DOTNS_POP_CONTROLLER` and `HOST_CLI_LOCAL_NETWORK_CONFIG` are removed.
+  - The hidden `local-network-check` command is removed.
+  - A stack without a `dub` service or a `dotns.popController` is refused for every command.
+  - The CLI's own username reads go through the stack's `dotns.popController` and no longer look the controller up on
+    chain. The signing host's core still discovers its controller on chain.
+  - A published built-in descriptor that changes the stack's `id`, or that the CLI cannot run on, is not used: the
+    bundled copy stays in use with a warning, as for a `tld` change.
+  - `truapi-host stack bundle` refuses a built-in network's copy that the CLI cannot run on, and a copy that changes the
+    `id` of the one at `--out`.
+  - An endpoint of a local stack that does not answer within 3 seconds is logged and left to fail on first use, as for
+    any other stack.
+
+- baf831f: `createTransaction` moves to v0.2 and adds a `ChainUnavailable { reason }` error for a chain that stays
+  unreachable, such as during a halt. Nothing was signed, so a product can retry on it, with a bound on the attempts. A
+  paired wallet answering through the TrUAPI core reports a chain it cannot reach the same way. v0.1 callers still get
+  `Unknown`. A product built against this version needs a host that serves v0.2. Hosts from 0.27 refuse it with
+  `UnsupportedVersion`, which products see as `Unsupported`, and earlier ones answer with `MalformedFrame`.
+- e92024d: Funding providers tell the host where and what the user pays with the new `FundingUpdate.Deposit` (crypto
+  address with network, asset, amount, exactness, payment URI and expiry, or bank details with the reference), allowed
+  until funds move. The core takes only instructions that name something to pay, have not expired, carry a payment URI
+  rather than a web, script or file one, keep their texts to one short plain line, and pay by the rail and asset of the
+  quote the user chose; anything else, or more than eight per session, is refused with the new
+  `HostFundingReportError.InvalidDetail`. `PaymentReceived` carries `mismatch` when less or another asset arrived. A
+  session's progress carries the latest deposit and mismatch. `Assigned.session` is boxed on the Rust side; the wire is
+  unchanged.
+- f23a4e0: Funding for the host's screens: a crypto `FundingQuoteAsk` names its `network`, Worker manifest crypto routes
+  declare `networks`, and candidates carry the `limits` quote refusals showed. Progress reports `retrying` and an
+  outbound session's `payout`, which the provider reports after release with the new `FundingUpdate.Payout`.
+  `FundingFailure.Refunded` ends an inbound payment the provider returned, and `FundingFailure.Declined` one the user's
+  bank or card issuer refused. The provider reports `Converting` on a withdrawal after release. The chosen quote keeps
+  the crypto `network` it was asked for. A `FundingProviderEntry` marked `bundled` is a provider the host ships itself:
+  the core goes by the host's manifest and never reads dotNS for it.
+
+  Progress follows the funding design: three milestones per direction (`Started`, `Received`, `Added` in; `Started`,
+  `Received`, `Sent` out), a `band` for the line under them, and `last_heard_at_ms` for when the provider last reported;
+  the host hears of a session again when it starts taking longer. A top-up in its crediting step reads
+  `AddingToBalance`. A top-up the user cancelled before paying takes a payment that arrives within 7 days anyway, opens
+  again and is delivered.
+
+- f23a4e0: A native host reads back only `funding_history()`, whenever it shows history, which lists every ended
+  session, with its provider, rail, asset, status, payout, refund and references, as soon as it ends; the core pushes
+  everything else it draws. `funding_session_changed` carries the session as the core holds it (choice, cancel offer,
+  amounts) beside its status and progress. `funding_options_changed` carries the overlay's candidates, and the countries
+  and amount limits for the rail, asset, network and country the host reports with the new `select_funding_options`,
+  with the limits on each declared crypto network; it arrives before the overlay shows, after each selection and after
+  each quote list. `funding_in_progress_changed` arrives each time funding resumes and again whenever it changes.
+  `funding_session`, `funding_sessions`, `funding_in_progress()`, `funding_candidates`, `funding_countries`,
+  `funding_amount_limits` and `detected_funding_country` are removed from the runtime. Every funding provider's worker
+  starts as the overlay opens, so the first quotes do not wait on a cold start.
+- e92024d: A funding session keeps the quote, rail and asset it was chosen on, and every `funding_session_changed` hands
+  a native host its progress, the steps for that direction and rail with when each was reached, so the host never reads
+  it back. Providers report their transaction id and reference with the new `FundingUpdate.Details`, at any point while
+  the session is open, up to eight per session, each a short plain line.
+- e92024d: `get_funding_quote(intent, ask)` prices a funding ask with every funding provider's worker, whatever its
+  manifest declares: the core calls the new host-initiated `FundingProvider.quote` (`onQuote` on the worker) and takes
+  its one answer. Rows resolve one by one, a provider that does not answer in 10 seconds is unavailable, and recent
+  answers are reused. `select_funding_provider` takes the chosen quote id, which must price the session's amount when it
+  has one (a session without one takes the quote's), and the provider receives the quote with `assign`. Hosts implement
+  `funding_quote_changed` on `NativeFundingCallbacks`. What the answers show about what each provider serves is kept for
+  12 hours and folded into `funding_candidates` while the provider's manifest serves Funding.
+- 73fef81: `truapi-host` runs against any Trinity stack with `--stack <descriptor URL | stack link | file>` (or
+  `HOST_CLI_STACK`), for example `truapi-host --stack 'polkadotapp://stack?key=0x…&url=…' signing-host`, so forks,
+  staging instances and local networks whose genesis differs from a built-in network work without a new release. The
+  stack supplies the People, Asset Hub and Bulletin endpoints and genesis hashes, the identity backend from its `dub`
+  service, the TLD and the dotNS `popController`. `--stack` and `--network` cannot be combined; a stack's product
+  namespace is its descriptor's `id` without a trailing `-fork`, except that a `polkadot-fork` stack keeps its full
+  `id`. A stack with the id `polkadot` is refused, and so is `--chain-backend light-client` with `--stack`. A fork of
+  Polkadot may keep Polkadot's genesis hashes and the `dot` TLD; an endpoint with one of Polkadot's genesis hashes stops
+  the command when its block hash at the lower of its and Polkadot's finalized block equals Polkadot's, and when it, or
+  every Polkadot node, does not answer that comparison. `--network` is now a global option, and `paseo-next-v2` and
+  `previewnet` are now built-in stacks: the CLI reads the descriptor their operators publish, falls back to the signed
+  copy the release ships when it is unreachable, and prints a line when the published one changes a field the CLI reads.
+  Before a command runs over RPC on a built-in stack or a `--stack`, every endpoint that answers within 3 seconds must
+  report the descriptor's genesis, and People must report the stack's `tld` as its `NetworkSuffix`; a built-in stack
+  whose chains restarted fetches its descriptor once more when it was unreachable, and otherwise fails with an error
+  that reports which descriptor is in use. `truapi-host stack bundle` refuses a copy that changes the `tld` of the one
+  at `--out`, and with `--skip-same-projection` leaves that copy in place when only fields the CLI does not read
+  changed. `network-check` prints the routing of any network or stack as JSON without contacting a chain.
+
+### Minor Changes
+
+- f23a4e0: A funding provider closes the screen it showed for a session with `fundingProvider.closeFrame({ intent })`
+  once it is done with it, such as a card payment the user made. The core asks the host through the new
+  `close_provider_frame` callback; the open `presentFrame` answers `Closed` and the host shows the session sheet in its
+  place. A session the provider does not serve answers `NotFound`.
+- f23a4e0: An ended funding session is compacted into the session pack as soon as it ends, acknowledged or not, unless
+  its provider still works on it, its payout outcome is not in, or a late payment may still open it. The pack remembers
+  whether the host acknowledged each session: `funding_session_changed` hands the host the full session with the change
+  that ended it, and the 200 newest sessions it has not acknowledged come through again as summaries when funding
+  resumes. `acknowledge_funding_session` marks a session told to the user whether it is held in full or compacted.
+  Compacted sessions stored before this release are skipped and kept, so they leave `funding_history()` until a core
+  that reads their format is back.
+- f23a4e0: `presentFrame` refuses an App route with `NoApp` when the provider ships no App, which the core asks the host
+  through `provider_has_app`. A provider's App is optional: one without it shows external pages.
+- f23a4e0: A funding provider reports what it is doing within a step with `FundingUpdate::Progress { detail }`: a typed
+  `FundingFact` (`Checked`, `Confirmations`, `PriceChecked`, `Parts`, `Scheduled`, `SentByBank`, `ExpectedBy`,
+  `InReview`, `Attempt`) with an optional time, which the host words in the user's language, or as a last resort an
+  `Other` text of at most 80 characters shown as given. The session's progress carries the latest as `detail` until the
+  step moves on; each one counts as hearing from the provider and none is kept in the history. A fact that does not fit
+  the session fails with `InvalidDetail`.
+- e92024d: The core reads Worker manifests v1 and v2 from dotNS, with the `includes.funding` configuration, cached for a
+  day. Hosts list their funding providers with `set_funding_providers`, each with a Worker manifest snapshot that must
+  parse, and the core offers each session the candidates serving its direction;
+  `select_funding_provider(intent, provider, quote_id)` takes the quote the user chose the provider on, which must be
+  one the core offered for the session.
+- 6cd2e50: Native hosts load images with `loadImage(reference)`. The core reads a Bulletin blob by CID over its own
+  Bulletin connection, returns it only once it hashes to the CID, passes on PNG, JPEG, GIF and WebP up to 2 MiB and 4096
+  pixels per side, and rejects bytes in a format other than the one the reference declares. The result carries the
+  bytes, their format and the CID as a content key. The browser core does not expose it.
+- f23a4e0: A host reports a product worker that stopped without being asked, because it crashed, failed to boot or the
+  system killed it, with `worker_exited` (`workerExited` on the web). While anything still holds that worker, the core
+  requests `Start` again through `request_worker_transition`, and hands a funding provider's restarted worker every
+  session it serves once it connects. Crashes less than a minute apart back off: the first restart is immediate, then
+  each waits 1 s, doubling up to 5 min. On the third crash in a row the host hears the new
+  `worker_crashing(product_id, crashes)` (`workerCrashing` on the web) and tells the user that product is not working. A
+  released withdrawal's provider can report `Details` for its payout until it reports the payout.
+- e92024d: The core reads a funding provider's Worker manifest from dotNS and caches it for a day like the root
+  manifest, taking its `includes.funding` configuration with unrecognised values left out. Funding routes are optional:
+  a configuration without a usable route still serves Funding.
+
+### Patch Changes
+
+- 951466e: An account named in a log line is written through `logging::Account`, which prints a short handle under both
+  `Display` and `Debug` and gives the whole value only through `in_full`. A value that holds an account inside it, such
+  as a statement renewal target or a signer, redacts that field in its own `Debug`, so naming it with `?` keeps the
+  account out of a crash report. Text a host hands the core is written through `logging::HostText`, which quotes and
+  escapes it the way a Rust string literal is written and stops at a bound, so a foreign exception cannot break the
+  line, be read as the fields beside it, or reorder what follows it.
+- c38ac5b: `truapi-host` no longer reads `E2E_LIVE_CHAIN`. It had no effect: every network routes exactly the People,
+  Asset Hub and Bulletin chains it serves.
+- 88cf440: A statement allowance or PGAS transaction that the pool drops or finds invalid fails as soon as the node
+  reports it, rather than after the two-minute submit timeout.
+
+  In the `truapi-host` CLI, a light-client chain keeps running after its last connection closes, so it syncs once per
+  process. Over RPC, a chain connection counts as dead after 50 seconds in which no data arrives at all, and a request
+  waiting on it fails after 30 seconds in which no message arrives or makes progress, so a large message that is still
+  downloading, such as a busy Bulletin block on a slow link, keeps both alive. The interactive status bar names the
+  chain backend next to the network, as in `paseo-next-v2 (light-client)`.
+
+- f2175c9: Every marker the core addresses to a host is listed in one table, `truapi::markers`, which says whether it
+  may leave the device and at what severity. Call sites name a marker from that table rather than writing its target
+  out, so a marker the table does not list does not build, and the layer refuses one that reaches it anyway.
+  `coreMarkers()` hands the table to a host, which reads it once and looks up what it is handed instead of matching
+  prefixes of its own.
+- baf831f: While dotli redials a halted chain, the core retries the requests it refuses after 1, 2, 4, 8, 16 and 16
+  seconds. `createTransaction` and other chain reads wait out a short halt instead of failing with
+  `subscription dropped`. The error that ends a chain follow is logged at `warn`.
+- a066379: The `truapi.chain.follow_budget_reached` line now says what each follow holding a slot is doing: how long it
+  has been open, when the node last sent it an event, how many chainHead calls were made on it and when the last one
+  was, and whether its receiver is still open.
+- e92024d: A quote asked of a provider whose worker the host is stopping and starting again waits, within the quote's
+  deadline, for the new worker's connection instead of failing on the old one, which keeps its link until its connection
+  closes.
+- 5c8dbf4: A product that navigates its whole document inside an iframe host connects again.
+  - `@parity/truapi`: a product addresses its iframe handshake to the embedding page's origin, taken from
+    `location.ancestorOrigins` first. A referrer on the product's own origin, which is what a document loaded by the
+    product's own navigation carries, no longer stands in for the host.
+  - `@parity/truapi-host`: `createIframeHost` answers each new document's `truapi-ready` with a port of its own and
+    moves the connection to it once the document sends a frame. `onPort` is called again with that port, and the
+    function it returned for the previous port runs when it is replaced or the host is disposed. Each port is a new
+    product session, so a host gives it a core connection of its own rather than piping it into the previous one. A
+    stray ready from a document that already holds its port leaves its connection alone. With an opaque sandbox only the
+    first document is connected, since a page the frame navigates to reports the same `"null"` origin as the product.
+  - The test host gives each product document its own core, so a suite whose product sets `location.href` keeps talking
+    to the host.
+
+- b19850d: `MarkerClass::Export` names its severity field, so a host reading the marker table over the bindings gets
+  `markerClass.severity` in Kotlin and `case .export(severity:)` in Swift rather than a positional payload.
+- c38ac5b: The `trinity-stack` Rust crate reads a validated descriptor's values as bytes: `Chain::genesis` returns the
+  genesis hash, `Descriptor::service` the service of a kind, and `Descriptor::dotns_address` a dotNS address. They
+  decode hex that validation already checked, and panic only on a descriptor that skipped validation. The wasm API of
+  `@parity/trinity-stack` is unchanged.
+- 67eb927: `createTransaction` and ring VRF resolution wait out a lost chain connection on the same pauses as a halt: a
+  node that cannot be reached, a connection that closes under the read at any step down to the metadata download, or a
+  follow that drops. A chain still out of reach after the last pause is reported as `ChainUnavailable`. A provider that
+  refuses the chain, such as a host that does not serve it, is still reported at once, and so is a node that answers
+  with an error on a live connection.
+- 81c6cd7: `@parity/truapi-host/markers` exports `CORE_MARKERS`, the core's marker table keyed on the dotted target, so
+  a web host reads what may leave the device from the same list the bindings carry to iOS and Android rather than
+  keeping a copy of its own. It sits on its own subpath so reading the table does not pull in the host runtime.
+
+## 0.29.0
+
+### Major Changes
+
+- e8e2c17: New `FundingProvider` trait for a provider's worker. The core calls the worker with host-initiated requests,
+  each handler returning its answer as `ok(answer)`: `onAssign` hands it a session, again with its last update when the
+  worker connects, `onCancel` asks it to stop one (`Stopped`, or `Offer`/`Refused` once money moved) and
+  `onSettleCancel` passes on the user's answer to its offer. The worker calls the core: `report` stores its progress on
+  the session, as `In` or `Out` steps by the session's direction (`{ tag: "In", value: { tag: "Delivered" } }`) or
+  `Failed`, and `presentFrame` shows one of its App's screens, or an external https page with an optional return URL, in
+  a host frame. `payment.topUp` and `payment.request` gain a v0.2 shape with an optional `funding` intent: a provider's
+  worker sets it to start funds for a session it serves, or the call fails with `FundingNotServed`. Products built
+  before this release keep calling the v0.1 shape, which names no session, and a host reads it as `funding: undefined`.
+  The core records them before the host is asked, refuses a repeat under the id with other terms or an id the host
+  already holds with `AlreadyExists`, and `Crediting` and `Collecting` must name funds of that session the host took, at
+  their amount, once, or fail with `NotStarted`. Sessions end as `Delivered` or `Released` from the recorded amounts of
+  the named top-ups once their claims are final, or of the named payment once it completes. An assigned session whose
+  provider has not seen the user's payment expires 7 days after the provider's last update
+  (`FundingAssignment.expiresAt`, `undefined` once funds move), and a second cancel ends it. Hosts assign a session with
+  `select_funding_provider`, and must implement `present_provider_frame` on `FundingPlatform` (natively
+  `NativeFundingCallbacks`). Sessions now live in the core database; funding sessions 0.26.0 kept in core storage are
+  not carried over.
+- e8e2c17: `funding.request` takes `{ direction, amount? }` and answers at once with `{ intent }` while the host shows
+  the overlay; `funding.statusSubscribe` takes `{ intent }`. A session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. `HostFundingError` is `NotConnected`, `InvalidAmount` or `Unknown`.
+- e8e2c17: Funding sessions are stored in the core database, one row per session, so funding needs one: natively the
+  configured `database_directory`, otherwise `set_core_db`. The `FundingSessions`, `FundingSessionPack` and
+  `FundingSessionsUnreadable` core storage keys are gone.
+- b7b5ffe: Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a
+  string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed
+  `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
+
+  Kotlin `ProductId.parse`, `ProductId.fromName`, `productId.executable` and `productId.owner` return
+  `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate
+  the failure.
+
+  Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>`
+  that writes the string value and validates it through Rust when restoring.
+
+  Rust consumers import `ProductId`, `ProductIdError` and `PRODUCT_ID_MAX_BYTES` from the `truapi` crate root; these
+  version-independent items are not exported through `truapi::latest`.
+
+  Callers must pass typed IDs to product configuration, callbacks, proof contexts, registry queries, cross-product
+  storage and NFT purse ownership. Valid IDs retain string wire and storage encodings. Malformed IDs in typed protocol
+  fields fail decoding before dispatch. Persisted permission scopes and manifest labels keep their existing encodings.
+
+  Native product-link and executable-name operations use shared Rust helpers. Product links must match the host-provided
+  network suffix, including `.li` links. Both native hosts stop content loading on product-resolution failures or
+  missing executables.
+
+  The shared host execution enum is named `ExecutableKind` in Rust, Swift, Kotlin and TypeScript. Host consumers must
+  update imports from `ProductExecutionKind`; its variants and wire encoding are unchanged.
+
+### Minor Changes
+
+- 85ee8d8: Every chain connection the `truapi-host` CLI makes goes through `truapi-provider`.
+  `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the chains with the embedded smoldot
+  light client instead of dialing the preset's RPC nodes, so a node that refuses a shared CI address no longer stops the
+  host. RPC stays the default. The light client supports `paseo-next-v2` and `previewnet`. A request from a CLI command
+  fails once its connection has delivered nothing for 30 seconds while it waits. On the light client a command first
+  waits for its chain to sync, and fails if the chain or its relay stalls.
+
+  Over RPC, a connection sends a ping after 20 seconds without an outgoing request, and counts as dead after 50 seconds
+  without any incoming frame, so the core opens a new connection instead of waiting on a dead one. Messages of up to 64
+  MiB pass in either direction, so the full body of a busy Bulletin block can be fetched. Chain connections verify
+  `wss://` certificates with the root certificates built into the binary, not with certificate authorities added to the
+  operating system.
+
+- d730414: Native hosts keep the Pocket collection in the core database. The core stores which cards are in the Pocket
+  and the newest face of each, and serves product Pocket calls from it. `HostRuntimeConfig.pinned_pocket_cards`
+  (`pinnedPocketCards` in Swift and Kotlin) lists the cards the host pins, in the order they are listed. `addPocketCard`
+  screens the card id and title as a product's, and refuses ones a product could not use with `PocketAddError`. The
+  runtime gains `pocketCards()`, a stream of every card, pinned first, and `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`. The core keeps the newest face of a card from each Pocket card render, at most every two seconds and
+  once more when the render stops. `PocketHostBridge`, the `pocket` argument of `openProductExecution` and
+  `notifyPocketCardsChanged` are removed, `encodeRendererNode` and `decodeRendererNode` are removed, and
+  `NativeRendererSubscription` is now `NativeSubscription`.
+
+### Patch Changes
+
+- ab108f7: When `truapi-host` cannot open a session's core database, for example because a newer `truapi-host` migrated
+  it, the signing host stops with the `rm -f` command that deletes it. Running that command starts the session clean and
+  keeps its accounts and pairings.
+- aef8ba1: A chain-head call on a follow that has ended now names why it ended instead of reporting
+  `unknown follow subscription id`: `ended when its connection closed`, `was stopped by the node`, or
+  `ended on an error with its connection still open`. Only the reason text changes, not the error kind. A spent id is
+  also no longer answered by an unrelated follow.
+
 ## 0.28.0
 
 ### Minor Changes

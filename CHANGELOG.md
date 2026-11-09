@@ -5,6 +5,88 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.30.0] - 2026-11-09
+
+### Added
+
+- emit the core marker table for the web hosts (#1971)
+- report product notification shown and tapped to Sentry (#1874)
+- report product notification shown and tapped to Sentry (#1875)
+- say what each follow holding a slot is doing when a connection fills (#1961)
+- name accounts and host text through types (#1938)
+- publish the crate to crates.io (#1943)
+- let the test host approve a product's login request (#1956)
+- swipe down to close Pocket product cards (#1832)
+- move product and tab title with menu into the status (#1744)
+- inject and read a statement's channel, expiry and key (#1935)
+- pass deep links from the test host page to the product (#1932)
+- load products from the app bundle; funding-only workers; headless worker prompts (#1865)
+- read the core's marker table instead of a prefix list (#1907)
+- let one test decline a confirmation (#1926)
+- Docklet R2 implementation (#1883)
+- load verified Bulletin images in the core for native hosts (#1906)
+- open Pocket Collectibles inside a turning book (#1886)
+- one table decides which markers leave a device (#1797)
+- live preimage lookups, product storage seeding and networks on the test server (#1431)
+- remove a product chat room from its chat menu (#1562)
+
+### Changed
+
+- one WalletAccountHolder owns the signing host's wallet (#1952)
+- send game reminder events through the host capture (#1975)
+- run every network from its stack descriptor (#1944)
+- crypto networks, learned limits, retrying, payout and refunds for the funding screens (#1344)
+- name the signing account in legacy-account reviews (#1888)
+- remove Browse tab (#1951)
+- one HostGrantStore for kept grants (#1688)
+- show network status instead of browse in the docklet on every build (#1942)
+- carry createTransaction through a chain halt and report ChainUnavailable (#1807)
+- apply Rust guidance across the workspace (#1929)
+- keep RPC providers off the catalog and light-client chains running (#1793)
+- take every test network from its Trinity stack descriptor (#1885)
+- prepare and execute EVM contract calls (#1873)
+- funding discovery, quotes, progress and deposit instructions (#1318)
+
+### Fixed
+
+- tuck the Docklet at once on a touch outside it (#1962)
+- wait out a lost connection for the current block (#1939)
+- open a Pocket card from its app when the product publishes no widget (#1955)
+- expand the Collectibles page only once the SPA is visible (#1920)
+- find contacts renamed to a full username (#1743)
+- give Sentry traces sample-rate a float value (#1823)
+- reconnect a product that navigates its whole document (#1895)
+- take a product's latest room name and icon when it registers again (#1717)
+
+## [0.29.0] - 2026-11-04
+
+### Added
+
+- open Pocket Collectibles with one tap on its card (#1859)
+- open collectibles with one tap on its card (#1855)
+- fade the pocket in place when collectibles open (#1834)
+- connect through truapi-provider, with a light-client backend (#1664)
+- reload spa and worker on archive changes (#1817)
+- load products from cache first (#1756)
+
+### Changed
+
+- @parity/truapi 0.29.0, @parity/truapi-host 0.29.0, @parity/truapi-provider 0.3.2 (#1879)
+- keep the Pocket collection in the core database (#1757)
+- encode dotNS contract calls with alloy sol! (#1845)
+- funding provider trait, reports and settlement (#1317)
+- typed ProductId across hosts (#1721)
+
+### Fixed
+
+- name a follow that has ended, and stop serving spent ids (#1665)
+- ask for cleanup when the core database cannot be opened (#1860)
+- Pocket card serves as app (#1858)
+- push an opened Pocket card onto the Wallet tab so the tab bar stays (#1617)
+- open Stash full screen from the Pocket Collectibles card (#1801)
+- present the pairing sheet over settings (#1835)
+- show the expanded pocket collectibles card in color (#1784)
+
 ## [0.28.0] - 2026-10-31
 
 ### Added
@@ -31,6 +113,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.28.0, @parity/truapi-host 0.28.0, @parity/trinity-stack 0.2.0 (#1829)
 - serve NFT purse rebalance_purse, transfer_item and operation status (#1696)
 - run the retry loops through one retry function (#1702)
 

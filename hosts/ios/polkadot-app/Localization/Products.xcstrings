@@ -1070,28 +1070,6 @@
         }
       }
     },
-    "product.browser.accessibility.minimize": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Minimize"
-          }
-        }
-      }
-    },
-    "product.browser.accessibility.more": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "More"
-          }
-        }
-      }
-    },
     "product.load.damaged.message": {
       "extractionState": "manual",
       "localizations": {
@@ -1353,6 +1331,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Accepted funds from %1$(product)@"
+          }
+        }
+      }
+    },
+    "update.notice.action": {
+      "comment": "Button on the product update notice that reloads the product into its new build",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        }
+      }
+    },
+    "update.notice.message": {
+      "comment": "Notice at the top of the app when a newer build of an open product has been downloaded",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ has an update"
           }
         }
       }

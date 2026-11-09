@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
 import UIKitExt
@@ -7,10 +8,23 @@ import Products
 
 extension MainTabBarViewController: SPAHosting {
     func openProduct(page: ProductPage) {
-        // A card is a modal over the container, so what it links to mounts unseen.
-        presentedViewController?.dismiss(animated: true)
-        let tab = browserCoordinator.findOrCreateTab(for: page)
-        mountSPA(for: tab)
+        #if FEATURE_PRODUCTS
+            // What is presented over the container would hide what it mounts.
+            presentedViewController?.dismiss(animated: true)
+            let tab = browserCoordinator.findOrCreateTab(for: page)
+            mountSPA(for: tab)
+        #else
+            guard let view = SPAViewFactory.createView(
+                page: page,
+                flowState: flowStateProvider.flowState(),
+                presentation: .fullScreen
+            ) else {
+                return
+            }
+
+            let host = UIWindow.keyWindow?.topmostViewController ?? self
+            host.present(view.controller, animated: true)
+        #endif
     }
 
     /// Presents a product as a one-shot sheet over the container. It never enters the tab store,
@@ -24,7 +38,6 @@ extension MainTabBarViewController: SPAHosting {
             return
         }
 
-        view.controller.modalPresentationStyle = .pageSheet
         view.controller.sheetPresentationController?.detents = [
             .custom { $0.maximumDetentValue * 0.92 }
         ]
@@ -57,6 +70,9 @@ extension MainTabBarViewController {
         guard let controller = browserCoordinator.controller(for: tab) else {
             closeSPA(tabId: tab.id)
             return
+        }
+        (controller as? StatusBarTitleProviding)?.onStatusBarTitleChanged = { [weak self] in
+            self?.refreshStatusBarTitle()
         }
         container.mountSPA(controller, for: tab.id)
         applyChrome(.spa(controller))

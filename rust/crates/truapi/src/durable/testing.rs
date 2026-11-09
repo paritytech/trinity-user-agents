@@ -89,7 +89,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		id,
 		domain: DomainId::new("test"),
 		group: None,
-		tx_hash: H256::repeat_byte(id.0 as u8),
+		tx_hash: H256::repeat_byte(u8::try_from(id.0).expect("test id fits in u8")),
 		mortality: Mortality::new(block(birth), period).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
@@ -159,7 +159,7 @@ impl PinnedView for FakeView {
 
 	async fn search(&self, from: u64, to: u64, _tx_hash: H256) -> SearchResult {
 		self.ranges.lock().push((from, to));
-		self.result
+		self.result.clone()
 	}
 }
 
@@ -344,7 +344,7 @@ impl BlockBackend for FakeChain {
 		if state.unreadable_outcomes.contains(&at.hash) {
 			return Err(unavailable("dispatch_outcome"));
 		}
-		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).copied())
+		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).cloned())
 	}
 }
 

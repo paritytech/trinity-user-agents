@@ -13,18 +13,17 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use parity_scale_codec::{Compact, Decode, Encode};
 use subxt::{tx::Signer, utils::H256};
 use tracing::debug;
 use truapi::{
 	Sr25519Signer,
-	chain::MortalExtrinsic,
+	chain::{EvmContractCaller, EvmContractError},
 	host_logic::{
 		dotns_gateway::{
 			AsDotnsGatewayExtension, ClaimBlocker, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,
-			MIN_PERSON_LABEL_LEN, RegisterNameCallArgs, ReviveCallArgs, ReviveDryRun, WeightLimit,
-			account_to_h160, build_register_proof_message, expire_reservation_call,
-			is_dotted_lite_username, is_registrable_full_label,
+			MIN_PERSON_LABEL_LEN, RegisterNameCallArgs, account_to_h160,
+			build_register_proof_message, expire_reservation_call, is_dotted_lite_username,
+			is_registrable_full_label,
 		},
 		product_account::{derive_full_person_ring_vrf_entropy, derive_identity_keypair},
 	},
@@ -36,13 +35,14 @@ use truapi::{
 };
 
 use crate::{
-	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::Stack,
 };
 
 /// Inputs for one full-person registration run.
 pub struct RegisterNameConfig {
 	/// Network preset providing the People and Asset Hub endpoints.
-	pub network: NetworkConfig,
+	pub network: Stack,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Base label to register: lowercase ASCII letters only (`is_person_label`
@@ -72,11 +72,11 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	{
 		bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
 	}
-	let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
+	let who = derive_identity_keypair(&config.entropy, config.network.tld())
 		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
-	let mut reader = AssetHubReader::for_network(&config.network).await?;
+	let mut reader = AssetHubReader::connect(&config.network).await?;
 	// Registered names (any flow) fail only at submission otherwise.
 	if !reader.label_available(label).await? {
 		bail!("label {label:?} is already registered on dotNS and cannot be registered again");
@@ -112,13 +112,17 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
-	let people_rpc = RpcClient::connect(config.network.people_ws)
-		.await
-		.context("connect People RPC")?;
+	let chains = CliChainProvider::new(&config.network);
+	let people_location = chains.location(config.network.genesis().people);
+	let people_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().people)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
-	let full_entropy =
-		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix);
+	let full_entropy = derive_full_person_ring_vrf_entropy(&config.entropy, config.network.tld());
 	let candidates =
 		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
 	let signer = FixedPersonhoodSigner::new(&candidates).await?;
@@ -158,9 +162,13 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading Asset Hub metadata and the exponent the subscriber verifies
 	// proofs against.
-	let ah_rpc = RpcClient::connect(config.network.asset_hub_ws)
-		.await
-		.context("connect Asset Hub RPC")?;
+	let asset_hub_location = chains.location(config.network.genesis().asset_hub);
+	let ah_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().asset_hub)
+			.await
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
+	);
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)
@@ -194,7 +202,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let extrinsics = crate::extrinsic_service(&config.network);
 	let asset_hub = ExtrinsicTarget {
 		extrinsics: &extrinsics,
-		genesis: H256(config.network.asset_hub_genesis),
+		genesis: H256(config.network.genesis().asset_hub),
 	};
 	let who_signer = Sr25519Signer::from_keypair(&who);
 	// Reservations in front of the claim can expire during the proof and the
@@ -206,6 +214,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 			reader: &mut reader,
 			label,
 			who: &who_signer,
+			contracts: &crate::asset_hub_contracts(&config.network),
 			asset_hub_rpc: &ah_rpc,
 			asset_hub_metadata: &ah_metadata,
 			asset_hub,
@@ -223,7 +232,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let call =
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsic = extrinsics
-		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis))
+		.build_mortal_extrinsic(H256(config.network.genesis().asset_hub))
 		.with_call_args("DotnsGateway", "register_name", call)
 		.with_extension(authorizer)
 		.with_restrict_origins(true)
@@ -252,6 +261,8 @@ struct QueueClear<'a> {
 	label: &'a str,
 	/// The claiming account, which signs the clearing call and pays its fee.
 	who: &'a Sr25519Signer,
+	/// Simulates and sends the clearing call on Asset Hub.
+	contracts: &'a EvmContractCaller,
 	asset_hub_rpc: &'a RpcClient,
 	asset_hub_metadata: &'a Metadata,
 	asset_hub: ExtrinsicTarget<'a>,
@@ -267,14 +278,15 @@ struct QueueClear<'a> {
 ///
 /// A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` of them and a
 /// reverted claim keeps none of that, so a longer run has to be cleared first.
-/// The fee and the storage deposit are paid in PGAS, claimed into the account
-/// when its balance falls short. A dry-run from an account that cannot fund the
-/// deposit fails, but still reports the limits that price the claim.
+/// The fee and the storage deposit are paid in PGAS. The account claims PGAS
+/// first when it holds none, or when the dry-run fails because the account
+/// cannot fund the storage deposit.
 async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 	let QueueClear {
 		reader,
 		label,
 		who,
+		contracts,
 		asset_hub_rpc,
 		asset_hub_metadata,
 		asset_hub,
@@ -284,28 +296,22 @@ async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 		ring,
 	} = clear;
 	let who_public = who.account_id().0;
-	let clear_call = ClearCall {
-		who,
-		controller: reader.pop_controller().await?,
-		input: expire_reservation_call(label),
-		asset_hub,
-	};
+	let controller = reader.pop_controller();
+	let input = expire_reservation_call(label);
+	let call_name = format!("DotnsPopController.expireReservation({label:?})");
 
-	let mut priced = clear_call.price(reader, asset_hub_rpc).await?;
-	// A PGAS claim spends one of the day's slots, and funds only repair a
-	// storage deposit the account cannot pay.
-	let unfunded_deposit =
-		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?;
-	let deposit_unfunded = priced.dry_run.fails_with(unfunded_deposit);
-	if let Err(error) = &priced.dry_run.result &&
-		!deposit_unfunded
-	{
-		bail!("DotnsPopController.expireReservation({label:?}) fails in a dry-run: {error}");
-	}
-	if deposit_unfunded ||
-		alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await? <
-			priced.cost
-	{
+	let unfunded_deposit = module_error_hex(
+		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?,
+	);
+	let dry_run = contracts.dry_run(who, &controller, &input).await;
+	let needs_pgas = match &dry_run {
+		Ok(_) => {
+			alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await? == 0
+		},
+		Err(EvmContractError::Dispatch { detail }) if *detail == unfunded_deposit => true,
+		Err(error) => bail!("{call_name} fails in a dry-run: {error}"),
+	};
+	let prepared = if needs_pgas {
 		let network_suffix = alloc::slot::read_network_suffix(asset_hub_rpc).await?;
 		let claimed = alloc::pgas::claim_pgas(alloc::pgas::PgasClaim {
 			asset_hub_rpc,
@@ -321,87 +327,38 @@ async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 		.await
 		.context("claim PGAS for the reservation queue clearing")?;
 		println!("REGISTER_PGAS_CLAIMED block={}", claimed.block_hash);
-		// The funded dry-run is the one that tells whether the call goes
-		// through, and the claim took blocks, so the build starts over.
-		priced = clear_call.price(reader, asset_hub_rpc).await?;
-		let balance =
-			alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await?;
-		if balance < priced.cost {
-			bail!(
-				"PGAS balance {balance} does not cover the queue clearing fee and storage \
-				 deposit, {}",
-				priced.cost
-			);
-		}
-	}
-	if let Err(error) = &priced.dry_run.result {
-		bail!("DotnsPopController.expireReservation({label:?}) fails in a dry-run: {error}");
-	}
+		// The claim took blocks, so the limits come from a dry-run of the funded account.
+		contracts
+			.dry_run(who, &controller, &input)
+			.await
+			.with_context(|| format!("{call_name} fails in a dry-run"))?
+	} else {
+		dry_run.with_context(|| format!("{call_name} fails in a dry-run"))?
+	};
+	prepared
+		.execute_until_finalized()
+		.await
+		.with_context(|| format!("send {call_name}"))?;
 
-	let block = asset_hub_rpc.submit_and_watch(priced.extrinsic.extrinsic.bytes()).await?;
-	// Inclusion does not mean the call succeeded, so read the queue again.
+	// The call can succeed and still leave a run longer than a claim clears, if
+	// new reservations expired meanwhile, so read the queue again.
 	match reader.claim_blocker(label, &account_to_h160(&who_public)).await? {
 		None => {
-			println!("REGISTER_QUEUE_CLEARED label={label} block={block}");
+			println!("REGISTER_QUEUE_CLEARED label={label}");
 			Ok(())
 		},
 		Some(ClaimBlocker::HeldBy(holder)) => Err(held_by_other(label, &holder)),
 		Some(ClaimBlocker::ClearFirst { dead }) => bail!(
-			"DotnsPopController.expireReservation({label:?}) was included in {block} but {dead} \
-			 expired or emptied reservations are still in front of this claim"
+			"{call_name} went through but {dead} expired or emptied reservations are still in \
+			 front of this claim"
 		),
 	}
 }
 
-/// The signed `expireReservation` call, before its limits are known.
-struct ClearCall<'a> {
-	who: &'a Sr25519Signer,
-	controller: [u8; 20],
-	input: Vec<u8>,
-	asset_hub: ExtrinsicTarget<'a>,
-}
-
-/// A clearing call built from a dry-run, and what the account has to hold in
-/// PGAS to send it.
-struct PricedClear {
-	dry_run: ReviveDryRun,
-	extrinsic: MortalExtrinsic,
-	/// The transaction fee plus the storage deposit the call needs at its peak.
-	/// `ChargePGAS` charges the fee in PGAS one to one, and the storage deposit
-	/// is held in PGAS while the account has enough of it.
-	cost: u128,
-}
-
-impl ClearCall<'_> {
-	/// Dry-runs the call from the account, then builds it with the limits that
-	/// reports and prices it.
-	async fn price(&self, reader: &AssetHubReader, rpc: &RpcClient) -> Result<PricedClear> {
-		let dry_run = reader
-			.dry_run_call(&self.who.account_id().0, &self.controller, &self.input)
-			.await
-			.context("dry-run DotnsPopController.expireReservation")?;
-		let call = ReviveCallArgs {
-			dest: self.controller,
-			value: 0,
-			weight_limit: WeightLimit {
-				ref_time: with_margin(dry_run.ref_time),
-				proof_size: with_margin(dry_run.proof_size),
-			},
-			storage_deposit_limit: dry_run.storage_deposit,
-			data: self.input.clone(),
-		};
-		let extrinsic = self
-			.asset_hub
-			.extrinsics
-			.build_mortal_extrinsic(self.asset_hub.genesis)
-			.with_call_args("Revive", "call", call)
-			.with_signer(self.who)
-			.build()
-			.await?;
-		let fee = query_fee(rpc, extrinsic.extrinsic.bytes()).await?;
-		let cost = fee.saturating_add(dry_run.storage_deposit);
-		Ok(PricedClear { dry_run, extrinsic, cost })
-	}
+/// The hex a dry-run reports for `DispatchError::Module` at
+/// `[pallet_index, error_index]`.
+fn module_error_hex([pallet_index, error_index]: [u8; 2]) -> String {
+	format!("0x{}", hex::encode([0x03, pallet_index, error_index, 0, 0, 0]))
 }
 
 /// The expired or emptied reservations to clear before `who` can claim `label`,
@@ -426,33 +383,6 @@ fn held_by_other(label: &str, holder: &[u8; 20]) -> anyhow::Error {
 		 claim it",
 		hex::encode(holder)
 	)
-}
-
-/// `value` plus 20%, so a weight taken from a dry-run still holds when the state
-/// moves a little before the call executes.
-fn with_margin(value: u64) -> u64 {
-	value.saturating_add(value / 5)
-}
-
-/// The fee `TransactionPaymentApi_query_info` reports for `extrinsic`.
-async fn query_fee(rpc: &RpcClient, extrinsic: &[u8]) -> Result<u128> {
-	let args = [extrinsic, &(extrinsic.len() as u32).encode()].concat();
-	let output = rpc
-		.call(
-			"state_call",
-			serde_json::json!([
-				"TransactionPaymentApi_query_info",
-				format!("0x{}", hex::encode(args))
-			]),
-		)
-		.await?;
-	let output = output.as_str().context("query_info returned a non-string response")?;
-	let bytes = hex::decode(output.strip_prefix("0x").unwrap_or(output))
-		.context("query_info output is not valid hex")?;
-	// RuntimeDispatchInfo: compact ref_time, compact proof_size, class, partial_fee.
-	let (_, _, _, fee) = <(Compact<u64>, Compact<u64>, u8, u128)>::decode(&mut &bytes[..])
-		.context("decode RuntimeDispatchInfo")?;
-	Ok(fee)
 }
 
 /// Resolves the `Link` argument. An explicit chat key wins, then an explicit

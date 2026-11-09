@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import UIKit
 import UIKitExt
@@ -9,6 +10,11 @@ import Products
 @MainActor
 struct ProductsRouterTests {
     private final class StubView: UIViewController, ControllerBackedProtocol {}
+
+    @MainActor
+    private final class Counter {
+        var value = 0
+    }
 
     @Test
     func notReadyUntilPresentationViewAttached() {
@@ -38,9 +44,40 @@ struct ProductsRouterTests {
         #expect(router.present(view: StubView()))
     }
 
+    /// A worker running headless has no screen of its own, so its prompts
+    /// present from the fallback until a view is anchored.
+    @Test
+    func presentsFromTheFallbackUntilAViewIsAnchored() {
+        let fallback = StubView()
+        let anchor = StubView()
+        let fallbackReads = Counter()
+        let router = ProductsRouter(fallback: {
+            fallbackReads.value += 1
+            return fallback
+        })
+
+        #expect(router.isReady)
+        #expect(router.present(view: StubView()))
+        #expect(fallbackReads.value == 2)
+
+        router.setPresentationView(anchor)
+
+        #expect(router.isReady)
+        #expect(router.present(view: StubView()))
+        #expect(fallbackReads.value == 2)
+    }
+
+    @Test
+    func notReadyWhenTheFallbackHasNoView() {
+        let router = ProductsRouter(fallback: { nil })
+
+        #expect(!router.isReady)
+        #expect(!router.present(view: StubView()))
+    }
+
     @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
-        let request = TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")
+        let request = TrUAPIActionConfirmationRequest.productSubtree(productId: try! ProductId("test.product.dot"))
         for approved in [true, false] {
             let context = TrUAPIActionConfirmationContext(request: request)
             let model = TrUAPIActionPromptViewFactory.makeViewModel(for: context)
@@ -56,7 +93,7 @@ struct ProductsRouterTests {
                 case let .normal(text): text
                 case let .attributed(text): text.string
                 }
-            #expect(body.contains("test.product"))
+            #expect(body.contains("test.product.dot"))
             #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
 
             let decision = await withCheckedContinuation { continuation in
