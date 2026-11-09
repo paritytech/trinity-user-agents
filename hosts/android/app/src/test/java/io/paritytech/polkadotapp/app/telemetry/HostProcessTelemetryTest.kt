@@ -176,6 +176,7 @@ class HostProcessTelemetryTest {
         val disabledCapture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
+            metrics = metrics { _, _, _, _ -> error("no distribution while host telemetry is off") },
         )
         disabledCapture.capture {
             eventBuilt = true

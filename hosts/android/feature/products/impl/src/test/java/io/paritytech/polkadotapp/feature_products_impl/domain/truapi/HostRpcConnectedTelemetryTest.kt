@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Test
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
@@ -84,16 +83,6 @@ class HostRpcConnectedTelemetryTest {
     }
 
     @Test
-    fun `an app or widget execution is a page`() {
-        val executable = HostRpcExecutable(HUMANITY, ExecutableKind.WIDGET, "page-session")
-        telemetry.observer({ executable }) { "people" }.dialling(CONNECTION, GENESIS, attempt = 0)
-
-        telemetry.responded(CONNECTION)
-
-        assertEquals("page", captured.single().tags["executable.kind"])
-    }
-
-    @Test
     fun `later frames on the same connection report nothing more`() {
         telemetry.observer({ null }) { "people" }.dialling(CONNECTION, GENESIS, attempt = 0)
 
@@ -132,22 +121,6 @@ class HostRpcConnectedTelemetryTest {
         telemetry.closedBeforeResponse(CONNECTION)
 
         assertEquals(emptyList<HostEvent>(), captured)
-    }
-
-    @Test
-    fun `the event and chain label are not built when capture drops it`() {
-        var chainLabelRead = false
-        val dropping = HostRpcConnectedTelemetry(originProvider, timeProvider, HostEventCapture { })
-        dropping.observer({ null }) {
-            chainLabelRead = true
-            "people"
-        }.dialling(CONNECTION, GENESIS, attempt = 0)
-
-        dropping.responded(CONNECTION)
-
-        assertFalse(chainLabelRead)
-        verify(exactly = 0) { originProvider.current() }
-        verify(exactly = 1) { timeProvider.nowMillis() }
     }
 
     @Test

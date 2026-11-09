@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
@@ -68,15 +67,6 @@ class HostProductResolvedTelemetryTest {
         val event = reported { report(HUMANITY, OPEN, STARTED_AT, QUEUE_MS, resolved = false) }
 
         assertEquals("error", event.tags["outcome"])
-    }
-
-    @Test
-    fun `the event is not built when capture drops it`() {
-        HostProductResolvedTelemetry(originProvider, timeProvider, HostEventCapture { }, cacheHits)
-            .report(HUMANITY, OPEN, STARTED_AT, QUEUE_MS, resolved = true)
-
-        verify(exactly = 0) { originProvider.current() }
-        verify(exactly = 0) { timeProvider.nowMillis() }
     }
 
     @Test

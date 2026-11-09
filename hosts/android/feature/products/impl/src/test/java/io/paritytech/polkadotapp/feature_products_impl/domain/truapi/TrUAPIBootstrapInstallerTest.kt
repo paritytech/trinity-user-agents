@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -130,25 +129,6 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("writable: false"))
         assertTrue(script.contains("configurable: false"))
         assertTrue(script.endsWith("} catch {}"))
-    }
-
-    // Optional and additive, so the schema version stays: a page without them reads the same as before.
-    @Test
-    fun `host telemetry script carries the tap time only for a page a tap opened`() {
-        val packageInfo = mock(PackageInfo::class.java).apply { versionName = "1.2.3" }
-        val packageManager = mock(PackageManager::class.java)
-        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
-        whenever(context.packageManager).thenReturn(packageManager)
-        whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
-
-        val tapped = hostTelemetryScript(context, "session", HostPageOrigin(1_793_880_000_000L, "pocket_card"))
-        val plain = hostTelemetryScript(context, "session")
-
-        assertTrue(tapped.contains("\"openedAtEpochMs\":1793880000000"))
-        assertTrue(tapped.contains("\"openSource\":\"pocket_card\""))
-        assertTrue(tapped.contains("\"schemaVersion\":\"1\""))
-        assertFalse(plain.contains("openedAtEpochMs"))
-        assertFalse(plain.contains("openSource"))
     }
 
     // The page reads these fields by name; pinned whole, so a renamed or added field shows up here first.

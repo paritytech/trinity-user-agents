@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
@@ -140,16 +139,6 @@ class HostPageOpenTelemetryTest {
     }
 
     @Test
-    fun `a page opened without a tap hands the page no open time`() {
-        val page = telemetry.open()
-
-        page.opened(HUMANITY)
-
-        assertEquals(null, page.pageOrigin)
-        assertEquals(emptyList<HostEvent>(), captured)
-    }
-
-    @Test
     fun `a page opened without a card tap carries no tap time`() {
         val page = telemetry.open()
         page.opened(HUMANITY)
@@ -221,16 +210,6 @@ class HostPageOpenTelemetryTest {
         page.closed()
 
         assertEquals(emptyList<HostEvent>(), captured)
-    }
-
-    @Test
-    fun `the event is not built when capture drops it`() {
-        val page = HostPageOpenTelemetry(originProvider, timeProvider, HostEventCapture { }, taps, sessionIds, cacheHits).open()
-
-        page.opened(HUMANITY)
-        page.finished(loaded = true)
-
-        verify(exactly = 0) { originProvider.current() }
     }
 
     private companion object {

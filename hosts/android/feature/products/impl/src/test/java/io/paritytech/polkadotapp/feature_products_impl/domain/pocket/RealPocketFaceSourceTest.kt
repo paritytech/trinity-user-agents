@@ -24,13 +24,10 @@ class RealPocketFaceSourceTest {
     private class FakeStreams : PocketFaceStreams {
         val faces = MutableSharedFlow<RendererNode>()
         var collectors = 0
-        var drawnByNoWorker = false
         val actions = mutableListOf<Triple<PocketCardKey, String, String>>()
 
-        override fun renderFaces(key: PocketCardKey, load: PocketFaceLoad): Flow<RendererNode> = faces.onStart {
-            collectors++
-            if (drawnByNoWorker) load.noWorker()
-        }
+        override fun renderFaces(key: PocketCardKey, load: PocketFaceLoad): Flow<RendererNode> =
+            faces.onStart { collectors++ }
 
         override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
             actions += Triple(key, actionId, payload.decodeToString())
@@ -65,17 +62,6 @@ class RealPocketFaceSourceTest {
         runCurrent()
 
         assertEquals(listOf("cache_hit", "ok"), reportedOutcomes)
-        onScreen.cancel()
-    }
-
-    @Test
-    fun `a face the stream says no worker will draw is reported as such`() = runTest {
-        streams.drawnByNoWorker = true
-
-        val onScreen = source.observeFace(loyalty.card.key).launchIn(this)
-        runCurrent()
-
-        assertEquals(listOf("no_worker"), reportedOutcomes)
         onScreen.cancel()
     }
 

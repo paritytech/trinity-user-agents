@@ -29,6 +29,7 @@ class GameReminderTelemetryTest {
             platform = "android",
             osVersion = "35",
             appBuild = 42,
+            launchId = "launch-1",
         )
     }
 

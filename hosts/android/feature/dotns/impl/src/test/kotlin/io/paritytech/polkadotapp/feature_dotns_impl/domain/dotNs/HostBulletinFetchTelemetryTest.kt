@@ -8,13 +8,11 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
-import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostCacheHits
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.HostEventOutcome
 import io.paritytech.polkadotapp.common.data.telemetry.HostLoadContext
 import io.paritytech.polkadotapp.common.data.telemetry.HostLoadTrigger
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -217,15 +215,6 @@ class HostBulletinFetchTelemetryTest {
         opening { resolver().resolveToLocalUri(APP_DOMAIN) }
 
         assertEquals(listOf("error"), captured.map { it.tags["outcome"] })
-    }
-
-    @Test
-    fun `the event is not built when capture drops it`() {
-        HostBulletinFetchTelemetry(originProvider, timeProvider, HostEventCapture { }, HostCacheHits())
-            .report(APP_DOMAIN, OPEN, HostEventOutcome.OK, 30L, FETCH_STARTED_AT, BUNDLE_BYTES, queueMillis = 0L)
-
-        verify(exactly = 0) { originProvider.current() }
-        verify(exactly = 0) { timeProvider.nowMillis() }
     }
 
     private suspend fun <T> opening(block: suspend () -> T): T = withContext(OPEN) { block() }

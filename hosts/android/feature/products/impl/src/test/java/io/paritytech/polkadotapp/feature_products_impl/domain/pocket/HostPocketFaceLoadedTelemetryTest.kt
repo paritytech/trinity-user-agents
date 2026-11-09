@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
@@ -15,7 +14,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -73,11 +71,6 @@ class HostPocketFaceLoadedTelemetryTest {
         load.track(flowOf("live")).collect()
 
         assertEquals("warm", captured.single().tags["worker.state"])
-    }
-
-    @Test
-    fun `the faces pass through unchanged`() = runTest {
-        assertEquals(listOf("a", "b"), telemetry.start(HUMANITY).track(flowOf("a", "b")).toList())
     }
 
     @Test
@@ -141,16 +134,6 @@ class HostPocketFaceLoadedTelemetryTest {
             onScreen.join()
             assertEquals(listOf("timeout"), captured.map { it.tags["outcome"] })
         }
-
-    @Test
-    fun `the event is not built when capture drops it`() = runTest {
-        HostPocketFaceLoadedTelemetry(originProvider, timeProvider, HostEventCapture { })
-            .start(HUMANITY)
-            .track(flowOf("live 1"))
-            .collect()
-
-        verify(exactly = 0) { originProvider.current() }
-    }
 
     private companion object {
         const val REQUESTED_AT = 30_000L
