@@ -41,6 +41,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
+        is RemotePermission.Validator -> null
     }
 }
 

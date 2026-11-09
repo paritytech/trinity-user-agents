@@ -97,8 +97,8 @@ Public identities, acquisition time, history counts and recovery bytes are inten
 | Shared Rust runtime | Optional `ValidatorPlatform` seam, typed dispatch, permission/lifetime enforcement; no native custody implementation implied |
 | Epoca native shell + protected helper | Integration target: shell verifies artifact and obtains consent; helper owns enrollment, keys, exclusive custody, durable journal/storage and draining. Shipping/qualification is separate from this RFC |
 | Other native/mobile hosts | Unsupported unless a conforming protected backend is explicitly installed; no inferred support from generated bindings |
-| Browser/WASM host | No protected backend supplied by this layer; acquisition returns domain `Unsupported`, not software key custody in product JavaScript |
-| Future browser/native bridge | Proposal only: would require reviewed artifact-bound consent, exclusive ownership, persistence and crash/revocation semantics before enabling the capability |
+| Browser/WASM host | Generated and tested optional `validator` host-callback namespace; the WASM runtime installs the adapter when host JavaScript provides it. Without it, acquisition returns domain `Unsupported`. No protected custody backend is supplied by this layer |
+| Browser/native bridge backend | The callback plumbing exists, but enabling protected custody still requires a reviewed backend with artifact-bound consent, exclusive ownership, persistence and crash/revocation semantics; product JavaScript must not own keys |
 
 ### Relation to JamPeerTransport
 
@@ -115,12 +115,17 @@ The prototype also expanded generic product identity policy for strict lowercase
 
 This is product-identity and manifest-resolution policy, not validator authorization. Accepting the identity must not grant account, artifact, remote-operation or custody authority. No change to the base branch is made by this RFC.
 
+This layer also fixes generic code generation to honor explicit enum discriminants. That fix could flow into #540 independently of Validator. The v01 Validator prototype remains unchanged except for a `clippy::large_enum_variant` allowance on `HostValidatorOpenResponse` (with its explanatory comment); variants and field order remain byte-identical.
+
 ## Trade-offs
 
 - A trusted helper and durable journal increase host complexity, but exposing keys or generic signing would remove the safety boundary entirely.
 - Opaque recovery keeps consensus out of the host but makes correctness depend on a trusted, reviewed guest artifact and honest replay/supersession assertions.
 - Fail-closed cancellation and poisoned state can reduce availability. Automatically releasing ambiguous custody or silently deleting guards would trade safety for liveness.
 - Experimental trait 112 and the complete V1 payload layout are preserved for existing consumers; future standardization/allocation is a separate proposal, not a renumbering in this port.
+- Revocation is permanent for the current execution, including after a later permission grant; recovery requires a new execution.
+- Permission decisions are stored per execution. This prevents grant reuse across executions but accumulates durable permission records; record lifecycle/retention is not implemented here.
+- Product-facing generic permission requests reject Validator scopes without prompting or storing a decision. Only trusted custody acquisition derives the account, genesis and execution scope.
 
 ## Testing and qualification
 

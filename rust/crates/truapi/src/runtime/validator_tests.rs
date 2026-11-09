@@ -375,3 +375,70 @@ fn full_authority_requires_role_parameters_and_valid_duties_and_revokes_in_fligh
         }
     });
 }
+
+#[test]
+fn username_refresh_preserves_custody_but_account_changes_close_it() {
+    use crate::api::Validator;
+    use futures::task::LocalSpawnExt;
+    let mut pool = futures::executor::LocalPool::new();
+    let pending = Arc::new(Mutex::new(Vec::new()));
+    let spawned = pending.clone();
+    let mut host = super::ProductRuntimeHost::new_compat(
+        Arc::new(StubPlatform::default()),
+        Arc::new(move |future| spawned.lock().push(future)),
+    );
+    let custody = Arc::new(Custody {
+        authority: Mutex::new(None), revocations: Mutex::new(vec![]),
+        entered: Mutex::new(None), release: Mutex::new(None),
+        authoring: true, full_duties: true,
+    });
+    host.validator_platform = Some(custody.clone());
+    let sessions = host.test_session_state();
+    let mut session = crate::test_support::session_info();
+    sessions.set_session(session.clone());
+    let cx = crate::CallContext::default();
+    let acquired = pool.run_until(host.open(&cx, wire::HostValidatorOpenRequest::V1(
+        v01::HostValidatorOpenRequest::Acquire { genesis: [9; 32] },
+    )));
+    assert!(acquired.is_ok());
+    pool.run_until_stalled();
+    session.lite_username = Some("refreshed".into());
+    session.full_username = Some("refreshed.paseo".into());
+    for future in pending.lock().drain(..) {
+        pool.spawner().spawn_local(future).unwrap();
+    }
+    sessions.set_session(session.clone());
+    pool.run_until_stalled();
+    assert!(custody.revocations.lock().is_empty());
+    let audit = wire::HostValidatorAuditProveRequest::V1(v01::HostValidatorAuditProveRequest {
+        handle: "test-owner".into(), parameters: vec![1],
+        input: v01::ValidatorAuditInput::Initial { entropy: [0; 32] },
+    });
+    assert!(pool.run_until(host.audit_prove(&cx, audit.clone())).is_ok());
+    session.public_key[0] ^= 1;
+    sessions.set_session(session);
+    pool.run_until_stalled();
+    assert!(!custody.revocations.lock().is_empty());
+    assert_eq!(pool.run_until(host.audit_prove(&cx, audit)),
+        Err(CallError::Domain(wire::HostValidatorAuditProveError::V1(v01::HostValidatorError::Closed))));
+}
+
+#[test]
+fn product_validator_permissions_never_prompt_or_persist() {
+    use crate::{api::Permissions, versioned::permissions, versioned::IntoLatest};
+    futures::executor::block_on(async {
+        let platform = Arc::new(StubPlatform::default());
+        let host = super::ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let request = permissions::RemotePermissionRequest::V1(v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::Validator {
+                genesis: [9; 32], account: [8; 32], execution: "123".into(),
+            },
+        });
+        let before = platform.local_storage.lock().unwrap().clone();
+        let cx = crate::CallContext::default();
+        assert!(!host.authorize_remote_permission(&cx, request.clone()).await.unwrap().into_latest().granted);
+        assert!(!host.request_remote_permission(&cx, request).await.unwrap().into_latest().granted);
+        assert!(platform.remote_permission_requests.lock().unwrap().is_empty());
+        assert_eq!(*platform.local_storage.lock().unwrap(), before);
+    });
+}

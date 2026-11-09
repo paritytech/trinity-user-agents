@@ -191,6 +191,8 @@ pub enum HostValidatorOpenRequest {
 }
 
 /// Custody acquisition or bounded recovery result.
+// Preserve the prototype's unboxed wire variants.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostValidatorOpenResponse {
     /// Locked, intact custody state, not yet replay-ready.

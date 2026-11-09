@@ -120,6 +120,14 @@ fn full_duty_valid(duty: &v01::ValidatorFullDuty) -> bool {
     }
 }
 
+fn same_authority_session(current: Option<&AuthoritySession>, expected: &AuthoritySession) -> bool {
+    current.is_some_and(|current| {
+        current.validation_id == expected.validation_id
+            && current.public_key == expected.public_key
+            && current.identity_account_id == expected.identity_account_id
+    })
+}
+
 impl ProductRuntimeHost {
     fn validator_adapter(&self) -> Result<&dyn ValidatorPlatform, v01::HostValidatorError> {
         self.validator_platform.as_deref().ok_or(v01::HostValidatorError::Unsupported)
@@ -127,7 +135,7 @@ impl ProductRuntimeHost {
 
     fn validator_live(&self, owner: &ValidatorOwner, cx: &CallContext) -> Result<(), v01::HostValidatorError> {
         if cx.cancel().is_cancelled() || owner.revoked.load(Ordering::Acquire)
-            || self.authority.current_session().as_ref() != Some(&owner.session)
+            || !same_authority_session(self.authority.current_session().as_ref(), &owner.session)
         {
             owner.revoked.store(true, Ordering::Release);
             if let Some(platform) = &self.validator_platform {
@@ -221,7 +229,7 @@ impl ProductRuntimeHost {
                 futures::select_biased! {
                     _ = stopped => return,
                     item = changed => {
-                        if item.is_none() || authority.current_session().as_ref() != Some(&session) {
+                        if item.is_none() || !same_authority_session(authority.current_session().as_ref(), &session) {
                             revoked.store(true, Ordering::Release);
                             platform.validator_revoke(execution);
                             return

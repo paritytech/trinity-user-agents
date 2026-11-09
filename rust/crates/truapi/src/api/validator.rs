@@ -50,7 +50,7 @@ pub trait Validator: Send + Sync {
     /// const zero = "0x0000000000000000000000000000000000000000000000000000000000000000";
     /// const result = await truapi.validator.sign({
     ///   handle: "acquired-handle", revision: "1", head: zero,
-    ///   duty: { stage: 0, set: 0, round: "1", target: zero, slot: 0 },
+    ///   duty: { stage: 0, set: 0, round: "1", target: zero, stateRoot: zero, slot: 0 },
     ///   recovery: { hash: zero, length: 1 },
     /// });
     /// console.log("durable signature available:", result.isOk());

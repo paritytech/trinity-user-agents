@@ -189,6 +189,13 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
+		// Only trusted custody acquisition may choose a validator permission scope.
+		if matches!(inner.permission, latest::RemotePermission::Validator { .. }) {
+			return Ok(RemotePermissionResponse::from_latest(
+				latest::RemotePermissionResponse { granted: false },
+				version,
+			));
+		}
 		let service = self.permissions_service();
 		match service.authorize_remote(inner).await {
 			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
@@ -233,6 +240,13 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
+		// Only trusted custody acquisition may choose a validator permission scope.
+		if matches!(inner.permission, latest::RemotePermission::Validator { .. }) {
+			return Ok(RemotePermissionResponse::from_latest(
+				latest::RemotePermissionResponse { granted: false },
+				version,
+			));
+		}
 		let service = self.permissions_service();
 		match service.check_or_prompt_remote(inner).await {
 			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
