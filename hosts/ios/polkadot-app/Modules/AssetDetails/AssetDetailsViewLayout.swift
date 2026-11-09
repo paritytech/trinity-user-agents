@@ -9,6 +9,7 @@ struct AssetDetailsView: View {
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
     var isCardHidden: Bool = false
+    var showsOpenedFace: Bool = false
     var onCardFrame: (CGRect) -> Void = { _ in }
 
     #if DEBUG
@@ -28,6 +29,7 @@ struct AssetDetailsView: View {
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
         isCardHidden: Bool = false,
+        showsOpenedFace: Bool = false,
         onCardFrame: @escaping (CGRect) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: viewModel)
@@ -35,6 +37,7 @@ struct AssetDetailsView: View {
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
         self.isCardHidden = isCardHidden
+        self.showsOpenedFace = showsOpenedFace
         self.onCardFrame = onCardFrame
     }
 
@@ -113,7 +116,7 @@ struct AssetDetailsView: View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded || showsOpenedFace
         )
     }
 

@@ -18,6 +18,11 @@ struct WalletView: View {
                 VStack(spacing: -cardOverlap) {
                     assetCard
                         .pocketMotion(motion(ofPosition: 0))
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .global)
+                        } action: {
+                            viewModel.balanceCardFrame = $0
+                        }
                     pocketCards
                 }
                 .padding(.horizontal, PocketCardSize.sideMargin)
@@ -68,13 +73,11 @@ struct WalletView: View {
             viewModel: viewModel.assetDetailsViewModel,
             onCardTapped: {
                 viewModel.onBalance?()
-            }
+            },
+            // The open flight clears the Pocket on its first frame, so the face switches as the card lifts.
+            // The close flight restores the Pocket as it starts, so the card turns back before it flies home.
+            showsOpenedFace: viewModel.openItem == .balance && viewModel.isPocketCleared
         )
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .global)
-        } action: {
-            viewModel.balanceCardFrame = $0
-        }
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
     }
 }
