@@ -14,10 +14,10 @@
 //! Two kinds of event reach the sink a host installs with [`set_host_sink`],
 //! whatever the console level is, because a native host keeps stderr out of its
 //! log files and crash reports. An event whose target starts with
-//! [`HOST_MARKER_PREFIX`] is addressed to the host rather than to the console,
-//! and its target is the marker the host receives. Any warning or error is
-//! forwarded too, under a marker naming its level, so a host's log does not
-//! depend on anyone lowering the level for everything else.
+//! [`markers::HOST_MARKER_PREFIX`] is addressed to the host rather than to the
+//! console, and its target is the marker the host receives. Any warning or
+//! error is forwarded too, under a marker naming its level, so a host's log
+//! does not depend on anyone lowering the level for everything else.
 //!
 //! On wasm each level maps to the matching `console` method
 //! (`error`/`warn`/`info`/`debug`); on native everything goes to stderr.
@@ -56,11 +56,6 @@ static HOST_SINK: RwLock<Option<HostSink>> = RwLock::new(None);
 
 /// Takes a marker and a detail line for the native host log.
 type HostSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Prefix that marks an event's target as addressed to the host rather than
-/// naming a module. Rust module paths separate with `::`, so a dotted target
-/// cannot collide with one, and the rest of the target names the condition.
-pub const HOST_MARKER_PREFIX: &str = "truapi.";
 
 /// Targets this crate family owns, whether a module path (`truapi::chain_runtime`)
 /// or a marker addressed to the host (`truapi.chain.follow_budget_reached`). A
@@ -268,7 +263,7 @@ fn subscriber(
 				if !meta.target().starts_with(CRATE_TARGET_PREFIX) {
 					return false;
 				}
-				if meta.target().starts_with(HOST_MARKER_PREFIX) {
+				if meta.target().starts_with(markers::HOST_MARKER_PREFIX) {
 					// A host-addressed target the table does not list is a
 					// mistake, not a line to pass on: nothing downstream knows
 					// what its detail carries.
@@ -463,7 +458,7 @@ impl<S: Subscriber> Layer<S> for HostSinkLayer {
 		// A marked target names its own condition, so it is the marker. Anything
 		// else reaches a host only for being a warning, so the marker names the
 		// level and the detail keeps the module that raised it.
-		let (marker, detail) = if meta.target().starts_with(HOST_MARKER_PREFIX) {
+		let (marker, detail) = if meta.target().starts_with(markers::HOST_MARKER_PREFIX) {
 			(meta.target().to_string(), visitor.detail())
 		} else {
 			(
