@@ -13,14 +13,34 @@ use truapi::latest::{
 
 use crate::dotns_name::DOTNS_TLDS;
 
-/// Polkadot's Relay, Asset Hub, People and Bulletin genesis hashes, in
-/// lowercase hex, from PCF's signed Polkadot descriptor. A transaction signed
-/// for a chain with one of them can also be valid on Polkadot itself.
-const RESERVED_GENESIS_HASHES: [&str; 4] = [
-	"91b171bb158e2d3848fa23a9f1c25182fb8e20313b2c1eb49219da7a70ce90c3",
-	"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
-	"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
-	"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
+const POLKADOT_RELAY_GENESIS: [u8; 32] = [
+	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
+	0xfb, 0x8e, 0x20, 0x31, 0x3b, 0x2c, 0x1e, 0xb4, 0x92, 0x19, 0xda, 0x7a, 0x70, 0xce, 0x90, 0xc3,
+];
+
+const POLKADOT_ASSET_HUB_GENESIS: [u8; 32] = [
+	0x68, 0xd5, 0x6f, 0x15, 0xf8, 0x5d, 0x31, 0x36, 0x97, 0x0e, 0xc1, 0x69, 0x46, 0x04, 0x0b, 0xc1,
+	0x75, 0x26, 0x54, 0xe9, 0x06, 0x14, 0x7f, 0x7e, 0x43, 0xe9, 0xd5, 0x39, 0xd7, 0xc3, 0xde, 0x2f,
+];
+
+const POLKADOT_PEOPLE_GENESIS: [u8; 32] = [
+	0x67, 0xfa, 0x17, 0x7a, 0x09, 0x7b, 0xfa, 0x18, 0xf7, 0x7e, 0xa9, 0x5a, 0xb5, 0x6e, 0x9b, 0xcd,
+	0xfe, 0xb0, 0xe5, 0xb8, 0xa4, 0x0e, 0x46, 0x29, 0x8b, 0xb9, 0x3e, 0x16, 0xb6, 0xfc, 0x50, 0x08,
+];
+
+const POLKADOT_BULLETIN_GENESIS: [u8; 32] = [
+	0x27, 0x61, 0xc9, 0x52, 0x59, 0xd5, 0x9e, 0x55, 0xae, 0x3d, 0xaf, 0x75, 0x6c, 0x14, 0x13, 0xb4,
+	0x6e, 0x45, 0xa5, 0xa2, 0x98, 0x72, 0x99, 0xf8, 0xef, 0x8e, 0x5d, 0x8e, 0x47, 0x76, 0xcb, 0xc4,
+];
+
+/// Polkadot's Relay, Asset Hub, People and Bulletin genesis hashes, from PCF's
+/// signed Polkadot descriptor. A transaction signed for a chain with one of
+/// them can also be valid on Polkadot itself.
+const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
+	POLKADOT_RELAY_GENESIS,
+	POLKADOT_ASSET_HUB_GENESIS,
+	POLKADOT_PEOPLE_GENESIS,
+	POLKADOT_BULLETIN_GENESIS,
 ];
 
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
@@ -211,9 +231,7 @@ fn descriptor_role(chain: ChainIdentifier) -> &'static str {
 fn refuse_reserved_genesis(
 	genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
 ) -> Result<(), StackError> {
-	let is_reserved =
-		|hash: &[u8; 32]| RESERVED_GENESIS_HASHES.contains(&hex::encode(hash).as_str());
-	match genesis_hashes.into_iter().find(is_reserved) {
+	match genesis_hashes.into_iter().find(|hash| RESERVED_GENESIS_HASHES.contains(hash)) {
 		Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
 		None => Ok(()),
 	}
