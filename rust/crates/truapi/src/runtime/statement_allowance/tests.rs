@@ -2041,3 +2041,71 @@ fn a_validate_only_statement_claim_submits_nothing() {
 		),
 	);
 }
+
+/// A transport that ends the signer's session at its `after`-th
+/// `state_getStorage` read, as a logout or a wallet switch landing while a
+/// claim reads the chain.
+struct EndsSessionOnRead {
+	inner: ScriptedRpc,
+	ended: Arc<std::sync::atomic::AtomicBool>,
+	reads: std::sync::atomic::AtomicUsize,
+	after: usize,
+}
+
+impl subxt_rpcs::client::RpcClientT for EndsSessionOnRead {
+	fn request_raw<'a>(
+		&'a self,
+		method: &'a str,
+		params: Option<Box<subxt_rpcs::client::RawValue>>,
+	) -> subxt_rpcs::client::RawRpcFuture<'a, Box<subxt_rpcs::client::RawValue>> {
+		if method == "state_getStorage" &&
+			self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == self.after
+		{
+			self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+		}
+		self.inner.request_raw(method, params)
+	}
+
+	fn subscribe_raw<'a>(
+		&'a self,
+		sub: &'a str,
+		params: Option<Box<subxt_rpcs::client::RawValue>>,
+		unsub: &'a str,
+	) -> subxt_rpcs::client::RawRpcFuture<'a, subxt_rpcs::client::RawRpcSubscription> {
+		self.inner.subscribe_raw(sub, params, unsub)
+	}
+}
+
+/// A Bulletin long-term storage claim proves with the session's keys: once
+/// the session ends mid-claim, no proof is made and nothing is submitted.
+#[test]
+fn a_session_that_ends_during_a_long_term_storage_claim_submits_nothing() {
+	let candidates = lite_people(lite_entropy());
+	let keys = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+	let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let signer = SessionBoundSigner { keys: &keys, ended: ended.clone() };
+	// The ring's revision, then counter 0 already spent; the session ends
+	// with that second read, before counter 1's alias.
+	let scripted = ScriptedRpc::new(["null", r#""0x01""#, "null"]);
+	scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+	let rpc = RpcClient::new(HostRpcClient::new(EndsSessionOnRead {
+		inner: scripted.clone(),
+		ended,
+		reads: Default::default(),
+		after: 2,
+	}));
+	let extrinsics = test_fixtures::people_extrinsics();
+	let outcome = futures::executor::block_on(claim_long_term_storage(LongTermStorageClaim {
+		rpc: &rpc,
+		metadata: test_fixtures::people(),
+		target_chain: test_fixtures::people_target(&extrinsics),
+		signer: &signer,
+		network_suffix: b"paseo",
+		target: &NOTIFICATION_TARGET,
+		period: 1,
+		ring: &lite_ring(),
+	}));
+
+	let Err(error) = outcome else { panic!("a claim for a session that ended must fail") };
+	assert_eq!((error.to_string(), submissions(&scripted)), ("Disconnected".to_string(), 0));
+}
