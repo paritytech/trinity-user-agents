@@ -12,21 +12,15 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     }
 
     private var assetDetailsScene: AssetDetailsScene
-    private var identityDetailsScene: IdentityDetailsScene
 
     private let titleLabel: PolkadotUI.Label = .create { view in
         view.typography = .headlineSmall
         view.textColor = .fgPrimary
     }
 
-    init(
-        presenter: WalletMainPresenterProtocol,
-        assetDetailsScene: AssetDetailsScene,
-        identityDetailsScene: IdentityDetailsScene
-    ) {
+    init(presenter: WalletMainPresenterProtocol, assetDetailsScene: AssetDetailsScene) {
         self.presenter = presenter
         self.assetDetailsScene = assetDetailsScene
-        self.identityDetailsScene = identityDetailsScene
         super.init(rootView: WalletView())
     }
 
@@ -51,7 +45,6 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         setMainTitle()
 
         assetDetailsScene.attachNavigationHost(self)
-        identityDetailsScene.attachNavigationHost(self)
         setupHandlers()
         presenter.setup()
     }
@@ -61,11 +54,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     }
 
     private func setupHandlers() {
-        rootView.viewModel.identityDetailsViewModel = identityDetailsScene.viewModel
         rootView.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
-        rootView.viewModel.onUsername = { [weak self] in
-            self?.showIdentityDetailsOverlay()
-        }
 
         rootView.viewModel.onBalance = { [weak self] in
             self?.showAssetDetailsOverlay()
@@ -86,16 +75,6 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
             presenter?.removePocketCard(card)
         }
-    }
-
-    private func setShareButton() {
-        let item = UIBarButtonItem(
-            image: .iconShareWallet,
-            style: .plain,
-            target: self,
-            action: #selector(didTapShare)
-        )
-        navigationItem.setRightBarButton(item, animated: true)
     }
 
     private func resetRightButton() {
@@ -157,11 +136,6 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     @objc
-    func didTapShare() {
-        identityDetailsScene.share()
-    }
-
-    @objc
     func collapseExpandedSection() {
         rootView.viewModel.expandedSection = .none
         resetOverlayCloseButton()
@@ -174,13 +148,6 @@ extension WalletMainViewController: WalletMainViewProtocol {
         setOverlayCloseButton()
         resetRightButton()
         setTitleCenter(String(localized: .walletMainPurse))
-    }
-
-    private func showIdentityDetailsOverlay() {
-        rootView.viewModel.expandedSection = .identityDetails
-        setOverlayCloseButton()
-        setShareButton()
-        setTitleCenter(String(localized: .walletMainIdCard))
     }
 
     private func openCollectibles() {

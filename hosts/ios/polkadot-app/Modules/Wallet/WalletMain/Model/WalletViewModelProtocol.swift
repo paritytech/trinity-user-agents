@@ -11,12 +11,7 @@ enum CollectiblesPeek: Equatable {
 
 enum WalletExpandedSection: Equatable {
     case none
-    case identityDetails
     case assetDetails
-
-    var isIdentityShown: Bool {
-        showsSection(.identityDetails)
-    }
 
     var isAssetDetailsShown: Bool {
         showsSection(.assetDetails)
@@ -28,7 +23,6 @@ enum WalletExpandedSection: Equatable {
 }
 
 protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
-    var identityDetailsViewModel: IdentityDetailsViewModel { get set }
     var assetDetailsViewModel: AssetDetailsViewModel { get set }
     var expandedSection: WalletExpandedSection { get set }
     var isCollectiblesAvailable: Bool { get set }
@@ -40,7 +34,6 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var collectiblesPeek: CollectiblesPeek { get set }
     var collectiblesFrame: CGRect { get set }
 
-    var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
     var onCollapse: (() -> Void)? { get set }
     var onCollectibles: (() -> Void)? { get set }
@@ -50,7 +43,6 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
 
 @Observable
 class WalletViewModel: WalletViewModelProtocol {
-    var identityDetailsViewModel: IdentityDetailsViewModel = .init()
     var assetDetailsViewModel: AssetDetailsViewModel = .init()
     var expandedSection: WalletExpandedSection = .none
     var isCollectiblesAvailable: Bool = false
@@ -69,7 +61,6 @@ class WalletViewModel: WalletViewModelProtocol {
     /// it never redraws the Pocket.
     @ObservationIgnored var collectiblesFrame: CGRect = .zero
 
-    var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?
     var onCollapse: (() -> Void)?
     var onCollectibles: (() -> Void)?

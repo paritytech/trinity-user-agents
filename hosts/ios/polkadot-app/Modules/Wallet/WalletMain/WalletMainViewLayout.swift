@@ -23,8 +23,6 @@ struct WalletView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(spacing: -cardOverlap) {
-                        // The Humanity card the Pocket pins replaces the identity card,
-                        // so only the asset card is drawn here.
                         assetCard
                             .pocketMotion(viewModel.isPocketCleared ? .shrunkAway : .resting)
                         pocketCards
@@ -113,34 +111,11 @@ struct WalletView: View {
             onCollapse: { viewModel.onCollapse?() }
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
-        .scaleEffect(assetScale)
-        .opacity(assetOpacity)
         .zIndex(assetZIndex)
-        .allowsHitTesting(assetHitTest)
     }
 
     private var offScreenOffset: CGFloat {
         max(viewHeight, 1_000)
-    }
-
-    private var assetScale: CGFloat {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            1.0
-        case .identityDetails:
-            0.95
-        }
-    }
-
-    private var assetOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            1
-        case .identityDetails:
-            0
-        }
     }
 
     private var assetZIndex: Double {
@@ -149,18 +124,6 @@ struct WalletView: View {
             0
         case .assetDetails:
             2
-        case .identityDetails:
-            0
-        }
-    }
-
-    private var assetHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            true
-        case .identityDetails:
-            false
         }
     }
 }
@@ -185,8 +148,7 @@ private extension WalletView {
             switch viewModel.expandedSection {
             case .none:
                 dimensions[.top] + collectiblesPeekHeight
-            case .assetDetails,
-                 .identityDetails:
+            case .assetDetails:
                 dimensions[.top] - offScreenOffset
             }
         }
@@ -198,8 +160,7 @@ private extension WalletView {
         switch viewModel.expandedSection {
         case .none:
             1
-        case .assetDetails,
-             .identityDetails:
+        case .assetDetails:
             0
         }
     }
@@ -208,8 +169,7 @@ private extension WalletView {
         switch viewModel.expandedSection {
         case .none:
             true
-        case .assetDetails,
-             .identityDetails:
+        case .assetDetails:
             false
         }
     }
