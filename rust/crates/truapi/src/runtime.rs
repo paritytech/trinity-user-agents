@@ -1723,8 +1723,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.or_else(|| {
 						services.funding().selection(&intent).map(|selection| selection.rail)
 					});
-				let context =
-					crate::host_logic::funding_view::frame_context(&target, direction, rail);
+				let context = crate::host_logic::funding_view::frame_context(direction, rail);
 				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
 					.present_provider_frame(provider, intent, target, context)

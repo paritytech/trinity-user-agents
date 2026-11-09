@@ -72,7 +72,8 @@ use truapi::latest::{
 	HostPaymentTopUpStatusSubscribeItem,
 };
 
-pub use book::{FundingBookEntry, FundingSessionBook};
+pub use crate::host_logic::funding_activity::FundingBookEntry;
+pub use book::FundingSessionBook;
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
@@ -479,19 +480,7 @@ impl FundingRegistry {
 	/// The activity with the sessions history leaves out, worked out again
 	/// only once a session changed.
 	pub fn activity_view(&self) -> crate::host_logic::funding_activity::ActivityView {
-		let now_ms = current_unix_millis();
-		self.book.activity(
-			|| {
-				self.announced()
-					.into_iter()
-					.map(|session| {
-						let progress = session.progress(now_ms);
-						(session, progress)
-					})
-					.collect()
-			},
-			|| self.history(),
-		)
+		self.book.activity(|| self.entries(current_unix_millis()), || self.history())
 	}
 
 	/// Install the core database the sessions are stored in. Set-once;
@@ -1701,7 +1690,6 @@ impl FundingRegistry {
 					}
 				},
 				Some(Announcement::InProgress(in_progress)) => {
-					self.book.in_progress_changed(in_progress);
 					if let Some(feed) = feed {
 						feed.funding_in_progress_changed(in_progress);
 					}

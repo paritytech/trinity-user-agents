@@ -1,6 +1,4 @@
-use truapi::latest::{
-	FundingDirection, FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote, FundingRail,
-};
+use truapi::latest::{FundingDirection, FundingFailure, FundingPayout, FundingQuote, FundingRail};
 
 use super::*;
 use crate::{
@@ -148,7 +146,7 @@ fn networks_read_by_name() {
 		("base-sepolia", "Base-Sepolia"),
 	];
 	for (id, name) in cases {
-		assert_eq!(network_name(id), name);
+		assert_eq!(funding_network_name(id.into()), name);
 	}
 }
 
@@ -273,7 +271,7 @@ fn held_up_statuses_are_delayed() {
 		(FundingStatus::Sent, false),
 	];
 	for (status, delayed) in cases {
-		assert_eq!(status_delayed(&status), delayed, "{status:?}");
+		assert_eq!(funding_status_delayed(status.clone()), delayed, "{status:?}");
 	}
 }
 
@@ -402,12 +400,13 @@ fn a_withdrawal_fee_rounds_up_to_the_cent() {
 		(quote(10_500, 10_000_000, 400, 100), FundingDirection::In, 500, 10_000),
 	];
 	for (quote, direction, shown, net) in cases {
-		let breakdown = fee_breakdown(&quote, direction);
-		assert_eq!((breakdown.total_fee_rounded_up, breakdown.net), (shown, net), "{quote:?}");
+		let breakdown = funding_fee_breakdown(quote.clone(), direction);
+		assert_eq!((breakdown.total_fee, breakdown.net), (shown, net), "{quote:?}");
 	}
-	let inbound = fee_breakdown(&quote(10_500, 10_000_000, 400, 100), FundingDirection::In);
+	let inbound = funding_fee_breakdown(quote(10_500, 10_000_000, 400, 100), FundingDirection::In);
 	assert_eq!((inbound.rate_num, inbound.rate_den), (10_000, 10_000_000));
-	let outbound = fee_breakdown(&quote(10_000_000, 9_000, 10_000, 0), FundingDirection::Out);
+	let outbound =
+		funding_fee_breakdown(quote(10_000_000, 9_000, 10_000, 0), FundingDirection::Out);
 	assert_eq!((outbound.rate_num, outbound.rate_den), (9_000, 9_990_000));
 }
 
@@ -431,7 +430,7 @@ fn typed_amounts_parse_to_units_or_none() {
 		("340282366920938463463374607431768211456", 0, None),
 	];
 	for (text, decimals, expected) in cases {
-		assert_eq!(units(text, decimals), expected, "{text} @ {decimals}");
+		assert_eq!(funding_units(text.into(), decimals), expected, "{text} @ {decimals}");
 	}
 }
 
@@ -446,30 +445,26 @@ fn fiat_is_told_from_crypto_by_iso_code() {
 		("BTC", false),
 	];
 	for (code, fiat) in cases {
-		assert_eq!(asset_is_fiat(code), fiat, "{code}");
+		assert_eq!(funding_asset_is_fiat(code.into()), fiat, "{code}");
 	}
 	assert!(ISO_4217.windows(2).all(|pair| pair[0] < pair[1]), "sorted for binary search");
 }
 
 // Divergence "Sent funds button": the fact behind it holds on a bank top-up
-// only; an App route gets the path inside the App.
+// only.
 #[test]
-fn a_frame_knows_its_app_path_and_whether_the_user_transfers() {
-	let app = |route: &str| FundingFrameTarget::App { route: route.to_string() };
-	let page =
-		FundingFrameTarget::Page { url: "https://pay.example".to_string(), return_url: None };
+fn only_a_bank_top_up_awaits_the_users_transfer() {
 	let cases = [
-		(app("kyc"), FundingDirection::In, Some(FundingRail::Bank), Some("/kyc"), true),
-		(app("/card?x=1"), FundingDirection::In, Some(FundingRail::Card), Some("/card?x=1"), false),
-		(app("#pay"), FundingDirection::Out, Some(FundingRail::Bank), Some("#pay"), false),
-		(page, FundingDirection::In, None, None, false),
+		(FundingDirection::In, Some(FundingRail::Bank), true),
+		(FundingDirection::In, Some(FundingRail::Card), false),
+		(FundingDirection::Out, Some(FundingRail::Bank), false),
+		(FundingDirection::In, None, false),
 	];
-	for (target, direction, rail, path, transfer) in cases {
-		let context = frame_context(&target, direction, rail);
+	for (direction, rail, awaits) in cases {
 		assert_eq!(
-			(context.app_path.as_deref(), context.awaits_user_transfer),
-			(path, transfer),
-			"{target:?}"
+			frame_context(direction, rail).awaits_user_transfer,
+			awaits,
+			"{direction:?} {rail:?}"
 		);
 	}
 }

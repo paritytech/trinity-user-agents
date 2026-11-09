@@ -354,11 +354,7 @@ impl RuntimeServices {
 									.map(|asset| limits_on(selection, asset, Some(&network)))
 									.reduce(FundingAmountLimits::widest)
 									.unwrap_or(FundingAmountLimits::ANY);
-								FundingNetworkLimits {
-									display_name: funding_view::network_name(&network),
-									network,
-									limits,
-								}
+								FundingNetworkLimits { network, limits }
 							})
 							.collect()
 					},
@@ -378,7 +374,8 @@ impl RuntimeServices {
 			&candidates,
 			selection.as_ref().and_then(|selection| selection.network.as_deref()),
 		);
-		if self.funding_country_due() {
+		let detected_country = self.recent_funding_country();
+		if detected_country.is_none() {
 			self.detect_country_for_options(intent);
 		}
 		let options = FundingOptions {
@@ -390,7 +387,7 @@ impl RuntimeServices {
 			default_rail,
 			asset,
 			tokens,
-			detected_country: self.recent_funding_country(),
+			detected_country: detected_country.flatten(),
 		};
 		self.funding().book().options_changed(intent, options.clone());
 		feed.funding_options_changed(intent.to_string(), options);

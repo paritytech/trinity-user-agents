@@ -3131,10 +3131,9 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 }
 
 // The host reads funding state back from the runtime once the core says
-// what changed: the overlay's options are there before it is shown and gone
-// once it closed, the session and its progress once it started, and whether
-// a provider works on any session, which leaves no resume marker while none
-// does.
+// what changed: the overlay's options while it is up, then the started
+// session, its progress and activity; no resume marker is left while no
+// provider works on a session.
 #[test]
 fn the_host_reads_back_what_the_core_says_changed() {
 	use super::funding_feed::FundingChangeKind;
@@ -3167,8 +3166,8 @@ fn the_host_reads_back_what_the_core_says_changed() {
 				.into_iter()
 				.map(|entry| entry.session.intent)
 				.collect::<Vec<_>>(),
-			host.funding_in_progress(),
-			host.funding_payment_moved(intent.clone()),
+			host.funding_quotes(intent.clone()).is_some(),
+			host.funding_activity().in_flight.len(),
 			super::funding_resume_pending(database_directory),
 		),
 		(
@@ -3180,8 +3179,8 @@ fn the_host_reads_back_what_the_core_says_changed() {
 			intent.clone(),
 			Some(session.progress(crate::unix_time::current_unix_millis()).status),
 			vec![intent],
-			Some(false),
 			false,
+			1,
 			false,
 		)
 	);

@@ -220,10 +220,9 @@ impl DetectedCountry {
 impl RuntimeServices {
 	/// Quotes for funding session `intent`, sent to the host through
 	/// [`crate::platform::FundingPlatform::funding_quotes_changed`]. Every
-	/// funding provider is asked to price `ask` in the session's direction; an
-	/// ask naming no country takes the one the host detected. Only providers
-	/// whose routes carry the ask's rail, or that declare none, are asked.
-	/// Each list is
+	/// funding provider whose routes carry the ask's rail, or that declares
+	/// none, is asked to price `ask` in the session's direction; an ask
+	/// naming no country takes the one the host detected. Each list is
 	/// complete and replaces the one before: a provider's row is `Pending`
 	/// until it first answers, then `Quoted` or `Unavailable`, and keeps its
 	/// answer until it answers again. A quote that does not price the ask
@@ -353,15 +352,11 @@ impl RuntimeServices {
 		true
 	}
 
-	/// The country the host detected within the reuse window, without asking
-	/// the host: `None` when it found none or is due to be asked again.
-	pub fn recent_funding_country(&self) -> Option<String> {
-		self.funding_quotes().detected.recent(current_unix_millis()).flatten()
-	}
-
-	/// Whether the country the host detected is due to be asked again.
-	pub fn funding_country_due(&self) -> bool {
-		self.funding_quotes().detected.recent(current_unix_millis()).is_none()
+	/// The country the host detected within the reuse window, without
+	/// asking the host: `None` when it is due to be asked again, `Some(None)`
+	/// when it found none.
+	pub fn recent_funding_country(&self) -> Option<Option<String>> {
+		self.funding_quotes().detected.recent(current_unix_millis())
 	}
 
 	/// The country the host detected for the user as an ISO 3166-1 alpha-2
