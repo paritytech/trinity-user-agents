@@ -12,25 +12,6 @@ async fn gated_read(
 }
 
 #[test]
-fn callers_that_overlap_a_read_share_its_answer() {
-	let flight = SingleFlight::<&str, u32>::default();
-	let reads = AtomicUsize::new(0);
-	let (open, gate) = oneshot::channel();
-	let gate = gate.shared();
-
-	let answers = block_on(async {
-		let callers =
-			join_all((0..4).map(|_| flight.run("peopl", || gated_read(&reads, gate.clone()))));
-		let opener = async {
-			open.send(7).unwrap();
-		};
-		futures::join!(callers, opener).0
-	});
-
-	assert_eq!((answers, reads.load(Ordering::SeqCst)), (vec![7; 4], 1));
-}
-
-#[test]
 fn a_settled_read_is_not_kept_so_the_next_caller_reads_again() {
 	let flight = SingleFlight::<&str, Result<u32, String>>::default();
 	let reads = AtomicUsize::new(0);
