@@ -17,7 +17,6 @@ pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;
 pub mod funding;
-pub mod funding_activity;
 pub mod funding_providers;
 pub mod funding_view;
 pub mod product_account;

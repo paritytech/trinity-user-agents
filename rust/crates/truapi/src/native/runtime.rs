@@ -381,21 +381,6 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// The user's funding activity: sessions in flight and the history of
-	/// ended ones.
-	pub fn funding_activity(&self) -> crate::host_logic::funding_activity::FundingActivity {
-		self.runtime.funding_activity()
-	}
-
-	/// Acknowledge that the user saw how the ended funding sessions
-	/// `intents` went; see [`SigningHostRuntime::acknowledge_funding_shown`].
-	pub async fn acknowledge_funding_shown(
-		&self,
-		intents: Vec<String>,
-	) -> Result<Vec<String>, HostRejection> {
-		Ok(self.runtime.acknowledge_funding_shown(intents).await?)
-	}
-
 	/// Offer the funding providers the remote configuration names, then the
 	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
@@ -410,6 +395,15 @@ impl NativeTrUApiHostRuntime {
 	/// reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.runtime.funding_history()
+	}
+
+	/// Ended funding session `intent`'s summary, as `funding_history` lists
+	/// it.
+	pub fn funding_summary(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_summary(&intent)
 	}
 
 	/// Record that the host told the user how ended session `intent` went;

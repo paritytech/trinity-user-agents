@@ -2216,27 +2216,11 @@ pub struct FundingQuoteList {
 	/// Once every provider answered and none quoted, the reason they all
 	/// gave. `None` while any is pending or quoted, or when they gave
 	/// different reasons.
-	pub refusal: Option<FundingQuotesRefusal>,
+	pub refusal: Option<FundingQuoteUnavailable>,
 	/// Once every provider answered and none quoted, what their refusals
 	/// say about the amount: the lowest minimum any showed, otherwise the
 	/// highest maximum.
 	pub issue: Option<FundingAmountIssue>,
-}
-
-/// Why no provider can serve an ask, when every one of them gave the same
-/// reason.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum FundingQuotesRefusal {
-	/// No provider answered in time.
-	Timeout,
-	/// No provider serves the user's country.
-	CountryUnsupported,
-	/// Every provider refused with this message.
-	Other {
-		/// The providers' message.
-		message: String,
-	},
 }
 
 /// Why an amount cannot go ahead.

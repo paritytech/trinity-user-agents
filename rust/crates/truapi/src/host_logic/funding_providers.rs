@@ -336,9 +336,6 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 /// in either direction: $10. It is the floor of every [`FundingAmountLimits`].
 pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
 
-/// Decimals of the CASH balance every funding amount in balance units is in.
-pub const CASH_DECIMALS: u8 = 6;
-
 /// The amounts a session can take on one rail, asset, network and country,
 /// across every provider, as their refusals showed: the smallest amount
 /// some provider takes, and the largest. A provider whose limit is unknown
@@ -487,9 +484,6 @@ pub struct FundingOptions {
 	/// The rails a session can use: those some candidate routes, crypto
 	/// first, then card, then bank.
 	pub rails: Vec<FundingRail>,
-	/// The default rail: the first of `rails`, or card when none is
-	/// routed.
-	pub default_rail: FundingRail,
 	/// The asset an ask for the selection names, which `countries`, `limits`
 	/// and `networks` go by: the picked asset, else for card or bank the
 	/// user's currency when a provider takes it, else the first fiat one
