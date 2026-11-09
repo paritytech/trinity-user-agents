@@ -38,6 +38,12 @@ import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetu
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarTitle
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
+import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
+import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
+import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
@@ -51,12 +57,14 @@ import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEve
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.observe
 import io.paritytech.polkadotapp.common.utils.observeWhenCreated
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBar
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -84,6 +92,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     @Inject
     lateinit var statusBarScrollHolder: StatusBarScrollHolder
 
+    @Inject
+    lateinit var hostEventOriginProvider: HostEventOriginProvider
+
+    @Inject
+    lateinit var hostEventCapture: HostEventCapture
+
     private val viewModel by viewModels<RootViewModel>()
 
     private val navHostFragment: NavHostFragment by lazy(LazyThreadSafetyMode.NONE) {
@@ -105,7 +119,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         navigationHolder.attach(navController)
         contextManager.attachActivity(this)
 
-        intent?.let(::processIntent)
+        intent?.let {
+            if (isFreshNotificationLaunch(isRestored = savedInstanceState != null, intentFlags = it.flags)) {
+                recordProductNotificationTap(it)
+            }
+            processIntent(it)
+        }
 
         handleDeeplinkOutcome()
         syncSplashScreenTheme()
@@ -126,6 +145,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
 
+        recordProductNotificationTap(intent)
         processIntent(intent)
     }
 
@@ -306,6 +326,27 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             }
         }
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun recordProductNotificationTap(intent: Intent) {
+        if (!FeatureOption.HOST_TELEMETRY.isEnabled) return
+
+        // Reading extras unparcels an intent any app can send this exported activity.
+        runCatching {
+            if (!intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) return@runCatching
+
+            // One tap is one event, whatever later hands this intent back to the activity.
+            intent.removeExtra(PRODUCT_NOTIFICATION_INTENT_MARKER)
+
+            // The extras are reachable from any app, so only a name the core accepts is reported.
+            val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
+                ?.let { ProductId.parse(it).getOrNull() }
+                ?: return@runCatching
+
+            hostEventCapture.capture {
+                hostEventOriginProvider.current().productNotificationTapped(productId.value)
+            }
+        }.logFailure("Failed to capture product notification tapped event")
     }
 
     private fun processIntent(intent: Intent) {
