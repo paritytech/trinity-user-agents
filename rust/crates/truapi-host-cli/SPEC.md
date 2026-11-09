@@ -1163,21 +1163,38 @@ other statement accounts keep running.
 
 Interactive mode and `--serve` restore every saved peer for the selected
 session. Background responders treat transient failures and ended subscriptions
-as retryable, with exponential backoff capped at 30 seconds. A remote
+as retryable, with exponential backoff capped at 30 seconds. After a session
+that ran for more than 30 seconds, the backoff starts again at one second. When
+the People chain cannot be reached, a responder sends an acknowledgement, a
+pairing answer or a disconnect notice again for about 15 seconds before it
+fails. It sends a response again until the People chain takes it, because the
+request behind it has already run and is not run again. A responder whose
+session cannot be served at all, such as one without an active local session,
+reports why and stops instead of restarting. A remote
 `Disconnected` protocol message stops retrying and removes only that peer from
 `paired-hosts.json` and allowance renewal. Other peers remain saved and active.
 
 Each responder uses a durable, versioned replay ledger scoped by the root
 public key, peer statement account ID, and peer encryption public key. A
-request is recorded as started before its messages execute and as completed
-afterward. Either state suppresses execution of an unexpired duplicate while
-still publishing the statement-level success acknowledgement. A duplicate
+request is acknowledged, then recorded as started before its messages execute
+and as completed afterward. A request whose acknowledgement fails is not
+recorded, so it runs when it is delivered again. Either state suppresses
+execution of an unexpired duplicate while still publishing the statement-level
+success acknowledgement. When the People chain refuses an answer to a request
+that ran, the responder keeps the answer in memory and publishes it again, with
+a fresh expiry, when the request is delivered again. A peer's request channel
+holds only its newest statement, so only the newest such request per peer is
+kept, and kept answers do not survive a process restart. A duplicate
 `Disconnected` request still terminates and removes that peer. Expired entries
 are pruned. Missing or overly distant peer expiry is retained for at most the
 seven-day SSO statement lifetime. At 1,024 live entries the ledger rejects a new
-request before executing it instead of evicting an unexpired replay marker.
+request before acknowledging or executing it instead of evicting an unexpired
+replay marker.
 
-In `exec`, `/pair` waits for the responder to finish. With `--deeplink` plus
+In `exec`, `/pair` waits for the responder to finish. It restarts the responder
+after a failure, like a background responder, and finishes when the paired host
+disconnects. A session that cannot be served at all fails `/pair` with that
+reason. With `--deeplink` plus
 another `exec` command or a script, the responder runs only for that command's
 lifetime and is then stopped. One-shot `exec` and `--script` do not restore
 other saved responders.
