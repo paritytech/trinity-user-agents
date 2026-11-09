@@ -470,6 +470,11 @@ impl FundingRegistry {
 		Self { services, ..Self::default() }
 	}
 
+	/// The services the registry belongs to, while they are alive.
+	pub fn services(&self) -> Option<Arc<RuntimeServices>> {
+		self.services.upgrade()
+	}
+
 	/// Assign open session `intent` to the provider the user chose, and hand
 	/// it to that provider. Returns whether it was open and unassigned.
 	pub async fn select_provider(

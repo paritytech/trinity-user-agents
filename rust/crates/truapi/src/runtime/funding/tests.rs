@@ -1060,6 +1060,7 @@ fn a_selection_goes_with_its_overlay() {
 		asset: Some("EUR".to_string()),
 		network: None,
 		country: None,
+		currency: None,
 	};
 	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
 	let while_up = (registry.select("fs_1", picked.clone()), registry.selection("fs_1"));

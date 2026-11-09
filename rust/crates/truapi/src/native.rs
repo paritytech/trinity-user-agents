@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod funding;
 mod platform;
 mod pocket;
 mod renderer;
@@ -45,6 +46,10 @@ pub use callbacks::{
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
+pub use funding::{
+	funding_amount_issue, funding_asset_is_fiat, funding_fee_breakdown, funding_network_name,
+	funding_status_delayed, funding_status_in_flight, funding_units,
 };
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};

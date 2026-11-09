@@ -3440,6 +3440,7 @@ fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
 		asset: Some(asset.to_string()),
 		network: None,
 		country: None,
+		currency: None,
 	};
 	services.select_funding_options(&intent, card("EUR"));
 	answer
@@ -9328,12 +9329,12 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 	);
 }
 
-// A manifest can lag behind its provider, so every provider is asked
-// whatever its routes say, and what the answers show is kept: a provider that
-// quotes a rail it never declared becomes a candidate for it, one that refuses
-// the user's country is marked unsupported there, and both survive a restart.
+// Only providers whose routes carry the ask's rail are asked, and what their
+// answers show is kept: one that refuses the user's country is marked
+// unsupported there, and that survives a restart. A provider routing only
+// crypto is not asked for a card quote.
 #[test]
-fn quotes_ask_every_provider_and_learn_what_it_serves() {
+fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 	let storage = stub_platform();
 	let start = || {
 		let services = funding_services_over(storage.clone());
@@ -9427,7 +9428,7 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 			)
 			.ok()
 		});
-		if stored.is_some_and(|records| records.len() == 2) {
+		if stored.is_some_and(|records| records.len() == 1) {
 			break;
 		}
 		std::thread::sleep(Duration::from_millis(10));
@@ -9436,7 +9437,7 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 	let mut after_restart = (false, false);
 	for _ in 0..200 {
 		after_restart = (serves_card_eur(&restarted), us_unsupported(&restarted));
-		if after_restart == (true, true) {
+		if after_restart.1 {
 			break;
 		}
 		std::thread::sleep(Duration::from_millis(10));
@@ -9449,7 +9450,7 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 			before_restart,
 			after_restart,
 		),
-		(1, 1, (true, true), (true, true))
+		(1, 0, (false, true), (false, true))
 	);
 }
 

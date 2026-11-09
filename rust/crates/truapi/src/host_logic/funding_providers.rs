@@ -301,6 +301,9 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 /// in either direction: $10. It is the floor of every [`FundingAmountLimits`].
 pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
 
+/// Decimals of the CASH balance every funding amount in balance units is in.
+pub const CASH_DECIMALS: u8 = 6;
+
 /// The amounts a session can take on one rail, asset, network and country,
 /// across every provider, as their refusals showed: the smallest amount
 /// some provider takes, and the largest. A provider whose limit is unknown
@@ -422,6 +425,10 @@ pub struct FundingSelection {
 	pub network: Option<String>,
 	/// The ISO 3166-1 alpha-2 code the user picked, or `None` for none yet.
 	pub country: Option<String>,
+	/// The ISO 4217 code of the picked country's currency, which the host
+	/// reads from its locale data. A card or bank ask names it when a
+	/// provider takes it.
+	pub currency: Option<String>,
 }
 
 /// What a session's overlay offers: the providers it can be handed to, and
@@ -442,6 +449,23 @@ pub struct FundingOptions {
 	/// declares takes, for the network picker: for the picked asset, or the
 	/// widest range across the network's assets before one is picked.
 	pub networks: Vec<FundingNetworkLimits>,
+	/// The rails a session can use: those some candidate routes, crypto
+	/// first, then card, then bank.
+	pub rails: Vec<FundingRail>,
+	/// The default rail: the first of `rails`, or card when none is
+	/// routed.
+	pub default_rail: FundingRail,
+	/// The asset an ask for the selection names: the picked token for
+	/// crypto, and for card or bank the user's currency when a provider
+	/// takes it, else the first fiat one lists. `None` before a selection,
+	/// and for crypto before a token is picked.
+	pub asset: Option<String>,
+	/// For crypto, the tokens a session can use on the picked network, or
+	/// on any before one is picked, each once in the order first listed.
+	pub tokens: Vec<String>,
+	/// The country the device is likely in, as the core last detected it
+	/// within the hour.
+	pub detected_country: Option<String>,
 }
 
 /// The amounts one network takes for a crypto selection.
@@ -450,6 +474,8 @@ pub struct FundingOptions {
 pub struct FundingNetworkLimits {
 	/// The network, as routes declare it.
 	pub network: String,
+	/// The network's canonical English name, which hosts may localise.
+	pub display_name: String,
 	/// The amounts the selection takes on it.
 	pub limits: FundingAmountLimits,
 }

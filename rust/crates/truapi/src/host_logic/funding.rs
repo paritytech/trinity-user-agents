@@ -21,7 +21,12 @@ use truapi::latest::{
 };
 use url::Url;
 
-use crate::platform::ProductId;
+use crate::{
+	host_logic::funding_view::{
+		FundingCancelAvailability, FundingEndedView, cancel_availability, ended_view,
+	},
+	platform::ProductId,
+};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -96,6 +101,10 @@ pub struct FundingSessionSummary {
 	pub transaction_id: Option<String>,
 	/// The provider's latest reference.
 	pub reference: Option<String>,
+	/// The facts about how the session ended. Not stored: it is worked out
+	/// from the rest whenever a summary is made or loaded.
+	#[codec(skip)]
+	pub ended: FundingEndedView,
 }
 
 impl FundingSession {
@@ -103,6 +112,7 @@ impl FundingSession {
 	pub fn summary(&self) -> FundingSessionSummary {
 		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
+			ended: FundingEndedView::default(),
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
 			direction: self.direction,
@@ -117,10 +127,17 @@ impl FundingSession {
 			transaction_id: self.transaction_id(),
 			reference: self.reference(),
 		}
+		.with_ended()
 	}
 }
 
 impl FundingSessionSummary {
+	/// The summary with its `ended` view worked out from the rest.
+	pub fn with_ended(mut self) -> Self {
+		self.ended = ended_view(&self);
+		self
+	}
+
 	/// The terminal item a subscriber receives.
 	pub fn wire_item(&self) -> HostFundingStatusSubscribeItem {
 		self.stage.wire_item(None)
@@ -282,6 +299,8 @@ pub struct FundingProgress {
 	/// the session; from then on a cancel is a request the provider answers,
 	/// and only the provider can end the session.
 	pub money_moved: bool,
+	/// Whether the user can cancel the session now, and what a cancel does.
+	pub cancel: FundingCancelAvailability,
 }
 
 /// Where a session stands, one line for the host to word: in flight by
@@ -889,13 +908,15 @@ impl FundingSession {
 				times[index] = times[index + 1];
 			}
 		}
+		let steps: Vec<FundingProgressStep> = steps
+			.iter()
+			.zip(times)
+			.map(|(step, reached_at_ms)| FundingProgressStep { step: *step, reached_at_ms })
+			.collect();
+		let band = self.band(now_ms);
+		let status = self.status(now_ms);
+		let money_moved = self.money_moved();
 		FundingProgress {
-			steps: steps
-				.iter()
-				.zip(times)
-				.map(|(step, reached_at_ms)| FundingProgressStep { step: *step, reached_at_ms })
-				.collect(),
-			band: self.band(now_ms),
 			last_heard_at_ms: self
 				.updates
 				.last()
@@ -928,9 +949,12 @@ impl FundingSession {
 			retrying: self.is_progress_retrying(),
 			payout: self.payout().cloned(),
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
-			status: self.status(now_ms),
 			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
-			money_moved: self.money_moved(),
+			money_moved,
+			cancel: cancel_availability(&status, money_moved),
+			steps,
+			band,
+			status,
 		}
 	}
 

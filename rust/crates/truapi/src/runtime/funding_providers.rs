@@ -25,6 +25,7 @@ use crate::{
 			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
 			LearnedSupport, LimitScope, amount_limits, country_support,
 		},
+		funding_view,
 		worker_manifest::WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductId},
@@ -113,6 +114,26 @@ impl FundingProviders {
 				manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
 			})
 			.map(|(provider_id, _)| provider_id)
+			.collect()
+	}
+
+	/// The quote targets asked to price an ask in `direction` on `rail`: those
+	/// whose routes, as declared and as their answers confirmed, carry the
+	/// rail, or that declare none, in the host's order.
+	pub fn quote_targets_for(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+	) -> Vec<ProductId> {
+		let candidates = self.candidates(direction);
+		self.quote_targets()
+			.into_iter()
+			.filter(|provider_id| {
+				candidates.iter().any(|candidate| {
+					candidate.provider_id == *provider_id &&
+						funding_view::routes_rail(candidate, rail)
+				})
+			})
 			.collect()
 	}
 
@@ -292,7 +313,11 @@ impl RuntimeServices {
 							.map(|asset| limits_on(selection, asset, Some(&network)))
 							.reduce(FundingAmountLimits::widest)
 							.unwrap_or(FundingAmountLimits::ANY);
-						FundingNetworkLimits { network, limits }
+						FundingNetworkLimits {
+							display_name: funding_view::network_name(&network),
+							network,
+							limits,
+						}
 					})
 					.collect(),
 					_ => Vec::new(),
@@ -301,10 +326,49 @@ impl RuntimeServices {
 				(countries, limits_on(selection, asset, selection.network.as_deref()), networks)
 			},
 		};
+		let rails = funding_view::routed_rails(&candidates);
+		let default_rail = funding_view::default_rail(&rails);
+		let asset = selection.as_ref().and_then(|selection| match selection.rail {
+			FundingRail::Crypto => selection.asset.clone(),
+			rail => {
+				Some(funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref()))
+			},
+		});
+		let tokens = funding_view::crypto_tokens(
+			&candidates,
+			selection.as_ref().and_then(|selection| selection.network.as_deref()),
+		);
+		if self.funding_country_due() {
+			self.detect_country_for_options(intent);
+		}
 		feed.funding_options_changed(
 			intent.to_string(),
-			FundingOptions { candidates, countries, limits, networks },
+			FundingOptions {
+				candidates,
+				countries,
+				limits,
+				networks,
+				rails,
+				default_rail,
+				asset,
+				tokens,
+				detected_country: self.recent_funding_country(),
+			},
 		);
+	}
+
+	/// Ask the host for the user's country in the background, and send
+	/// session `intent` its options again once it answered one.
+	fn detect_country_for_options(&self, intent: &str) {
+		let Some(services) = self.funding().services() else {
+			return;
+		};
+		let intent = intent.to_string();
+		(self.spawner)(Box::pin(async move {
+			if services.detected_funding_country().await.is_some() {
+				services.send_funding_options(&intent);
+			}
+		}));
 	}
 
 	/// Read every host provider's manifest that is not already being read. A

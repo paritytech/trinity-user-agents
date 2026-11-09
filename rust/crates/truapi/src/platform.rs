@@ -2210,6 +2210,51 @@ pub struct FundingQuoteList {
 	/// When the core asks every provider again, in Unix milliseconds. Each
 	/// row keeps its answer until the provider answers again.
 	pub refresh_at_ms: u64,
+	/// The amount the list prices, in balance units, which `issue` is
+	/// about.
+	pub amount: u128,
+	/// Once every provider answered and none quoted, the reason they all
+	/// gave. `None` while any is pending or quoted, or when they gave
+	/// different reasons.
+	pub refusal: Option<FundingQuotesRefusal>,
+	/// Once every provider answered and none quoted, what their refusals
+	/// say about the amount: the lowest minimum any showed, otherwise the
+	/// highest maximum.
+	pub issue: Option<FundingAmountIssue>,
+}
+
+/// Why no provider can serve an ask, when every one of them gave the same
+/// reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuotesRefusal {
+	/// No provider answered in time.
+	Timeout,
+	/// No provider serves the user's country.
+	CountryUnsupported,
+	/// Every provider refused with this message.
+	Other {
+		/// The providers' message.
+		message: String,
+	},
+}
+
+/// Why an amount cannot go ahead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingAmountIssue {
+	/// A withdrawal of more than the user can spend.
+	NotEnoughBalance,
+	/// Below the smallest amount any provider takes.
+	BelowMinimum {
+		/// That smallest amount, in balance units.
+		min: u128,
+	},
+	/// Above the largest amount any provider takes.
+	AboveMaximum {
+		/// That largest amount, in balance units.
+		max: u128,
+	},
 }
 
 /// One provider's place in the list a quote request fills in.
