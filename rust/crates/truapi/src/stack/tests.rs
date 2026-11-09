@@ -8,6 +8,11 @@ const POLKADOT_PEOPLE: [u8; 32] = [
 	0xfe, 0xb0, 0xe5, 0xb8, 0xa4, 0x0e, 0x46, 0x29, 0x8b, 0xb9, 0x3e, 0x16, 0xb6, 0xfc, 0x50, 0x08,
 ];
 
+const POLKADOT_ASSET_HUB: [u8; 32] = [
+	0x68, 0xd5, 0x6f, 0x15, 0xf8, 0x5d, 0x31, 0x36, 0x97, 0x0e, 0xc1, 0x69, 0x46, 0x04, 0x0b, 0xc1,
+	0x75, 0x26, 0x54, 0xe9, 0x06, 0x14, 0x7f, 0x7e, 0x43, 0xe9, 0xd5, 0x39, 0xd7, 0xc3, 0xde, 0x2f,
+];
+
 fn bundled(
 	descriptor: &serde_json::Value,
 	allows_reserved_values: bool,
@@ -48,6 +53,15 @@ fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
 			Err(RemoteChainInfoError::NotSupported),
 		]
 	);
+}
+
+/// Only a stack link names a stack, so any other pointer is refused.
+#[test]
+fn a_pointer_that_is_not_a_stack_link_is_refused() {
+	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
+
+	let refused = Stack::bundled("https://example.invalid", &bytes, false);
+	assert!(matches!(refused, Err(StackError::Pointer(_))), "{refused:?}");
 }
 
 /// A later copy is checked against the pointer's key, so a pointer without
@@ -112,11 +126,13 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 }
 
 /// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,
-/// including roles the core never reads, start only in a build that allows
-/// them.
+/// a role the core reads or one it never reads, start only in a build that
+/// allows them.
 #[test]
 fn reserved_values_need_the_builds_permission() {
 	let on_dot = test_descriptor("dot", [0xa1; 32], [0xb2; 32], None);
+	let on_polkadot_asset_hub =
+		test_descriptor("paseo", [0xa1; 32], [0xb2; 32], Some(POLKADOT_ASSET_HUB));
 	let mut polkadot_people_as_another_role =
 		test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
 	polkadot_people_as_another_role["chains"]
@@ -125,11 +141,12 @@ fn reserved_values_need_the_builds_permission() {
 		.push(test_descriptor_chain("Collectives", POLKADOT_PEOPLE, Some(1001)));
 
 	assert_eq!(
-		[&on_dot, &polkadot_people_as_another_role].map(|descriptor| {
+		[&on_dot, &on_polkadot_asset_hub, &polkadot_people_as_another_role].map(|descriptor| {
 			(bundled(descriptor, false).err(), bundled(descriptor, true).is_ok())
 		}),
 		[
 			(Some(StackError::ReservedTld), true),
+			(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_ASSET_HUB }), true),
 			(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true),
 		]
 	);
