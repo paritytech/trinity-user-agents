@@ -27,11 +27,11 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import uniffi.truapi.ProductId
 import uniffi.truapi.CodeFormat
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIProductScanViewModelTest {

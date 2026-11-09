@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -20,8 +19,12 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.FundingBand
+import uniffi.truapi.FundingBookEntry
+import uniffi.truapi.FundingCancelAvailability
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingEndedOutcome
+import uniffi.truapi.FundingEndedView
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
@@ -35,13 +38,13 @@ import uniffi.truapi.ProductId
 
 class FundingActivityCenterTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
-    private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
+    private val sessions = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
     private val inProgress = MutableStateFlow<Boolean?>(null)
-    private val endedSummaries = MutableStateFlow<Set<String>>(emptySet())
+    private val unacknowledged = MutableStateFlow<Set<String>>(emptySet())
     private var recorded = emptyList<FundingSessionSummary>()
     private val runtime = mockk<FundingRuntime> {
         every { sessions } returns this@FundingActivityCenterTest.sessions
-        every { endedSummaries } returns this@FundingActivityCenterTest.endedSummaries
+        every { unacknowledged } returns this@FundingActivityCenterTest.unacknowledged
         every { inProgress } returns this@FundingActivityCenterTest.inProgress
         coEvery { history() } answers { Result.success(recorded) }
         coEvery { start() } returns Result.success(Unit)
@@ -77,7 +80,7 @@ class FundingActivityCenterTest {
     @Test
     fun `an ending handed over as its summary is acknowledged once its row is built`() = runBlocking {
         recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
-        endedSummaries.value = setOf("in")
+        unacknowledged.value = setOf("in")
 
         val activity = center.observe().first()
         center.observe().first()
@@ -292,10 +295,11 @@ class FundingActivityCenterTest {
         refunded = refunded,
         transactionId = null,
         reference = null,
+        ended = FundingEndedView(FundingEndedOutcome.Open, null, null, null, null),
     )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
-        sessions.value = entries.associate { (session, progress) -> session.intent to FundingSessionEntry(session, progress) }
+        sessions.value = entries.associate { (session, progress) -> session.intent to FundingBookEntry(session, progress) }
     }
 
     private fun progress(
@@ -318,6 +322,7 @@ class FundingActivityCenterTest {
         status = status,
         longerAtMs = null,
         moneyMoved = false,
+        cancel = FundingCancelAvailability.UNAVAILABLE,
     )
 
     private fun session(

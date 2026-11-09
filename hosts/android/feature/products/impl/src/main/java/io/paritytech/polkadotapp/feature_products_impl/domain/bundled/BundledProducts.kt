@@ -9,15 +9,15 @@ import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestPar
 import uniffi.truapi.BundleReader
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.FundingProviderEntry
-import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
 import uniffi.truapi.bundledAssetPath
-import uniffi.truapi.bundledProducts as coreBundledProducts
+import uniffi.truapi.bundledFundingProviders
 import java.io.InputStream
 import java.net.URI
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import uniffi.truapi.bundledProducts as coreBundledProducts
 
 /** The files the app ships, by their path under its assets. */
 interface BundledProductFiles {
@@ -125,13 +125,8 @@ class BundledProducts internal constructor(
 
     fun hasApp(product: BundledProduct): Boolean = shipped.products[product.id]?.hasApp == true
 
-    /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
-    fun fundingProviders(): List<FundingProviderEntry> = shipped.products.values.sortedBy { it.id.value }.mapNotNull { product ->
-        val manifest = workerManifest(product)
-            ?.takeIf { hasWorker(product) && worker(product, it)?.includesFunding == true }
-            ?: return@mapNotNull null
-        FundingProviderEntry(productId = product.id, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
-    }
+    /** The bundled products that serve Funding, as the core reads them: the manifest shipped is the one it goes by. */
+    fun fundingProviders(): List<FundingProviderEntry> = if (enabled) bundledFundingProviders(ROOT, reader) else emptyList()
 
     /** Whether the worker [product] ships declares the Chat modality; a manifest the parser rejects declares none. */
     fun includesChat(product: BundledProduct): Boolean =

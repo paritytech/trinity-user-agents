@@ -69,6 +69,7 @@ class BundledProductsTest {
                     productId = ProductId.parse("provider.dot").getOrThrow(),
                     workerManifest = manifest,
                     origin = FundingProviderOrigin.BUNDLED,
+                    hasApp = true,
                 ),
             ),
             products.fundingProviders(),

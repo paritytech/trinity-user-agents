@@ -4,12 +4,11 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.funding.Fundi
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.U128
 import java.math.BigDecimal
-import java.math.BigInteger
-import java.math.RoundingMode
 
 /**
  * The payment balance as the funding screens show it. Amounts cross the FFI as decimal strings of the
- * asset's smallest unit, and are drawn as dollars followed by the asset's symbol.
+ * asset's smallest unit, and are drawn as dollars followed by the asset's symbol. The core reads typed text into
+ * units (`fundingUnits`).
  */
 data class FundingCash(
     val symbol: String,
@@ -17,10 +16,6 @@ data class FundingCash(
 ) {
     fun decimal(units: U128): BigDecimal =
         units.toBigIntegerOrNull()?.toBigDecimal()?.movePointLeft(precision)?.canonical() ?: BigDecimal.ZERO
-
-    /** Rounds down, so the host never asks for more than the user typed. */
-    fun units(value: BigDecimal): U128 =
-        value.movePointRight(precision).setScale(0, RoundingMode.DOWN).toBigInteger().max(BigInteger.ZERO).toString()
 
     /** "$50.20", with cents only when there are any. */
     fun figure(value: BigDecimal): String = FundingMoney.figure(value)

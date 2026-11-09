@@ -4,28 +4,28 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountrySupport
 import uniffi.truapi.FundingDirection
-import uniffi.truapi.FundingLimit
 import uniffi.truapi.FundingNetworkLimits
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
-import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
-import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
-import uniffi.truapi.FundingRoute
+import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import kotlin.time.Instant
 import uniffi.truapi.FundingCountry as CoreFundingCountry
 
+// The core decides the rails, the asset, who is asked and the amount rules; these check the screen state reads them.
 class FundingFlowStateTest {
     private companion object {
         const val REFRESH_AT_MS = 120_000uL
@@ -37,14 +37,18 @@ class FundingFlowStateTest {
     private val providerB = ProductId.parse("b.dot").getOrThrow()
 
     @Test
-    fun `card is the default rail whenever a provider serves it`() {
-        assertEquals(FundingRail.CARD, state(listOf(candidate(providerA, crypto()), candidate(providerB, card()))).rail)
-        assertEquals(FundingRail.CRYPTO, state(listOf(candidate(providerA, crypto()))).rail)
+    fun `the core's default rail holds until the user picks one`() {
+        val flow = state(options(defaultRail = FundingRail.CRYPTO))
+        val picked = flow.withRail(FundingRail.CARD)
+
+        assertEquals(FundingRail.CRYPTO, flow.rail)
+        assertEquals(FundingRail.CRYPTO, state(null).withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
+        assertEquals(FundingRail.CARD, picked.withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
     }
 
     @Test
-    fun `the ask names the payment country's currency when a provider takes it`() {
-        val ask = state(listOf(candidate(providerA, card(assets = listOf("EUR", "USD")))), amount = "50").currentAsk()
+    fun `a card ask names the asset the core resolved`() {
+        val ask = state(options(asset = "EUR"), amount = "50").currentAsk()
 
         assertEquals(
             FundingQuoteAsk(
@@ -57,30 +61,47 @@ class FundingFlowStateTest {
             ),
             ask,
         )
+        assertNull(state(options(asset = null), amount = "50").currentAsk())
     }
 
     @Test
-    fun `no limit shows until the core reports one`() {
-        val flow = state(listOf(candidate(providerA, card())), amount = "5")
-
-        assertEquals(FundingLimits(null, null), flow.amountLimits)
-        assertNull(flow.amountIssue)
+    fun `the selection carries the country's currency`() {
+        assertEquals(
+            FundingSelection(rail = FundingRail.CARD, asset = "EUR", network = null, country = "DE", currency = "EUR"),
+            state(options(asset = "EUR")).selection,
+        )
     }
 
     @Test
-    fun `the core's limits bound the amount`() {
-        val limits = FundingLimits(BigDecimal("10"), BigDecimal("5000"))
-        val below = state(listOf(candidate(providerA, card())), amount = "5").withAmountLimits(limits)
-        val above = state(listOf(candidate(providerA, card())), amount = "6000").withAmountLimits(limits)
+    fun `text that is no amount asks for nothing`() {
+        val flow = state(options(asset = "EUR"), amount = "5.")
 
-        assertEquals(FundingAmountIssue.BelowMinimum(BigDecimal("10")), below.amountIssue)
-        assertFalse(below.canContinue)
-        assertEquals(FundingAmountIssue.AboveMaximum(BigDecimal("5000")), above.amountIssue)
+        assertEquals("5000000", flow.units)
+        assertNull(state(options(asset = "EUR"), amount = "abc").units)
+        assertNull(state(options(asset = "EUR"), amount = "abc").currentAsk())
+    }
+
+    @Test
+    fun `the amount issue is the core's`() {
+        val limits = FundingAmountLimits(min = "10000000", max = "5000000000")
+
+        assertEquals(FundingAmountIssue.BelowMinimum("10000000"), state(options(limits = limits), amount = "5").amountIssue)
+        assertFalse(state(options(limits = limits), amount = "5").canContinue)
+        assertEquals(FundingAmountIssue.NotEnoughBalance, state(options(), FundingDirection.OUT, amount = "300").amountIssue)
+        assertNull(state(options(limits = limits), amount = "50").amountIssue)
+    }
+
+    @Test
+    fun `quoting lasts until the first list for the ask arrives`() {
+        val asked = state(options(asset = "EUR"), amount = "50").let { it.asking(requireNotNull(it.currentAsk())) }
+
+        assertTrue(asked.isQuoting)
+        assertFalse(asked.receiving(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
     }
 
     @Test
     fun `a list for an earlier request is dropped`() {
-        val asked = state(listOf(candidate(providerA, card())), amount = "50").let { start ->
+        val asked = state(options(asset = "EUR"), amount = "50").let { start ->
             start.asking(requireNotNull(start.currentAsk())).requested(2u)
         }
 
@@ -91,52 +112,22 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `a new ask drops the lists of the request before it`() {
-        val first = state(listOf(candidate(providerA, card())), amount = "50").let { start ->
-            start.asking(requireNotNull(start.currentAsk()))
-                .requested(1u)
-                .receiving(list(quoted(providerA, send = "500"), best = providerA, requestId = 1u))
-        }
-        val second = first.withAmountText("60").let { it.asking(requireNotNull(it.currentAsk())) }
-
-        assertSame(second, second.receiving(list(quoted(providerA, send = "500"), best = providerA, requestId = 1u)))
-        assertEquals(providerA, second.receiving(list(quoted(providerA, send = "600"), best = providerA, requestId = 2u)).selectedProviderId)
-    }
-
-    @Test
-    fun `one quote among refusals lets the amount through`() {
-        val flow = state(listOf(candidate(providerA, card()), candidate(providerB, card())), amount = "5").let { start ->
-            start.asking(requireNotNull(start.currentAsk()))
-                .receiving(list(refused(providerA, FundingQuoteRefusal.BelowMinimum("20000000")), quoted(providerB, send = "500"), best = providerB))
-        }
-
-        assertNull(flow.amountIssue)
-        assertEquals(providerB, flow.selectedProviderId)
-    }
-
-    @Test
-    fun `withdrawing more than the balance is refused locally`() {
-        val flow = state(listOf(candidate(providerA, card(FundingDirection.OUT))), FundingDirection.OUT, amount = "300")
-
-        assertEquals(FundingAmountIssue.NotEnoughBalance, flow.amountIssue)
-    }
-
-    @Test
     fun `the core's best quote is selected until the user picks another`() {
-        val quoted = state(listOf(candidate(providerA, card()), candidate(providerB, card())), amount = "50").let { start ->
+        val quoted = state(options(asset = "EUR"), amount = "50").let { start ->
             start.asking(requireNotNull(start.currentAsk()))
                 .receiving(list(quoted(providerA, send = "5200"), quoted(providerB, send = "5100"), best = providerB))
         }
 
         assertEquals(listOf(providerB, providerA), listOf(quoted.selectedProviderId, quoted.withChosenProvider(providerA).selectedProviderId))
         assertEquals(Instant.fromEpochMilliseconds(REFRESH_AT_MS.toLong()), quoted.refreshAt)
+        assertEquals(listOf(providerA, providerB), quoted.servingCandidates.map { it.providerId })
     }
 
     // Asking the same ask again starts every row pending; the old price stays on screen, greyed, until the new one.
     @Test
     fun `a row pending after the same ask again keeps its last quote greyed`() {
         val quote = quoted(providerA, send = "5200")
-        val refreshed = state(listOf(candidate(providerA, card())), amount = "50").let { start ->
+        val refreshed = state(options(asset = "EUR"), amount = "50").let { start ->
             val ask = requireNotNull(start.currentAsk())
             start.asking(ask)
                 .receiving(list(quote, best = providerA))
@@ -150,11 +141,13 @@ class FundingFlowStateTest {
 
     @Test
     fun `the core's country support marks unsupported countries and lists each country's minimum`() {
-        val flow = state(listOf(candidate(providerA, card())), amount = "5").withCountrySupport(
-            listOf(
-                CoreFundingCountry("fr", FundingCountrySupport.Unsupported),
-                CoreFundingCountry("DE", FundingCountrySupport.Supported(min = "20000000")),
-                CoreFundingCountry("PT", FundingCountrySupport.Supported(min = null)),
+        val flow = state(
+            options(
+                countries = listOf(
+                    CoreFundingCountry("fr", FundingCountrySupport.Unsupported),
+                    CoreFundingCountry("DE", FundingCountrySupport.Supported(min = "20000000")),
+                    CoreFundingCountry("PT", FundingCountrySupport.Supported(min = null)),
+                ),
             ),
         )
 
@@ -163,90 +156,76 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `networks and tokens are the union of the crypto routes`() {
+    fun `networks carry the core's names and minimums`() {
         val flow = state(
-            listOf(
-                candidate(providerA, crypto(assets = listOf("USDC"), networks = listOf("ethereum", "polkadot"))),
-                candidate(providerB, crypto(assets = listOf("USDT"), networks = listOf("ethereum", "tron"))),
-            ),
-        )
-
-        assertEquals(listOf("ethereum", "polkadot", "tron"), flow.networks.map { it.id })
-        assertEquals(listOf("USDT"), flow.withNetwork("tron").tokens.map { it.symbol })
-    }
-
-    @Test
-    fun `the core's options set each network's minimum`() {
-        val flow = state(listOf(candidate(providerA, crypto(networks = listOf("ethereum", "polkadot"))))).withOptions(
-            FundingOptions(
-                candidates = listOf(candidate(providerA, crypto(networks = listOf("ethereum", "polkadot")))),
-                countries = emptyList(),
-                limits = FundingAmountLimits(min = null, max = null),
+            options(
+                defaultRail = FundingRail.CRYPTO,
                 networks = listOf(
-                    FundingNetworkLimits("ethereum", FundingAmountLimits(min = "30000000", max = null)),
-                    FundingNetworkLimits("polkadot", FundingAmountLimits(min = null, max = null)),
+                    FundingNetworkLimits("ethereum", "Ethereum", FundingAmountLimits(min = "30000000", max = null)),
+                    FundingNetworkLimits("polkadot", "Polkadot", FundingAmountLimits(min = null, max = null)),
                 ),
             ),
         )
 
+        assertEquals(listOf(FundingNetwork("ethereum", "Ethereum"), FundingNetwork("polkadot", "Polkadot")), flow.networks)
         assertEquals(BigDecimal("30") to null, flow.minimum("ethereum") to flow.minimum("polkadot"))
     }
 
     @Test
     fun `changing the rail drops the network, token and quotes`() {
-        val flow = state(listOf(candidate(providerA, card()), candidate(providerB, crypto())), amount = "50").let { start ->
-            start.asking(requireNotNull(start.currentAsk())).withRail(FundingRail.CRYPTO).withNetwork("ethereum")
-        }
+        val start = state(options(asset = "EUR"), amount = "50")
+        val flow = start.asking(requireNotNull(start.currentAsk())).withRail(FundingRail.CRYPTO).withNetwork("ethereum")
 
-        assertEquals(state(listOf(candidate(providerA, card()), candidate(providerB, crypto())), amount = "50").copy(rail = FundingRail.CRYPTO, network = "ethereum"), flow)
+        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum"), flow)
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
     private fun state(
-        candidates: List<FundingCandidate>,
+        options: FundingOptions?,
         direction: FundingDirection = FundingDirection.IN,
         amount: String = "",
     ) = FundingFlowState.initial(
         direction = direction,
         cash = cash,
         spendable = BigDecimal("226.78"),
-        candidates = candidates,
+        options = options,
         amount = null,
         country = germany,
     ).withAmountText(amount)
 
-    private fun candidate(
-        providerId: ProductId,
-        route: FundingRoute,
-        limits: List<FundingLimit> = emptyList(),
-    ) = FundingCandidate(
-        providerId = providerId,
-        routes = listOf(route),
-        unsupported = emptyList(),
+    private fun options(
+        defaultRail: FundingRail = FundingRail.CARD,
+        asset: String? = "EUR",
+        limits: FundingAmountLimits = FundingAmountLimits(min = null, max = null),
+        countries: List<CoreFundingCountry> = emptyList(),
+        networks: List<FundingNetworkLimits> = emptyList(),
+    ) = FundingOptions(
+        candidates = listOf(candidate(providerA), candidate(providerB)),
+        countries = countries,
         limits = limits,
+        networks = networks,
+        rails = listOf(FundingRail.CRYPTO, FundingRail.CARD),
+        defaultRail = defaultRail,
+        asset = asset,
+        tokens = emptyList(),
+        detectedCountry = null,
     )
 
-    private fun card(direction: FundingDirection = FundingDirection.IN, assets: List<String> = listOf("EUR")) =
-        route(FundingRail.CARD, direction, assets, networks = null)
-
-    private fun crypto(assets: List<String> = listOf("USDC"), networks: List<String> = listOf("ethereum")) =
-        route(FundingRail.CRYPTO, FundingDirection.IN, assets, networks)
-
-    private fun route(rail: FundingRail, direction: FundingDirection, assets: List<String>, networks: List<String>?) =
-        FundingRoute(
-            rail = rail,
-            directions = listOf(direction),
-            assets = assets,
-            networks = networks,
-            countries = null,
-        )
-
-    private fun list(vararg rows: FundingQuoteRow, best: ProductId? = null, requestId: ULong = 1u) =
-        FundingQuoteList(requestId = requestId, rows = rows.toList(), best = best, refreshAtMs = REFRESH_AT_MS)
-
-    private fun refused(providerId: ProductId, refusal: FundingQuoteRefusal) = FundingQuoteRow(
+    private fun candidate(providerId: ProductId) = FundingCandidate(
         providerId = providerId,
-        state = FundingQuoteState.Unavailable(FundingQuoteUnavailable.Refused(refusal)),
+        routes = emptyList(),
+        unsupported = emptyList(),
+        limits = emptyList(),
+    )
+
+    private fun list(vararg rows: FundingQuoteRow, best: ProductId? = null, requestId: ULong = 1u) = FundingQuoteList(
+        requestId = requestId,
+        rows = rows.toList(),
+        best = best,
+        refreshAtMs = REFRESH_AT_MS,
+        amount = "50000000",
+        refusal = null,
+        issue = null,
     )
 
     private fun quoted(providerId: ProductId, send: String) = FundingQuoteRow(
