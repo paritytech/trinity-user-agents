@@ -10,12 +10,20 @@ use crate::{
 	host_logic::{
 		attestation::SigningContexts,
 		product_account::{
-			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
-			derive_root_keypair_from_entropy,
+			derive_identity_keypair, derive_product_subtree_keypair,
+			derive_ring_vrf_domain_entropy, derive_root_keypair_from_entropy,
 		},
+		sso::pairing::{
+			ResponderIdentity, VersionedHandshakeResponse, decode_app_handshake_data,
+			decrypt_v2_handshake_response, derive_x25519_keypair_from_entropy,
+			encrypt_v2_handshake_response, establish_responder_session_info,
+			generate_pairing_device_identity,
+		},
+		statement_store::build_signed_statement,
 	},
 	platform::ProductId,
 };
+use parity_scale_codec::Encode;
 
 /// The key a host advertises on chain must be the one it serves over
 /// pairing. These derive independently, so a test that asks only one of
@@ -25,8 +33,23 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 	const CHAT_ENTROPY: [u8; 16] = [0xAB; 16];
 	const SUFFIX: &str = "paseo";
 
-	let (_, served) =
-		derive_responder_identity(&CHAT_ENTROPY, SUFFIX).expect("responder identity derives");
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let session = signing_host.wallet().current_session().unwrap();
+	let host = generate_pairing_device_identity().unwrap();
+	let peer = PairedSsoPeer {
+		statement_account_id: host.statement_store_public_key,
+		encryption_public_key: host.encryption_public_key,
+	};
+	let (_, answer) = signing_host.wallet().pairing_answer(&session, peer, [0; 32]).unwrap();
+	let verified = decode_verified_statement_data(&answer, session.identity_account_id).unwrap();
+	let VersionedHandshakeResponse::V2 { public_key, encrypted_message } =
+		decode_app_handshake_data(&verified.data).unwrap();
+	let v2::EncryptedResponse::Success(served) =
+		decrypt_v2_handshake_response(host.encryption_secret_key, public_key, &encrypted_message)
+			.unwrap()
+	else {
+		panic!("expected pairing success")
+	};
 	let registration = crate::host_logic::attestation::build_lite_registration(
 		&CHAT_ENTROPY,
 		SUFFIX,
@@ -40,7 +63,7 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 
 	assert_eq!(
 		&registration.identifier_key[1..33],
-		&crate::host_logic::x25519_seal::X25519PrivateKey::from(served).public_key().0,
+		&X25519PrivateKey::from(served.identity_chat_private_key).public_key().0,
 		"the advertised chat key is not the one served over pairing"
 	);
 }
@@ -50,7 +73,7 @@ use crate::{
 		CreateTransactionReview, HostInfo, LegacySigningAccount, Platform, PlatformInfo,
 		SigningHostConfig,
 	},
-	runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
+	runtime::{HostSession, services::RuntimeServices},
 	test_support::{StubPlatform, test_spawner},
 };
 use std::sync::Arc;
@@ -89,21 +112,24 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 #[test]
 fn responder_advertises_and_signs_with_the_local_uid_identity() {
 	let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-	let local_identity = signing_host.current_session().unwrap().identity_account_id.unwrap();
-	let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
-	assert_eq!(identity.statement_public_key, local_identity);
+	let wallet_session = signing_host.wallet().current_session().unwrap();
+	let local_identity = wallet_session.identity_account_id.unwrap();
 	// The statement identity is the network's `uid.<suffix>` account, the
 	// one the pairing host resolves a username for; a `.dot` account has
 	// no lite record on a test network.
-	assert_ne!(
-		derive_responder_identity(&ENTROPY, "dot").unwrap().0.statement_public_key,
-		local_identity
-	);
+	assert_ne!(derive_identity_keypair(&ENTROPY, "dot").unwrap().public.to_bytes(), local_identity);
 
 	let (_, host_encryption_public_key) = derive_x25519_keypair_from_entropy(&[0x42; 16], b"sso");
-	let session =
-		establish_responder_session_info(&identity, [0x55; 32], host_encryption_public_key)
-			.unwrap();
+	let session = signing_host
+		.wallet()
+		.sso_session(
+			&wallet_session,
+			PairedSsoPeer {
+				statement_account_id: [0x55; 32],
+				encryption_public_key: host_encryption_public_key,
+			},
+		)
+		.unwrap();
 	let statement = build_signed_statement(
 		&session,
 		[0x66; 32],
@@ -112,8 +138,7 @@ fn responder_advertises_and_signs_with_the_local_uid_identity() {
 		fresh_statement_expiry(),
 	)
 	.unwrap();
-	let verified =
-		decode_verified_statement_data(&statement, Some(identity.statement_public_key)).unwrap();
+	let verified = decode_verified_statement_data(&statement, Some(local_identity)).unwrap();
 	assert_eq!(verified.signer, local_identity);
 }
 
@@ -126,7 +151,7 @@ fn advertised_device_key_is_independent_of_the_identity() {
 
 	// The regression this guards: advertising the SSO channel key as the
 	// device key makes every device sharing an identity indistinguishable.
-	let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, SSO_ENCRYPTION_DOMAIN);
+	let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
 	assert_ne!(advertised, sso_public);
 }
 
@@ -135,10 +160,6 @@ fn advertised_device_key_is_independent_of_the_identity() {
 /// left on a screen no later message can move it off.
 #[test]
 fn the_pairing_notices_decode_on_the_pairing_host() {
-	use crate::host_logic::sso::pairing::{
-		VersionedHandshakeResponse, decrypt_v2_handshake_response, generate_pairing_device_identity,
-	};
-
 	// Encrypt to the key a pairing host actually advertises, so each notice
 	// is decrypted with the secret that host kept rather than one the test
 	// chose for both sides.
@@ -266,6 +287,34 @@ fn pairing_without_an_observer_still_answers_the_handshake() {
 	.expect("the handshake is answered without an observer");
 }
 
+/// The pairing host waits on the failure notice with no deadline, so a
+/// wallet change between the two notices must not silence it.
+#[test]
+fn a_pairing_failure_is_sent_after_the_wallet_changes() {
+	let peer = PairedSsoPeer {
+		statement_account_id: [0x31; 32],
+		encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
+	};
+	let submitted = || ("statement_submit", r#"{"status":"new"}"#.to_string());
+	let (services, signing_host) = signing_fixture(Arc::new(StubPlatform {
+		rpc_method_responses: vec![submitted(), submitted()],
+		..Default::default()
+	}));
+	let responder = SsoResponderService::new(services, signing_host.clone());
+	let announced = futures::executor::block_on(
+		responder.notify_pairing_allowance_allocation(&pairing_deeplink(peer)),
+	)
+	.expect("the allocation is announced");
+
+	futures::executor::block_on(signing_host.activate_local_session(vec![0xCD; 16]))
+		.expect("another wallet activates");
+
+	futures::executor::block_on(
+		responder.notify_pairing_failed(&announced, "no free StatementStore slot".to_string()),
+	)
+	.expect("the failure notice is still sent");
+}
+
 /// The peer writes what the pairing prompt calls it. Rendering that as
 /// sent lets it reorder or pad out the prompt's own words around itself.
 #[test]
@@ -322,14 +371,24 @@ fn persisted_peer_rebuilds_the_original_responder_session() {
 		statement_account_id: [0x53; 32],
 		encryption_public_key: X25519PrivateKey::from([0x64; 32]).public_key().0,
 	};
-	let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
+	let statement = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+	let (encryption_secret_key, encryption_public_key) =
+		derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+	let identity = ResponderIdentity {
+		statement_secret: statement.secret.to_bytes(),
+		statement_public_key: statement.public.to_bytes(),
+		encryption_secret_key,
+		encryption_public_key,
+	};
 	let mut expected = establish_responder_session_info(
 		&identity,
 		peer.statement_account_id,
 		peer.encryption_public_key,
 	)
 	.unwrap();
-	let resumed = responder_session(&ENTROPY, NETWORK_SUFFIX, peer).unwrap();
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let selected = signing_host.wallet().current_session().unwrap();
+	let resumed = signing_host.wallet().sso_session(&selected, peer).unwrap();
 
 	assert_eq!(
 		crate::host_logic::statement_store::statement_public_key_from_secret(resumed.ss_secret)
