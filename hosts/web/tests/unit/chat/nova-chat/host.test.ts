@@ -91,6 +91,8 @@ function startA(
     keysGate?: Promise<void>;
     /** Know no name, and hold the chain's name read until it resolves. */
     lookup?: Promise<string | null>;
+    /** The user's answer to Send. Defaults to Send. */
+    confirmSend?: () => Promise<boolean>;
   } = {},
 ): Harness {
   const notifications = new NotificationStore(new MemoryStorage());
@@ -162,7 +164,7 @@ function startA(
     accounts: {
       allow: async () => ({ account: "0x00", until: Date.now() + 86_400_000 }),
     },
-    confirmSend: async () => true,
+    confirmSend: options.confirmSend ?? (async () => true),
     confirmAccept: async () => true,
     showChat: () => {},
     log: () => {},
@@ -219,23 +221,98 @@ async function bAsks(store: MemoryStatementStore, requestId: string) {
 }
 
 describe("posting requests and acceptances", () => {
-  test("a request is submitted only once its notification account's allowance is final", async () => {
+  test("a request is answered once it is kept, and submitted only once its notification account's allowance is final", async () => {
     const store = new MemoryStatementStore();
     const a = startA(store);
     let release!: () => void;
     a.settle.gate = new Promise((resolve) => (release = resolve));
     await a.host.start();
-    const answer = a.port.call({
+    // The product's start query has its own time limit, shorter than the
+    // finality wait: the answer must not wait for the post.
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    await until(() => a.claims.length === 1);
+    await tick(50);
+    expect(a.submits).toHaveLength(0);
+    expect(a.host.sent()).toMatchObject([
+      { paused: expect.stringContaining("Posting") },
+    ]);
+    release();
+    await until(() => a.submits.length === 1);
+    await tick(50);
+    expect(a.submits).toHaveLength(1);
+    expect(a.claims).toHaveLength(1);
+    expect(a.host.sent()).toMatchObject([{ paused: null }]);
+    a.host.stop();
+  });
+
+  test("a Send the user cancels keeps nothing and claims nothing", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { confirmSend: async () => false });
+    await a.host.start();
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: false, reason: "You did not send the request." });
+    await tick(50);
+    expect(a.claims).toEqual([]);
+    expect(a.submits).toEqual([]);
+    expect(a.host.sent()).toEqual([]);
+    expect(a.scheduled).toEqual([]);
+    a.host.stop();
+  });
+
+  test("a request cancelled under Sent while its allowance becomes final is not submitted", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    let release!: () => void;
+    a.settle.gate = new Promise((resolve) => (release = resolve));
+    await a.host.start();
+    await a.port.call({
       call: "request",
       handle: handle(B_PEER),
       welcome: null,
     });
     await until(() => a.claims.length === 1);
-    await tick(50);
-    expect(a.submits).toHaveLength(0);
+    expect(a.host.cancel(a.host.sent()[0]!.id)).toBe(true);
     release();
-    expect(await answer).toEqual({ ok: true });
-    expect(a.submits).toHaveLength(1);
+    await tick(50);
+    expect(a.submits).toEqual([]);
+    expect(a.scheduled).toEqual([]);
+    expect(a.host.sent()).toEqual([]);
+    a.host.stop();
+  });
+
+  test("a person blocked while the allowance becomes final gets no request, and it is not tried again", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    let release!: () => void;
+    a.settle.gate = new Promise((resolve) => (release = resolve));
+    await a.host.start();
+    await a.port.call({
+      call: "request",
+      handle: handle(B_PEER),
+      welcome: null,
+    });
+    await until(() => a.claims.length === 1);
+    a.blocked.push(B_PEER);
+    release();
+    await until(
+      () => a.host.sent()[0]?.paused?.startsWith("Not posted") ?? false,
+    );
+    expect(a.host.sent()).toMatchObject([
+      { paused: "Not posted: You blocked this person." },
+    ]);
+    expect(a.submits).toEqual([]);
+    expect(a.scheduled).toEqual([]);
     a.host.stop();
   });
 
@@ -245,15 +322,14 @@ describe("posting requests and acceptances", () => {
     a.settle.gate = Promise.reject(new Error("not final after 180 s"));
     a.settle.gate.catch(() => {});
     await a.host.start();
-    const answer = await a.port.call({
-      call: "request",
-      handle: handle(B_PEER),
-      welcome: null,
-    });
-    expect(answer).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining("not final"),
-    });
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    await until(() => a.scheduled.length === 1);
     expect(a.submits).toHaveLength(0);
     expect(a.host.sent()).toMatchObject([
       { paused: expect.stringContaining("not final") },
@@ -272,15 +348,17 @@ describe("posting requests and acceptances", () => {
     const store = new MemoryStatementStore();
     const a = startA(store, { failClaims: 5 });
     await a.host.start();
-    const answer = await a.port.call({
-      call: "request",
-      handle: handle(B_PEER),
-      welcome: null,
-    });
-    expect(answer).toEqual({
-      ok: false,
-      reason: `Not posted yet, trying again in 30 s: ${CONNECTION_LOST}`,
-    });
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    await until(() => a.scheduled.length === 1);
+    expect(a.host.sent()).toMatchObject([
+      { paused: `Not posted yet, trying again in 30 s: ${CONNECTION_LOST}` },
+    ]);
     for (let tries = 2; tries <= 5; tries++) {
       expect(a.scheduled).toHaveLength(1);
       a.scheduled.shift()!();
@@ -304,6 +382,7 @@ describe("posting requests and acceptances", () => {
       a.port.call({ call: "request", handle: handle(B_PEER), welcome: null }),
       a.port.call({ call: "request", handle: handle(C_PEER), welcome: null }),
     ]);
+    await until(() => a.submits.length === 2);
     expect(a.claims).toHaveLength(2);
     expect(a.maxClaimsInFlight()).toBe(1);
     a.host.stop();
@@ -355,6 +434,7 @@ describe("a copy of the host's state taken at any write", () => {
         welcome: null,
       }),
     ).toEqual({ ok: true });
+    await until(() => a.host.sent()[0]?.paused === null);
     a.host.stop();
     const [account] = a.claims;
     expect(a.claims).toEqual([account!]);
@@ -417,6 +497,7 @@ describe("Decline and Block", () => {
       handle: handle(B_PEER),
       welcome: null,
     });
+    await until(() => a.submits.length === 1);
     const posted = decodeStatement(a.submits[0]!);
     const sent = await boundaryB().openRequest(posted);
     if (isRefused(sent)) throw new Error(sent.refused);
@@ -469,6 +550,29 @@ describe("a host that stopped changes nothing after", () => {
     expect(first.scheduled).toHaveLength(0);
     expect(first.submits).toHaveLength(0);
     next.host.stop();
+  });
+
+  test("a request whose allowance becomes final after a stop is not submitted, and writes nothing", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    let release!: () => void;
+    a.settle.gate = new Promise((resolve) => (release = resolve));
+    await a.host.start();
+    expect(
+      await a.port.call({
+        call: "request",
+        handle: handle(B_PEER),
+        welcome: null,
+      }),
+    ).toEqual({ ok: true });
+    await until(() => a.claims.length === 1);
+    a.host.stop();
+    const before = kept();
+    release();
+    await tick(100);
+    expect(a.submits).toEqual([]);
+    expect(a.scheduled).toEqual([]);
+    expect(kept()).toBe(before);
   });
 
   test("a request whose sender's chat key arrives after a stop is not listed", async () => {

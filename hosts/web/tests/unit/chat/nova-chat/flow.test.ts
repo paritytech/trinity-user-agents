@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import {
@@ -18,7 +18,15 @@ import {
 } from "../../../../src/chat/nova-chat/session.js";
 import { encodeMessage } from "../../../../src/chat/nova-chat/wire.js";
 import type { HandleNames } from "../../../../src/contacts/contacts.js";
-import { startNovaChatHost } from "../../../../src/invitations/nova-chat-host.js";
+import {
+  startNovaChatHost,
+  type NovaChatHostOptions,
+} from "../../../../src/invitations/nova-chat-host.js";
+import { messagePortBridge } from "../../../../src/chat/draft/contract.js";
+import { ChatV2Host } from "../../../../src/chat/draft/host.js";
+import { chatV2Over } from "../../../../src/chat/draft/product.js";
+import { ChatV2Provider } from "../../../../src/chat/draft/provider.js";
+import { serveConversations } from "../../../../src/chat/draft/conversations.js";
 import type { ContactChatHost } from "../../../../src/invitations/contact-chat-host.js";
 import { asProductId } from "@parity/truapi";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
@@ -138,6 +146,7 @@ function startUser(
     productStorage: MemoryStorage;
     blocked: string[];
   },
+  overrides: Partial<NovaChatHostOptions> = {},
 ): User {
   const own = ids[name];
   const notifications =
@@ -180,6 +189,7 @@ function startUser(
     confirmAccept: async () => true,
     showChat: () => {},
     log: () => {},
+    ...overrides,
   });
   const channel = new MessageChannel();
   host.attachChat(channel.port2);
@@ -355,5 +365,104 @@ describe("Nova Chat, host side and worker session together", () => {
     a.session.stop();
     a.host.stop();
     b.host.stop();
+  });
+});
+
+/** One turn of the event loop, through a port, so it runs under fake timers. */
+const turn = () =>
+  new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    channel.port2.onmessage = () => {
+      channel.port1.close();
+      channel.port2.close();
+      resolve();
+    };
+    channel.port1.postMessage(null);
+  });
+
+async function turnsUntil(what: string, check: () => boolean): Promise<void> {
+  for (let turns = 0; !check(); turns++) {
+    if (turns > 5_000) throw new Error(`no ${what} after ${turns} turns`);
+    await turn();
+  }
+}
+
+describe("New chat through the draft bridge, while the finality wait outlasts the start's time limit", () => {
+  test("the start answers before the wait ends, the room shows Outgoing, and the request is posted once, after finality", async () => {
+    Object.assign(globalThis, { localStorage: new MemoryStorage() });
+    jest.useFakeTimers();
+    try {
+      const store = new MemoryStatementStore();
+      const claims: string[] = [];
+      /** Finality after 60 s of fake time: twice the start's 30 s. */
+      const FINAL_AFTER_MS = 60_000;
+      const a = startUser("A", store, undefined, {
+        claimNotification: async (account) => {
+          claims.push(bytesToHex(account));
+          return { line: "claimed in the test", seq: 0 };
+        },
+        notificationSettled: () =>
+          new Promise((resolve) => setTimeout(resolve, FINAL_AFTER_MS)),
+      });
+      await a.host.start();
+      await a.session.run();
+
+      const chat = new ChatV2Host({
+        media: () => null,
+        contactRooms: () => true,
+        log: () => {},
+      });
+      const channel = new MessageChannel();
+      chat.connect(product.id, messagePortBridge(channel.port2));
+      const served = serveConversations(
+        chatV2Over(messagePortBridge(channel.port1)),
+        a.session,
+        { reads: { get: () => null, set: () => {} } },
+      );
+      await served.ready;
+      const screen = new ChatV2Provider(
+        product.id,
+        chat,
+        Date.now,
+        a.host.chatOptions,
+      );
+
+      let started: string | Error | undefined;
+      screen.start!.start(ids.B, "Hi Bob").then(
+        (roomId) => (started = roomId),
+        (error: Error) => (started = error),
+      );
+      await turnsUntil("claim", () => claims.length === 1);
+      for (let turns = 0; turns < 500 && started === undefined; turns++)
+        await turn();
+      // Past the start's 30 s, with the claim not final yet.
+      jest.advanceTimersByTime(30_001);
+      await turnsUntil("answer", () => started !== undefined);
+      const bForA = handleOf(ids.A, ids.B) as HexString;
+      expect(started).toBe(bForA);
+      expect(chat.room(product.id, bForA)?.contact).toEqual({
+        handle: { bytes: bForA },
+        state: "Outgoing",
+      });
+      expect(store.submitted).toHaveLength(0);
+      expect(a.host.sent()).toMatchObject([
+        { purpose: "Hi Bob", paused: expect.stringContaining("Posting") },
+      ]);
+
+      jest.advanceTimersByTime(FINAL_AFTER_MS);
+      await turnsUntil("post", () => store.submitted.length > 0);
+      await turnsUntil("Sent", () => a.host.sent()[0]?.paused === null);
+      // Long after: no second post and no second claim.
+      jest.advanceTimersByTime(10 * 60_000);
+      for (let turns = 0; turns < 200; turns++) await turn();
+      expect(store.submitted).toHaveLength(1);
+      expect(claims).toHaveLength(1);
+
+      served.stop();
+      a.session.stop();
+      a.host.stop();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

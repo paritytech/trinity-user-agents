@@ -169,6 +169,9 @@ const NAMING_TIMEOUT_MS = 10_000;
 const RETRY_MS = 30_000;
 /** How often a request that was not posted is tried again, at most, before it waits for the user. */
 const POST_ATTEMPTS = 5;
+/** Sent's line for a request that is kept but not posted yet. */
+const POSTING =
+  "Posting: it leaves once today's notification slot is final on the People chain.";
 const DECLINED_MAX = 500;
 
 const errorText = (error: unknown): string =>
@@ -313,14 +316,23 @@ export function startNovaChatHost(
    * on one day (the apps' `//chat-request//<id>//<period>`,
    * `//chat-accept//<id>//<period>`, with the peer's request id for an
    * acceptance), so a try again claims no new slot. Posts run one at a time.
+   * `unwanted` says why the post is no longer wanted, or null; it is asked
+   * before the claim and again before the submit.
    */
   const postAs = (
     kind: "chat-request" | "chat-accept",
     requestId: string,
     statement: Statement,
+    unwanted: () => string | null = () => null,
   ): Promise<void> => {
+    const check = () => {
+      if (state !== "running") throw new Error(`${product.name} stopped`);
+      const why = unwanted();
+      if (why !== null) throw new Error(why);
+    };
     const run = async () => {
       if (store === null) throw new Error("the Statement Store is not open");
+      check();
       const period = claimPeriod(now());
       const signer = options.notificationSigner(kind, requestId, period);
       const claim = await options.claimNotification(signer.public, period);
@@ -328,7 +340,7 @@ export function startNovaChatHost(
         `${product.name}: ${kind} ${requestId.slice(0, 8)}… ${claim.line}`,
       );
       await options.notificationSettled(signer.public, { period, ...claim });
-      if (state !== "running") throw new Error(`${product.name} stopped`);
+      check();
       const result = await store.submit(
         encodeSigned(statement, signer.public, signer.sign),
       );
@@ -508,7 +520,7 @@ export function startNovaChatHost(
       requestId,
       welcome,
       createdAt: now(),
-      problem: "posting",
+      problem: POSTING,
     };
     outgoing = [...outgoing.filter((each) => each.peer !== peer), item];
     save();
@@ -516,8 +528,12 @@ export function startNovaChatHost(
     sentChanged();
     watchAcceptance(peer);
     tell(peer);
-    await postRequest(item, POST_ATTEMPTS);
-    return item.problem === null ? { ok: true } : failure(item.problem);
+    // The finality wait can outlast the product's start query, so the
+    // request is answered once it is kept, and Sent shows how its post goes.
+    void postRequest(item, POST_ATTEMPTS).catch((error: unknown) =>
+      options.log(`${product.name}: ${errorText(error)}`),
+    );
+    return { ok: true };
   };
 
   /**
@@ -543,13 +559,20 @@ export function startNovaChatHost(
         welcome: item.welcome,
       });
       if (isRefused(built)) throw new Error(built.refused);
-      await postAs("chat-request", item.requestId, built.statement);
+      await postAs("chat-request", item.requestId, built.statement, () =>
+        !outgoing.includes(item)
+          ? "the request was cancelled"
+          : blocked(item.peer)
+            ? "You blocked this person."
+            : null,
+      );
       if (state !== "running") return;
       item.problem = null;
       options.log(`${product.name}: your request is posted.`);
     } catch (error) {
       if (state !== "running") return;
-      const again = attempts > 1 && outgoing.includes(item);
+      const again =
+        attempts > 1 && outgoing.includes(item) && !blocked(item.peer);
       item.problem = again
         ? `Not posted yet, trying again in ${RETRY_MS / 1000} s: ${errorText(error)}`
         : `Not posted: ${errorText(error)}`;

@@ -23,6 +23,10 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
   block.
 - Claims run one at a time. A request that failed is tried up to five times, 30 s apart, and again at the next start; an
   Accept may be pressed again. A try on the same day reuses the account and claims no new slot.
+- The worker's `request` is answered once the host keeps the request, after **Send**, not once it is posted: the
+  finality wait can outlast the 30 s the host gives a product to start a chat. **Sent** shows the request as posting,
+  then why a try failed, until it is posted. A request cancelled under **Sent**, or to a person blocked meanwhile, is
+  not submitted.
 - Decline in the Inbox forgets the request, and a repost of it is not listed again.
 - **The worker** (`src/chat/nova-chat/worker.ts`, `session.ts`) keeps the conversations, history, acknowledgements and
   retries. It follows its conversations' topics and posts through its own TrUAPI Statement Store, one product account
@@ -69,8 +73,8 @@ user writes.
 ## Tests
 
 - `tests/unit/chat/nova-chat/`: the key boundary's checks, both directions against the independent
-  `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), and the host side with the worker session
-  over an in-memory store.
+  `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), the host side with the worker session over
+  an in-memory store, and a New chat through the draft bridge whose finality wait outlasts the start's 30 s.
 - [`browser/nova-chat.spec.ts`](../browser/nova-chat.spec.ts): three demo users over the simulated store, both
   directions, with a reload.
 
