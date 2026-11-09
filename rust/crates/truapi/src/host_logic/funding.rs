@@ -774,6 +774,16 @@ impl FundingStage {
 		}
 	}
 
+	/// The CASH amount credited or debited, in balance units, once the
+	/// session delivered or released.
+	pub fn settled_amount(&self) -> Option<u128> {
+		match self {
+			Self::Delivered { credited, .. } => Some(*credited),
+			Self::Released { debited, .. } => Some(*debited),
+			Self::Open | Self::Failed { .. } => None,
+		}
+	}
+
 	/// The wire item subscribers receive for this stage; an open stage
 	/// reports `expires_at`.
 	fn wire_item(&self, expires_at: Option<u64>) -> HostFundingStatusSubscribeItem {

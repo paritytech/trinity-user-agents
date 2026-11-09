@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.FundingActivity as CoreFundingActivity
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCancelAvailability
@@ -39,16 +40,15 @@ import uniffi.truapi.ProductId
 class FundingActivityCenterTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val sessions = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
-    private val inProgress = MutableStateFlow<Boolean?>(null)
-    private val unacknowledged = MutableStateFlow<Set<String>>(emptySet())
+    private val activity = MutableStateFlow<CoreFundingActivity?>(null)
     private var recorded = emptyList<FundingSessionSummary>()
     private val runtime = mockk<FundingRuntime> {
         every { sessions } returns this@FundingActivityCenterTest.sessions
-        every { unacknowledged } returns this@FundingActivityCenterTest.unacknowledged
-        every { inProgress } returns this@FundingActivityCenterTest.inProgress
+        every { activity } returns this@FundingActivityCenterTest.activity
         coEvery { history() } answers { Result.success(recorded) }
         coEvery { start() } returns Result.success(Unit)
         coEvery { acknowledge(any()) } returns Result.success(true)
+        coEvery { acknowledgeShown(any()) } answers { Result.success(firstArg()) }
     }
     private val center = FundingActivityCenter(runtime)
 
@@ -78,14 +78,13 @@ class FundingActivityCenterTest {
 
     // The core hands over an ending it has compacted as its summary only; its row tells the user how it went.
     @Test
-    fun `an ending handed over as its summary is acknowledged once its row is built`() = runBlocking {
+    fun `an ending handed over as its summary is acknowledged as shown once its row is built`() = runBlocking {
         recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
-        unacknowledged.value = setOf("in")
 
         val activity = center.observe().first()
         center.observe().first()
 
-        coVerify(exactly = 1) { runtime.acknowledge("in") }
+        coVerify(exactly = 1) { runtime.acknowledgeShown(listOf("in")) }
         assertEquals(listOf("in"), activity.history.map { it.id })
     }
 
@@ -145,7 +144,7 @@ class FundingActivityCenterTest {
         coVerify(exactly = 0) { runtime.acknowledge(any()) }
     }
 
-    // The core loads its sessions once funding resumes, which it says by pushing whether funding is in progress.
+    // The core loads its sessions once funding resumes, and pushes its activity again then.
     @Test
     fun `the history is read again once funding resumes`() = runBlocking {
         serve()
@@ -154,7 +153,7 @@ class FundingActivityCenterTest {
             center.observe().take(2).map { activity ->
                 if (activity.history.isEmpty()) {
                     recorded = listOf(summary("loaded", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
-                    inProgress.value = false
+                    this@FundingActivityCenterTest.activity.value = CoreFundingActivity(inFlight = emptyList(), history = emptyList())
                 }
                 activity.history.map { it.id }
             }.toList()

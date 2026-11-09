@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingActivity
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
@@ -31,14 +32,14 @@ interface FundingRuntime {
     /** Every session the core holds in full, with its progress, by intent, as the core last answered. */
     val sessions: StateFlow<Map<String, FundingBookEntry>>
 
-    /** Ended sessions the host has not acknowledged, as the core last answered. */
-    val unacknowledged: StateFlow<Set<String>>
-
     /**
-     * Whether a provider still works on any session, as the core last answered: `null` until funding resumed, which
-     * is also when the core has loaded the sessions [history] reads.
+     * The sessions in flight and the history of ended ones, as the core last answered: `null` until it has, and again
+     * whenever a session changes or funding resumes.
      */
-    val inProgress: StateFlow<Boolean?>
+    val activity: StateFlow<FundingActivity?>
+
+    /** Records that the user saw how the ended sessions [intents] went, as the history showed them. */
+    suspend fun acknowledgeShown(intents: List<String>): Result<List<String>>
 
     /** Every ended session the core holds, in full or compacted, as summaries newest first. Read it each time history shows. */
     suspend fun history(): Result<List<FundingSessionSummary>>
@@ -64,7 +65,7 @@ interface FundingRuntime {
     /** The user's answer to the provider's cancel offer: the terms shown to accept them, `null` to decline. */
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
 
-    /** Records that the user was shown how ended session [intent] went; until then it stays [unacknowledged]. */
+    /** Records that the user was shown how ended session [intent] went. */
     suspend fun acknowledge(intent: String): Result<Boolean>
 
     /**
