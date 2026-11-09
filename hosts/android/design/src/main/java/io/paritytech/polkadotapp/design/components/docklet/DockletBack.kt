@@ -7,11 +7,19 @@ enum class DockletBackEdge { Left, Right, None }
 
 enum class DockletBackAction { Claim, Restore, PlainBack }
 
-fun dockletBackAction(edge: DockletBackEdge, touchY: Float, band: ClosedFloatingPointRange<Float>): DockletBackAction = when {
-    edge == DockletBackEdge.None -> DockletBackAction.Restore
+fun dockletBackAction(
+    edge: DockletBackEdge,
+    touchY: Float,
+    band: ClosedFloatingPointRange<Float>,
+    restoresOnBack: Boolean,
+): DockletBackAction = when {
+    edge == DockletBackEdge.None -> dockletPressBackAction(restoresOnBack)
     edge == DockletBackEdge.Right && touchY in band -> DockletBackAction.Claim
     else -> DockletBackAction.PlainBack
 }
+
+fun dockletPressBackAction(restoresOnBack: Boolean): DockletBackAction =
+    if (restoresOnBack) DockletBackAction.Restore else DockletBackAction.PlainBack
 
 // Before Android 15 a Back button press reports the left edge, so only a swipe there is trusted to be one.
 fun dockletBackEdge(swipeEdge: Int, sdkInt: Int): DockletBackEdge = when (swipeEdge) {

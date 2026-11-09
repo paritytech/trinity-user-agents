@@ -163,6 +163,45 @@ class DockletHideStateTest {
     }
 
     @Test
+    fun `a tuck hides the dock at once with no landing, haptic or fade`() = runTest {
+        val state = hideState()
+
+        state.tuck()
+
+        assertTrue(state.isOffScreen)
+        assertEquals(90f, state.pose().angleDegrees, EPS)
+        assertEquals(0f, state.quietFade(), EPS)
+        advanceUntilIdle()
+        assertEquals(emptyList<DockletLanding>(), landings)
+        assertEquals(emptyList<DockletMoment>(), moments)
+    }
+
+    @Test
+    fun `a tuck stops a restore in flight without reporting the dock shown`() = runTest {
+        val state = hiddenState()
+        state.restore()
+        advanceTimeBy(FrameMillis * 6)
+        runCurrent()
+
+        state.tuck()
+        advanceUntilIdle()
+
+        assertTrue(state.isOffScreen)
+        assertEquals(emptyList<DockletLanding>(), landings)
+    }
+
+    @Test
+    fun `a tuck leaves a held dock in the hand`() = runTest {
+        val state = hideState()
+        state.startHide(DockletPoint(200f, 816f), time = 0.milliseconds)
+
+        state.tuck()
+
+        assertFalse(state.countsAsHidden)
+        assertTrue(state.isHeld)
+    }
+
+    @Test
     fun `a restore from the tip or a key brings the dock back with a medium haptic`() = runTest {
         val state = hiddenState()
 

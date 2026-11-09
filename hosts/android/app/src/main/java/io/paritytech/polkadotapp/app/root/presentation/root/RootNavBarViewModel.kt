@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarProductPin
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarVisibilityHolder
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
@@ -47,7 +48,7 @@ class RootNavBarViewModel @Inject constructor(
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
     val hidden: StateFlow<Boolean> = tabBarVisibilityHolder.hidden
     val forced: StateFlow<Boolean> = tabBarVisibilityHolder.forced
-    val overProduct: StateFlow<Boolean> = tabBarVisibilityHolder.overProduct
+    val productPin: StateFlow<TabBarProductPin?> = tabBarVisibilityHolder.productPin
     val openApps: StateFlow<ImmutableList<TabInfo>> = productSessionController.openTabs
         .map { it.toImmutableList() }
         .stateInBackground(started = SharingStarted.Eagerly, initialValue = persistentListOf())

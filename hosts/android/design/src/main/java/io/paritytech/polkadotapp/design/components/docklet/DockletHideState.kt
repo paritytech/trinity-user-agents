@@ -16,6 +16,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -163,6 +164,19 @@ class DockletHideState internal constructor(
             withFrameNanos { }
             withFrameNanos { }
             runSettle(from = 0f, to = 1f, velocity = 0f, spec = DockletSpring.Quiet)
+        }
+    }
+
+    fun tuck() {
+        if (isHeld) return
+        stopMotion()
+        landingPending = false
+        quiet = false
+        target = 1f
+        settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            peek.snapTo(0f)
+            progress.snapTo(1f)
+            barAlpha.snapTo(1f)
         }
     }
 

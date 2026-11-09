@@ -7,28 +7,44 @@ import org.junit.Test
 class DockletBackTest {
     @Test
     fun `a right-edge swipe inside the band pulls the hidden dock`() {
-        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 700f, Band))
+        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 700f, Band, restoresOnBack = true))
     }
 
     @Test
     fun `the band reaches 24 dp past both its ends`() {
-        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 396f, Band))
-        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 871f, Band))
+        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 396f, Band, restoresOnBack = true))
+        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 871f, Band, restoresOnBack = true))
     }
 
     @Test
     fun `a right-edge swipe outside the band is a plain Back`() {
-        assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.Right, 200f, Band))
+        assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.Right, 200f, Band, restoresOnBack = true))
     }
 
     @Test
     fun `a left-edge swipe is a plain Back and leaves the dock hidden`() {
-        assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.Left, 700f, Band))
+        assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.Left, 700f, Band, restoresOnBack = true))
     }
 
     @Test
     fun `a Back with no swipe edge brings the hidden dock back`() {
-        assertEquals(DockletBackAction.Restore, dockletBackAction(DockletBackEdge.None, 0f, Band))
+        assertEquals(DockletBackAction.Restore, dockletBackAction(DockletBackEdge.None, 0f, Band, restoresOnBack = true))
+    }
+
+    @Test
+    fun `over a product a Back with no swipe edge goes to the product`() {
+        assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.None, 0f, Band, restoresOnBack = false))
+        assertEquals(DockletBackAction.PlainBack, dockletPressBackAction(restoresOnBack = false))
+    }
+
+    @Test
+    fun `over a product a right-edge swipe inside the band still pulls the hidden dock`() {
+        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 700f, Band, restoresOnBack = false))
+    }
+
+    @Test
+    fun `on a tab a Back that never reported an edge brings the hidden dock back`() {
+        assertEquals(DockletBackAction.Restore, dockletPressBackAction(restoresOnBack = true))
     }
 
     @Test

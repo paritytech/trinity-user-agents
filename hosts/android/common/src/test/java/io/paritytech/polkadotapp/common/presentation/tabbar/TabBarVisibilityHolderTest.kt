@@ -8,49 +8,65 @@ class TabBarVisibilityHolderTest {
 
     @Test
     fun `a product pins the bar over itself`() {
-        holder.forceShow(Product, overProduct = true)
+        holder.forceShow(ProductA)
 
-        assertEquals(Visibility(hidden = false, forced = true, overProduct = true), holder.visibility())
+        assertEquals(Visibility(hidden = false, forced = true, productPin = ProductA), holder.visibility())
     }
 
     @Test
     fun `Main pins the bar without a product`() {
-        holder.forceShow(Main, overProduct = false)
+        holder.forceShow(Main)
 
-        assertEquals(Visibility(hidden = false, forced = true, overProduct = false), holder.visibility())
+        assertEquals(Visibility(hidden = false, forced = true, productPin = null), holder.visibility())
     }
 
     @Test
-    fun `a product opening while Main is still pinned already counts as over a product`() {
-        holder.forceShow(Main, overProduct = false)
-        holder.forceShow(Product, overProduct = true)
+    fun `a product opening while Main is still pinned is already over a product`() {
+        holder.forceShow(Main)
+        holder.forceShow(ProductA)
 
-        assertEquals(Visibility(hidden = false, forced = true, overProduct = true), holder.visibility())
+        assertEquals(Visibility(hidden = false, forced = true, productPin = ProductA), holder.visibility())
     }
 
     @Test
-    fun `leaving the product for Main drops the product mode and keeps the bar`() {
-        holder.forceShow(Product, overProduct = true)
-        holder.forceShow(Main, overProduct = false)
-        holder.releaseForce(Product)
+    fun `Main resuming before the product lets go is still over the product until it does`() {
+        holder.forceShow(ProductA)
+        holder.forceShow(Main)
 
-        assertEquals(Visibility(hidden = false, forced = true, overProduct = false), holder.visibility())
+        assertEquals(Visibility(hidden = false, forced = true, productPin = ProductA), holder.visibility())
+
+        holder.releaseForce(ProductA)
+
+        assertEquals(Visibility(hidden = false, forced = true, productPin = null), holder.visibility())
+    }
+
+    @Test
+    fun `a second product opened over the first is a new pin`() {
+        holder.forceShow(ProductA)
+        holder.forceShow(ProductB)
+
+        assertEquals(Visibility(hidden = false, forced = true, productPin = ProductB), holder.visibility())
+
+        holder.releaseForce(ProductB)
+
+        assertEquals(Visibility(hidden = false, forced = true, productPin = ProductA), holder.visibility())
     }
 
     @Test
     fun `the bar leaves with the last screen that pinned it`() {
-        holder.forceShow(Product, overProduct = true)
-        holder.releaseForce(Product)
+        holder.forceShow(ProductA)
+        holder.releaseForce(ProductA)
 
-        assertEquals(Visibility(hidden = true, forced = false, overProduct = false), holder.visibility())
+        assertEquals(Visibility(hidden = true, forced = false, productPin = null), holder.visibility())
     }
 
-    private data class Visibility(val hidden: Boolean, val forced: Boolean, val overProduct: Boolean)
+    private data class Visibility(val hidden: Boolean, val forced: Boolean, val productPin: TabBarProductPin?)
 
-    private fun TabBarVisibilityHolder.visibility() = Visibility(hidden.value, forced.value, overProduct.value)
+    private fun TabBarVisibilityHolder.visibility() = Visibility(hidden.value, forced.value, productPin.value)
 
     private companion object {
         val Main = Any()
-        val Product = Any()
+        val ProductA = TabBarProductPin()
+        val ProductB = TabBarProductPin()
     }
 }

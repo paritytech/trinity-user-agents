@@ -43,6 +43,7 @@ import io.paritytech.polkadotapp.design.components.docklet.DockletHideState
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackAction
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackEdge
 import io.paritytech.polkadotapp.design.components.docklet.dockletPoint
+import io.paritytech.polkadotapp.design.components.docklet.dockletPressBackAction
 import io.paritytech.polkadotapp.design.components.docklet.dockletTouch
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import kotlinx.coroutines.flow.Flow
@@ -100,8 +101,8 @@ fun RootNavBarHide(
     }
 
     var plainBackRequested by remember { mutableStateOf(false) }
-    if (restoresOnBack && hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
-        HiddenDockBack(hideState = hideState, onPlainBack = { plainBackRequested = true })
+    if (hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
+        HiddenDockBack(hideState = hideState, restoresOnBack = restoresOnBack, onPlainBack = { plainBackRequested = true })
     }
     val dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     LaunchedEffect(plainBackRequested) {
@@ -125,7 +126,7 @@ fun RootNavBarHide(
 }
 
 @Composable
-private fun HiddenDockBack(hideState: DockletHideState, onPlainBack: () -> Unit) {
+private fun HiddenDockBack(hideState: DockletHideState, restoresOnBack: Boolean, onPlainBack: () -> Unit) {
     val density = LocalDensity.current
     val currentOnPlainBack by rememberUpdatedState(onPlainBack)
 
@@ -137,12 +138,12 @@ private fun HiddenDockBack(hideState: DockletHideState, onPlainBack: () -> Unit)
                 if (action == null) {
                     val band = hideState.drawbridge?.backBand() ?: return@collect
                     val edge = dockletBackEdge(event.swipeEdge, Build.VERSION.SDK_INT)
-                    action = dockletBackAction(edge, point.y, band)
+                    action = dockletBackAction(edge, point.y, band, restoresOnBack = restoresOnBack)
                     if (action == DockletBackAction.Claim) hideState.startRestore(point, SystemClock.uptimeMillis().milliseconds)
                 }
                 if (action == DockletBackAction.Claim) hideState.moveRestore(point, SystemClock.uptimeMillis().milliseconds)
             }
-            when (action ?: DockletBackAction.Restore) {
+            when (action ?: dockletPressBackAction(restoresOnBack)) {
                 DockletBackAction.Claim -> hideState.cancelDrag()
                 DockletBackAction.Restore -> hideState.restore()
                 DockletBackAction.PlainBack -> currentOnPlainBack()

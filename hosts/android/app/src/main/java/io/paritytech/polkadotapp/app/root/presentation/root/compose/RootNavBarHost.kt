@@ -19,7 +19,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
 
     val hidden by viewModel.hidden.collectAsStateWithLifecycle()
     val forceShown by viewModel.forced.collectAsStateWithLifecycle()
-    val overProduct by viewModel.overProduct.collectAsStateWithLifecycle()
+    val productPin by viewModel.productPin.collectAsStateWithLifecycle()
     val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val tabWarnings by viewModel.tabWarnings.collectAsStateWithLifecycle()
@@ -30,7 +30,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
     RootNavBarOverlay(
         hidden = hidden,
         forceShown = forceShown,
-        overProduct = overProduct,
+        productPin = productPin,
         screenKey = currentEntry?.id,
         currentTab = currentTab,
         tabWarnings = tabWarnings,

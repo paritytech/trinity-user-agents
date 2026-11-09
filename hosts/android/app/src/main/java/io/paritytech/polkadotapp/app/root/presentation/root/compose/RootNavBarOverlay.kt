@@ -50,6 +50,7 @@ import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotAction
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarBaseInset
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarProductPin
 import io.paritytech.polkadotapp.common.presentation.tabbar.dockletSlotTap
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
@@ -96,7 +97,7 @@ private const val BEHIND_CARD_DIM = 1f - DockletMaterials.BehindCardBrightness
 fun RootNavBarOverlay(
     hidden: Boolean,
     forceShown: Boolean,
-    overProduct: Boolean,
+    productPin: TabBarProductPin?,
     screenKey: String?,
     currentTab: BottomTab,
     tabWarnings: ImmutableMap<BottomTab, Boolean>,
@@ -176,9 +177,9 @@ fun RootNavBarOverlay(
         }
     }
 
-    val dockMeasured = hideState.drawbridge != null
-    LaunchedEffect(overProduct, dockMeasured) {
-        if (overProduct) hideState.quietHide()
+    val overProduct = productPin != null
+    LaunchedEffect(productPin) {
+        if (overProduct) hideState.tuck()
     }
 
     openScanPanelRequests.collectAsEffect { _, _ ->

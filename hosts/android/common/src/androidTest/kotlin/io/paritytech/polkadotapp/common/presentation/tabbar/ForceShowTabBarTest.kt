@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.common.presentation.tabbar
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,6 +12,8 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -61,6 +64,26 @@ class ForceShowTabBarTest {
     }
 
     @Test
+    fun aProductScreenPinsTheBarOverItselfOnceItResumes() {
+        pinBar { ShowTabBarOverProduct() }
+        moveHostTo(Lifecycle.State.STARTED)
+        assertNull(holder.productPin.value)
+
+        moveHostTo(Lifecycle.State.RESUMED)
+
+        assertTrue(holder.forced.value)
+        assertNotNull(holder.productPin.value)
+    }
+
+    @Test
+    fun mainPinsTheBarWithoutAProduct() {
+        pinBar()
+        moveHostTo(Lifecycle.State.RESUMED)
+
+        assertNull(holder.productPin.value)
+    }
+
+    @Test
     fun aPreviewThatNeverResumesLeavesNothingPinned() {
         pinBar()
         moveHostTo(Lifecycle.State.STARTED)
@@ -70,14 +93,14 @@ class ForceShowTabBarTest {
         assertTrue(holder.hidden.value)
     }
 
-    private fun pinBar() {
+    private fun pinBar(pin: @Composable () -> Unit = { ForceShowTabBar() }) {
         compose.setContent {
             if (pinned) {
                 CompositionLocalProvider(
                     LocalLifecycleOwner provides host,
                     LocalTabBarVisibility provides holder,
                 ) {
-                    ForceShowTabBar()
+                    pin()
                 }
             }
         }
