@@ -140,7 +140,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
         amount = feeText(fees.net),
         providerFee = feeText(quote.providerFee),
         networkFee = feeText(quote.networkFee),
-        totalFee = feeText(fees.totalFeeRoundedUp),
+        totalFee = feeText(fees.totalFee),
         pay = if (inbound) quoteUnit.format(quote.sendAmount) else cash.label(cash.decimal(quote.sendAmount)),
         rate = rateOf(quoteUnit, fees.rateNum, fees.rateDen),
     )
