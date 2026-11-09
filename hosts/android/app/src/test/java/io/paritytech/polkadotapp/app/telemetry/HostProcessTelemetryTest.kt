@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -121,8 +122,25 @@ class HostProcessTelemetryTest {
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals(SentryLevel.INFO, sentryEvent?.level)
         assertEquals("host.telemetry", sentryEvent?.logger)
+        assertEquals(listOf("host.process.started"), sentryEvent?.fingerprints)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
+    }
+
+    @Test
+    fun `one event name is one Sentry group whatever else the event carries`() {
+        val fingerprints = mutableListOf<List<String>?>()
+        val capture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { fingerprints += it.fingerprints },
+        )
+
+        capture.capture { HostEvent("host.webview.created", mapOf("host.platform" to "android"), emptyMap()) }
+        capture.capture { HostEvent("host.webview.created", emptyMap(), mapOf("host.app_build" to 42L)) }
+        capture.capture { HostEvent("host.process.started", emptyMap(), emptyMap()) }
+
+        assertEquals(fingerprints[0], fingerprints[1])
+        assertNotEquals(fingerprints[1], fingerprints[2])
     }
 
     @Test
