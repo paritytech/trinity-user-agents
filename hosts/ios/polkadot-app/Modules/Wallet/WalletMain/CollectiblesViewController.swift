@@ -16,7 +16,6 @@ final class CollectiblesViewController: UIViewController {
     private let pageView = UIView()
     private let skeleton = CollectiblesSkeletonView(frame: .zero)
     private let book = CollectiblesBookView(frame: .zero)
-    private lazy var backSwipe = PocketBackSwipe(screen: self)
 
     private var opening = CollectiblesOpening()
     private var hasStartedOpening = false
@@ -45,7 +44,6 @@ final class CollectiblesViewController: UIViewController {
 
         view.backgroundColor = .bgSurfaceMain
         setupPage()
-        backSwipe.install(ahead: [product.pageScrollView.panGestureRecognizer])
         view.addSubview(book)
         observePageLoad()
     }
@@ -66,13 +64,13 @@ final class CollectiblesViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(false)
+        navigationController?.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(true)
+        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func viewDidLayoutSubviews() {

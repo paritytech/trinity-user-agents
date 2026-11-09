@@ -16,7 +16,6 @@ final class AssetDetailsScreenViewController: UIViewController {
     private lazy var hosting = UIHostingController(
         rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
-    private lazy var backSwipe = PocketBackSwipe(screen: self)
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private let titleLabel: PolkadotUI.Label = .create { view in
         view.typography = .headlineSmall
@@ -43,21 +42,19 @@ final class AssetDetailsScreenViewController: UIViewController {
         view.backgroundColor = .bgSurfaceMain
         setupTitle()
         setupHosting()
-        backSwipe.install(ahead: [])
         pullDown.install()
     }
 
-    // The stack's own swipes would pop the screen beside its back swipe.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(false)
+        navigationController?.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(true)
+        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {

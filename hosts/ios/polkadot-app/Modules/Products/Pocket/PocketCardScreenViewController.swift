@@ -23,7 +23,6 @@ final class PocketCardScreenViewController: UIViewController {
     private weak var origin: PocketOrigin?
 
     private let scrollView = FaceScrollView()
-    private lazy var backSwipe = PocketBackSwipe(screen: self)
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private var productHeight: Constraint?
 
@@ -62,7 +61,6 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
-        backSwipe.install(ahead: [scrollView.panGestureRecognizer, product.pageScrollView.panGestureRecognizer])
         setupPageDrag()
         pullDown.install()
 
@@ -76,17 +74,16 @@ final class PocketCardScreenViewController: UIViewController {
         applyPendingFace(animated: false)
     }
 
-    // The stack's own swipes would pop the card beside its back swipe.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(false)
+        navigationController?.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        backSwipe.setSystemBackSwipesEnabled(true)
+        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
