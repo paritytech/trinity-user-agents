@@ -51,17 +51,26 @@ impl<Response: FromLatest, Error: FromLatest> VersionedOutput
 	}
 }
 
+/// An item no variant of the caller's version carries is left out of the
+/// stream, since that caller could not decode it.
 impl<Item, Error> VersionedOutput for Subscription<Item, CallError<Error>>
 where
-	Item: FromLatest + 'static,
-	Error: FromLatest + 'static,
+	Item: FromLatest + Send + 'static,
+	Error: FromLatest + Send + 'static,
 	Item::Latest: 'static,
 	Error::Latest: 'static,
 {
 	type Latest = Subscription<Item::Latest, CallError<Error::Latest>>;
 
 	fn from_latest(latest: Self::Latest, version: u8) -> Self {
-		Self::new(latest.map(move |result| VersionedOutput::from_latest(result, version)))
+		Self::new(latest.filter_map(move |result| {
+			core::future::ready(match result {
+				Ok(item) => Item::try_from_latest(item, version).map(Ok),
+				Err(error) => {
+					Some(Err(error.map_domain(|domain| Error::from_latest(domain, version))))
+				},
+			})
+		}))
 	}
 }
 

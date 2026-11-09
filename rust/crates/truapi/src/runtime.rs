@@ -107,7 +107,7 @@ use truapi::{
 	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest, Versioned,
+		IntoLatest,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -1655,7 +1655,6 @@ impl Renderer for ProductRuntimeHost {
 		request: HostRendererActionSubscribeRequest,
 	) -> Subscription<HostRendererActionSubscribeItem, CallError<HostRendererActionSubscribeError>>
 	{
-		let decodes_footer_contexts = request.version() >= 2;
 		version(request)
 			.exec(|()| async move {
 				if self.connection.renderer_access().is_err() {
@@ -1665,14 +1664,7 @@ impl Renderer for ProductRuntimeHost {
 					self.connection
 						.renderer
 						.subscribe()
-						.map(|item| item.map(IntoLatest::into_latest))
-						.filter(move |item| {
-							let footer = matches!(
-								item,
-								Ok(action) if matches!(action.context, latest::RenderContext::ChatRoomFooter { .. })
-							);
-							core::future::ready(decodes_footer_contexts || !footer)
-						}),
+						.map(|item| item.map(IntoLatest::into_latest)),
 				)
 			})
 			.await

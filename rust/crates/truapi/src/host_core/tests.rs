@@ -1032,6 +1032,64 @@ fn start_render(
 		.expect("a Worker connection may render")
 }
 
+#[test]
+fn only_a_footer_context_renders_in_v2() {
+	// A product on the published SDK decodes only V1 render requests, and a
+	// footer context exists only in V2, which the product that docked the card speaks.
+	let (runtime, sink) = render_runtime();
+	let footer = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatRoomFooter {
+			room_id: "room".into(),
+			message_type: "register".into(),
+		},
+		payload: vec![1],
+	};
+	let message = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message-1".into(),
+			message_type: "vote".into(),
+		},
+		payload: vec![2],
+	};
+
+	// When
+	let _renders = [footer.clone(), message]
+		.map(|request| runtime.control().render(request).expect("a Worker connection may render"));
+
+	// Then
+	let sent: Vec<_> = sink
+		.frames
+		.lock()
+		.expect("recording sink mutex poisoned")
+		.iter()
+		.map(|frame| {
+			let start =
+				ProtocolMessage::decode(&mut frame.as_slice()).expect("a start frame decodes");
+			truapi::versioned::renderer::ProductRendererRenderRequest::decode(
+				&mut start.payload.value.as_slice(),
+			)
+			.expect("a render request decodes")
+		})
+		.collect();
+	assert_eq!(
+		sent,
+		[
+			truapi::versioned::renderer::ProductRendererRenderRequest::V2(footer),
+			truapi::versioned::renderer::ProductRendererRenderRequest::V1(
+				v01::ProductRendererRenderRequest {
+					context: v01::RenderContext::ChatMessage {
+						room_id: "room".into(),
+						message_id: "message-1".into(),
+						message_type: "vote".into(),
+					},
+					payload: vec![2],
+				}
+			),
+		]
+	);
+}
+
 /// Request id of the render start frame sent at `index`.
 fn render_request_id(sink: &RecordingSink, index: usize) -> String {
 	let frames = sink.frames.lock().expect("recording sink mutex poisoned");

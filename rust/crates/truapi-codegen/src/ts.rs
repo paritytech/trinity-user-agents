@@ -161,14 +161,12 @@ fn selected_public_aliases(
 		}
 	}
 
+	let selected_by_wrappers: BTreeSet<String> = selected_by_base.keys().cloned().collect();
 	for ty in &api.types {
 		let Some((version, base)) = version_prefixed_type(&ty.name) else {
 			continue;
 		};
-		if version > target_version {
-			continue;
-		}
-		if selected_by_base.contains_key(base) {
+		if version > target_version || selected_by_wrappers.contains(base) {
 			continue;
 		}
 		let entry = selected_by_base.entry(base.to_string()).or_insert((version, ty.name.clone()));
@@ -960,10 +958,11 @@ fn method_wire_version(
 /// included method references end up absent from the map and can be elided
 /// from the emitted types altogether.
 ///
-/// The request of a host-initiated method keeps every version up to the
+/// The request of a host-initiated subscription keeps every version up to the
 /// target, because the host picks the version it sends and the client has to
 /// decode whichever arrives. Its item keeps the version
-/// [`host_initiated_item_version`] picks.
+/// [`host_initiated_item_version`] picks. A host-initiated request answers in
+/// one version, so it decodes only that version of its request.
 fn versioned_wrapper_emit_versions(
 	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
@@ -982,6 +981,7 @@ fn versioned_wrapper_emit_versions(
 				emit.entry(wrapper_name).or_default().insert(wire_version);
 			}
 			if method.wire.host_initiated &&
+				method.kind == MethodKind::Subscription &&
 				let Some(request_name) = request_wrapper_name(method, wrappers)
 			{
 				let decoded_versions = wrappers[request_name]

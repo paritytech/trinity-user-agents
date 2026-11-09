@@ -53,19 +53,6 @@ fn a_chat_message_context_still_renders_as_v1() {
 }
 
 #[test]
-fn a_footer_context_renders_as_v2() {
-	let request = v02::ProductRendererRenderRequest {
-		context: v02::RenderContext::ChatRoomFooter {
-			room_id: "room".into(),
-			message_type: "register".into(),
-		},
-		payload: vec![1],
-	};
-
-	assert_eq!(ProductRendererRenderRequest::from_latest(request, 1).version(), 2);
-}
-
-#[test]
 fn footer_render_request_matches_the_wire_fixture() {
 	let request = ProductRendererRenderRequest::V2(v02::ProductRendererRenderRequest {
 		context: v02::RenderContext::ChatRoomFooter {

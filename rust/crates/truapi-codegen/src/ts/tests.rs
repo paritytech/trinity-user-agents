@@ -344,6 +344,41 @@ fn a_host_initiated_request_decodes_every_version_and_answers_in_the_oldest_item
 	);
 }
 
+/// A host-initiated request is answered in the one version the client
+/// registered, so a request in another version is refused rather than
+/// answered in a version the host did not ask in.
+#[test]
+fn a_host_initiated_request_decodes_only_the_version_it_answers_in() {
+	let mut method =
+		request_method_with_wrappers("ask", Some(0), "AskRequest", "AskResponse", "AskError");
+	method.wire.host_initiated = true;
+	let mut api = api(vec![method]);
+	api.public_trait_order = vec!["Example".to_string()];
+	api.types.push(versioned_tuple_wrapper_variants(
+		"AskRequest",
+		&[(1, "V01AskRequest"), (2, "V02AskRequest")],
+	));
+	api.types.push(empty_struct("V01AskRequest"));
+	api.types.push(empty_struct("V02AskRequest"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("AskResponse", &[(1, "Answer"), (2, "Answer")]));
+	api.types.push(empty_struct("Answer"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("AskError", &[(1, "Failure"), (2, "Failure")]));
+	api.types.push(empty_struct("Failure"));
+
+	let types = generate_types(&api, 2).unwrap();
+	let client = generate_client(&api, 2, 2).unwrap();
+
+	assert!(types.contains("S.indexedTaggedUnion({V2: [1, AskRequest] as const})"), "{types}");
+	assert!(
+		client.contains(
+			"if (request.tag !== \"V2\") throw new Error(\"unsupported request version\");"
+		),
+		"{client}"
+	);
+}
+
 /// Products built against the unit-only version pass plain strings, so the
 /// tagged version has to take them as well. A variant the older version
 /// never named stays tagged, and an enum with no unit-only ancestor is left
@@ -407,6 +442,13 @@ fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
 	assert!(types.contains("  | \"Text\"\n  | \"Empty\"\n;"), "{types}");
 	assert!(!types.contains("  | \"Hidden\""), "{types}");
 	assert_eq!(types.matches("S.withPlainVariants").count(), 1, "{types}");
+	assert!(
+		types.contains(
+			"  | { tag: \"Card\"; value: boolean }\n  | \"Text\"\n  | \"Empty\"\n;\n\nexport const Footer:"
+		),
+		"{types}"
+	);
+	assert!(types.contains("export type V01Footer = \"Text\" | \"Empty\";"), "{types}");
 }
 
 #[test]
