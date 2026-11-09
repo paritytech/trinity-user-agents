@@ -328,48 +328,52 @@ impl RuntimeServices {
 				country: selection.country.as_deref(),
 			})
 		};
+		// The asset the overlay works in: the one the user picked, else the
+		// one the core resolves for the rail, so a selection without an asset
+		// already gets that asset's countries and limits.
+		let asset = selection.as_ref().and_then(|selection| match selection.rail {
+			FundingRail::Crypto => selection.asset.clone(),
+			rail => Some(selection.asset.clone().unwrap_or_else(|| {
+				funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref())
+			})),
+		});
 		let (countries, limits, networks) = match &selection {
 			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
-				let countries = selection
-					.asset
+				let countries = asset
 					.as_deref()
 					.map(|asset| providers.countries(session.direction, selection.rail, asset))
 					.unwrap_or_default();
 				let networks = match selection.rail {
-					FundingRail::Crypto => declared_networks(
-						&candidates,
-						session.direction,
-						selection.asset.as_deref(),
-					)
-					.into_iter()
-					.map(|(network, assets)| {
-						let limits = assets
-							.iter()
-							.map(|asset| limits_on(selection, asset, Some(&network)))
-							.reduce(FundingAmountLimits::widest)
-							.unwrap_or(FundingAmountLimits::ANY);
-						FundingNetworkLimits {
-							display_name: funding_view::network_name(&network),
-							network,
-							limits,
-						}
-					})
-					.collect(),
+					FundingRail::Crypto => {
+						declared_networks(&candidates, session.direction, asset.as_deref())
+							.into_iter()
+							.map(|(network, assets)| {
+								let limits = assets
+									.iter()
+									.map(|asset| limits_on(selection, asset, Some(&network)))
+									.reduce(FundingAmountLimits::widest)
+									.unwrap_or(FundingAmountLimits::ANY);
+								FundingNetworkLimits {
+									display_name: funding_view::network_name(&network),
+									network,
+									limits,
+								}
+							})
+							.collect()
+					},
 					_ => Vec::new(),
 				};
-				let asset = selection.asset.as_deref().unwrap_or_default();
-				(countries, limits_on(selection, asset, selection.network.as_deref()), networks)
+				let limits = limits_on(
+					selection,
+					asset.as_deref().unwrap_or_default(),
+					selection.network.as_deref(),
+				);
+				(countries, limits, networks)
 			},
 		};
 		let rails = funding_view::routed_rails(&candidates);
 		let default_rail = funding_view::default_rail(&rails);
-		let asset = selection.as_ref().and_then(|selection| match selection.rail {
-			FundingRail::Crypto => selection.asset.clone(),
-			rail => {
-				Some(funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref()))
-			},
-		});
 		let tokens = funding_view::crypto_tokens(
 			&candidates,
 			selection.as_ref().and_then(|selection| selection.network.as_deref()),
@@ -377,20 +381,19 @@ impl RuntimeServices {
 		if self.funding_country_due() {
 			self.detect_country_for_options(intent);
 		}
-		feed.funding_options_changed(
-			intent.to_string(),
-			FundingOptions {
-				candidates,
-				countries,
-				limits,
-				networks,
-				rails,
-				default_rail,
-				asset,
-				tokens,
-				detected_country: self.recent_funding_country(),
-			},
-		);
+		let options = FundingOptions {
+			candidates,
+			countries,
+			limits,
+			networks,
+			rails,
+			default_rail,
+			asset,
+			tokens,
+			detected_country: self.recent_funding_country(),
+		};
+		self.funding().book().options_changed(intent, options.clone());
+		feed.funding_options_changed(intent.to_string(), options);
 	}
 
 	/// Ask the host for the user's country in the background, and send

@@ -345,6 +345,7 @@ impl RuntimeServices {
 		if !self.funding_quotes().publish(intent, list, quotable) {
 			return false;
 		}
+		self.funding().book().quotes_changed(intent, list.clone());
 		if let Some(platform) = self.funding().platform() {
 			platform.funding_quotes_changed(intent.to_string(), list.clone());
 		}
