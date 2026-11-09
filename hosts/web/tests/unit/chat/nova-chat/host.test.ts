@@ -22,6 +22,7 @@ import {
 import type { HandleNames } from "../../../../src/contacts/contacts.js";
 import { startNovaChatHost } from "../../../../src/invitations/nova-chat-host.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
+import type { SendPrompt } from "../../../../src/invitations/invitation-service.js";
 import type { StatementStoreLike } from "../../../../src/platform/statement-store.js";
 import { MemoryStatementStore } from "../../../support/statement-memory.js";
 import { MemoryStorage } from "../../../support/test-support.js";
@@ -92,7 +93,7 @@ function startA(
     /** Know no name, and hold the chain's name read until it resolves. */
     lookup?: Promise<string | null>;
     /** The user's answer to Send. Defaults to Send. */
-    confirmSend?: () => Promise<boolean>;
+    confirmSend?: (prompt: SendPrompt) => Promise<boolean>;
   } = {},
 ): Harness {
   const notifications = new NotificationStore(new MemoryStorage());
@@ -239,15 +240,13 @@ describe("posting requests and acceptances", () => {
     await until(() => a.claims.length === 1);
     await tick(50);
     expect(a.submits).toHaveLength(0);
-    expect(a.host.sent()).toMatchObject([
-      { paused: expect.stringContaining("Posting") },
-    ]);
+    expect(a.host.sent()).toMatchObject([{ status: { tag: "posting" } }]);
     release();
     await until(() => a.submits.length === 1);
     await tick(50);
     expect(a.submits).toHaveLength(1);
     expect(a.claims).toHaveLength(1);
-    expect(a.host.sent()).toMatchObject([{ paused: null }]);
+    expect(a.host.sent()).toMatchObject([{ status: { tag: "waiting" } }]);
     a.host.stop();
   });
 
@@ -305,11 +304,14 @@ describe("posting requests and acceptances", () => {
     await until(() => a.claims.length === 1);
     a.blocked.push(B_PEER);
     release();
-    await until(
-      () => a.host.sent()[0]?.paused?.startsWith("Not posted") ?? false,
-    );
+    await until(() => a.host.sent()[0]?.status.tag === "paused");
     expect(a.host.sent()).toMatchObject([
-      { paused: "Not posted: You blocked this person." },
+      {
+        status: {
+          tag: "paused",
+          reason: "Not posted: You blocked this person.",
+        },
+      },
     ]);
     expect(a.submits).toEqual([]);
     expect(a.scheduled).toEqual([]);
@@ -332,7 +334,12 @@ describe("posting requests and acceptances", () => {
     await until(() => a.scheduled.length === 1);
     expect(a.submits).toHaveLength(0);
     expect(a.host.sent()).toMatchObject([
-      { paused: expect.stringContaining("not final") },
+      {
+        status: {
+          tag: "retrying",
+          reason: expect.stringContaining("not final"),
+        },
+      },
     ]);
     a.settle.gate = null;
     expect(a.scheduled).toHaveLength(1);
@@ -340,7 +347,7 @@ describe("posting requests and acceptances", () => {
     await until(() => a.submits.length === 1);
     expect(a.claims).toHaveLength(2);
     expect(a.claims[1]).toBe(a.claims[0]!);
-    expect(a.host.sent()).toMatchObject([{ paused: null }]);
+    expect(a.host.sent()).toMatchObject([{ status: { tag: "waiting" } }]);
     a.host.stop();
   });
 
@@ -357,7 +364,12 @@ describe("posting requests and acceptances", () => {
     ).toEqual({ ok: true });
     await until(() => a.scheduled.length === 1);
     expect(a.host.sent()).toMatchObject([
-      { paused: `Not posted yet, trying again in 30 s: ${CONNECTION_LOST}` },
+      {
+        status: {
+          tag: "retrying",
+          reason: `Not posted yet, trying again in 30 s: ${CONNECTION_LOST}`,
+        },
+      },
     ]);
     for (let tries = 2; tries <= 5; tries++) {
       expect(a.scheduled).toHaveLength(1);
@@ -367,7 +379,7 @@ describe("posting requests and acceptances", () => {
     }
     expect(a.scheduled).toHaveLength(0);
     expect(a.host.sent()).toMatchObject([
-      { paused: `Not posted: ${CONNECTION_LOST}` },
+      { status: { tag: "paused", reason: `Not posted: ${CONNECTION_LOST}` } },
     ]);
     expect(new Set(a.claims).size).toBe(1);
     expect(a.submits).toHaveLength(0);
@@ -413,6 +425,124 @@ describe("posting requests and acceptances", () => {
   });
 });
 
+describe("a Send the user agreed to in New chat", () => {
+  const agree = (a: Harness, welcome: string) =>
+    a.host.chatOptions.start!.confirm!(B_PEER, welcome);
+  const ask = (a: Harness, welcome: string | null) =>
+    a.port.call({ call: "request", handle: handle(B_PEER), welcome });
+
+  test("is spent by the product's request, which asks nothing more, and a release after it keeps the request", async () => {
+    const prompts: SendPrompt[] = [];
+    const store = new MemoryStatementStore();
+    const a = startA(store, {
+      confirmSend: async (prompt) => (prompts.push(prompt), true),
+    });
+    await a.host.start();
+    const release = await agree(a, "hi");
+    expect(release).toBeFunction();
+    expect(prompts).toMatchObject([{ purpose: "hi" }]);
+    expect(await ask(a, "hi")).toEqual({ ok: true });
+    // New chat stops waiting once the product answered: the kept request is
+    // the user's, and it is posted all the same.
+    release!();
+    await until(() => a.submits.length === 1);
+    expect(prompts).toHaveLength(1);
+    expect(a.claims).toHaveLength(1);
+    a.host.stop();
+  });
+
+  test("Cancel keeps nothing, and a request for another welcome asks again", async () => {
+    const answers = [false, true, false];
+    const prompts: SendPrompt[] = [];
+    const store = new MemoryStatementStore();
+    const a = startA(store, {
+      confirmSend: async (prompt) => (prompts.push(prompt), answers.shift()!),
+    });
+    await a.host.start();
+    expect(await agree(a, "hi")).toBeNull();
+    expect(await agree(a, "hi")).toBeFunction();
+    expect(await ask(a, "something else")).toEqual({
+      ok: false,
+      reason: "You did not send the request.",
+    });
+    expect(prompts.map((prompt) => prompt.purpose)).toEqual([
+      "hi",
+      "hi",
+      "something else",
+    ]);
+    await tick(50);
+    expect(a.host.sent()).toEqual([]);
+    expect(a.claims).toEqual([]);
+    a.host.stop();
+  });
+
+  test("is not spent once New chat stopped waiting: a late request asks again", async () => {
+    const answers = [true, false];
+    const store = new MemoryStatementStore();
+    const a = startA(store, { confirmSend: async () => answers.shift()! });
+    await a.host.start();
+    const release = await agree(a, "");
+    release!();
+    expect(await ask(a, null)).toEqual({
+      ok: false,
+      reason: "You did not send the request.",
+    });
+    await tick(50);
+    expect(a.host.sent()).toEqual([]);
+    expect(a.claims).toEqual([]);
+    a.host.stop();
+  });
+
+  test("a request that spent it, still building when New chat stopped waiting, keeps nothing and sends nothing", async () => {
+    let release!: () => void;
+    const store = new MemoryStatementStore();
+    const a = startA(store, {
+      keysGate: new Promise((resolve) => (release = resolve)),
+    });
+    await a.host.start();
+    const stopWaiting = await agree(a, "hi");
+    const answer = ask(a, "hi");
+    await tick(50);
+    stopWaiting!();
+    release();
+    expect(await answer).toEqual({
+      ok: false,
+      reason:
+        "New chat stopped waiting before the request was kept. Nothing was sent.",
+    });
+    await tick(50);
+    expect(a.host.sent()).toEqual([]);
+    expect(a.claims).toEqual([]);
+    a.host.stop();
+  });
+
+  test("a stop closes its open prompt, and nothing is kept, claimed or posted", async () => {
+    let signal: AbortSignal | undefined;
+    const store = new MemoryStatementStore();
+    const a = startA(store, {
+      confirmSend: (prompt) =>
+        new Promise((resolve) => {
+          signal = prompt.signal;
+          // As the host's prompt does: an abort is a Cancel.
+          prompt.signal?.addEventListener("abort", () => resolve(false));
+        }),
+    });
+    await a.host.start();
+    const agreeing = agree(a, "hi");
+    await until(() => signal !== undefined);
+    a.host.stop();
+    await expect(agreeing).rejects.toThrow("Nova Chat stopped.");
+    expect(signal!.aborted).toBe(true);
+    await tick(50);
+    expect(a.claims).toEqual([]);
+    expect(a.submits).toEqual([]);
+    expect(
+      JSON.parse(localStorage.getItem("nova-chat:A") ?? `{"outgoing":[]}`)
+        .outgoing,
+    ).toEqual([]);
+  });
+});
+
 describe("a copy of the host's state taken at any write", () => {
   test("resumes a pending request under the same request id, so a restore claims no new notification slot", async () => {
     const store = new MemoryStatementStore();
@@ -434,7 +564,7 @@ describe("a copy of the host's state taken at any write", () => {
         welcome: null,
       }),
     ).toEqual({ ok: true });
-    await until(() => a.host.sent()[0]?.paused === null);
+    await until(() => a.host.sent()[0]?.status.tag === "waiting");
     a.host.stop();
     const [account] = a.claims;
     expect(a.claims).toEqual([account!]);
@@ -449,7 +579,7 @@ describe("a copy of the host's state taken at any write", () => {
       const restored = startA(network);
       await restored.host.start();
       const pending = restored.host.sent();
-      if (pending.length > 0 && pending[0]!.paused !== null)
+      if (pending.length > 0 && pending[0]!.status.tag !== "waiting")
         await until(() => restored.submits.length === 1);
       await tick(50);
       // Whatever the copy held, the restored host claims for no other
@@ -457,8 +587,8 @@ describe("a copy of the host's state taken at any write", () => {
       expect(restored.claims.every((claimed) => claimed === account)).toBe(
         true,
       );
-      expect(restored.host.sent().map((each) => each.paused)).toEqual(
-        pending.length === 0 ? [] : [null],
+      expect(restored.host.sent().map((each) => each.status.tag)).toEqual(
+        pending.length === 0 ? [] : ["waiting"],
       );
       restored.host.stop();
     }

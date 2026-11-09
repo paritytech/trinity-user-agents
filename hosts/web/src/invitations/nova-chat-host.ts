@@ -150,8 +150,19 @@ interface Outgoing {
   requestId: string;
   welcome: string | null;
   createdAt: number;
-  /** Why it is not posted, or null once it is. */
+  /** Why it is not posted, or null once it is. A request not posted is posted again at the next start. */
   problem: string | null;
+}
+
+/**
+ * A Send the user agreed to in New chat before the product was asked, for
+ * one request to one person with this welcome. The product's `request`
+ * spends it. It is live until its start ended; a request that spends it is
+ * kept only while it is.
+ */
+interface Agreed {
+  welcome: string | null;
+  live: boolean;
 }
 
 interface Saved {
@@ -169,9 +180,8 @@ const NAMING_TIMEOUT_MS = 10_000;
 const RETRY_MS = 30_000;
 /** How often a request that was not posted is tried again, at most, before it waits for the user. */
 const POST_ATTEMPTS = 5;
-/** Sent's line for a request that is kept but not posted yet. */
-const POSTING =
-  "Posting: it leaves once today's notification slot is final on the People chain.";
+/** Why a request just kept is not posted yet. */
+const NOT_POSTED = "Not posted yet.";
 const DECLINED_MAX = 500;
 
 const errorText = (error: unknown): string =>
@@ -242,6 +252,12 @@ export function startNovaChatHost(
       return () => clearTimeout(timer);
     });
   const retries = new Map<PeerId, () => void>();
+  /** Requests whose post runs now: the claim, the finality wait and the submit. */
+  const inFlight = new Set<Outgoing>();
+  /** Sends the user agreed to in New chat, by person, until the product's request spends them. */
+  const agreed = new Map<PeerId, Agreed>();
+  /** Closes the host's open prompts once it stops. */
+  const prompts = new AbortController();
   /** Posts run one at a time, so two never race for one notification slot. */
   let posting: Promise<unknown> = Promise.resolve();
   let indexes: { [peer: PeerId]: string } = {};
@@ -486,6 +502,30 @@ export function startNovaChatHost(
   const peerOf = (handle: string): PeerId | null =>
     handles.accountFor(handle)?.toLowerCase() ?? null;
 
+  /** Ask the user to send a request to `peer`. False, unasked, once the host stopped. */
+  const askSend = async (
+    peer: PeerId,
+    welcome: string | null,
+  ): Promise<boolean> => {
+    const name =
+      options.nameOf(peer)?.name ??
+      (await options.lookupName(peer)) ??
+      "Contact";
+    if (state !== "running") return false;
+    return options.confirmSend({
+      product,
+      to: { name, handle: name },
+      purpose: welcome ?? "Wants to chat with you.",
+      signal: prompts.signal,
+    });
+  };
+
+  /**
+   * The worker's request to `handle`. It spends a Send the user agreed to in
+   * New chat for this person and welcome; with none, the user is asked here.
+   * It answers once the request is kept, and posts it after
+   * ({@link postRequest}).
+   */
   const request = async (
     handle: string,
     welcome: string | null,
@@ -493,17 +533,14 @@ export function startNovaChatHost(
     const peer = peerOf(handle);
     if (peer === null) return failure("The host cannot name this contact.");
     if (blocked(peer)) return failure("You blocked this person.");
-    const name =
-      options.nameOf(peer)?.name ??
-      (await options.lookupName(peer)) ??
-      "Contact";
-    if (state !== "running") return refusal(`${product.name} stopped.`);
-    const sent = await options.confirmSend({
-      product,
-      to: { name, handle: name },
-      purpose: welcome ?? "Wants to chat with you.",
-    });
-    if (!sent) return failure("You did not send the request.");
+    const grant = agreed.get(peer);
+    const spent = grant?.welcome === welcome ? grant : null;
+    if (spent !== null) agreed.delete(peer);
+    else {
+      const sent = await askSend(peer, welcome);
+      if (state !== "running") return refusal(`${product.name} stopped.`);
+      if (!sent) return failure("You did not send the request.");
+    }
     if (state !== "running") return refusal(`${product.name} stopped.`);
     if (blocked(peer)) return refusal("You blocked this person.");
     const requestId = newId();
@@ -515,12 +552,16 @@ export function startNovaChatHost(
     });
     if (state !== "running") return refusal(`${product.name} stopped.`);
     if (isRefused(built)) return failure(`Not sent: ${built.refused}.`);
+    if (spent?.live === false)
+      return failure(
+        "New chat stopped waiting before the request was kept. Nothing was sent.",
+      );
     const item: Outgoing = {
       peer,
       requestId,
       welcome,
       createdAt: now(),
-      problem: POSTING,
+      problem: NOT_POSTED,
     };
     outgoing = [...outgoing.filter((each) => each.peer !== peer), item];
     save();
@@ -551,6 +592,8 @@ export function startNovaChatHost(
       save();
       return sentChanged();
     }
+    inFlight.add(item);
+    sentChanged();
     try {
       const built = await boundary.request(hexToBytes(item.peer as HexString), {
         requestId: item.requestId,
@@ -582,6 +625,8 @@ export function startNovaChatHost(
           item.peer,
           schedule(() => void postRequest(item, attempts - 1), RETRY_MS),
         );
+    } finally {
+      inFlight.delete(item);
     }
     save();
     sentChanged();
@@ -757,6 +802,9 @@ export function startNovaChatHost(
   const stop = () => {
     if (state === "stopped") return;
     state = "stopped";
+    prompts.abort();
+    for (const grant of agreed.values()) grant.live = false;
+    agreed.clear();
     for (const cancel of retries.values()) cancel();
     retries.clear();
     stopAnswers();
@@ -782,12 +830,13 @@ export function startNovaChatHost(
     if (peer === null || boundary.state(peer) !== "incoming")
       throw new Error("This request is no longer pending.");
     if (blocked(peer)) throw new Error("You blocked this person.");
-    const agreed = await options.confirmAccept({
+    const accepted = await options.confirmAccept({
       product,
       from: item.sender,
       purpose: item.purpose,
+      signal: prompts.signal,
     });
-    if (!agreed) throw new Error("You did not accept.");
+    if (!accepted) throw new Error("You did not accept.");
     if (state !== "running") throw new Error(`${product.name} stopped.`);
     if (blocked(peer)) throw new Error("You blocked this person.");
     const theirs = requestOfItem(item.id);
@@ -872,6 +921,24 @@ export function startNovaChatHost(
         startListeners.add(listener);
         return () => startListeners.delete(listener);
       },
+      // The user decides before the worker is asked: the finality wait and
+      // the prompt are both longer than the start's time limit allows.
+      confirm: async (account, welcome) => {
+        const peer = account.toLowerCase();
+        if (state !== "running")
+          throw new Error(`${product.name} is not running.`);
+        if (blocked(peer)) throw new Error("You blocked this person.");
+        const text = welcome.trim() === "" ? null : welcome;
+        const sent = await askSend(peer, text);
+        if (state !== "running") throw new Error(`${product.name} stopped.`);
+        if (!sent) return null;
+        const grant: Agreed = { welcome: text, live: true };
+        agreed.set(peer, grant);
+        return () => {
+          grant.live = false;
+          if (agreed.get(peer) === grant) agreed.delete(peer);
+        };
+      },
     },
   };
 
@@ -905,7 +972,14 @@ export function startNovaChatHost(
           product,
           purpose: item.welcome ?? "Wants to chat with you.",
           createdAt: item.createdAt,
-          paused: item.problem,
+          status:
+            item.problem === null
+              ? { tag: "waiting" as const }
+              : inFlight.has(item)
+                ? { tag: "posting" as const }
+                : retries.has(item.peer)
+                  ? { tag: "retrying" as const, reason: item.problem }
+                  : { tag: "paused" as const, reason: item.problem },
         }))
         .sort((left, right) => right.createdAt - left.createdAt),
     cancel: (id) => {
@@ -913,6 +987,8 @@ export function startNovaChatHost(
       const peer = id.slice(SENT_PREFIX.length);
       if (!boundary.withdraw(peer)) return false;
       outgoing = outgoing.filter((item) => item.peer !== peer);
+      retries.get(peer)?.();
+      retries.delete(peer);
       acceptanceWatches.get(peer)?.();
       acceptanceWatches.delete(peer);
       save();

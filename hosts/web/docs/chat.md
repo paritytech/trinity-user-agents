@@ -123,6 +123,10 @@ Draft additions, beside the unmerged `setRoomContact` proposal (`lc/product-only
   **Contact**. The product never learns the name.
 - `startConversation { handle, welcome? }`: **+** opens the host picker. An existing room opens. Anyone else gets the
   request form, and only **Send request** asks the product.
+- The product has 30 s to answer a start. A host that asks its own consent first (`start.confirm`, Nova Chat) asks it
+  before the product, so the user's time on the prompt is not the product's. Cancel asks the product nothing. The
+  consent holds for that start only: a request the product makes after the start ended is asked again, and one still
+  being built then is not kept. A request already kept is the user's; it stays until they cancel it under **Sent**.
 - A product cannot resolve a handle to an account. So a chat engine that addresses peers by account cannot run as a
   product. Contact Chat reaches people only through its host's request service.
 - The people in a product's rooms appear only in the host's **+**. They never become `contacts.pick` results or payment
@@ -141,7 +145,10 @@ not the OS notification permission.
   expires.
 - **Accept** hands the intent to the owning product. The row shows **Accepting…**. A refusal, a closed product or no
   answer in 30 s shows the reason and keeps the request waiting. Accepted means that the recipient's product replied.
-- **Sent** lists the user's pending requests, with **Cancel** (local only) and **Paused** with a reason.
+- **Sent** lists the user's pending requests, with **Cancel** (local only) and a status: **Waiting** (posted, waits for
+  the answer), **Posting** (the host posts it now, such as while a claim becomes final), **Retrying** (a try failed and
+  the host tries again by itself) or **Paused** (not tried again by itself for now). Retrying and Paused show why.
+  Contact Chat's requests are Waiting or Paused.
 - Storage: `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, per network and wallet or demo user. The
   list is in `src/notifications/`.
 - Dev server: More → **Add sample notifications** (from `fixtures/notifications/sample-notifications.ts`, Dismiss only)

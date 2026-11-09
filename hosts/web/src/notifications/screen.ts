@@ -48,9 +48,27 @@ export interface SentRequest {
   product: { id: string; name: string };
   purpose: string;
   createdAt: number;
-  /** Paused while the host cannot keep it posted, with why. */
-  paused: string | null;
+  status: SentStatus;
 }
+
+/** Where a sent request is, as Sent shows it. */
+export type SentStatus =
+  /** Posted: it waits for the recipient's answer. */
+  | { tag: "waiting" }
+  /** The host is posting it now, such as while its claim becomes final. */
+  | { tag: "posting" }
+  /** A try to post it failed, and the host tries again by itself. */
+  | { tag: "retrying"; reason: string }
+  /** Not posted, or not kept posted, and not tried again by itself for now. */
+  | { tag: "paused"; reason: string };
+
+/** What Sent says of each {@link SentStatus}. */
+export const SENT_STATUS_LABEL: Record<SentStatus["tag"], string> = {
+  waiting: "Waiting",
+  posting: "Posting",
+  retrying: "Retrying",
+  paused: "Paused",
+};
 
 const KIND_LINE: Record<NotificationKind, string> = {
   invitation: "Chat invitation",
@@ -299,12 +317,15 @@ export class NotificationsScreen {
           ago(request.createdAt, this.store.now()),
         ),
       );
+      const { status } = request;
+      row.dataset.sentStatus = status.tag;
       const meta = el("span", "notification-meta");
+      const label = SENT_STATUS_LABEL[status.tag];
       meta.append(
         `${request.product.name} · `,
-        request.paused === null
-          ? "Waiting"
-          : el("span", "notification-status", "Paused"),
+        status.tag === "waiting"
+          ? label
+          : el("span", "notification-status", label),
       );
       const message = el("span", "notification-message");
       message.append(el("span", "notification-text", request.purpose));
@@ -321,8 +342,8 @@ export class NotificationsScreen {
         ),
       );
       row.append(main, actions);
-      if (request.paused !== null)
-        row.append(el("p", "chat-error notification-problem", request.paused));
+      if (status.tag === "retrying" || status.tag === "paused")
+        row.append(el("p", "chat-error notification-problem", status.reason));
       list.append(row);
     }
     section.append(el("h3", "chat-section-title", "Sent"), list);

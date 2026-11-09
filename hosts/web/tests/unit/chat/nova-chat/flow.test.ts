@@ -253,7 +253,11 @@ describe("Nova Chat, host side and worker session together", () => {
         composer: { allowed: false },
       },
     ]);
-    expect(a.host.sent()).toMatchObject([{ purpose: "Hi Bob", paused: null }]);
+    await until(
+      "A's request posted",
+      () => a.host.sent()[0]?.status.tag === "waiting",
+    );
+    expect(a.host.sent()).toMatchObject([{ purpose: "Hi Bob" }]);
 
     await until("B's Inbox", () => b.notifications.list().length === 1);
     const item = b.notifications.list()[0]!;
@@ -387,16 +391,25 @@ async function turnsUntil(what: string, check: () => boolean): Promise<void> {
   }
 }
 
-describe("New chat through the draft bridge, while the finality wait outlasts the start's time limit", () => {
-  test("the start answers before the wait ends, the room shows Outgoing, and the request is posted once, after finality", async () => {
+describe("New chat through the draft bridge, when the prompt and the finality wait each outlast the start's time limit", () => {
+  test("a Send after 45 s starts the chat at once, the room shows Outgoing, Sent shows it posting, and it is posted once, after finality", async () => {
     Object.assign(globalThis, { localStorage: new MemoryStorage() });
     jest.useFakeTimers();
     try {
       const store = new MemoryStatementStore();
       const claims: string[] = [];
+      let prompts = 0;
+      /** The user reads the prompt for 45 s of fake time, past the start's 30 s. */
+      const DECIDE_MS = 45_000;
       /** Finality after 60 s of fake time: twice the start's 30 s. */
       const FINAL_AFTER_MS = 60_000;
       const a = startUser("A", store, undefined, {
+        confirmSend: () => {
+          prompts += 1;
+          return new Promise((resolve) =>
+            setTimeout(() => resolve(true), DECIDE_MS),
+          );
+        },
         claimNotification: async (account) => {
           claims.push(bytesToHex(account));
           return { line: "claimed in the test", seq: 0 };
@@ -432,11 +445,12 @@ describe("New chat through the draft bridge, while the finality wait outlasts th
         (roomId) => (started = roomId),
         (error: Error) => (started = error),
       );
+      await turnsUntil("the prompt", () => prompts === 1);
+      for (let turns = 0; turns < 200; turns++) await turn();
+      expect([started, claims.length]).toEqual([undefined, 0]);
+
+      jest.advanceTimersByTime(DECIDE_MS);
       await turnsUntil("claim", () => claims.length === 1);
-      for (let turns = 0; turns < 500 && started === undefined; turns++)
-        await turn();
-      // Past the start's 30 s, with the claim not final yet.
-      jest.advanceTimersByTime(30_001);
       await turnsUntil("answer", () => started !== undefined);
       const bForA = handleOf(ids.A, ids.B) as HexString;
       expect(started).toBe(bForA);
@@ -446,17 +460,24 @@ describe("New chat through the draft bridge, while the finality wait outlasts th
       });
       expect(store.submitted).toHaveLength(0);
       expect(a.host.sent()).toMatchObject([
-        { purpose: "Hi Bob", paused: expect.stringContaining("Posting") },
+        { purpose: "Hi Bob", status: { tag: "posting" } },
       ]);
+
+      // A second New chat with Bob opens the same room: no second request.
+      expect(await screen.start!.start(ids.B, "Hi again")).toBe(bForA);
 
       jest.advanceTimersByTime(FINAL_AFTER_MS);
       await turnsUntil("post", () => store.submitted.length > 0);
-      await turnsUntil("Sent", () => a.host.sent()[0]?.paused === null);
-      // Long after: no second post and no second claim.
+      await turnsUntil(
+        "Sent",
+        () => a.host.sent()[0]?.status.tag === "waiting",
+      );
+      // Long after: no second post, claim or prompt.
       jest.advanceTimersByTime(10 * 60_000);
       for (let turns = 0; turns < 200; turns++) await turn();
-      expect(store.submitted).toHaveLength(1);
-      expect(claims).toHaveLength(1);
+      expect([store.submitted.length, claims.length, prompts]).toEqual([
+        1, 1, 1,
+      ]);
 
       served.stop();
       a.session.stop();

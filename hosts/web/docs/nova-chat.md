@@ -23,10 +23,13 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
   block.
 - Claims run one at a time. A request that failed is tried up to five times, 30 s apart, and again at the next start; an
   Accept may be pressed again. A try on the same day reuses the account and claims no new slot.
-- The worker's `request` is answered once the host keeps the request, after **Send**, not once it is posted: the
-  finality wait can outlast the 30 s the host gives a product to start a chat. **Sent** shows the request as posting,
-  then why a try failed, until it is posted. A request cancelled under **Sent**, or to a person blocked meanwhile, is
-  not submitted.
+- New chat asks **Send** before the worker is asked to start, so the prompt does not count against the start's 30 s. The
+  worker's `request` spends that consent, for the same person and first message, while New chat waits; otherwise the
+  host asks again. A sign-out or a wallet switch closes the prompt as a Cancel.
+- The worker's `request` is answered once the host keeps the request, not once it is posted: the finality wait can
+  outlast the start's 30 s. **Sent** shows it **Posting**, then **Retrying** with why after a failed try, **Paused**
+  once the tries ran out, and **Waiting** once the store took it. A request cancelled under **Sent**, or to a person
+  blocked meanwhile, is not submitted.
 - Decline in the Inbox forgets the request, and a repost of it is not listed again.
 - **The worker** (`src/chat/nova-chat/worker.ts`, `session.ts`) keeps the conversations, history, acknowledgements and
   retries. It follows its conversations' topics and posts through its own TrUAPI Statement Store, one product account
@@ -76,7 +79,8 @@ user writes.
   `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), the host side with the worker session over
   an in-memory store, and a New chat through the draft bridge whose finality wait outlasts the start's 30 s.
 - [`browser/nova-chat.spec.ts`](../browser/nova-chat.spec.ts): three demo users over the simulated store, both
-  directions, with a reload.
+  directions, with a reload; and, on Playwright's clock, a Send prompt left open past the start's 30 s, cancelled once
+  and then sent.
 
 Neither shows that a Nova app reads us. That needs a phone: the app's build and network, and an identity registered on
 that network's People chain for the browser, never a phrase the phone also uses.

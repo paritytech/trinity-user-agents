@@ -306,4 +306,84 @@ describe("Nova Chat between test users", () => {
     },
     TEST_MS,
   );
+
+  // The start's 30 s limit is for the product. The tab's clock is Playwright's,
+  // so the prompt can stay open past it without a real 30 s wait.
+  test(
+    "a Send prompt left open past the start's 30 s: Cancel keeps nothing, and Send starts the chat, which Sent shows waiting",
+    async () => {
+      const { context, outside, errors, open } = await offline();
+      await context.clock.install();
+      const stops: (() => void)[] = [];
+      try {
+        const alice = await open();
+        await actAs(alice, "alice");
+        const bob = await open();
+        await actAs(bob, "bob");
+        await workerFrame(alice);
+        await workerFrame(bob);
+        stops.push(allowStatements(alice), allowStatements(bob));
+
+        const welcome = "Hi Bob, after a long look";
+        const prompt = alice.locator("dialog.prompt", {
+          hasText: "Send invitation",
+        });
+        const formError = alice.locator(".chat-new .chat-error");
+        await chat(alice);
+        await alice.click('[aria-label="New chat"]');
+        await alice
+          .locator("dialog.prompt", { hasText: "New chat" })
+          .locator("button", { hasText: "Bob" })
+          .click();
+        await alice.fill(".chat-new-request textarea", welcome);
+
+        await alice.click('[data-action="start-chat"]');
+        await prompt.waitFor();
+        await alice.clock.fastForward(31_000);
+        await alice.waitForTimeout(500);
+        expect(await formError.count()).toBe(0);
+        await prompt
+          .getByRole("button", { name: "Cancel", exact: true })
+          .click();
+        await formError
+          .filter({ hasText: "You did not send the request." })
+          .waitFor();
+
+        await alice.click('[data-action="start-chat"]');
+        await prompt.waitFor();
+        await alice.clock.fastForward(31_000);
+        await alice.waitForTimeout(500);
+        await prompt.getByRole("button", { name: "Send", exact: true }).click();
+        await alice
+          .locator("#chat-screen", {
+            hasText: "Waiting for them to accept your request",
+          })
+          .first()
+          .waitFor();
+        expect(
+          await alice.locator(".chat-error", { hasText: "in time" }).count(),
+        ).toBe(0);
+
+        await toList(alice);
+        await alice.click('#chat-tabs [data-chat-tab="inbox"]');
+        const sent = alice.locator('[data-group="sent"] .notification-row', {
+          hasText: "Bob",
+        });
+        await sent.and(alice.locator('[data-sent-status="waiting"]')).waitFor();
+        expect(await sent.count()).toBe(1);
+
+        await accept(bob, "Alice", welcome);
+        await toList(alice);
+        await alice.click('#chat-tabs [data-chat-tab="inbox"]');
+        await sent.waitFor({ state: "detached" });
+
+        expect(outside).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        for (const stop of stops) stop();
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
 });

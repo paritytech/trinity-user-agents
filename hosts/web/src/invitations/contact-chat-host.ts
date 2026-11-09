@@ -333,7 +333,10 @@ export function sentRequests(
         product,
         purpose: item.context.purpose,
         createdAt: item.context.createdAt,
-        paused: item.paused,
+        status:
+          item.paused === null
+            ? { tag: "waiting" as const }
+            : { tag: "paused" as const, reason: item.paused },
       };
     })
     .sort((left, right) => right.createdAt - left.createdAt);

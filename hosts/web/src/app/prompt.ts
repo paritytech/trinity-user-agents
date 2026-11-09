@@ -39,6 +39,8 @@ export interface PromptRequest<T> {
   choices: PromptChoice<T>[];
   /** The answer when the prompt is dismissed without choosing, as with Escape. */
   dismissed: T;
+  /** Gives `dismissed`, and closes the prompt or never shows it, once aborted. */
+  signal?: AbortSignal;
   /** `list` stacks the choices, one per row, for a choice among many. */
   layout?: "list";
   /** A field that filters a list's rows by their label as the user types. */
@@ -116,7 +118,9 @@ export function setRequesterDescriber(
  * not see.
  */
 export function ask<T>(request: PromptRequest<T>): Promise<T> {
-  const answer = queue.then(() => show(request));
+  const answer = queue.then(() =>
+    request.signal?.aborted === true ? request.dismissed : show(request),
+  );
   queue = answer.catch(() => {});
   return answer;
 }
@@ -324,9 +328,11 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
     let stopFollowing = () => {};
     let lookupSession: ReturnType<PromptLookup<T>["open"]> | null = null;
     let answered = false;
+    const dismiss = () => finish(request.dismissed);
     const finish = (value: T) => {
       if (answered) return;
       answered = true;
+      request.signal?.removeEventListener("abort", dismiss);
       lookupSession?.close();
       stopFollowing();
       dialog.close();
@@ -386,5 +392,6 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
     document.body.append(dialog);
     stopFollowing = followArea(dialog);
     dialog.showModal();
+    request.signal?.addEventListener("abort", dismiss, { once: true });
   });
 }

@@ -97,6 +97,8 @@ export interface SendPrompt {
   product: Product;
   to: { name: string; handle: string };
   purpose: string;
+  /** Closes the prompt, as Cancel would, once aborted. */
+  signal?: AbortSignal;
 }
 
 /** What the host asks its user before an Accept reaches the product. */
@@ -104,6 +106,8 @@ export interface AcceptPrompt {
   product: Product;
   from: { name: string; handle: string };
   purpose: string;
+  /** Closes the prompt, as Cancel would, once aborted. */
+  signal?: AbortSignal;
 }
 
 /** The product's end of its port, as the host holds it. */

@@ -86,6 +86,15 @@ export interface ChatV2ProviderOptions {
     blocked(): string | null;
     /** Calls back when {@link blocked} may answer differently. Answers an unsubscribe. */
     onChange?(listener: () => void): () => void;
+    /**
+     * Ask the user to send a request to `account` with `welcome` before the
+     * product is asked, so the start's time limit counts only the product's
+     * work. Resolves with a release, called once the start ended however it
+     * ended, or with null when the user did not send: then the product is
+     * not asked. Rejects saying why the user cannot be asked. Absent: the
+     * product asks for consent itself, inside its time limit.
+     */
+    confirm?(account: string, welcome: string): Promise<(() => void) | null>;
   };
 }
 
@@ -435,31 +444,40 @@ export class ChatV2Provider implements ChatProvider {
       start: async (account, welcome) => {
         const known = this.roomWith(account);
         if (known !== undefined) return known.roomId;
-        const request: ProductChatStartConversationRequest = {
-          ...(await start.target(account)),
-          ...(welcome === "" ? {} : { welcome }),
-        };
-        const answer = await this.host.query(
-          this.productId,
-          "startConversation",
-          request,
-        );
-        if (answer.isErr()) throw new Error(refusalText(answer.error));
-        const roomId = answer.value.roomId;
-        const contact = this.room(roomId)?.contact;
-        // The product names the room's contact; only a room it declared with
-        // that person is an answer.
-        if (
-          contact === undefined ||
-          ("handle" in request
-            ? !("handle" in contact) ||
-              contact.handle.bytes !== request.handle.bytes.toLowerCase()
-            : this.contactAccount(contact) !== account.toLowerCase())
-        )
-          throw new Error(
-            "The product did not open a conversation with this person.",
+        const release =
+          start.confirm === undefined
+            ? () => {}
+            : await start.confirm(account, welcome);
+        if (release === null) throw new Error("You did not send the request.");
+        try {
+          const request: ProductChatStartConversationRequest = {
+            ...(await start.target(account)),
+            ...(welcome === "" ? {} : { welcome }),
+          };
+          const answer = await this.host.query(
+            this.productId,
+            "startConversation",
+            request,
           );
-        return roomId;
+          if (answer.isErr()) throw new Error(refusalText(answer.error));
+          const roomId = answer.value.roomId;
+          const contact = this.room(roomId)?.contact;
+          // The product names the room's contact; only a room it declared with
+          // that person is an answer.
+          if (
+            contact === undefined ||
+            ("handle" in request
+              ? !("handle" in contact) ||
+                contact.handle.bytes !== request.handle.bytes.toLowerCase()
+              : this.contactAccount(contact) !== account.toLowerCase())
+          )
+            throw new Error(
+              "The product did not open a conversation with this person.",
+            );
+          return roomId;
+        } finally {
+          release();
+        }
       },
     };
   }

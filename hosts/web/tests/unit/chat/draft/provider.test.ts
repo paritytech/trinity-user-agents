@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import type { ProviderEvent } from "../../../../src/chat/provider.js";
 import {
   messagePortBridge,
@@ -530,5 +530,137 @@ describe("starting a chat that was blocked", () => {
     provider.dispose();
 
     expect([seen, listeners.size]).toEqual([[{ type: "status" }], 0]);
+  });
+});
+
+describe("a start the host confirms before it asks the product", () => {
+  const ADA = `0x${"ad".repeat(32)}` as const;
+
+  /** One turn of the event loop, through a port, so it also runs under fake timers. */
+  const turn = () =>
+    new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port2.onmessage = () => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port1.postMessage(null);
+    });
+  const turns = async (count = 50) => {
+    for (let index = 0; index < count; index++) await turn();
+  };
+
+  /**
+   * A product that declares a room with Ada for each start, or, with
+   * `answers` false, never answers. `confirm` is the host's question.
+   */
+  function confirming(
+    confirm: (account: string, welcome: string) => Promise<(() => void) | null>,
+    answers = true,
+  ) {
+    const host = new ChatV2Host({
+      media: () => null,
+      contactRooms: () => true,
+      log: () => {},
+    });
+    const channel = new MessageChannel();
+    host.connect(PRODUCT, messagePortBridge(channel.port2));
+    const product = chatV2Over(messagePortBridge(channel.port1));
+    const asked: unknown[] = [];
+    product.onStartConversation(async (request, send) => {
+      asked.push(request);
+      if (!answers) return;
+      await product.createRoom({
+        roomId: "ada",
+        metadata: { name: "Ada", description: "Direct" },
+        config: {
+          productSource: true,
+          reactionDetails: false,
+          participants: true,
+          messageActions: false,
+          reportSeen: true,
+        },
+        preview: { order: "Timestamp" },
+      });
+      await product.setRoomContact({
+        roomId: "ada",
+        contact: { account: ADA, state: "Outgoing" },
+      });
+      send({ roomId: "ada" });
+    });
+    const provider = new ChatV2Provider(PRODUCT, host, Date.now, {
+      start: {
+        target: () => ({ contact: "reference" }),
+        blocked: () => null,
+        confirm,
+      },
+    });
+    return { start: provider.start!, asked };
+  }
+
+  /** Settle `promise` into a value or the error's message, without awaiting it. */
+  function watch<T>(promise: Promise<T>) {
+    const seen: { value?: T; error?: string } = {};
+    promise.then(
+      (value) => (seen.value = value),
+      (error: Error) => (seen.error = error.message),
+    );
+    return seen;
+  }
+
+  // The start's 30 s limit is for the product's work. A user who reads the
+  // prompt for longer must not get "The product did not answer in time."
+  test("a Send after 60 s on the prompt still starts, and the product is asked only after it", async () => {
+    jest.useFakeTimers();
+    try {
+      let releases = 0;
+      const { start, asked } = confirming(
+        (account, welcome) =>
+          new Promise((resolve) => {
+            expect([account, welcome]).toEqual([ADA, "hi"]);
+            setTimeout(() => resolve(() => (releases += 1)), 60_000);
+          }),
+      );
+      const seen = watch(start.start(ADA, "hi"));
+      await turns();
+      expect(asked).toEqual([]);
+      jest.advanceTimersByTime(60_000);
+      await turns(200);
+      expect(seen).toEqual({ value: "ada" });
+      expect(asked).toEqual([{ contact: "reference", welcome: "hi" }]);
+      expect(releases).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("Cancel on the prompt asks the product nothing", async () => {
+    const { start, asked } = confirming(async () => null);
+    await expect(start.start(ADA, "hi")).rejects.toThrow(
+      "You did not send the request.",
+    );
+    await settle();
+    expect(asked).toEqual([]);
+  });
+
+  test("the confirmation is released once the start ended, also when the product timed out", async () => {
+    jest.useFakeTimers();
+    try {
+      let releases = 0;
+      const { start, asked } = confirming(
+        async () => () => (releases += 1),
+        false,
+      );
+      const seen = watch(start.start(ADA, ""));
+      await turns();
+      expect([asked.length, releases]).toEqual([1, 0]);
+      jest.advanceTimersByTime(30_001);
+      await turns();
+      expect(seen).toEqual({ error: "The product did not answer in time." });
+      expect(releases).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

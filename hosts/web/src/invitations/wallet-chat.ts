@@ -649,6 +649,7 @@ export function confirmSend(
       { label: "Send", value: true, tone: "primary" },
     ],
     dismissed: false,
+    ...(prompt.signal === undefined ? {} : { signal: prompt.signal }),
   });
 }
 
@@ -670,5 +671,6 @@ export function confirmAccept(
       { label: "Accept", value: true, tone: "primary" },
     ],
     dismissed: false,
+    ...(prompt.signal === undefined ? {} : { signal: prompt.signal }),
   });
 }
