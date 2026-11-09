@@ -60,7 +60,8 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         router.present(view: FundingPresentedController(controller: controller))
     }
 
-    func providerPage(providerId: ProductId, path: String, title: String) -> UIViewController? {
+    func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController? {
+        let path = route.hasPrefix("/") || route.hasPrefix("#") ? route : "/" + route
         let destination = providerId.rawValue + path
         let flowState = flowStateProvider.flowState()
 

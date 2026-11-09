@@ -18,9 +18,8 @@ protocol FundingOverlayEnvironment: AnyObject {
 
     /// Presents over whatever is on screen; false when nothing is.
     func present(_ controller: UIViewController) -> Bool
-    /// The provider product's page at `path` inside its App, as the app
-    /// shows products.
-    func providerPage(providerId: ProductId, path: String, title: String) -> UIViewController?
+    /// The provider product's page at `route`, as the app shows products.
+    func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController?
     /// Whether the provider product ships an App; true when that cannot be
     /// told, so its page is tried as before.
     func providerHasApp(providerId: ProductId) async -> Bool
@@ -139,7 +138,7 @@ private extension AppFundingOverlay {
             return await coordinator.presentFrame(
                 providerId: providerId,
                 intent: intent,
-                path: context.appPath ?? route,
+                route: route,
                 awaitsUserTransfer: context.awaitsUserTransfer
             )
         case let .page(url, returnUrl):
@@ -279,12 +278,12 @@ final class FundingOverlayCoordinator {
     func presentFrame(
         providerId: ProductId,
         intent: String,
-        path: String,
+        route: String,
         awaitsUserTransfer: Bool
     ) async -> FundingFrameOutcome {
         let brand = await environment.branding.brand(for: providerId)
         guard !Task.isCancelled,
-              let page = environment.providerPage(providerId: providerId, path: path, title: brand.name)
+              let page = environment.providerPage(providerId: providerId, route: route, title: brand.name)
         else { return .dismissed }
 
         let presented = Presented<FundingProviderFrameController>()

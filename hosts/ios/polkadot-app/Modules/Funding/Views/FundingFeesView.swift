@@ -37,7 +37,7 @@ private extension FundingFeesView {
     /// rounded up to the cent so it never under-states the cost.
     func breakdown(_ quote: FundingQuote) -> some View {
         let fees = fundingFeeBreakdown(quote: quote, direction: model.direction)
-        let total = model.direction == .out ? fees.totalFeeRoundedUp : fees.totalFee
+        let total = fees.totalFee
 
         return VStack(spacing: DSSpacings.small) {
             feeText(fees.net, of: quote).map { line(String(localized: .Funding.feesAmount), $0) }

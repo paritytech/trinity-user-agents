@@ -109,7 +109,7 @@ struct FundingCloseFrameTests {
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         let answer = Task {
-            await coordinator.presentFrame(providerId: provider, intent: "intent", path: "/", awaitsUserTransfer: false)
+            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
         }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
@@ -127,7 +127,7 @@ struct FundingCloseFrameTests {
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         let answer = Task {
-            await coordinator.presentFrame(providerId: provider, intent: "intent", path: "/", awaitsUserTransfer: false)
+            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
         }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
@@ -268,7 +268,7 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
         return true
     }
 
-    func providerPage(providerId _: ProductId, path _: String, title _: String) -> UIViewController? {
+    func providerPage(providerId _: ProductId, route _: String, title _: String) -> UIViewController? {
         UIViewController()
     }
 
