@@ -59,18 +59,32 @@ public struct HostEvent: Sendable, Equatable {
     }
 
     /// The event for a product WebView; `hostSessionID` is the id its page reads from `__trinityHostTelemetry`.
+    /// When a tap opened the page, `tap_ms` is the host's share of the open: the tap to this WebView.
     public static func webViewCreated(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
-        monotonicMilliseconds: Int
+        monotonicMilliseconds: Int,
+        openTap: HostOpenTap? = nil,
+        now: Date = Date()
     ) -> HostEvent {
-        make(
+        var tags = [
+            "truapi.host_version": truapiHostVersion,
+            "host.session_id": hostSessionID.uuidString.lowercased()
+        ]
+        var extras: [String: HostEventValue] = [:]
+
+        if let openTap {
+            tags["open.source"] = openTap.source.rawValue
+            extras["tap_ms"] = .integer(max(0, now.epochMilliseconds - openTap.openedAtEpochMilliseconds))
+        }
+
+        return make(
             name: "host.webview.created",
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            tags: ["truapi.host_version": truapiHostVersion],
-            extras: ["host.session_id": .string(hostSessionID.uuidString.lowercased())]
+            tags: tags,
+            extras: extras
         )
     }
 }

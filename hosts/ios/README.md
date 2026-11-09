@@ -120,6 +120,8 @@ Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** f
 Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
 the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
 platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
+A page opened from a Pocket card tap or a Pocket link also gets `openedAtEpochMs` (the tap's wall-clock milliseconds) and
+`openSource` (`pocket_card` or `deeplink`); `host.webview.created` carries the session as its `host.session_id` tag.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

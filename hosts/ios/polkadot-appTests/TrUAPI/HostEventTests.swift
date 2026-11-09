@@ -28,7 +28,7 @@ struct HostEventTests {
         #expect(event.extras["event.monotonic_ms"] == .integer(42))
     }
 
-    @Test func webViewCreatedCarriesItsCorrelationIDAsAnExtra() throws {
+    @Test func webViewCreatedCarriesItsCorrelationIDAsASearchableTag() throws {
         let origin = HostEventOrigin(
             launchID: UUID(),
             osVersion: "26.5",
@@ -46,10 +46,35 @@ struct HostEventTests {
         )
 
         #expect(event.name == "host.webview.created")
-        #expect(event.extras["host.session_id"] == .string("d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
+        #expect(event.tags["host.session_id"] == "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")
         #expect(event.extras["event.monotonic_ms"] == .integer(84))
         #expect(event.extras["app.launch_id"] == nil)
+        #expect(event.extras["tap_ms"] == nil)
+        #expect(event.tags["open.source"] == nil)
         #expect(event.tags["host.os_version"] == nil)
+    }
+
+    @Test func webViewCreatedAfterATapSaysWhatOpenedItAndHowLongTheHostTook() throws {
+        let origin = HostEventOrigin(
+            launchID: UUID(),
+            osVersion: "26.5",
+            appVersion: nil,
+            appBuild: nil,
+            appVariant: "debug"
+        )
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_000.123))
+
+        let event = try HostEvent.webViewCreated(
+            hostSessionID: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
+            origin: origin,
+            truapiHostVersion: "0.9.0",
+            monotonicMilliseconds: 84,
+            openTap: tap,
+            now: Date(timeIntervalSince1970: 1_793_900_001.623)
+        )
+
+        #expect(event.tags["open.source"] == "pocket_card")
+        #expect(event.extras["tap_ms"] == .integer(1500))
     }
 
     @Test func aNoopRecorderNeverBuildsTheEvent() {

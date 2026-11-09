@@ -22,6 +22,7 @@ actor SPARustRuntime {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
+    private let openTap: HostOpenTap?
     private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
@@ -36,7 +37,8 @@ actor SPARustRuntime {
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording
+        hostEventRecorder: HostEventRecording,
+        openTap: HostOpenTap? = nil
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -44,6 +46,7 @@ actor SPARustRuntime {
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
+        self.openTap = openTap
     }
 
     deinit {
@@ -83,7 +86,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             bootstrapScript: bootstrapScript,
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
-                truapiHostVersion: truapiHostVersion()
+                truapiHostVersion: truapiHostVersion(),
+                openTap: openTap
             )
         )
 
@@ -99,7 +103,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             hostSessionID: hostSessionId,
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds(),
+            openTap: openTap
         ))
 
         // Disposed while initializing: dispose captured nil for the engine,

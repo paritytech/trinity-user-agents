@@ -16,9 +16,11 @@ final class SPARustRuntimeFactory {
 
     private let environment: Environment
     private weak var presentationView: ControllerBackedProtocol?
+    private var pendingOpenTap: HostOpenTap?
 
     init(environment: Environment) {
         self.environment = environment
+        pendingOpenTap = environment.configuration.openTap
     }
 
     /// The view runtime prompts anchor to; attached to the routers on every
@@ -41,13 +43,18 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             routers: environment.routers
         )
 
+        // Only the first runtime is timed from the tap; a retry opens the page again later.
+        let openTap = pendingOpenTap
+        pendingOpenTap = nil
+
         return SPARustRuntime(
             executionModel: executionModel,
             configuration: environment.configuration,
             contentLoader: environment.contentLoader,
             schemeHandlerProxy: environment.schemeHandlerProxy,
             logger: environment.rust.logger,
-            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder(),
+            openTap: openTap
         )
     }
 }
