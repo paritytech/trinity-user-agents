@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
@@ -17,7 +19,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -134,13 +135,15 @@ class HostProcessTelemetryTest {
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { fingerprints += it.fingerprints },
         )
+        val otherBuild = origin.copy(appVariant = "debug", nativeAppVersion = "9.9.9", appBuild = 7L)
 
-        capture.capture { HostEvent("host.webview.created", mapOf("host.platform" to "android"), emptyMap()) }
-        capture.capture { HostEvent("host.webview.created", emptyMap(), mapOf("host.app_build" to 42L)) }
-        capture.capture { HostEvent("host.process.started", emptyMap(), emptyMap()) }
+        capture.capture { HostEvent(name = "host.one", tags = origin.baseTags(), extras = origin.baseExtras()) }
+        capture.capture {
+            HostEvent(name = "host.one", tags = otherBuild.baseTags(), extras = otherBuild.baseExtras())
+        }
+        capture.capture { HostEvent(name = "host.two", tags = emptyMap(), extras = emptyMap()) }
 
-        assertEquals(fingerprints[0], fingerprints[1])
-        assertNotEquals(fingerprints[1], fingerprints[2])
+        assertEquals(listOf(listOf("host.one"), listOf("host.one"), listOf("host.two")), fingerprints)
     }
 
     @Test
