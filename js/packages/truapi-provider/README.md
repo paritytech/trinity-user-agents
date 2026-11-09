@@ -5,9 +5,10 @@ Network transport for the TrUAPI `ChainProvider` contract: an embedded
 WebSocket JSON-RPC node, behind one API. This package is the WebAssembly build,
 for browser and desktop (webview) hosts.
 
-You connect to a network by its genesis hash, and everything else is handled for
-you: the bundled catalog provides the spec and relay wiring, so clients never
-ship or refresh specs of their own. One light client is shared across all
+You connect to a chain by its genesis hash. A provider built for a Trinity stack
+(`setStack`) runs the chains of the stack's descriptor from the light specs you
+fetched for it. Without a stack, the bundled catalog provides the spec and relay
+wiring of `paseo-next-v2` and `previewnet`. One light client is shared across all
 connections, and its synced state is kept between launches, so a launch resumes
 from finalized state instead of syncing from scratch. It holds at most 32 of them
 at once and rejects a `connect` past that, so a client that leaks connections
@@ -43,21 +44,65 @@ const response = await connection.nextResponse(); // undefined once closed
 connection.close();
 ```
 
+To run a Trinity stack, give the builder the stack's link and its descriptor as
+served, the same pair the host gives the core, then the light spec of each
+chain:
+
+```js
+const builder = new ChainProviderBuilder();
+builder.setStack(link, descriptorBytes);
+for (const chain of descriptor.chains) {
+  const response = await fetch(chain.lightSpec.url);
+  if (!response.ok) continue; // the chain stays unknown; add its spec later
+  builder.addLightSpec(
+    chain.genesisHash,
+    new Uint8Array(await response.arrayBuffer()),
+  );
+}
+const provider = builder.build();
+```
+
+`setStack` throws when the link is malformed or the descriptor is refused under
+it: a link with a key accepts only a descriptor signed with that key.
+`addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
+imply another genesis hash, with the chain's role in the message, and leaves the
+builder as it was. Fetch the descriptor again before refusing the stack, since a
+wrong spec is what a stale descriptor looks like after a wipe. Pass the bytes as
+served, before any decoding, because the digest covers them.
+
+The descriptor decides the rest. The chain without a `paraId` is the relay and
+every other chain syncs through it, and a chain runs the statement-store
+protocol only when the descriptor sets `statementStore` on it. A chain whose
+spec was not added is unknown to the provider (`connect` rejects), and the rest
+of the stack runs. `provider.addLightSpec(genesisHash, bytes)` supplies it
+later without a new provider. A parachain also needs its relay's spec. A stack's
+provider never resolves a chain from the bundled catalog.
+
+Build one provider per stack, and a new one when the stack's `generation`
+changes: the light client keys a chain by its genesis hash, which a fork shares
+with its source.
+
 Warm start is opt-in, because this package stores nothing itself. Hand
 `setStorage` a client to storage you already own:
 
 ```js
 builder.setStorage({
-  async load(genesisHash) {
-    return (await myStore.get(genesisHash)) ?? null;
+  async load(genesisHash, stack) {
+    return (await myStore.get(`${stack ?? ""}:${genesisHash}`)) ?? null;
   },
-  async save(genesisHash, blob) {
-    await myStore.put(genesisHash, blob);
+  async save(genesisHash, blob, stack) {
+    await myStore.put(`${stack ?? ""}:${genesisHash}`, blob);
   },
 });
 ```
 
-Both are called with a `0x`-prefixed lowercase genesis hash. A client that cannot
+Both are called with a `0x`-prefixed lowercase genesis hash. `stack` identifies
+the stack given to `setStack`: its key in hex when the link has one, otherwise
+its normalised descriptor URL. It is `undefined` on a provider without a stack.
+Keep a blob per stack and genesis hash, because two stacks can share a genesis
+hash. What `save` receives starts with a line naming the stack's `generation`,
+and `load` must return it unchanged. After a wipe the provider ignores what was
+stored for the earlier generation and the next save replaces it. A client that cannot
 answer must reject rather than resolve `null`, which means "nothing stored yet"
 and would let the next write replace good state. Without a client every chain
 syncs from the checkpoint in the chain spec on every run.

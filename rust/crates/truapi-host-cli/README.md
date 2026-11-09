@@ -1133,9 +1133,10 @@ the CLI creates and cleans up a unique temporary Unix socket.
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
-command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
-claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
+command uses the selected backend. The light client takes its chain specs from
+the stack's descriptor, so it runs every built-in network and any `--stack`. It
+is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 

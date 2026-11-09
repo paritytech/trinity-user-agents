@@ -259,8 +259,15 @@ Statement submissions and allowance operations reuse the core's People-chain RPC
 client. Statement subscriptions each open their own connection.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
-embedded smoldot light client plus a bundled chain-spec catalog, addressed by
-genesis hash, so the host ships no chain specs and never refreshes them. The light
+embedded smoldot light client addressed by genesis hash. A provider built for a
+Trinity stack runs the chains of the stack's descriptor: the host fetches each
+chain's `lightSpec` and hands the bytes over, and the provider checks them
+against the descriptor's `sha256` and the chain's genesis hash, wires each
+parachain to the relay and runs the statement-store protocol where the
+descriptor sets `statementStore`. A chain whose spec has not arrived is unknown
+until the host adds it, and the rest of the stack runs. The crate also bundles
+a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
+provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
 The limit covers only light-client connections; connections to a remote node are
@@ -294,7 +301,10 @@ every artifact resumes from stored finalized state instead, including the relay 
 parachain syncs through. The provider owns when a blob is read and written; the
 host owns where the bytes live. The crate stores nothing itself: a host implements
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
-control of quota and of whether the bytes are backed up or encrypted.
+control of quota and of whether the bytes are backed up or encrypted. A blob is
+stored per stack and genesis hash, because a fork shares its source's genesis
+hashes, and carries the stack's `generation`, so a stack that restarted its
+chains reads nothing stored for the earlier ones.
 
 ### Building extrinsics
 

@@ -336,9 +336,9 @@ concurrent peers under one host do not share a trace key.
 
 `--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
 default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
-explicit flag over it. The option is global. With a stack it fails at
-startup, for every command; another combination the light client cannot serve
-fails when the command resolves its network, before it starts.
+explicit flag over it. The option is global. A stack whose descriptor names no
+light spec for a chain the light client runs fails when the command resolves
+its network, before it starts.
 
 ### 4.4 Global stack option
 
@@ -346,7 +346,7 @@ fails when the command resolves its network, before it starts.
 stack instead of a built-in network (§14.1). `HOST_CLI_STACK` supplies the same
 value when the flag is absent, and a blank value is unset. The option is global.
 `stack` and `update` do not run against it, but still refuse it next to
-`--network` or `--chain-backend light-client`.
+`--network`.
 
 ### 4.5 Global network option
 
@@ -1773,10 +1773,8 @@ under the TLD and is stored under the namespace. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
 unreachable one does so without a message. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
-light-client` on a built-in whose descriptor in use has genesis hashes other than
-this build's light-client chain specs fails at start, since the stack restarted
-after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
-no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
+light-client` fails at start when the descriptor in use names no `lightSpec` for
+the relay, People, Asset Hub or Bulletin. `scripts/update-stacks.sh` refreshes the
 shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
@@ -1796,7 +1794,13 @@ the checks repeat only when that fetch puts the published copy in use, and
 otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
 that prints both. An endpoint that does not answer within 3 seconds, or a People
 chain without the storage item, is logged and left to fail on first use.
-`--chain-backend light-client` is not checked.
+
+With `--chain-backend light-client` the endpoints are not used, and the light
+specs are checked instead (§14.3). A spec whose bytes differ from the
+descriptor's `sha256`, or that implies another genesis hash than its chain's, is
+an error handled like an endpoint's wrong genesis: the descriptor is fetched
+once more when the shipped copy is in use. A spec that cannot be fetched is
+logged, and fetched again when a command first connects to its chain.
 
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
@@ -1804,9 +1808,8 @@ key; any other value is read as a local descriptor file, signed or not, with no
 key checked. A fetched stack is read with no stored copy. An unreachable stack, a
 descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
-`NetworkSuffix` are checked as above. `--chain-backend light-client` is
-refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
+`NetworkSuffix` are checked as above, or its light specs with `--chain-backend
+light-client`. The product namespace (`HostChainSet.network` and the
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
 be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
 not share the `polkadot` namespace.
@@ -1920,12 +1923,19 @@ dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
 
-With `light-client`, the embedded smoldot light client syncs the chains from the
-specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
-cannot be combined with `--stack`, nor with a built-in stack that restarted after
-those specs were bundled (§14.1). One light client per network serves the process
-and keeps each chain running after its last connection closes, so a chain syncs
-once per process.
+With `light-client`, the embedded smoldot light client syncs the chains from
+the light specs the stack's descriptor names, so it runs every built-in network
+and any `--stack`. The CLI fetches the `lightSpec.url` of the relay, People,
+Asset Hub and Bulletin with the descriptor's fetch rules (1 MiB, no redirects),
+and `truapi-provider` checks each against the descriptor's `sha256` and the
+chain's genesis hash before it loads it. The descriptor also gives the relay
+each parachain syncs through and the chains that run the statement-store
+protocol. A checked spec is kept in `light-specs/<sha256>.json` under the state
+directory (`$XDG_STATE_HOME/truapi-host`), outside any `--base-path`, and a
+later run reads it from there while it still passes the check. One light client
+per stack and descriptor serves the process and keeps each chain running after
+its last connection closes, so a chain syncs once per process. It stores no
+database, so every process syncs from the specs' checkpoints.
 
 CLI commands wait for the chain to sync before their first request, since
 smoldot sends nothing until then and the 30-second limit above would fail it.
