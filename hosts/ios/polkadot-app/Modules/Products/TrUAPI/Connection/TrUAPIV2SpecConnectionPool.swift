@@ -3,6 +3,7 @@ import os
 import ChainRegistry
 import Foundation_iOS
 import FoundationExt
+import IssueMonitoring
 import SDKLogger
 
 /// One dedicated node socket per core `chain_connect`; socket deaths are reported, never hidden by reconnects.
@@ -48,6 +49,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
     private let dateProvider: DateProviding
     private let resumePolicy: ResumePolicy
     private let logger: SDKLoggerProtocol
+    private let issueDiagnostic: IssueDiagnostic
     private let state = OSAllocatedUnfairLock(uncheckedState: State())
 
     public init(
@@ -55,12 +57,14 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         applicationHandler: ApplicationHandlerProtocol,
         dateProvider: DateProviding,
         resumePolicy: ResumePolicy = .default,
+        issueDiagnostic: IssueDiagnostic = NoopIssueDiagnostic(),
         logger: SDKLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.applicationHandler = applicationHandler
         self.dateProvider = dateProvider
         self.resumePolicy = resumePolicy
+        self.issueDiagnostic = issueDiagnostic
         self.logger = logger
 
         applicationHandler.delegate = self
@@ -124,6 +128,7 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
         }
 
         logger.info("[truapi.chain] chain connection \(connectionId) open on \(socket.url)")
+        issueDiagnostic.recordRecovery(for: socket.url.absoluteString)
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didReceive text: String) {
@@ -148,6 +153,7 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
         guard let connectionId else { return }
 
         logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
+        reportFailure(of: socket.url, reason: reason)
         handler?.chainDidClose(connectionId: connectionId)
     }
 }
@@ -190,6 +196,22 @@ extension TrUAPIV2SpecConnectionPool {
 }
 
 private extension TrUAPIV2SpecConnectionPool {
+    /// A dial that never connected and a transport that died are failures to the product; a close the peer
+    /// or the pool asked for is not.
+    func reportFailure(of url: URL, reason: ChainSocketCloseReason) {
+        switch reason {
+        case let .transport(error):
+            issueDiagnostic.recordFailure(for: url.absoluteString, error: error, counters: [:])
+        case .connectTimeout:
+            issueDiagnostic.recordFailure(for: url.absoluteString, error: nil, counters: [:])
+        case .peerClosed,
+             .livenessTimeout,
+             .pathLost,
+             .resumed:
+            break
+        }
+    }
+
     func makeSocket(for genesisHash: Data) -> ChainSocketProtocol? {
         guard let chain = chainRegistry.getChainByGenesis(for: genesisHash.toHex()) else { return nil }
 

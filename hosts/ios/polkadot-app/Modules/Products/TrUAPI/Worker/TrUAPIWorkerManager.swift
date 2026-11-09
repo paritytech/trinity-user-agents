@@ -1,6 +1,7 @@
 import Foundation
 import os
 import AsyncExtensions
+import IssueMonitoring
 import Products
 import StructuredConcurrency
 import TrUAPIHost
@@ -104,6 +105,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private let startupWindow: Duration
     /// Where a worker's prompts present while no chat has given it a screen.
     private let presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
+    private let issueDiagnostic: IssueDiagnostic
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
@@ -125,12 +127,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
         presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil,
+        issueDiagnostic: IssueDiagnostic = NoopIssueDiagnostic(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.references = references
         self.startupWindow = startupWindow
         self.presentationFallback = presentationFallback
+        self.issueDiagnostic = issueDiagnostic
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -260,6 +264,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
             executionSubject.send(executionSubject.value.merging([productId: runtime.execution]) { _, new in new })
+            issueDiagnostic.recordRecovery(for: "\(productId)")
 
             logger.debug("Started worker for \(productId)...")
         } catch {
@@ -268,6 +273,9 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // clearing that would swallow a start the core never repeats.
             guard held[productId]?.belongsTo(boot) == true else { return }
 
+            if !(error is CancellationError) {
+                issueDiagnostic.recordFailure(for: "\(productId)", error: error, counters: [:])
+            }
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
             // A failed boot left in the map would swallow every later start,
             // while the core keeps counting the reference the holder took and

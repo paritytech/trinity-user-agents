@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -209,6 +210,28 @@ struct TrUAPIWorkerManagerTests {
         try await execution(of: gameProductId, in: manager)
     }
 
+    /// A worker that will not boot is the one failure no screen shows, so the manager reports it, and a later
+    /// boot that works clears it.
+    @Test
+    func reportsAWorkerThatFailedToBootAndClearsItOnceItBoots() async throws {
+        let logger = MockLogger()
+        let diagnostic = RecordingIssueDiagnostic()
+        let builder = StubWorkerBuilder(cannotBuild: true)
+        let manager = makeManager(builder: builder, logger: logger, issueDiagnostic: diagnostic)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await logger.waitForError(containing: "failed to start")
+
+        #expect(diagnostic.failureCount == 1)
+        #expect(diagnostic.recoveryCount == 0)
+
+        builder.cannotBuild = false
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+
+        #expect(diagnostic.recoveryCount == 1)
+    }
+
     /// A stop for a product that never started is what the core sends when a
     /// card's worker was refused, and it must not tear anything else down.
     @Test
@@ -366,12 +389,14 @@ private func makeManager(
     builder: any TrUAPIWorkerBuilding,
     references: StubWorkerReferences = StubWorkerReferences(),
     startupWindow: Duration = .seconds(30),
-    logger: MockLogger = MockLogger()
+    logger: MockLogger = MockLogger(),
+    issueDiagnostic: IssueDiagnostic = NoopIssueDiagnostic()
 ) -> TrUAPIWorkerManager {
     TrUAPIWorkerManager(
         builder: builder,
         references: { references },
         startupWindow: startupWindow,
+        issueDiagnostic: issueDiagnostic,
         logger: logger
     )
 }

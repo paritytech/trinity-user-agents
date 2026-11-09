@@ -89,6 +89,7 @@ private extension RustRuntimeEnvironment {
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
+            issueDiagnostic: HostLoadIssueDiagnostics.rpcConnection,
             logger: logger
         )
 

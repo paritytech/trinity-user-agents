@@ -161,6 +161,7 @@ final class ProductPocketService: @unchecked Sendable {
             // A worker the core starts on demand, such as a funding provider,
             // has no screen, and its permission prompts present from the app's.
             presentationFallback: { [weak runtimeProvider] in runtimeProvider?.presentationView },
+            issueDiagnostic: HostLoadIssueDiagnostics.workerBoot,
             logger: logger
         )
 

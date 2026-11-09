@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import IssueMonitoring
 import SDKLogger
 @testable import polkadot_app
 
@@ -37,6 +38,24 @@ struct TrUAPIV2SpecConnectionPoolTests {
             .info("[truapi.chain] chain connection 2 dialling wss://node.example"),
             .info("[truapi.chain] chain connection 2 open on wss://node.example")
         ])
+    }
+
+    /// A dead node is routine, so the pool tells the diagnostic about every transport death or failed dial and
+    /// every socket that did open, and leaves the threshold to it. A close the peer or the pool asked for is
+    /// not a failure.
+    @Test func transportDeathsAndFailedDialsAreFailuresAndOpensRecoveries() throws {
+        struct Refused: Error {}
+        let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        let diagnostic = RecordingIssueDiagnostic()
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets[0].simulateClose(.transport(Refused()))
+        sockets[1].simulateClose(.connectTimeout)
+        sockets[2].simulateClose(.peerClosed)
+
+        #expect(diagnostic.failureCount == 2)
+        #expect(diagnostic.recoveryCount == 3)
     }
 
     @Test func eachConnectGetsItsOwnSocketAndId() throws {
@@ -324,6 +343,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
         registry: MockChainRegistry,
         handler: RecordingChainEventHandler? = nil,
         lifecycle: Lifecycle = Lifecycle(),
+        issueDiagnostic: IssueDiagnostic = NoopIssueDiagnostic(),
         logger: SDKLoggerProtocol = StubLogger()
     ) -> TrUAPIV2SpecConnectionPool {
         let pool = TrUAPIV2SpecConnectionPool(
@@ -331,6 +351,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
             applicationHandler: lifecycle.applicationHandler,
             dateProvider: lifecycle.dateProvider,
             resumePolicy: .init(expiryThreshold: 30, probeTimeout: 5),
+            issueDiagnostic: issueDiagnostic,
             logger: logger
         )
         pool.eventHandler = handler

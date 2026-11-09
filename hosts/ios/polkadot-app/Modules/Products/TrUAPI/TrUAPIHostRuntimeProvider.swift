@@ -146,6 +146,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
+            issueDiagnostic: HostLoadIssueDiagnostics.rpcConnection,
             logger: logger
         )
 
