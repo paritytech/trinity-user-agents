@@ -1,6 +1,7 @@
 //! Session, auto-signing and session-store tests driven through the pairing host.
 
 use crate::{
+	host_logic::statement_store::SUBMIT_STATEMENT_METHOD,
 	platform::{AuthState, CoreStorageKey},
 	runtime::{
 		ProductRuntimeHost,
@@ -143,7 +144,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 	let platform = Arc::new(StubPlatform {
 		sign_raw_confirmed: true,
 		rpc_method_responses: answers("statement_subscribeStatement", r#""sub""#, 4)
-			.chain(answers("statement_submit", r#"{"status":"new"}"#, 4))
+			.chain(answers(SUBMIT_STATEMENT_METHOD, r#"{"status":"new"}"#, 4))
 			.chain(answers("statement_unsubscribeStatement", "true", 4))
 			.collect(),
 		..Default::default()

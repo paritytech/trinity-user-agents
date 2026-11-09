@@ -2291,7 +2291,9 @@ fn is_transport_loss(error: &SubxtRpcError) -> bool {
 	matches!(error, SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_))
 }
 
-fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
+/// A failed or closed transport is `Unavailable`; any other error is a
+/// `HostFailure`.
+pub fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
 			RuntimeFailure::unavailable_with_reason(method, error.to_string())
