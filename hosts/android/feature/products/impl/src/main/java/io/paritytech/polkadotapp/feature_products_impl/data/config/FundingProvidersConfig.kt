@@ -1,34 +1,31 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.config
 
+import com.google.gson.Gson
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
-import io.paritytech.polkadotapp.tools_remoteconfig_api.getSyncedJsonObject
-import timber.log.Timber
-import uniffi.truapi.ProductId
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.mapNotNull
 import javax.inject.Inject
 
-/** The published funding providers the host lists to the core; the core offers no others. */
+/** The published funding providers Remote Config lists; the core reads the names and offers no others. */
 interface FundingProvidersConfig {
-    /** In configured order, without duplicates. Waits for the first Remote Config sync. */
-    suspend fun getFundingProviderIds(): Result<List<ProductId>>
+    /** The names as configured, after the first Remote Config sync and again on every update. */
+    fun publishedNames(): Flow<List<String>>
 }
 
 internal class RemoteConfigFundingProvidersConfig @Inject constructor(
     private val remoteConfigService: RemoteConfigService,
 ) : FundingProvidersConfig {
-    override suspend fun getFundingProviderIds(): Result<List<ProductId>> {
-        return remoteConfigService.getSyncedJsonObject<FundingConfigRemote>(CONFIG_KEY)
-            .mapCatching { it.toProviderIds() }
-    }
+    private val gson = Gson()
 
-    // Gson bypasses Kotlin nullability, so a missing `providers` arrives as null, and so can an element.
-    private fun FundingConfigRemote.toProviderIds(): List<ProductId> {
-        return providers.orEmpty()
-            .mapNotNull { name ->
-                name?.let(ProductId::parse)
-                    ?.onFailure { Timber.w(it, "Skipping funding provider %s in $CONFIG_KEY", name) }
-                    ?.getOrNull()
-            }
-            .distinct()
+    // A value that does not parse, which Gson may read as no object at all, keeps the list the core had.
+    override fun publishedNames(): Flow<List<String>> = remoteConfigService.observeString(CONFIG_KEY).mapNotNull { raw ->
+        val config = runCatching { gson.fromJson(raw, FundingConfigRemote::class.java) }
+            .logFailure("Unreadable $CONFIG_KEY")
+            .getOrNull()
+            ?: return@mapNotNull null
+        // Gson bypasses Kotlin nullability, so a missing `providers` arrives as null, and so can an element.
+        config.providers.orEmpty().filterNotNull()
     }
 
     private class FundingConfigRemote(

@@ -142,7 +142,6 @@ internal class RealResolveProductUseCase @Inject constructor(
             appVersion = SemVer.ZERO,
             includesChat = true,
             includesPocket = card != null,
-            includesFunding = false,
             pocketCards = listOfNotNull(card?.toDefinition()),
         )
     }

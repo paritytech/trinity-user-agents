@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
@@ -47,9 +47,9 @@ class FundingActivityCenter @Inject constructor(
      * The pushed sessions already acknowledged in this process, as pushed: one the core hands back after a late report
      * differs, so it is acknowledged again. Read and written under [reloadMutex].
      */
-    private val acknowledged = mutableSetOf<FundingSessionEntry>()
+    private val acknowledged = mutableSetOf<FundingBookEntry>()
 
-    /** Ended sessions handed over as their summary only and acknowledged in this process. Under [reloadMutex]. */
+    /** Ended sessions the core listed as unacknowledged and acknowledged in this process. Under [reloadMutex]. */
     private val acknowledgedSummaries = mutableSetOf<String>()
 
     /**
@@ -58,7 +58,7 @@ class FundingActivityCenter @Inject constructor(
      * built, so the core stops pushing it on resume.
      */
     fun observe(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.endedSummaries, runtime.inProgress) { sessions, summaries, _ -> sessions.values to summaries }
+        combine(runtime.sessions, runtime.unacknowledged, runtime.inProgress) { sessions, summaries, _ -> sessions.values to summaries }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
             .map { (sessions, summaries) -> reloadMutex.withLock { reload(sessions, summaries) } }
 
@@ -70,7 +70,7 @@ class FundingActivityCenter @Inject constructor(
             ?.firstOrNull { it.intent == intent }
             ?.let(FundingRecord::of)
 
-    private suspend fun reload(sessions: Collection<FundingSessionEntry>, summaries: Set<String>): FundingActivity {
+    private suspend fun reload(sessions: Collection<FundingBookEntry>, summaries: Set<String>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
@@ -94,7 +94,7 @@ class FundingActivityCenter @Inject constructor(
     }
 
     /** Acknowledges each ended session the core has not been told about; a failed call is tried again on the next reload. */
-    private suspend fun acknowledgeEnded(entries: List<FundingSessionEntry>) {
+    private suspend fun acknowledgeEnded(entries: List<FundingBookEntry>) {
         entries
             .filter { !it.session.acknowledged && !it.session.stage.isOpen && it !in acknowledged }
             .forEach { entry ->
@@ -104,7 +104,7 @@ class FundingActivityCenter @Inject constructor(
             }
     }
 
-    /** Acknowledges each ended session handed over as its summary once its history row is built. */
+    /** Acknowledges each ended session the core lists as unacknowledged once its history row is built. */
     private suspend fun acknowledgeSummaries(intents: Set<String>) {
         (intents - acknowledgedSummaries).forEach { intent ->
             runtime.acknowledge(intent)

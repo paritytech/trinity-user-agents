@@ -591,6 +591,7 @@ impl FundingPlatform for ReentrantHost {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -687,6 +688,7 @@ impl FundingPlatform for SilentPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
+		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -1060,6 +1062,7 @@ fn a_selection_goes_with_its_overlay() {
 		asset: Some("EUR".to_string()),
 		network: None,
 		country: None,
+		currency: None,
 	};
 	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
 	let while_up = (registry.select("fs_1", picked.clone()), registry.selection("fs_1"));

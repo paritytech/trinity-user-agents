@@ -267,3 +267,36 @@ fn amount_limits_span_every_provider() {
 		)
 	);
 }
+
+// Divergence "Remote provider config": the host applies every refresh; the
+// list puts the configured providers first, each once, then the bundled ones
+// the configuration does not name, and leaves out names that are no product.
+#[test]
+fn the_provider_config_lists_published_then_unnamed_bundled() {
+	let bundled = |name: &str| FundingProviderEntry {
+		product_id: ProductId::for_test(name),
+		worker_manifest: Some("{}".to_string()),
+		origin: FundingProviderOrigin::Bundled,
+		has_app: Some(true),
+	};
+	let names = ["ramp.dot", "bank.dot", "ramp.dot", "not a product!"].map(str::to_string);
+	let (entries, invalid) =
+		provider_config(&names, vec![bundled("bank.dot"), bundled("fundtest.dot")]);
+	assert_eq!(
+		(
+			entries
+				.iter()
+				.map(|entry| (entry.product_id.as_str().to_string(), entry.origin))
+				.collect::<Vec<_>>(),
+			invalid,
+		),
+		(
+			vec![
+				("ramp.dot".to_string(), FundingProviderOrigin::Published),
+				("bank.dot".to_string(), FundingProviderOrigin::Published),
+				("fundtest.dot".to_string(), FundingProviderOrigin::Bundled),
+			],
+			vec!["not a product!".to_string()],
+		)
+	);
+}

@@ -241,6 +241,8 @@ JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/tru
 a single package with tree-shakeable subpath entries:
 
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
+- `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
+  leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can

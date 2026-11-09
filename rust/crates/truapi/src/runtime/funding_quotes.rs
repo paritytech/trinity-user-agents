@@ -38,6 +38,7 @@ use crate::{
 	host_logic::{
 		funding::FundingChoice,
 		funding_providers::{LearnedLimit, LearnedSupport},
+		funding_view,
 	},
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
@@ -180,8 +181,17 @@ impl FundingQuotes {
 	/// asking any provider.
 	#[cfg(test)]
 	pub(crate) fn show(&self, intent: &str, ask: FundingQuoteAsk, rows: Vec<FundingQuoteRow>) {
+		let amount = ask.amount;
 		let (request_id, _) = self.start(intent, ask);
-		let list = FundingQuoteList { request_id, rows, best: None, refresh_at_ms: 0 };
+		let list = FundingQuoteList {
+			request_id,
+			rows,
+			best: None,
+			refresh_at_ms: 0,
+			amount,
+			refusal: None,
+			issue: None,
+		};
 		self.publish(intent, &list, true);
 	}
 }
@@ -211,7 +221,9 @@ impl RuntimeServices {
 	/// Quotes for funding session `intent`, sent to the host through
 	/// [`crate::platform::FundingPlatform::funding_quotes_changed`]. Every
 	/// funding provider is asked to price `ask` in the session's direction; an
-	/// ask naming no country takes the one the host detected. Each list is
+	/// ask naming no country takes the one the host detected. Only providers
+	/// whose routes carry the ask's rail, or that declare none, are asked.
+	/// Each list is
 	/// complete and replaces the one before: a provider's row is `Pending`
 	/// until it first answers, then `Quoted` or `Unavailable`, and keeps its
 	/// answer until it answers again. A quote that does not price the ask
@@ -270,7 +282,7 @@ impl RuntimeServices {
 			// dotNS answered for meanwhile is asked too.
 			let mut providers_changed = self.funding_providers().on_change();
 			self.refresh_funding_providers();
-			let targets = self.funding_providers().quote_targets();
+			let targets = self.funding_providers().quote_targets_for(ask.direction, ask.rail);
 			// A row keeps its last answer until the provider answers again.
 			rows = targets
 				.iter()
@@ -284,7 +296,15 @@ impl RuntimeServices {
 				})
 				.collect();
 			let refresh_at_ms = current_unix_millis().saturating_add(refresh.as_millis() as u64);
-			let mut list = FundingQuoteList { request_id, rows, best: None, refresh_at_ms };
+			let mut list = FundingQuoteList {
+				request_id,
+				rows,
+				best: None,
+				refresh_at_ms,
+				amount: ask.amount,
+				refusal: None,
+				issue: None,
+			};
 			if !self.publish_quotes(&intent, &mut list) {
 				return;
 			}
@@ -319,6 +339,8 @@ impl RuntimeServices {
 		list.best = best_quote(session.direction, &list.rows, |provider_id| {
 			self.funding_providers().is_quote_target(provider_id)
 		});
+		list.refusal = funding_view::quotes_refusal(&list.rows);
+		list.issue = funding_view::quotes_issue(&list.rows);
 		let quotable = !session.is_terminal() && session.provider_id.is_none();
 		if !self.funding_quotes().publish(intent, list, quotable) {
 			return false;
@@ -328,6 +350,17 @@ impl RuntimeServices {
 		}
 		self.send_funding_options(intent);
 		true
+	}
+
+	/// The country the host detected within the reuse window, without asking
+	/// the host: `None` when it found none or is due to be asked again.
+	pub fn recent_funding_country(&self) -> Option<String> {
+		self.funding_quotes().detected.recent(current_unix_millis()).flatten()
+	}
+
+	/// Whether the country the host detected is due to be asked again.
+	pub fn funding_country_due(&self) -> bool {
+		self.funding_quotes().detected.recent(current_unix_millis()).is_none()
 	}
 
 	/// The country the host detected for the user as an ISO 3166-1 alpha-2
