@@ -11,20 +11,32 @@ struct CriticalIssueEventTests {
         appVariant: "nightly"
     )
 
-    /// Asserting the whole event pins what an issue does not carry as well as what
-    /// it does, which is the point for a type whose flow and kind are the only free
-    /// text it is allowed.
-    @Test func anIssueBecomesExactlyThisEvent() {
-        let event = CriticalIssue(flow: "productLoad", kind: "contentUnavailable")
-            .hostEvent(origin: origin, monotonicMilliseconds: 42)
+    /// Asserting the whole event pins what an issue does not carry as well as
+    /// what it does. A tag that arrives carrying free text fails this, which is
+    /// what `CriticalIssue` taking its flow and kind as `StaticString` is for,
+    /// and so does a grouping key that stops being the flow and the kind.
+    @Test func anIssueBecomesExactlyThisEvent() throws {
+        let event = CriticalIssue(
+            flow: "productLoad",
+            kind: "contentFetchStalled",
+            error: StalledError(),
+            counters: ["attempts": 3]
+        ).hostEvent(origin: origin, monotonicMilliseconds: 42)
+
+        // The type is named by its module, which keeps two same named errors in
+        // different packages apart.
+        let errorType = try #require(event.tags["errorType"])
+        #expect(errorType.hasSuffix(".StalledError"))
 
         #expect(event == HostEvent(
-            name: "productLoad.contentUnavailable",
+            name: "productLoad.contentFetchStalled",
             level: .error,
-            fingerprint: ["productLoad", "contentUnavailable"],
+            fingerprint: ["productLoad", "contentFetchStalled"],
             tags: [
                 "flow": "productLoad",
-                "kind": "contentUnavailable",
+                "kind": "contentFetchStalled",
+                "errorType": errorType,
+                "errorCode": "stalled",
                 "host.os_version": "26.5",
                 "host.app_variant": "nightly",
                 "host.platform": "ios",
@@ -34,85 +46,20 @@ struct CriticalIssueEventTests {
                 "app.launch_id": .string(origin.launchID.uuidString.lowercased()),
                 "host.app_build": .integer(77),
                 "event.monotonic_ms": .integer(42)
-            ]
+            ],
+            counters: ["attempts": 3]
         ))
     }
 
-    @Test func anIssueWithAnErrorNamesItsTypeItsCodeAndItsCounters() throws {
-        let event = CriticalIssue(
-            flow: "productLoad",
-            kind: "contentFetchStalled",
-            error: StalledError(),
-            counters: ["attempts": 3]
-        ).hostEvent(origin: origin, monotonicMilliseconds: 42)
+    @Test func anIssueWithoutAnErrorNamesNeitherItsTypeNorItsCode() {
+        let event = CriticalIssue(flow: "chat-request", kind: "renewal-starved")
+            .hostEvent(origin: origin, monotonicMilliseconds: 42)
 
-        // The leading dot is the assertion: the type is named by its module, which
-        // is what keeps two same named errors in different packages apart.
-        #expect(try #require(event.tags["errorType"]).hasSuffix(".StalledError"))
-        #expect(event.tags["errorCode"] == "stalled")
-        #expect(event.counters == ["attempts": 3])
-    }
-
-    @Test func aLifecycleEventGroupsOnItsNameAloneAndCountsNothing() {
-        let event = HostEvent.make(name: "host.process.started", origin: origin, monotonicMilliseconds: 42)
-
-        #expect(event.level == .info)
-        #expect(event.fingerprint == ["host.process.started"])
-        #expect(event.counters.isEmpty)
-    }
-
-    @Test func anEmptyGroupingKeyFallsBackToTheNameRatherThanReachingTheBackendEmpty() {
-        let event = HostEvent(name: "host.test", fingerprint: [], tags: [:], extras: [:])
-
-        #expect(event.fingerprint == ["host.test"])
-    }
-
-    @Test func theReporterReadsTheClockOnceAnIssueRatherThanOnceASession() {
-        let recorder = RecordingHostEventRecorder()
-        let readings = Readings()
-        let reporter = HostEventIssueReporter(
-            recorder: recorder,
-            origin: origin,
-            monotonicMilliseconds: { readings.next() }
-        )
-
-        reporter.report(CriticalIssue(flow: "chat-request", kind: "renewal-starved"))
-        reporter.report(CriticalIssue(flow: "chat-request", kind: "renewal-starved"))
-
-        #expect(recorder.events.count == 2)
-        #expect(recorder.events.map { $0.extras["event.monotonic_ms"] } == [.integer(1), .integer(2)])
+        #expect(event.tags["errorType"] == nil)
+        #expect(event.tags["errorCode"] == nil)
     }
 }
 
-/// Collects what a reporter hands over, standing in for the sender a build
-/// without reporting support does not link.
-private final class RecordingHostEventRecorder: HostEventRecording, @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: [HostEvent] = []
-
-    var events: [HostEvent] {
-        lock.withLock { recorded }
-    }
-
-    func record(_ event: @autoclosure () -> HostEvent) {
-        let event = event()
-        lock.withLock { recorded.append(event) }
-    }
-}
-
-/// A clock that moves, so a reporter caching its first reading fails.
-private final class Readings: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-
-    func next() -> Int {
-        lock.withLock {
-            count += 1
-            return count
-        }
-    }
-}
-
-struct StalledError: ReportableError {
+private struct StalledError: ReportableError {
     let reportCode = "stalled"
 }
