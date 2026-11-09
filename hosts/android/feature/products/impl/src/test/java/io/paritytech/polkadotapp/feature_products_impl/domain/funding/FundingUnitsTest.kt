@@ -13,8 +13,7 @@ class FundingUnitsTest {
     private val cash = FundingCash(symbol = "CASH", precision = 6)
 
     @Test
-    fun `cash units round down so the host never asks for more than typed`() {
-        assertEquals("50199999", cash.units(BigDecimal("50.1999999")))
+    fun `cash units read as the balance's decimals`() {
         assertEquals(BigDecimal("50.199999"), cash.decimal("50199999"))
     }
 
@@ -68,14 +67,9 @@ class FundingUnitsTest {
     }
 
     @Test
-    fun `an unknown network is shown capitalised`() {
-        assertEquals(listOf("Polkadot", "Avalanche"), listOf(FundingNetwork("polkadot"), FundingNetwork("avalanche")).map { it.name })
-    }
-
-    @Test
     fun `networks and tokens show their first letter as a monogram`() {
-        assertEquals("P", FundingNetwork("polkadot").monogram)
-        assertEquals("A", FundingNetwork("avalanche").monogram)
+        assertEquals("P", FundingNetwork("polkadot", "Polkadot").monogram)
+        assertEquals("A", FundingNetwork("avalanche", "avalanche").monogram)
         assertEquals("U", FundingToken("usdt").monogram)
     }
 }

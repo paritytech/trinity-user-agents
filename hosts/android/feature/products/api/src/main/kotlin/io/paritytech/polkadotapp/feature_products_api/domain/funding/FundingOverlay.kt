@@ -18,8 +18,8 @@ enum class FundingOverlayOutcome {
 
 /** What a provider asks the host to show in its frame. */
 sealed interface ProviderFrameTarget {
-    /** A route of the provider's own App. */
-    data class App(val route: String) : ProviderFrameTarget
+    /** A route of the provider's own App, at [path] under the App's origin as the core normalised it. */
+    data class App(val path: String) : ProviderFrameTarget
 
     /** An external https page, such as an onramp's widget, finished once it reaches [returnUrl]. */
     data class Page(val url: String, val returnUrl: String?) : ProviderFrameTarget
@@ -44,8 +44,16 @@ interface FundingOverlay {
      */
     suspend fun present(request: FundingOverlayRequest): FundingOverlayOutcome
 
-    /** Shows [target] for provider [providerId]'s session [intent] and answers how it closed. */
-    suspend fun presentProviderFrame(providerId: ProductId, intent: String, target: ProviderFrameTarget): ProviderFrameOutcome
+    /**
+     * Shows [target] for provider [providerId]'s session [intent] and answers how it closed. [awaitsUserTransfer] is
+     * the core saying the session waits on a transfer the user makes outside the frame.
+     */
+    suspend fun presentProviderFrame(
+        providerId: ProductId,
+        intent: String,
+        target: ProviderFrameTarget,
+        awaitsUserTransfer: Boolean,
+    ): ProviderFrameOutcome
 
     /**
      * Closes the frame [presentProviderFrame] shows for provider [providerId]'s session [intent], answering it

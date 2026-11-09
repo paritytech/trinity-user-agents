@@ -110,7 +110,6 @@ class RealFundingProductsWarmUpTest {
                     appVersion = SemVer.ZERO,
                     includesChat = true,
                     includesPocket = false,
-                    includesFunding = false,
                     pocketCards = emptyList(),
                 )
             },

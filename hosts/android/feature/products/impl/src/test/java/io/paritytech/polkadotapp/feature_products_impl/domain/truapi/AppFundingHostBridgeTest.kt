@@ -21,27 +21,16 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProduct
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import uniffi.truapi.FundingAmountLimits
-import uniffi.truapi.FundingBand
+import uniffi.truapi.FundingChangeKind
+import uniffi.truapi.FundingFrameContext
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
-import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
-import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingStage
-import uniffi.truapi.FundingStatus
-import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.ProductId
 import java.math.BigInteger
 import uniffi.truapi.FundingDirection as CoreFundingDirection
@@ -51,9 +40,11 @@ class AppFundingHostBridgeTest {
     private val widget = ProductId.parse("widget.dot").getOrThrow()
     private val overlay = mockk<FundingOverlay>()
     private val countryDetector = mockk<DeviceCountryDetector>()
-    private val bundledProducts = mockk<BundledProducts> { every { product(any<ProductId>()) } returns null }
+    private val funding = mockk<TrUAPIFundingRuntime>(relaxed = true)
     private val resolveProduct = mockk<ResolveProductUseCase>()
-    private val bridge = AppFundingHostBridge(Lazy { overlay }, countryDetector, bundledProducts, resolveProduct)
+    private val bridge = AppFundingHostBridge(Lazy { overlay }, Lazy { funding }, countryDetector, resolveProduct)
+    private val app = FundingFrameContext(appPath = "/kyc", awaitsUserTransfer = false)
+    private val page = FundingFrameContext(appPath = null, awaitsUserTransfer = true)
 
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test
@@ -94,26 +85,27 @@ class AppFundingHostBridgeTest {
         }
     }
 
+    // The core normalises the route into the path the frame opens, and says whether the user transfers outside it.
     @Test
-    fun `a provider frame answers how it closed`() = runBlocking {
+    fun `a provider frame opens the core's path and answers how it closed`() = runBlocking {
         coEvery {
-            overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/kyc"))
+            overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/kyc"), false)
         } returns ProviderFrameOutcome.Closed
 
-        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.App("/kyc")))
+        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.App("kyc"), app))
     }
 
     // The worker reads the onramp's result from the query of the page it returned to.
     @Test
     fun `an external page hands back the URL it returned to`() = runBlocking {
-        val page = ProviderFrameTarget.Page("https://ramp.example/widget", "https://ramp.dot/return")
+        val target = ProviderFrameTarget.Page("https://ramp.example/widget", "https://ramp.dot/return")
         val returned = "https://ramp.dot/return?status=done"
-        coEvery { overlay.presentProviderFrame(ramp, "intent", page) } returns
+        coEvery { overlay.presentProviderFrame(ramp, "intent", target, true) } returns
             ProviderFrameOutcome.Returned(returned)
 
         assertEquals(
             FundingFrameOutcome.Returned(returned),
-            bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.Page(page.url, page.returnUrl)),
+            bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.Page(target.url, target.returnUrl), page),
         )
     }
 
@@ -124,61 +116,14 @@ class AppFundingHostBridgeTest {
         assertEquals("PT", bridge.detectedCountry())
     }
 
-    // The CASH card re-reads the session list on this, so a dropped change leaves a stale row.
+    // The core has the new state before it calls; the read happens off its thread.
     @Test
-    fun `a session change is announced with its intent`() = runBlocking {
-        val changed = withTimeout(1_000) {
-            bridge.changedSessions()
-                .onSubscription {
-                    bridge.fundingSessionChanged("intent", HostFundingStatusSubscribeItem.InProgress(expiresAt = null), null, null)
-                }
-                .first()
-        }
+    fun `a change notice goes to the runtime that reads it back`() {
+        bridge.fundingChanged("intent", FundingChangeKind.SESSION)
+        bridge.fundingChanged(null, FundingChangeKind.IN_PROGRESS)
 
-        assertEquals("intent", changed)
-    }
-
-    // The funding screens draw what the core last handed over; a session the core keeps only as a summary has none.
-    @Test
-    fun `a session change keeps the session and progress it carries`() {
-        val inProgress = HostFundingStatusSubscribeItem.InProgress(expiresAt = null)
-        val session = session()
-
-        bridge.fundingSessionChanged("intent", inProgress, session, progress(FundingStatus.ConvertingToCash))
-        val kept = bridge.sessions().value["intent"]
-        bridge.fundingSessionChanged("intent", inProgress, null, null)
-
-        assertEquals(session to FundingStatus.ConvertingToCash, kept?.session to kept?.progress?.status)
-        assertEquals(emptyMap<String, FundingSessionEntry>(), bridge.sessions().value)
-    }
-
-    @Test
-    fun `the latest options are kept per session`() {
-        bridge.fundingOptionsChanged("a", options(min = "10"))
-        bridge.fundingOptionsChanged("b", options(min = "20"))
-        bridge.fundingOptionsChanged("a", options(min = "30"))
-
-        assertEquals(mapOf("a" to options(min = "30"), "b" to options(min = "20")), bridge.options().value)
-    }
-
-    @Test
-    fun `an overlay's options go once it closes`() = runBlocking {
-        bridge.fundingOptionsChanged("intent", options(min = "10"))
-        bridge.fundingOptionsChanged("other", options(min = "20"))
-        coEvery { overlay.present(any()) } returns FundingOverlayOutcome.DISMISSED
-
-        present()
-
-        assertEquals(mapOf("other" to options(min = "20")), bridge.options().value)
-    }
-
-    @Test
-    fun `the in-progress flag is kept as pushed`() {
-        assertEquals(null, bridge.inProgress().value)
-
-        bridge.fundingInProgressChanged(true)
-
-        assertEquals(true, bridge.inProgress().value)
+        verify { funding.onChanged("intent", FundingChangeKind.SESSION) }
+        verify { funding.onChanged(null, FundingChangeKind.IN_PROGRESS) }
     }
 
     @Test
@@ -199,28 +144,6 @@ class AppFundingHostBridgeTest {
         assertEquals(false, bridge.providerHasApp(widget))
     }
 
-    // An App the app does not ship lives on dotNS, as the frame opens it.
-    @Test
-    fun `a bundled provider without a bundled App is looked up on dotNS`() = runBlocking {
-        val bundled = mockk<BundledProduct>()
-        every { bundledProducts.product(ramp) } returns bundled
-        every { bundledProducts.hasApp(bundled) } returns false
-        coEvery { resolveProduct.resolve(ramp) } returns Result.success(resolved(app = true))
-
-        assertEquals(true, bridge.providerHasApp(ramp))
-    }
-
-    // An App the app ships is answered from the bundle, with nothing asked of dotNS.
-    @Test
-    fun `a bundled provider with a bundled App has one without a lookup`() = runBlocking {
-        val bundled = mockk<BundledProduct>()
-        every { bundledProducts.product(ramp) } returns bundled
-        every { bundledProducts.hasApp(bundled) } returns true
-
-        assertEquals(true, bridge.providerHasApp(ramp))
-        coVerify(exactly = 0) { resolveProduct.resolve(any()) }
-    }
-
     // Not knowing must not refuse a provider's screen that would open.
     @Test
     fun `a provider that cannot be resolved keeps its App route`() = runBlocking {
@@ -237,50 +160,6 @@ class AppFundingHostBridgeTest {
             widget = null,
             worker = null,
         ),
-    )
-
-    private fun options(min: String) = FundingOptions(
-        candidates = emptyList(),
-        countries = emptyList(),
-        limits = FundingAmountLimits(min = min, max = null),
-        networks = emptyList(),
-    )
-
-    private fun session() = FundingSession(
-        intent = "intent",
-        ownerProductId = null,
-        direction = CoreFundingDirection.IN,
-        amount = "50",
-        stage = FundingStage.Open,
-        openedAtMs = 0uL,
-        deadlineMs = 0uL,
-        acknowledged = false,
-        providerId = ramp,
-        assignedAtMs = 0uL,
-        cancel = null,
-        updates = emptyList(),
-        started = emptyList(),
-        choice = null,
-        refund = null,
-        detail = null,
-    )
-
-    private fun progress(status: FundingStatus) = FundingProgress(
-        steps = emptyList(),
-        band = FundingBand.CONVERTING,
-        lastHeardAtMs = null,
-        detail = null,
-        failedAtMs = null,
-        transactionId = null,
-        reference = null,
-        deposit = null,
-        mismatch = null,
-        retrying = false,
-        payout = null,
-        refunded = null,
-        status = status,
-        longerAtMs = null,
-        moneyMoved = true,
     )
 
     private suspend fun present() = bridge.presentFunding(null, "intent", CoreFundingDirection.IN, null)

@@ -69,6 +69,7 @@ class BundledProductsTest {
                     productId = ProductId.parse("provider.dot").getOrThrow(),
                     workerManifest = manifest,
                     origin = FundingProviderOrigin.BUNDLED,
+                    hasApp = true,
                 ),
             ),
             products.fundingProviders(),
@@ -80,17 +81,6 @@ class BundledProductsTest {
         assertTrue(products.includesChat(products.product(ProductId.parse("chat.dot").getOrThrow())!!))
         assertFalse(products.includesChat(products.product(ProductId.parse("quiet.dot").getOrThrow())!!))
         assertFalse(products.includesChat(products.product(ProductId.parse("provider.dot").getOrThrow())!!))
-    }
-
-    @Test
-    fun `serves a request the way a published archive is served`() {
-        val app = products.product(ProductId.parse("provider.dot").getOrThrow())!!.appRoot
-
-        assertEquals("$app/index.html", products.assetPath(app, "/", isMainFrame = true))
-        assertEquals("$app/assets/main.js", products.assetPath(app, "/assets/main.js", isMainFrame = false))
-        assertEquals("$app/index.html", products.assetPath(app, "/card", isMainFrame = true))
-        assertNull(products.assetPath(app, "/assets/missing.js", isMainFrame = false))
-        assertNull(products.assetPath(app, "/../worker/index.js", isMainFrame = false))
     }
 
     @Test
@@ -117,7 +107,6 @@ class BundledProductContentTest {
             "bundled-products/provider.dot/worker/index.js" to "export {}",
             "bundled-products/provider.dot/app/index.html" to "<html></html>",
             "bundled-products/provider.dot/app/assets/main.js" to "export {}",
-            "bundled-products/provider.dot/app/assets/core.wasm" to "wasm",
         ),
     )
     private val products = BundledProducts(files, ManifestParser(Gson()), enabled = true)
@@ -143,18 +132,6 @@ class BundledProductContentTest {
     @Test
     fun `a missing file is not found`() {
         assertEquals(BundledProductContent.Answer.NotFound, app.answer("provider.dot", "/assets/missing.js", isMainFrame = false))
-    }
-
-    @Test
-    fun `serves module scripts and wasm with the types that run`() {
-        assertEquals(
-            BundledProductContent.Answer.File("${product.appRoot}/assets/main.js", "text/javascript", emptyMap()),
-            app.answer("provider.dot", "/assets/main.js", isMainFrame = false),
-        )
-        assertEquals(
-            "application/wasm",
-            (app.answer("provider.dot", "/assets/core.wasm", isMainFrame = false) as BundledProductContent.Answer.File).mimeType,
-        )
     }
 
     @Test
