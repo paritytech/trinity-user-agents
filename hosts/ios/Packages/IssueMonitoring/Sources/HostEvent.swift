@@ -18,9 +18,10 @@ public struct HostEvent: Sendable, Equatable {
     public let extras: [String: HostEventValue]
     public let counters: [String: Int]
 
-    /// `fingerprint` defaults to the name alone, which is the grouping every
-    /// lifecycle event wants. An event passes its own only to keep a grouping
-    /// that a name would not reproduce.
+    /// `fingerprint` is the key the backend groups on and defaults to the name
+    /// alone. An event passes its own when its grouping is finer than the name,
+    /// which a name derived from other fields cannot express. `counters` reaches
+    /// the backend as a structured context rather than as extras.
     public init(
         name: String,
         level: HostLogLevel = .info,
@@ -29,9 +30,10 @@ public struct HostEvent: Sendable, Equatable {
         extras: [String: HostEventValue],
         counters: [String: Int] = [:]
     ) {
+        let grouping = fingerprint ?? []
         self.name = name
         self.level = level
-        self.fingerprint = fingerprint ?? [name]
+        self.fingerprint = grouping.isEmpty ? [name] : grouping
         self.tags = tags
         self.extras = extras
         self.counters = counters

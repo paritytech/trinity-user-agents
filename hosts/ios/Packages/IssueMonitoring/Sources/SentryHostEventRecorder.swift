@@ -12,6 +12,8 @@
             sentryEvent.tags = event.tags
             sentryEvent.extra = event.extras.mapValues(\.sentryValue)
 
+            // The scope deep merges its own contexts into this one, so naming a
+            // key here adds a section rather than replacing device, app and os.
             if !event.counters.isEmpty {
                 sentryEvent.context = ["counters": event.counters]
             }

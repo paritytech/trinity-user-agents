@@ -47,7 +47,7 @@ public enum IssueMonitoringFactory {
         )
     }
 
-    /// Records typed native host lifecycle events; builds without reporting support receive a no-op recorder.
+    /// Records typed native host events; builds without reporting support receive a no-op recorder.
     public static func createHostEventRecorder() -> HostEventRecording {
         #if SENTRY_ENABLED
             SentryHostEventRecorder()
@@ -81,7 +81,7 @@ public enum IssueMonitoringFactory {
         return HostEventIssueReporter(
             recorder: createHostEventRecorder(),
             origin: .current,
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds
+            monotonicMilliseconds: { HostEventClock.monotonicMilliseconds() }
         )
     }
 }

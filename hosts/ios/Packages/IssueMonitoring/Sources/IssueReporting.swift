@@ -26,12 +26,12 @@ public struct CriticalIssue: Sendable {
     }
 }
 
-public extension CriticalIssue {
-    /// The event this issue leaves as. It groups on flow and kind rather than on
-    /// the name those two spell, so an issue keeps the grouping it has, and it
-    /// carries `error` because a flow broke rather than progressed.
+extension CriticalIssue {
+    /// The event this issue leaves as. Its grouping key is flow and kind rather
+    /// than the name they spell, because that name is derived from both, and its
+    /// severity is `error` because a flow broke rather than progressed.
     func hostEvent(origin: HostEventOrigin, monotonicMilliseconds: Int) -> HostEvent {
-        var tags = ["flow": flow, "kind": kind]
+        var tags = ["flow": flow, "kind": kind, "host.os_version": origin.osVersion]
 
         if let errorType {
             tags["errorType"] = errorType
@@ -48,6 +48,7 @@ public extension CriticalIssue {
             level: .error,
             fingerprint: [flow, kind],
             tags: tags,
+            extras: ["app.launch_id": .string(origin.launchID.uuidString.lowercased())],
             counters: counters
         )
     }
@@ -55,12 +56,12 @@ public extension CriticalIssue {
 
 /// Reports an issue as a host event, so the issues and the lifecycle events a
 /// host sends leave through one sender.
-public struct HostEventIssueReporter: IssueReporting {
+struct HostEventIssueReporter: IssueReporting {
     private let recorder: HostEventRecording
     private let origin: HostEventOrigin
     private let monotonicMilliseconds: @Sendable () -> Int
 
-    public init(
+    init(
         recorder: HostEventRecording,
         origin: HostEventOrigin,
         monotonicMilliseconds: @escaping @Sendable () -> Int
@@ -70,7 +71,7 @@ public struct HostEventIssueReporter: IssueReporting {
         self.monotonicMilliseconds = monotonicMilliseconds
     }
 
-    public func report(_ issue: CriticalIssue) {
+    func report(_ issue: CriticalIssue) {
         recorder.record(issue.hostEvent(origin: origin, monotonicMilliseconds: monotonicMilliseconds()))
     }
 }
