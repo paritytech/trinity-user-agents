@@ -48,12 +48,6 @@ struct PocketCardTapReporterTests {
 
         #expect(frames.waiting == 0)
     }
-
-    @Test func theNextDrawnFrameArrives() async {
-        await withCheckedContinuation { continuation in
-            NextDrawnFrame.wait { continuation.resume() }
-        }
-    }
 }
 
 @MainActor

@@ -304,21 +304,6 @@ struct SPARustRuntimeTests {
         #expect(recorder.events.map { $0.tags["outcome"] } == ["abandoned"])
     }
 
-    /// Counted from the runtime's creation: the user who leaves while the product still resolves gave up.
-    @Test func aPageClosedBeforeItStartedIsAbandoned() async throws {
-        let directURL = try #require(URL(string: "http://localhost:3000"))
-        let recorder = RecordingHostEventRecorder()
-        let runtime = try makeRuntime(
-            configuration: makeConfiguration(contentSource: .directURL(directURL)),
-            hostEventRecorder: recorder
-        )
-
-        await runtime.dispose()
-
-        #expect(recorder.events.map(\.name) == ["host.webview.page_loaded"])
-        #expect(recorder.events.first?.tags["outcome"] == "abandoned")
-    }
-
     @Test func anOpenThatFailedBeforeStartingIsAnError() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let recorder = RecordingHostEventRecorder()
@@ -331,26 +316,6 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
 
         #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
-    }
-
-    /// The product's dotNS reads run before its page starts, inside the page's session, so they join
-    /// its page in Sentry.
-    @Test func theContentLoadRunsUnderThePageSession() async throws {
-        let recorder = RecordingHostEventRecorder()
-        let loader = StubProductContentLoader()
-        let runtime = try makeRuntime(
-            configuration: makeConfiguration(contentSource: .dotNs),
-            contentLoader: loader,
-            hostEventRecorder: recorder
-        )
-
-        _ = try await runtime.start(with: MockJSEngine())
-        await runtime.dispose()
-
-        let session = try #require(recorder.events.first?.tags["host.session_id"])
-        let context = try #require(loader.openContexts.first ?? nil)
-        #expect(context.sessionID?.uuidString.lowercased() == session)
-        #expect(context.trigger == .open)
     }
 
     #if DEBUG

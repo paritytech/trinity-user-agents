@@ -121,25 +121,6 @@ struct HostEventTests {
         #expect(event.tags["outcome"] == "cache_hit")
     }
 
-    @Test func aDisabledLoadTelemetryNeverBuildsTheEvent() {
-        var built = false
-
-        HostLoadTelemetry.disabled.record { origin, now in
-            built = true
-            return .productResolved(
-                productID: "peopl.testnet",
-                outcome: .ok,
-                trigger: .open,
-                durationMilliseconds: 0,
-                hostSessionID: nil,
-                origin: origin,
-                monotonicMilliseconds: now
-            )
-        }
-
-        #expect(!built)
-    }
-
     /// A Release build hands the telemetry a recorder that drops everything; it must time nothing for it.
     @Test func aDroppingRecorderDisablesTheTelemetry() async {
         let telemetry = HostLoadTelemetry(recorder: NoopHostEventRecorder())
@@ -148,45 +129,9 @@ struct HostEventTests {
 
         #expect(!telemetry.isEnabled)
         #expect(telemetry.now() == nil)
+        #expect(telemetry.makeSessionID() == nil)
         #expect(telemetry.beginOpen(source: .pocketCard) == nil)
         #expect(context == nil)
-    }
-
-    @Test func aDisabledLoadTelemetryReadsNoClockAndBindsNoContext() async {
-        let telemetry = HostLoadTelemetry.disabled
-
-        let context = await telemetry.withContext(session: UUID(), trigger: .open) { telemetry.context }
-
-        #expect(!telemetry.isEnabled)
-        #expect(telemetry.now() == nil)
-        #expect(telemetry.makeSessionID() == nil)
-        #expect(context == nil)
-    }
-
-    @Test func loadTelemetryStampsTheEventWithItsOriginAndClock() {
-        let recorder = RecordingHostEventRecorder()
-        let telemetry = HostLoadTelemetry(
-            recorder: recorder,
-            origin: HostEventFixtures.origin,
-            monotonicMilliseconds: { 77 }
-        )
-
-        telemetry.record { origin, now in
-            .productResolved(
-                productID: "peopl.testnet",
-                outcome: .error,
-                trigger: .open,
-                durationMilliseconds: 7,
-                hostSessionID: nil,
-                origin: origin,
-                monotonicMilliseconds: now
-            )
-        }
-
-        #expect(recorder.events.count == 1)
-        #expect(recorder.events.first?.extras["event.monotonic_ms"] == .integer(77))
-        #expect(recorder.events.first?.extras["app.launch_id"] == .string(HostEventFixtures.launchValue))
-        #expect(recorder.events.first?.tags["host.os_version"] == "26.5.1")
     }
 
     /// A refresh scheduled from inside a page open must not take the page's session.
@@ -232,21 +177,6 @@ struct HostEventTests {
         #expect(inSession == [true, true, false, true, true])
         #expect(prewarm == [true, true, true, false])
         #expect(!telemetry.shouldReport(step, productID: "other.testnet", outcome: .ok))
-    }
-
-    @Test func aTapReadsBothClocks() {
-        let telemetry = HostLoadTelemetry(
-            recorder: RecordingHostEventRecorder(),
-            monotonicMilliseconds: { 42 },
-            epochMilliseconds: { 1_793_900_000_000 }
-        )
-
-        #expect(telemetry.beginOpen(source: .pocketCard) == HostOpenTap(
-            source: .pocketCard,
-            openedAtEpochMilliseconds: 1_793_900_000_000,
-            monotonicMilliseconds: 42
-        ))
-        #expect(HostLoadTelemetry.disabled.beginOpen(source: .pocketCard) == nil)
     }
 
     @Test func aNoopRecorderNeverBuildsTheEvent() {

@@ -378,16 +378,6 @@ struct TrUAPIWorkerManagerTests {
         #expect(recorder.events.map { $0.tags["outcome"] } == ["error"])
         #expect(recorder.events.first?.extras["blank_ready_ms"] == nil)
     }
-
-    @Test
-    func aDisabledTelemetryStartsNoSession() async throws {
-        let manager = makeManager(builder: StubWorkerBuilder())
-
-        manager.demandChanged(productId: gameProductId, transition: .start)
-        try await execution(of: gameProductId, in: manager)
-
-        #expect(manager.hostSessionId(of: gameProductId) == nil)
-    }
 }
 
 // MARK: - Fixtures

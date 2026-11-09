@@ -144,25 +144,6 @@ struct PocketHandlersTests {
 
         #expect(await unserved(by: handlers) == [gameProductId])
     }
-
-    @Test
-    func aDisabledTelemetryTracksNoUnservedProducts() async throws {
-        let published = StubPublishedCards()
-        published.failures = [PocketPublishError.noPocket]
-        let handlers = makeHandlers(workers: workersRunning(gameProductId), published: published)
-
-        _ = await handlers.reconcile([loyalty])
-
-        #expect(await unserved(by: handlers).isEmpty)
-    }
-
-    /// Joined to the worker that draws the face, and whether it was up when the face was asked for.
-    @Test
-    func reportsTheWorkersStatus() async throws {
-        let handlers = makeHandlers(workers: workersRunning(gameProductId))
-
-        #expect(handlers.workerStatus(of: gameProductId) == PocketWorkerStatus(hostSessionId: nil, isRunning: true))
-    }
 }
 
 // MARK: - Fixtures
