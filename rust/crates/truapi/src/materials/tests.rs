@@ -236,21 +236,27 @@ fn the_lookup_stops_when_every_caller_is_gone() {
 	assert_eq!(next(&mut answers), Some(Ok(TEXT.to_vec())));
 }
 
-/// An ID is product input, so a product could name any blob on Bulletin. One
-/// larger than the format allows is refused and never fills the device.
+/// An ID is product input, so a product could name any blob on Bulletin.
+/// Only materials this core reads are kept: a broken one never fills the
+/// device, and one of a newer format is reported as unsupported.
 #[test]
-fn a_material_over_the_format_limit_is_invalid_and_not_kept() {
+fn a_material_this_core_cannot_read_is_refused_and_not_kept() {
 	let (_dir, db) = open_temporary_core_db();
 	let device = Device::over(db);
-	let oversized = vec![b' '; MAX_MATERIAL_BYTES + 1];
-	let id = preimage_key(&oversized);
-	let mut answers = device.materials.observe(id);
-	wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
+	let newer = b"// @material 2\nvec4 material(vec2 uv) { return vec4(1.0); }\n".to_vec();
+	for (text, failure) in [
+		(vec![b' '; MAX_MATERIAL_BYTES + 1], MaterialFailure::InvalidMaterial),
+		(newer, MaterialFailure::Unsupported),
+	] {
+		let id = preimage_key(&text);
+		let mut answers = device.materials.observe(id);
+		wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
 
-	device.bulletin.answer(id, oversized);
+		device.bulletin.answer(id, text);
 
-	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::InvalidMaterial)));
-	assert_eq!(next(&mut answers), None);
+		assert_eq!(next(&mut answers), Some(Err(failure)));
+		assert_eq!(next(&mut answers), None);
+	}
 	assert!(device.kept_ids().is_empty());
 }
 
@@ -270,11 +276,15 @@ fn a_lookup_that_ends_is_not_found_at_once() {
 	assert_eq!(next(&mut answers), None);
 }
 
-/// A material of the largest size the format allows, distinct per `index`.
+/// A material of the largest size the format allows, distinct per `index`,
+/// padded through its label, which the format does not check.
 fn largest_material(index: usize) -> Vec<u8> {
-	let mut text = format!("// {index}\n").into_bytes();
-	text.resize(MAX_MATERIAL_BYTES, b' ');
-	text
+	let head = "// @material 1\n// @control {\"name\":\"k\",\"label\":\"";
+	let tail = format!(
+		"\",\"type\":\"float\",\"default\":{index}}}\nvec4 material(vec2 uv) {{ return vec4(p_k); }}\n"
+	);
+	let label = "x".repeat(MAX_MATERIAL_BYTES - head.len() - tail.len());
+	format!("{head}{label}{tail}").into_bytes()
 }
 
 /// Materials only other screens drew make room for newer ones, oldest first,
@@ -305,7 +315,7 @@ fn the_start_up_fetch_gets_what_saved_faces_name_and_the_device_lacks() {
 	let (_dir, db) = open_temporary_core_db();
 	let device = Device::over(db);
 	let kept = TEXT.to_vec();
-	let missing = b"// @material 1\n// missing\n".to_vec();
+	let missing = b"// @material 1\nvec4 material(vec2 uv) { return vec4(0.0); }\n".to_vec();
 	device.keep(&kept);
 	device.save_face(&[preimage_key(&kept), preimage_key(&missing)]);
 

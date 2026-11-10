@@ -5,7 +5,7 @@
 //! left. Only bytes that hash to the ID count: the core's Bulletin lookup
 //! already reads others as a miss. Once [`FETCH_DEADLINE`] passes without
 //! them, the fetch reports `NotFound` and goes on, so a material that arrives
-//! late still draws.
+//! late still draws. Only materials this core reads are kept.
 //! A material a saved Pocket face draws is never evicted. The others share
 //! [`UNPINNED_BYTES`], and the oldest kept goes first.
 
@@ -28,8 +28,9 @@ use futures::{
 };
 use parking_lot::Mutex;
 use rusqlite::{OptionalExtension, Transaction};
-use truapi::latest::{MaterialFailure, RendererNode};
+use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 
+use self::format::read_material;
 use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
@@ -81,8 +82,8 @@ impl Materials {
 
 	/// The text of material `id` once it is on the device, then the end.
 	/// Before that, the failure the deadline reported, after which the text
-	/// can still come. `InvalidMaterial`, or a lookup that can never answer,
-	/// ends the stream.
+	/// can still come. A material this core cannot read (`InvalidMaterial` or
+	/// `Unsupported`), or a lookup that can never answer, ends the stream.
 	pub fn observe(&self, id: [u8; 32]) -> BoxStream<'static, Result<Vec<u8>, MaterialFailure>> {
 		let (caller, answers) = unbounded();
 		let started = {
@@ -188,9 +189,7 @@ impl Materials {
 	}
 
 	async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
-		if text.len() > MAX_MATERIAL_BYTES {
-			return Err(MaterialFailure::InvalidMaterial);
-		}
+		read_material(&text)?;
 		let row = text.clone();
 		let kept = self
 			.0
@@ -288,9 +287,26 @@ fn evict(tx: &Transaction<'_>) -> Result<(), DbError> {
 }
 
 fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
+	let layers = materials_nodes(node).into_iter().flat_map(|(props, _)| &props.layers);
+	ids.extend(layers.map(|layer| layer.material));
+}
+
+/// Every `Materials` node in `tree`, depth first, each with whether another
+/// `Materials` node encloses it.
+fn materials_nodes(tree: &RendererNode) -> Vec<(&MaterialsProps, bool)> {
+	let mut nodes = Vec::new();
+	visit_materials(tree, false, &mut nodes);
+	nodes
+}
+
+fn visit_materials<'tree>(
+	node: &'tree RendererNode,
+	nested: bool,
+	nodes: &mut Vec<(&'tree MaterialsProps, bool)>,
+) {
 	let children = match node {
 		RendererNode::Materials { props, children } => {
-			ids.extend(props.layers.iter().map(|layer| layer.material));
+			nodes.push((props, nested));
 			children
 		},
 		RendererNode::Box { children, .. } |
@@ -304,8 +320,9 @@ fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
 		RendererNode::TextField { .. } |
 		RendererNode::Image { .. } => return,
 	};
+	let nested = nested || matches!(node, RendererNode::Materials { .. });
 	for child in children {
-		collect_material_ids(child, ids);
+		visit_materials(child, nested, nodes);
 	}
 }
 
@@ -318,6 +335,13 @@ const TOTAL_BYTES: &str = "SELECT COALESCE(SUM(length(text)), 0) FROM material";
 const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid DESC";
 
 const DELETE: &str = "DELETE FROM material WHERE id = ?1";
+
+#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod format;
+#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod limits;
+#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod noise;
 
 #[cfg(test)]
 mod tests;

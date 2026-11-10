@@ -24,7 +24,8 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `materials` module keeps the
                          materials renderer trees name in the same database, read
-                         from Bulletin by its `bulletin_lookup` module
+                         from Bulletin by its `bulletin_lookup` module and checked
+                         against Shaderlab's material format and the tree limits
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
