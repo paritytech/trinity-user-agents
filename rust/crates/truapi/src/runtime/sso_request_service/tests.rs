@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-	platform::{CoreStorage, ProductId},
+	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
 	test_support::{StubPlatform, sso_session_info, test_spawner},
 };
@@ -114,6 +114,42 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			(Some(session), BTreeMap::new())
 		);
 	}
+}
+
+#[test]
+fn clearing_the_old_session_during_login_keeps_the_new_one_connected() {
+	let storage = Arc::new(CleanupStorage::default());
+	let platform = Arc::new(StubPlatform {
+		core_storage_override: Some(storage.clone()),
+		..Default::default()
+	});
+	let states = Arc::new(Mutex::new(Vec::new()));
+	let recorded = states.clone();
+	*platform.on_auth_state.lock().unwrap() =
+		Some(Arc::new(move |state: &AuthState| recorded.lock().unwrap().push(state.clone())));
+	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+	let host = pairing.session().clone();
+	let previous = sso_session_info();
+	block_on(host.set_connected_session_for_tests(previous.clone()));
+	let mut next = previous;
+	next.sso.as_mut().unwrap().identity_account_id = [0x55; 32];
+	let (release, pause) = oneshot::channel();
+	*storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
+	let generation = host.begin_login_attempt();
+	let mut login = Box::pin(host.commit_login_session(&next, generation));
+	assert!(login.as_mut().now_or_never().is_none());
+	let mut clear = Box::pin(host.clear_disconnected_session(true, None));
+	assert!(clear.as_mut().now_or_never().is_none());
+	release.send(()).unwrap();
+	assert_eq!(block_on(login), Ok(true));
+	block_on(clear);
+	assert_eq!(
+		(host.session_state.current(), states.lock().unwrap().last().cloned()),
+		(
+			Some(next.clone()),
+			Some(AuthState::Connected(Box::new(connected_session_ui_info(&next))))
+		)
+	);
 }
 
 #[test]

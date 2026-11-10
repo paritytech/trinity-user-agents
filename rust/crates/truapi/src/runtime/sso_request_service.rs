@@ -609,7 +609,9 @@ impl SsoRequestService {
 		if !pending_auth_deletion && !pending_grants {
 			return Ok(());
 		}
-		self.auth_state.store_disconnected();
+		if self.session_state.current().is_none() {
+			self.auth_state.store_disconnected();
+		}
 		let auth_result = if pending_auth_deletion {
 			self.platform
 				.clear_core_storage(CoreStorageKey::AuthSession)
