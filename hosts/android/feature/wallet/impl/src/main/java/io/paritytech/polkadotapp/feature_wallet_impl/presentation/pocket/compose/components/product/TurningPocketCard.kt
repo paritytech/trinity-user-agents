@@ -49,7 +49,7 @@ internal fun TurningPocketCard(
     front: ProductFaceBindings,
     back: ProductFaceBindings,
     leaving: Boolean,
-    turn: CardTurnState = rememberCardTurnState(),
+    turn: CardTurnState,
 ) {
     val backFace by back.face.collectAsStateWithLifecycle()
     val turnable = backFace != null && !leaving

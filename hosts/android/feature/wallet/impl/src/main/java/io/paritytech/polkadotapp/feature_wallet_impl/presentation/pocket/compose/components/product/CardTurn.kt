@@ -97,22 +97,20 @@ internal class CardTurnState(initialAngle: Float = 0f) {
     }
 
     /**
-     * Turns to the other side of where the card is going, so it reverses a turn under way. It turns the way a
-     * right-to-left swipe does, the one a right thumb makes.
+     * Turns to the other side of where the card is going, so it reverses a turn under way. From rest it turns
+     * the way a right-to-left swipe does, the one a right thumb makes.
      */
     suspend fun turnOver() {
+        val rightToLeft = nearest(heading, HALF_TURN) - HALF_TURN
+        val leftToRight = rightToLeft + FULL_TURN
         // Set now, not once the lock is taken, so a request queued behind this one sees where it goes.
-        heading = nearest(heading, HALF_TURN) - HALF_TURN
+        heading = if (abs(leftToRight - angle) < abs(rightToLeft - angle)) leftToRight else rightToLeft
         settle(heading, 0f, MutatePriority.Default, TURN_OVER_STIFFNESS)
     }
 
-    /**
-     * Turns the card for its page, answering as the turn starts. The user's drag wins, and asking for
-     * the front of a card without a back succeeds.
-     */
+    /** Turns the card for its page, answering as the turn starts. Asking for the front of a card without a back succeeds. */
     suspend fun requestSide(side: PocketCardSide, hasBack: Boolean): FaceShownAnswer {
         if (side == PocketCardSide.BACK && !hasBack) return FaceShownAnswer.NO_BACK
-        if (dragging) return FaceShownAnswer.USER_MOVING
 
         CoroutineScope(currentCoroutineContext()).launch { turnTo(side) }
         return FaceShownAnswer.APPLIED
