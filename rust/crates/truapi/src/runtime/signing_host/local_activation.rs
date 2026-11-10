@@ -40,7 +40,7 @@ impl LocalActivation for SigningHost {
 		let services = self.services.clone();
 		let session_state = self.wallet.session_state();
 		let auth_state = self.auth_state.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let Some(identity) = lookup_session_identity(
 				&services.dotns_reads,
 				&services.chain,
@@ -56,7 +56,7 @@ impl LocalActivation for SigningHost {
 			if session_state.replace_session_if_current(&session, named.clone()) {
 				auth_state.connected(&connected_session_ui_info(&named));
 			}
-		}));
+		});
 		Ok(())
 	}
 }

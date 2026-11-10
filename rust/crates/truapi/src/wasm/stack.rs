@@ -15,11 +15,11 @@ use super::{
 	get_optional_string_at, get_required_object, get_required_string_at, invoke_unit,
 };
 use crate::{
+	Spawner,
 	platform::{
 		Stack, StackFetchRequest, StackFetchResponse, StackHost, StackRecords, StackRefresh,
 		StackRefreshOutcome, StackStatus,
 	},
-	subscription::Spawner,
 	time::RealTimer,
 };
 

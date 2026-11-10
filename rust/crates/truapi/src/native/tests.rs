@@ -3054,6 +3054,30 @@ fn reads_the_card_faces_the_hosts_conform_to() {
 	assert!(matches!(node, latest::RendererNode::Column { .. }));
 }
 
+/// Face files spell an inline image's bytes as the generated client does, a
+/// `0x` hex string, so a face written by hand and one written by the SDK read alike.
+#[test]
+fn reads_an_inline_image_from_hex() {
+	let image = |value: &str| {
+		format!(
+			r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{value}"}}}}}}}}"#
+		)
+	};
+
+	assert_eq!(
+		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				fit: None,
+			},
+		}
+	);
+	assert!(parse_renderer_node_json(image("not hex")).is_err());
+	assert!(parse_renderer_node_json(image("89504e47")).is_err());
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();

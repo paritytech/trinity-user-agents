@@ -8,7 +8,7 @@ use truapi::latest::GenericError;
 use super::*;
 use crate::{
 	stack::{StackChains, StackRefreshOutcome},
-	test_support::{sign_test_descriptor, test_descriptor, test_spawner},
+	test_support::{sign_test_descriptor, test_descriptor},
 	time::ManualTimer,
 };
 
@@ -101,7 +101,7 @@ fn start(records: Arc<MemoryRecords>, responses: Vec<StackFetchResponse>) -> Sta
 	let refresh = load(records, timer.clone());
 	let (told, statuses) = channel();
 	let host = QueuedHost { responses: Mutex::new(responses.into()), statuses: Mutex::new(told) };
-	assert!(refresh.start(Arc::new(host), &test_spawner()));
+	assert!(refresh.start(Arc::new(host), &Spawner::for_test()));
 	Started { refresh, timer, statuses }
 }
 
@@ -209,5 +209,5 @@ fn the_refresh_starts_once() {
 	let (told, _statuses) = channel();
 	let second = QueuedHost { responses: Mutex::default(), statuses: Mutex::new(told) };
 
-	assert!(!started.refresh.start(Arc::new(second), &test_spawner()));
+	assert!(!started.refresh.start(Arc::new(second), &Spawner::for_test()));
 }

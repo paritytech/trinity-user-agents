@@ -18,10 +18,7 @@ use super::{
 	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
 	signed_pointer, source::StackSource,
 };
-use crate::{
-	background_task::BackgroundTask, subscription::Spawner, time::Timer,
-	unix_time::current_unix_secs,
-};
+use crate::{Spawner, background_task::BackgroundTask, time::Timer, unix_time::current_unix_secs};
 
 /// The largest descriptor the core reads.
 const MAX_DESCRIPTOR_BYTES: u32 = 1024 * 1024;
