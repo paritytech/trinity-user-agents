@@ -37,7 +37,7 @@ class FundingUiMapperTest {
     @Test
     fun `the core's best of several quotes is marked and the countdown runs to its refresh`() {
         val state = flow()
-            .let { it.asking(requireNotNull(it.currentAsk())) }
+            .asked(1u)
             .receiving(bothQuoted())
 
         val providers = state.toProvidersUiState(emptyMap())
@@ -57,7 +57,7 @@ class FundingUiMapperTest {
         try {
             val fees = requireNotNull(
                 flow()
-                    .let { it.asking(requireNotNull(it.currentAsk())) }
+                    .asked(1u)
                     .receiving(bothQuoted())
                     .toFeesUiState(),
             )
@@ -74,7 +74,7 @@ class FundingUiMapperTest {
     @Test
     fun `asking the same again keeps what each price was for while the new one loads`() {
         val quotedOnce = flow()
-            .let { it.asking(requireNotNull(it.currentAsk())) }
+            .asked(1u)
             .receiving(bothQuoted())
 
         val providers = quotedOnce.asking(requireNotNull(quotedOnce.currentAsk()))
@@ -96,6 +96,10 @@ class FundingUiMapperTest {
         assertEquals(FundingBandUi(RCommon.string.funding_band_delayed, null, warning = true), bank.bandLine(FundingBand.DELAYED, null))
         assertNull(bank.bandLine(FundingBand.ENDED, null))
     }
+
+    /** Asks for the quotes on screen, and takes [id] as the core's id for the ask. */
+    private fun FundingFlowState.asked(id: ULong): FundingFlowState =
+        asking(requireNotNull(currentAsk())).let { it.requested(id, it.askNumber) }
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,

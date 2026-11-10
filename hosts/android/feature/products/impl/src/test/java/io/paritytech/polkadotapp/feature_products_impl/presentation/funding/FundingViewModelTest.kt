@@ -17,6 +17,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlin.time.Instant
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
@@ -34,6 +36,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -223,6 +226,40 @@ class FundingViewModelTest {
         coVerify { router.closeFundingOverlay("intent") }
     }
 
+    // The core numbers every quote request of the runtime, so a new ask's id is the one it returns, not the last + 1,
+    // and a list can arrive before that id does.
+    @Test
+    fun `quote lists show only for the request id the core returned`() = runTest(testDispatcher) {
+        val secondId = CompletableDeferred<ULong>()
+        var asks = 0
+        coEvery { interactor.requestQuote("intent", any()) } coAnswers {
+            if (asks++ == 0) Result.success(4uL) else Result.success(secondId.await())
+        }
+        val model = viewModel()
+        advanceUntilIdle()
+        val quoted = FundingQuoteRow(ramp, FundingQuoteState.Quoted(quote()))
+        fun countdown() = (model.state.value as LoadingState.Loaded).data.providers.countdown
+
+        model.onPreset(BigDecimal("50"))
+        advanceTimeBy(601)
+        runCurrent()
+        quoteLists.emit(list(quoted, best = ramp, requestId = 4uL))
+        runCurrent()
+        model.onPreset(BigDecimal("60"))
+        advanceTimeBy(601)
+        runCurrent()
+        quoteLists.emit(list(quoted, best = ramp, requestId = 5uL, refreshAtMs = 70_000uL))
+        runCurrent()
+        secondId.complete(9uL)
+        runCurrent()
+        assertNotEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(70_000)), countdown())
+
+        quoteLists.emit(list(quoted, best = ramp, requestId = 9uL, refreshAtMs = 80_000uL))
+        runCurrent()
+        assertEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(80_000)), countdown())
+        cancelTicker(model)
+    }
+
     @Test
     fun `the core is told each selection, and the amount limits it pushes back reach the amount screen`() = runTest(testDispatcher) {
         val model = viewModel()
@@ -288,11 +325,16 @@ class FundingViewModelTest {
         assetDecimals = 2u,
     )
 
-    private fun list(vararg rows: FundingQuoteRow, best: ProductId?) = FundingQuoteList(
-        requestId = 1uL,
+    private fun list(
+        vararg rows: FundingQuoteRow,
+        best: ProductId?,
+        requestId: ULong = 1uL,
+        refreshAtMs: ULong = 60_000uL,
+    ) = FundingQuoteList(
+        requestId = requestId,
         rows = rows.toList(),
         best = best,
-        refreshAtMs = 60_000uL,
+        refreshAtMs = refreshAtMs,
         amount = "50000000",
         refusal = null,
         issue = null,

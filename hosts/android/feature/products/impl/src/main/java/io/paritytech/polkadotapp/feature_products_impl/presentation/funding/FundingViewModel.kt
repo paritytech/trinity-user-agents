@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
@@ -458,12 +459,12 @@ class FundingViewModel @AssistedInject constructor(
 
     private fun requestQuote() {
         val ask = flow.value?.currentAsk() ?: return
-        flow.update { it?.asking(ask) }
+        val number = flow.updateAndGet { it?.asking(ask) }?.askNumber ?: return
 
         launchUnit {
             interactor.requestQuote(intent, ask)
                 .logFailure("Funding quote request failed")
-                .onSuccess { id -> flow.update { it?.requested(id) } }
+                .onSuccess { id -> flow.update { it?.requested(id, number) } }
         }
     }
 
