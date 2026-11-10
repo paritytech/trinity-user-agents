@@ -221,6 +221,21 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 			.await
 			.map_err(v01::GenericError::from)
 	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+		self.callbacks.on_core_log(
+			"truapi.native.callback.set_expanded_card_back_shown".to_string(),
+			format!("{shown}"),
+		);
+
+		self.callbacks
+			.set_expanded_card_back_shown(shown)
+			.await
+			.map_err(v01::GenericError::from)
+	}
 }
 
 #[async_trait::async_trait]

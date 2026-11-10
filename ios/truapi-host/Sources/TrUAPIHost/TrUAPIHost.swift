@@ -73,6 +73,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// pretending it moved one.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
+    /// Turn this execution's expanded card so its back (`true`) or its front
+    /// (`false`) is up. Answers `.noBack` when the card has no back to show,
+    /// and the face call's outcomes otherwise, without waiting for the
+    /// animation. Defaults to `.unsupported`, so an app that cannot turn cards
+    /// says so.
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32
@@ -454,6 +461,9 @@ public extension HostBridge {
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         .unsupported
     }
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
     /// Defaults opt out of worker keep-alive; override to run background work
     /// past the product's surface. The id is still distinct per call, because
     /// an `OperationId` names one operation: a host overriding only
@@ -762,6 +772,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         try await withHostRejection {
             try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardBackShown(shown: shown)
         }
     }
 
@@ -1200,9 +1216,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.removePocketCard(productId: productId, cardId: cardId)
     }
 
-    /// The newest face kept for a card, if one is.
-    public func pocketCardFace(productId: ProductId, cardId: String) async throws -> RendererNode? {
-        try await inner.pocketCardFace(productId: productId, cardId: cardId)
+    /// The newest face kept for one side of a card, if one is.
+    public func pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = .front
+    ) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId, side: side)
     }
 
     /// Decides durable transactions from the chain until none is live, then

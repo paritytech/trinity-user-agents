@@ -83,6 +83,17 @@ pub trait HostCallbacks: Send + Sync {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
 
+	/// Turn this execution's expanded card so its back (`true`) or its front
+	/// (`false`) is up.
+	///
+	/// Answer `NoBack` when asked for a back the card does not have to show,
+	/// and `NotPresented` and `UserMoving` as for the face. Return without
+	/// waiting for the animation to finish.
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
 	/// Prompt the user for a remote permission `product` requested.
 	async fn remote_permission(
 		&self,

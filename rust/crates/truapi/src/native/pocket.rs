@@ -7,12 +7,12 @@ use futures::{
 	StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
 };
-use truapi::latest::ProductRendererRenderItem;
+use truapi::latest::{ProductRendererRenderItem, RenderContext};
 
 use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
 use crate::{
 	platform::ProductId,
-	pocket_cards::{PocketCards, PocketEntry},
+	pocket_cards::{PocketCardSide, PocketCards, PocketEntry},
 	subscription::Spawner,
 	time::RealTimer,
 };
@@ -45,20 +45,30 @@ pub fn observe_pocket_cards(
 	})
 }
 
+/// The card and side a render draws, when it draws one of a Pocket card's faces.
+pub fn card_side(context: &RenderContext) -> Option<(String, PocketCardSide)> {
+	match context {
+		RenderContext::PocketCard { card_id } => Some((card_id.clone(), PocketCardSide::Front)),
+		RenderContext::PocketCardBack { card_id } => Some((card_id.clone(), PocketCardSide::Back)),
+		_ => None,
+	}
+}
+
 /// Wraps the observer of one card's render so every face it draws is also
-/// kept as the card's newest. Keeping stops once the render's observer is
+/// kept as the newest on `side`. Keeping stops once the render's observer is
 /// dropped, after writing the last face.
 pub fn keeping_faces(
 	cards: PocketCards,
 	product_id: ProductId,
 	card_id: String,
+	side: PocketCardSide,
 	observer: Arc<dyn NativeRendererObserver>,
 	spawner: &Spawner,
 ) -> Arc<dyn NativeRendererObserver> {
 	let (faces, drawn) = unbounded();
 	let keeper = cards.clone();
 	(spawner)(Box::pin(async move {
-		keeper.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
+		keeper.keep_faces(product_id, card_id, side, drawn, Arc::new(RealTimer)).await;
 	}));
 	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }

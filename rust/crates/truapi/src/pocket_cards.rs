@@ -72,6 +72,24 @@ pub struct PocketEntry {
 	pub privileged: bool,
 }
 
+/// The side of a card a face is drawn on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PocketCardSide {
+	/// The face the card shows unless it is turned over.
+	Front,
+	/// The face drawn for `PocketCardBack`, shown when the card is turned over.
+	Back,
+}
+
+impl PocketCardSide {
+	fn column(self) -> &'static str {
+		match self {
+			Self::Front => "FRONT",
+			Self::Back => "BACK",
+		}
+	}
+}
+
 /// What a removal did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum PocketCardRemoval {
@@ -179,7 +197,7 @@ impl PocketCards {
 					":card": card_id,
 					":title": title,
 				})?;
-				upsert_face(tx, &product_id, &card_id, &face, draw_order)
+				upsert_face(tx, &product_id, &card_id, PocketCardSide::Front, &face, draw_order)
 			})
 			.await?;
 		Ok(())
@@ -210,17 +228,22 @@ impl PocketCards {
 			.await
 	}
 
-	/// The newest face kept for a card. One that no longer decodes reads as
-	/// none, and the card waits for its product to draw again.
+	/// The newest face kept for one side of a card. One that no longer
+	/// decodes reads as none, and the card waits for its product to draw again.
 	pub async fn face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<RendererNode>, DbError> {
 		let kept: Option<Vec<u8>> = self
 			.db
 			.read(move |conn| {
-				let params = named_params! { ":product": product_id.as_str(), ":card": card_id };
+				let params = named_params! {
+					":product": product_id.as_str(),
+					":card": card_id,
+					":side": side.column(),
+				};
 				Ok(conn.prepare_cached(FACE)?.query_row(params, |row| row.get(0)).optional()?)
 			})
 			.await?;
@@ -231,17 +254,19 @@ impl PocketCards {
 		}))
 	}
 
-	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the card's
-	/// newest, if the card is in the Pocket and no later face is kept.
+	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the newest
+	/// on that side of the card, if the card is in the Pocket and no later
+	/// face is kept there.
 	async fn keep_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 		face: RendererNode,
 		draw_order: u64,
 	) -> Result<(), DbError> {
 		self.db
-			.write(move |tx| upsert_face(tx, &product_id, &card_id, &face, draw_order))
+			.write(move |tx| upsert_face(tx, &product_id, &card_id, side, &face, draw_order))
 			.await
 	}
 
@@ -252,6 +277,7 @@ impl PocketCards {
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 		mut faces: UnboundedReceiver<(RendererNode, u64)>,
 		timer: Arc<dyn Timer>,
 	) {
@@ -273,12 +299,12 @@ impl PocketCards {
 				newest = Some(newer);
 			}
 			if let Some(drawn) = newest.take() {
-				self.keep_newest(&product_id, &card_id, drawn).await;
+				self.keep_newest(&product_id, &card_id, side, drawn).await;
 				interval = timer.sleep(FACE_WRITE_INTERVAL).fuse();
 			}
 		}
 		if let Some(drawn) = newest {
-			self.keep_newest(&product_id, &card_id, drawn).await;
+			self.keep_newest(&product_id, &card_id, side, drawn).await;
 		}
 	}
 
@@ -286,10 +312,12 @@ impl PocketCards {
 		&self,
 		product_id: &ProductId,
 		card_id: &str,
+		side: PocketCardSide,
 		(face, draw_order): (RendererNode, u64),
 	) {
-		if let Err(error) =
-			self.keep_face(product_id.clone(), card_id.to_owned(), face, draw_order).await
+		if let Err(error) = self
+			.keep_face(product_id.clone(), card_id.to_owned(), side, face, draw_order)
+			.await
 		{
 			tracing::warn!(%error, card_id, "a Pocket face was not kept");
 		}
@@ -360,25 +388,27 @@ const PRIVILEGED: &str =
 
 const DELETE: &str = "DELETE FROM pocket_card WHERE product_id = :product AND card_id = :card";
 
-const FACE: &str =
-	"SELECT face FROM pocket_card_face WHERE product_id = :product AND card_id = :card";
+const FACE: &str = "SELECT face FROM pocket_card_face
+	WHERE product_id = :product AND card_id = :card AND side = :side";
 
-const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face, draw_order)
-	SELECT :product, :card, :face, :draw_order WHERE EXISTS
+const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, side, face, draw_order)
+	SELECT :product, :card, :side, :face, :draw_order WHERE EXISTS
 		(SELECT 1 FROM pocket_card WHERE product_id = :product AND card_id = :card)
-	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
+	ON CONFLICT (product_id, card_id, side) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
 		WHERE excluded.draw_order > pocket_card_face.draw_order";
 
 fn upsert_face(
 	tx: &Transaction<'_>,
 	product_id: &ProductId,
 	card_id: &str,
+	side: PocketCardSide,
 	face: &RendererNode,
 	draw_order: u64,
 ) -> Result<(), DbError> {
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
+		":side": side.column(),
 		":face": face.encode(),
 		":draw_order": draw_order,
 	})?;
