@@ -353,6 +353,18 @@
         }
       }
     },
+    "collectibles": {
+      "comment": "Title of the screen that shows the Collectibles product.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collectibles"
+          }
+        }
+      }
+    },
     "createProof.body.context": {
       "extractionState": "manual",
       "localizations": {

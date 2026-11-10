@@ -222,7 +222,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
 private final class RecordingWireframe: WalletMainWireframeProtocol {
     private(set) var openedProduct: ProductId?
 
-    func showProduct(page: ProductPage) {
+    func showCollectibles(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
     }
 
