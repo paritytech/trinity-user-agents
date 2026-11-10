@@ -23,7 +23,7 @@ import type {
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
-  CoreStorageKey,
+  StackStorageKey,
   PermissionDecision,
   ProductContext,
   ExecutableKind,
@@ -225,7 +225,9 @@ describe("createWasmRawCallbacks", () => {
         },
         coreStorage: {
           readCoreStorage: async (key) =>
-            key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
+            key.slot.tag === "AuthSession"
+              ? new Uint8Array([1, 2, 3])
+              : undefined,
           writeCoreStorage: async (key, value) => {
             calls.push(["writeCoreStorage", key, [...value]]);
           },
@@ -310,7 +312,10 @@ describe("createWasmRawCallbacks", () => {
         value: { deeplink: "polkadotapp://example" },
       }),
     );
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
+    const authSessionKey = StackStorageKey.enc({
+      stack: "stack",
+      slot: { tag: "AuthSession" },
+    });
     expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
       new Uint8Array([1, 2, 3]),
     );
@@ -432,8 +437,15 @@ describe("createWasmRawCallbacks", () => {
         "authStateChanged",
         { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
       ],
-      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
-      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      [
+        "writeCoreStorage",
+        { stack: "stack", slot: { tag: "AuthSession", value: undefined } },
+        [3, 2, 1],
+      ],
+      [
+        "clearCoreStorage",
+        { stack: "stack", slot: { tag: "AuthSession", value: undefined } },
+      ],
     ]);
 
     disposePreimages?.();

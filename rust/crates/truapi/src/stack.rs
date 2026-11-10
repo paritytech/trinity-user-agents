@@ -6,8 +6,9 @@
 //! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
 //! chain's genesis hash, and answers `get_chain_info`.
 //!
-//! [`Stack::storage`] is the only way the core reaches
-//! [`CoreStorage`](crate::platform::CoreStorage).
+//! What the core stores belongs to one stack: [`Stack::storage`] is the only
+//! way the core reaches [`CoreStorage`](crate::platform::CoreStorage), and it
+//! puts [`Stack::id`] in every key.
 
 mod storage;
 
@@ -215,7 +216,8 @@ impl Stack {
 		Ok(Self { identity, network, tld, chains })
 	}
 
-	/// The stack's identity. See [`StackIdentity::id`].
+	/// The stack's identity, which every key the core stores carries. See
+	/// [`StackIdentity::id`].
 	pub fn id(&self) -> &str {
 		&self.identity.id
 	}
@@ -228,7 +230,7 @@ impl Stack {
 
 	/// The core's storage for this stack over the host's `storage`.
 	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
-		StackStorage::new(storage)
+		StackStorage::new(storage, &self.identity.id)
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

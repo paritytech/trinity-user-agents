@@ -27,7 +27,9 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
 	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
+			&ProductId::for_test(owner),
+		)),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");

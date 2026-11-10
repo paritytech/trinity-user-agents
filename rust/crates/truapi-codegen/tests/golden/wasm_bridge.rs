@@ -308,7 +308,7 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
 impl crate::platform::CoreStorage for WasmPlatform {
     async fn read_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
     ) -> Result<Option<Vec<u8>>, latest::GenericError> {
         Ok(invoke_optional_bytes_return(
             &self.bridge.read_core_storage,
@@ -320,7 +320,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
 
     async fn write_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
         value: Vec<u8>,
     ) -> Result<(), latest::GenericError> {
         invoke_unit(
@@ -336,7 +336,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
 
     async fn clear_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
     ) -> Result<(), latest::GenericError> {
         invoke_unit(
             &self.bridge.clear_core_storage,

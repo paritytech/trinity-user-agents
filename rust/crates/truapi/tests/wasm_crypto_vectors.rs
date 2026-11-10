@@ -25,7 +25,7 @@ use truapi::{
 		x25519_seal::AEAD_NONCE_LEN,
 	},
 	latest::HostDevicePermissionRequest,
-	platform::{CoreStorageKey, HostInfo, PairingHostConfig, PlatformInfo},
+	platform::{CoreStorageKey, HostInfo, PairingHostConfig, PlatformInfo, StackStorageKey},
 };
 use wasm_bindgen_test::wasm_bindgen_test;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
@@ -183,12 +183,19 @@ fn session_crypto_and_statement_proof_vectors_work_on_wasm() {
 
 #[wasm_bindgen_test]
 fn wasm_core_storage_descriptors_are_strict_and_stable() {
-	let encoded = CoreStorageKey::device_permission_authorization(
+	let stack_key = |slot| StackStorageKey { stack: "stack".to_string(), slot }.encode();
+	let encoded = stack_key(CoreStorageKey::device_permission_authorization(
 		&ProductId::for_test("product.dot"),
 		&HostDevicePermissionRequest::Camera,
-	)
-	.encode();
+	));
 	let described = truapi::wasm::describe_core_storage_key_for_wasm(encoded).expect("valid key");
+	assert_eq!(
+		js_sys::Reflect::get(&described, &wasm_bindgen::JsValue::from_str("stack"))
+			.expect("stack property")
+			.as_string()
+			.as_deref(),
+		Some("stack")
+	);
 	assert_eq!(
 		js_sys::Reflect::get(&described, &wasm_bindgen::JsValue::from_str("kind"))
 			.expect("kind property")
@@ -205,7 +212,7 @@ fn wasm_core_storage_descriptors_are_strict_and_stable() {
 	);
 
 	assert!(truapi::wasm::describe_core_storage_key_for_wasm(Vec::new()).is_err());
-	let mut trailing = CoreStorageKey::AuthSession.encode();
+	let mut trailing = stack_key(CoreStorageKey::AuthSession);
 	trailing.push(0);
 	assert!(truapi::wasm::describe_core_storage_key_for_wasm(trailing).is_err());
 }

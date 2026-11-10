@@ -2190,7 +2190,7 @@ async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, &configs, now).await?;
+	let applied = product_config::apply(platform, platform.stack_identity(), &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}

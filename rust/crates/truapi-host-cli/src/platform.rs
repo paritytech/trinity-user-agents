@@ -33,7 +33,7 @@ use truapi::{
 		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
 		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
 		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
-		ThemeHost, UserConfirmation, UserConfirmationReview,
+		StackIdentity, StackStorageKey, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -172,6 +172,8 @@ pub struct CliPlatform {
 	/// `Features::feature_supported` answers from.
 	served_chains: Roles<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
+	/// Identity of the stack this host runs, which every core slot is keyed by.
+	stack_identity: StackIdentity,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -260,6 +262,7 @@ impl CliPlatform {
 			chain,
 			served_chains: network.genesis(),
 			extension_versions: network.extension_versions(),
+			stack_identity: network.identity(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
@@ -289,7 +292,12 @@ impl CliPlatform {
 		*self.approval.lock().expect("approval policy mutex poisoned") = approval;
 	}
 
-	fn core_key(key: &CoreStorageKey) -> Vec<u8> {
+	/// Identity of the stack this host runs.
+	pub fn stack_identity(&self) -> &StackIdentity {
+		&self.stack_identity
+	}
+
+	fn core_key(key: &StackStorageKey) -> Vec<u8> {
 		use parity_scale_codec::Encode;
 		key.encode()
 	}
@@ -311,8 +319,8 @@ impl CliPlatform {
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
-	fn is_device_scoped(key: &CoreStorageKey) -> bool {
-		matches!(key, CoreStorageKey::DeviceEncryptionKey)
+	fn is_device_scoped(key: &StackStorageKey) -> bool {
+		matches!(key.slot, CoreStorageKey::DeviceEncryptionKey)
 	}
 
 	fn persist_device_storage(&self) -> Result<(), StorageError> {
@@ -366,7 +374,9 @@ impl CliPlatform {
 			CoreStorageKey::PairingDeviceIdentity,
 			CoreStorageKey::LastProcessedPairingStatement,
 		]
-		.map(|key| Self::core_key(&key));
+		.map(|slot| {
+			Self::core_key(&StackStorageKey { stack: self.stack_identity.id.clone(), slot })
+		});
 		let carried = {
 			// Keep the same path -> storage lock order used by persistence so
 			// an auth transition cannot deadlock with a concurrent core write.
@@ -574,7 +584,7 @@ impl ProductOperations for CliPlatform {
 impl CoreStorage for CliPlatform {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 	) -> Result<Option<Vec<u8>>, api::GenericError> {
 		let store =
 			if Self::is_device_scoped(&key) { &self.device_storage } else { &self.core_storage };
@@ -587,7 +597,7 @@ impl CoreStorage for CliPlatform {
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), api::GenericError> {
 		let device_scoped = Self::is_device_scoped(&key);
@@ -602,7 +612,7 @@ impl CoreStorage for CliPlatform {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), api::GenericError> {
 		let device_scoped = Self::is_device_scoped(&key);
 		{
 			let store = if device_scoped { &self.device_storage } else { &self.core_storage };

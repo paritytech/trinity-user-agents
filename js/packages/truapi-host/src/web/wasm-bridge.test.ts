@@ -2,7 +2,10 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { CoreStorageKey } from "../generated/host-callbacks.js";
+import {
+  StackStorageKey,
+  type CoreStorageKey,
+} from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
@@ -73,11 +76,17 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       },
     ];
     expect(
-      keys.map((key) => describeCoreStorageKey(CoreStorageKey.enc(key))),
+      keys.map((slot) =>
+        describeCoreStorageKey(StackStorageKey.enc({ stack: "stack", slot })),
+      ),
     ).toEqual([
-      { kind: "ProductManifest", productLabel: "peopl" },
-      { kind: "AutoSigningKey", productId: "peopl.dot" },
-      { kind: "PermissionAuthorization", productLabel: "caller" },
+      { stack: "stack", kind: "ProductManifest", productLabel: "peopl" },
+      { stack: "stack", kind: "AutoSigningKey", productId: "peopl.dot" },
+      {
+        stack: "stack",
+        kind: "PermissionAuthorization",
+        productLabel: "caller",
+      },
     ]);
   });
 
@@ -92,7 +101,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const coreStorage = mock.callbacks.coreStorage;
     const readCoreStorage = coreStorage.readCoreStorage.bind(coreStorage);
     coreStorage.readCoreStorage = async (key) => {
-      invoked.push(`readCoreStorage:${key.tag}`);
+      invoked.push(`readCoreStorage:${key.slot.tag}`);
       return readCoreStorage(key);
     };
 

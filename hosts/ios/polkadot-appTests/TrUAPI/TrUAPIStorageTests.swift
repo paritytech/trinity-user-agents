@@ -108,7 +108,7 @@ final class TrUAPIStorageTests {
 
     @Test func coreStorageRoundTrip() throws {
         let storage = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
-        let key = Data([0x00]).toHex() // CoreStorageKey.AuthSession
+        let key = Data([0x00]).toHex() // opaque to the store; the core passes StackStorageKey bytes
         let value = Data([0xAA])
 
         try storage.write(key: key, value: value)

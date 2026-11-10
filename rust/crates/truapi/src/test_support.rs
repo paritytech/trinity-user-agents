@@ -32,7 +32,8 @@ use crate::platform::{
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
 	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
 	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview, StackStorage,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	StackStorageKey, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -339,9 +340,14 @@ pub const TEST_STACK_ID: &str = "test-stack";
 /// Generation of every [`test_stack`].
 pub const TEST_STACK_GENERATION: &str = "test-generation";
 
+/// `slot` under [`TEST_STACK_ID`], the key a test host stores it by.
+pub fn test_storage_key(slot: CoreStorageKey) -> StackStorageKey {
+	StackStorageKey { stack: TEST_STACK_ID.to_string(), slot }
+}
+
 /// The [`test_stack`]'s slots in `host`, as the core reaches them.
 pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
-	StackStorage::new(host)
+	StackStorage::new(host, TEST_STACK_ID)
 }
 
 /// A stack on `tld` over these chains, without a relay. Reserved values are
@@ -1199,7 +1205,7 @@ impl PlatformProductOperations for StubPlatform {
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.read_core_storage(key).await;
@@ -1207,7 +1213,7 @@ impl PlatformCoreStorage for StubPlatform {
 		if self.core_storage_pending {
 			futures::future::pending::<()>().await;
 		}
-		if let CoreStorageKey::AuthSession = key {
+		if let CoreStorageKey::AuthSession = key.slot {
 			if let Some(reason) = self.session_error {
 				return Err(v01::GenericError { reason: reason.to_string() });
 			}
@@ -1217,7 +1223,7 @@ impl PlatformCoreStorage for StubPlatform {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
-			(&key, self.permission_storage_error)
+			(&key.slot, self.permission_storage_error)
 		{
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
@@ -1225,19 +1231,19 @@ impl PlatformCoreStorage for StubPlatform {
 			.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.get(&core_storage_test_key(key))
+			.get(&stub_storage_key(&key))
 			.cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.write_core_storage(key, value).await;
 		}
-		if let CoreStorageKey::AuthSession = key {
+		if let CoreStorageKey::AuthSession = key.slot {
 			self.session_writes
 				.lock()
 				.expect("session write list mutex poisoned")
@@ -1258,15 +1264,15 @@ impl PlatformCoreStorage for StubPlatform {
 		self.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.insert(core_storage_test_key(key), value);
+			.insert(stub_storage_key(&key), value);
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.clear_core_storage(key).await;
 		}
-		if let CoreStorageKey::AuthSession = key {
+		if let CoreStorageKey::AuthSession = key.slot {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
@@ -1276,13 +1282,17 @@ impl PlatformCoreStorage for StubPlatform {
 		self.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.remove(&core_storage_test_key(key));
+			.remove(&stub_storage_key(&key));
 		Ok(())
 	}
 }
 
-/// Stable string key used by the stub core-storage map.
-pub fn core_storage_test_key(key: CoreStorageKey) -> String {
+/// The stub core-storage map's key for `slot` of the [`test_stack`].
+pub fn core_storage_test_key(slot: CoreStorageKey) -> String {
+	stub_storage_key(&test_storage_key(slot))
+}
+
+fn stub_storage_key(key: &StackStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 

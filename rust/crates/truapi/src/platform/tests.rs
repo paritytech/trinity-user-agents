@@ -535,16 +535,21 @@ fn product_context_decoding_normalizes_the_product_id() {
 	assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
 }
 
+/// `slot` of the stack `stack`, encoded as a host receives it.
+fn stack_key(slot: CoreStorageKey) -> Vec<u8> {
+	StackStorageKey { stack: "stack".to_string(), slot }.encode()
+}
+
 #[test]
 fn core_storage_key_description_is_strict_and_product_scoped() {
-	let permission = CoreStorageKey::device_permission_authorization(
+	let permission = stack_key(CoreStorageKey::device_permission_authorization(
 		&ProductId::for_test("product.dot"),
 		&HostDevicePermissionRequest::Camera,
-	)
-	.encode();
+	));
 	assert_eq!(
 		describe_core_storage_key(&permission),
 		Ok(CoreStorageKeyDescription {
+			stack: "stack".to_string(),
 			kind: "PermissionAuthorization",
 			owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 		})
@@ -583,15 +588,23 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		),
 		(CoreStorageKey::FundingSupport, "FundingSupport", None),
 	] {
-		let description = describe_core_storage_key(&key.encode()).expect("valid key");
-		assert_eq!(description, CoreStorageKeyDescription { kind, owner });
+		let description = describe_core_storage_key(&stack_key(key)).expect("valid key");
+		assert_eq!(
+			description,
+			CoreStorageKeyDescription { stack: "stack".to_string(), kind, owner }
+		);
 	}
 
 	assert_eq!(
 		describe_core_storage_key(&[]),
 		Err(CoreStorageKeyDescriptionError::InvalidEncoding)
 	);
-	let mut trailing = CoreStorageKey::AuthSession.encode();
+	// A slot with no stack is not a key: a host never stores one.
+	assert_eq!(
+		describe_core_storage_key(&CoreStorageKey::AuthSession.encode()),
+		Err(CoreStorageKeyDescriptionError::InvalidEncoding)
+	);
+	let mut trailing = stack_key(CoreStorageKey::AuthSession);
 	trailing.push(0);
 	assert_eq!(
 		describe_core_storage_key(&trailing),
@@ -639,10 +652,10 @@ fn persisted_permission_and_manifest_scopes_keep_their_string_encoding() {
 	];
 	for (key, encoded, kind, owner) in cases {
 		assert_eq!(key.encode(), encoded);
-		assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key));
+		assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key.clone()));
 		assert_eq!(
-			describe_core_storage_key(&encoded),
-			Ok(CoreStorageKeyDescription { kind, owner: Some(owner) })
+			describe_core_storage_key(&stack_key(key)),
+			Ok(CoreStorageKeyDescription { stack: "stack".to_string(), kind, owner: Some(owner) })
 		);
 	}
 }

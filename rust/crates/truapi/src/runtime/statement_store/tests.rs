@@ -50,7 +50,9 @@ fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	};
 	futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 		platform,
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
+			&ProductId::for_test(owner),
+		)),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");

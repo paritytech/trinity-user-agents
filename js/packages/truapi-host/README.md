@@ -48,6 +48,12 @@ a `generation`, the network, the TLD and each chain's genesis hash. Only the
 `wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
 `MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
 
+The core keeps what it stores apart per stack. Every `coreStorage` callback
+takes a `StackStorageKey`, `{ stack, slot }`: the slot and the identity of the
+stack it belongs to, which is the key in the stack's pointer, or a test
+stack's `id`. Store each value under the whole key. A fork and its source then
+share nothing, although their genesis hashes are equal.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

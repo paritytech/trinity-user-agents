@@ -31,25 +31,28 @@ struct MemStorage {
 impl CoreStorage for MemStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		Ok(self.inner.lock().await.get(&test_key(key)).cloned())
 	}
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		self.inner.lock().await.insert(test_key(key), value);
 		Ok(())
 	}
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(
+		&self,
+		key: crate::platform::StackStorageKey,
+	) -> Result<(), v01::GenericError> {
 		self.inner.lock().await.remove(&test_key(key));
 		Ok(())
 	}
 }
 
-fn test_key(key: CoreStorageKey) -> String {
+fn test_key(key: crate::platform::StackStorageKey) -> String {
 	hex::encode(key.encode())
 }
 
@@ -1059,10 +1062,10 @@ fn a_trusted_product_grant_is_not_persisted() {
 
 	assert_eq!(
 		futures::executor::block_on(storage.read_core_storage(
-			CoreStorageKey::remote_permission_authorization(
+			crate::test_support::test_storage_key(CoreStorageKey::remote_permission_authorization(
 				&ProductId::for_test("peopl.dot"),
 				&request
-			)
+			))
 		))
 		.unwrap(),
 		None,
@@ -1533,10 +1536,10 @@ fn corrupt_cache_entry_returns_none() {
 	let storage = MemStorage::default();
 	// Write garbage bytes under the canonical key.
 	futures::executor::block_on(storage.write_core_storage(
-		CoreStorageKey::device_permission_authorization(
+		crate::test_support::test_storage_key(CoreStorageKey::device_permission_authorization(
 			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
-		),
+		)),
 		vec![0xff, 0xfe, 0xfd],
 	))
 	.unwrap();
@@ -1564,18 +1567,21 @@ struct FailingStorage;
 impl CoreStorage for FailingStorage {
 	async fn read_core_storage(
 		&self,
-		_key: CoreStorageKey,
+		_key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		Err(v01::GenericError { reason: "read failed".into() })
 	}
 	async fn write_core_storage(
 		&self,
-		_key: CoreStorageKey,
+		_key: crate::platform::StackStorageKey,
 		_value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		Err(v01::GenericError { reason: "write failed".into() })
 	}
-	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(
+		&self,
+		_key: crate::platform::StackStorageKey,
+	) -> Result<(), v01::GenericError> {
 		Err(v01::GenericError { reason: "clear failed".into() })
 	}
 }

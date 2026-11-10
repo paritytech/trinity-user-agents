@@ -840,6 +840,27 @@ export interface SignVrfReview {
 }
 
 /**
+ * A `CoreStorageKey` slot of one stack: the key a host stores core-owned
+ * state under.
+ *
+ * `stack` is the stack's identity, `Stack::id`: its key in hex. Two stacks
+ * never share a key, even when their chains have the same genesis hashes, as
+ * a fork's and its source's do. A host stores every slot under the whole
+ * encoded key and never under the slot alone.
+ */
+export interface StackStorageKey {
+  /**
+   * Identity of the stack the slot belongs to.
+   */
+  stack: string;
+
+  /**
+   * The slot.
+   */
+  slot: CoreStorageKey;
+}
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1507,6 +1528,23 @@ export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
 );
 
 /**
+ * A `CoreStorageKey` slot of one stack: the key a host stores core-owned
+ * state under.
+ *
+ * `stack` is the stack's identity, `Stack::id`: its key in hex. Two stacks
+ * never share a key, even when their chains have the same genesis hashes, as
+ * a fork's and its source's do. A host stores every slot under the whole
+ * encoded key and never under the slot alone.
+ */
+export const StackStorageKey: S.Codec<StackStorageKey> = S.lazy(
+  (): S.Codec<StackStorageKey> =>
+    S.Struct({
+      stack: S.str,
+      slot: CoreStorageKey,
+    }) as S.Codec<StackStorageKey>,
+);
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1845,6 +1883,10 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
+ * Every key names the stack its slot belongs to. The core reads and writes
+ * only the stack it runs, so what a host stored for one stack is never read
+ * for another.
+ *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
  * has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1861,17 +1903,17 @@ export interface CoreStorage {
   /**
    * Read a core-owned value by typed slot.
    */
-  readCoreStorage(key: CoreStorageKey): Promise<Uint8Array | undefined>;
+  readCoreStorage(key: StackStorageKey): Promise<Uint8Array | undefined>;
 
   /**
    * Write a core-owned value by typed slot.
    */
-  writeCoreStorage(key: CoreStorageKey, value: Uint8Array): Promise<void>;
+  writeCoreStorage(key: StackStorageKey, value: Uint8Array): Promise<void>;
 
   /**
    * Clear a core-owned value by typed slot.
    */
-  clearCoreStorage(key: CoreStorageKey): Promise<void>;
+  clearCoreStorage(key: StackStorageKey): Promise<void>;
 }
 
 /**

@@ -42,10 +42,10 @@ import type {
 
 import type {
   AuthState,
-  CoreStorageKey,
   HostScan,
   JsonRpcConnection,
   PermissionDecision,
+  StackStorageKey,
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
@@ -1002,19 +1002,21 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   };
 
   const productKey = (key: string): string => `product:${key}`;
-  const coreKey = (key: CoreStorageKey): string =>
-    key.value === undefined
-      ? `core:${key.tag}`
+  const coreKey = ({ stack, slot }: StackStorageKey): string =>
+    slot.value === undefined
+      ? `core:${slot.tag}:${stack}`
       : // Entries sorted, so a payload built field-by-field in a different
         // order still addresses the slot it addressed before.
-        `core:${key.tag}:${JSON.stringify(key.value, (_, inner: unknown) =>
-          inner !== null && typeof inner === "object" && !Array.isArray(inner)
-            ? Object.fromEntries(
-                Object.entries(inner as Record<string, unknown>).sort(
-                  ([left], [right]) => left.localeCompare(right),
-                ),
-              )
-            : inner,
+        `core:${slot.tag}:${stack}:${JSON.stringify(
+          slot.value,
+          (_, inner: unknown) =>
+            inner !== null && typeof inner === "object" && !Array.isArray(inner)
+              ? Object.fromEntries(
+                  Object.entries(inner as Record<string, unknown>).sort(
+                    ([left], [right]) => left.localeCompare(right),
+                  ),
+                )
+              : inner,
         )}`;
   /** Replacing a mock decision must invalidate the core's settled answer. */
   const forgetStoredAuthorization = (permission: string): void => {

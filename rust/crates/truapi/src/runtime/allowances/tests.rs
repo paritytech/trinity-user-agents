@@ -12,21 +12,24 @@ struct MemStorage {
 impl CoreStorage for MemStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(
+		&self,
+		key: crate::platform::StackStorageKey,
+	) -> Result<(), GenericError> {
 		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
 		Ok(())
 	}
