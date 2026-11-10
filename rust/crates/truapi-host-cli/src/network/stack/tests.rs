@@ -1,15 +1,14 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_stack},
+		testing::{edit_chain, edit_stack, test_pointer},
 	},
 	*,
 };
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	let pointer = Pointer::new("https://stack.example/descriptor.json", None)
-		.expect("a descriptor URL is a pointer");
+	let pointer = test_pointer();
 	Stack::new(&pointer, descriptor, ChainBackend::Rpc)
 }
 
@@ -139,8 +138,7 @@ fn test_built_in_networks_name_their_light_specs() {
 /// the command starts, naming the chain, rather than on every connect.
 #[test]
 fn test_light_client_without_a_light_spec_error() {
-	let pointer = Pointer::new("https://stack.example/descriptor.json", None)
-		.expect("a descriptor URL is a pointer");
+	let pointer = test_pointer();
 	let descriptor = edit_chain("Bulletin", |chain| {
 		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
 	});

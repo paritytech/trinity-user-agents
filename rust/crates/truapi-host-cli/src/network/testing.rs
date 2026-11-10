@@ -51,8 +51,13 @@ pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Desc
 	})
 }
 
-/// The pointer the stacks of this module are read under.
-fn test_pointer() -> Pointer {
+/// The genesis hash a light spec fixture implies.
+pub fn light_spec_genesis(spec: &str) -> [u8; 32] {
+	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")
+}
+
+/// The pointer test stacks are read under.
+pub fn test_pointer() -> Pointer {
 	Pointer::new("https://stack.example/descriptor.json", None).expect("a descriptor URL")
 }
 
@@ -103,8 +108,7 @@ impl Stack {
 			[("Relay", RELAY_LIGHT_SPEC, relay_url), ("People", PEOPLE_LIGHT_SPEC, people_url)]
 				.into_iter()
 				.fold(self.with_edit(|_| {}), |stack, (role, spec, url)| {
-					let genesis = trinity_stack::light_spec_genesis(spec.as_bytes())
-						.expect("the fixture is a light spec");
+					let genesis = light_spec_genesis(spec);
 					stack.with_chain_edit(role, |chain| {
 						chain["genesisHash"] = format!("0x{}", hex::encode(genesis)).into();
 						chain["lightSpec"] = serde_json::json!({

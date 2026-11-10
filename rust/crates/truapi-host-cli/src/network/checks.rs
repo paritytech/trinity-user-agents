@@ -9,7 +9,7 @@ use anyhow::{Result, bail, ensure};
 use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
 
 use super::{
-	ChainEndpoint, Roles, Stack,
+	ChainEndpoint, Stack,
 	built_in::BuiltInOrigin,
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 	within_check_timeout,
@@ -43,21 +43,16 @@ pub async fn verify_chains(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> R
 /// that cannot be fetched is logged, and fetched again when a command first
 /// connects to its chain.
 async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<()> {
-	let Roles { people, asset_hub, bulletin } = stack.genesis();
-	let relay = light.provider().relay_of(people);
-	let loads = relay
-		.into_iter()
-		.chain([people, asset_hub, bulletin])
-		.map(|genesis| async move {
-			match light.load_spec(genesis).await {
-				Ok(()) => Ok(()),
-				Err(MissingSpec::Unreachable(reason)) => {
-					tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
-					Ok(())
-				},
-				Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
-			}
-		});
+	let loads = light.chains(stack.chains()).into_iter().map(|genesis| async move {
+		match light.load_spec(genesis).await {
+			Ok(()) => Ok(()),
+			Err(MissingSpec::Unreachable(reason)) => {
+				tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
+				Ok(())
+			},
+			Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
+		}
+	});
 	futures::future::try_join_all(loads).await?;
 	Ok(())
 }

@@ -14,7 +14,10 @@ use trinity_stack::Descriptor;
 use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
-use crate::stack_descriptor::{FETCH_TIMEOUT, fetch};
+use crate::{
+	network::ChainEndpoint,
+	stack_descriptor::{FETCH_TIMEOUT, Roles, fetch},
+};
 
 /// How long a kept spec outlives its last write. A relay's spec is replaced
 /// whenever its operator publishes a fresher checkpoint, so old ones pile up.
@@ -69,6 +72,13 @@ impl StackLightClient {
 	/// The provider running the stack's chains.
 	pub fn provider(&self) -> &EmbeddedChainProvider {
 		&self.provider
+	}
+
+	/// The chains this client runs for a stack routed as `routed`: the relay
+	/// they sync through, then People, Asset Hub and Bulletin.
+	pub fn chains(&self, routed: &Roles<ChainEndpoint>) -> Vec<[u8; 32]> {
+		let relay = self.provider.relay_of(routed.people.genesis);
+		relay.into_iter().chain(routed.iter().map(|chain| chain.genesis)).collect()
 	}
 
 	/// Connects to the stack's chain with `genesis_hash`, getting its spec and

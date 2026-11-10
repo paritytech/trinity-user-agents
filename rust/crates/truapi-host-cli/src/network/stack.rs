@@ -90,15 +90,12 @@ pub fn light_client(
 	spec_directory: PathBuf,
 ) -> Result<StackLightClient> {
 	let light = StackLightClient::new(&pointer.stack_id(), descriptor, spec_directory)?;
-	let Roles { people, asset_hub, bulletin } = routed;
-	let relay = light.provider().relay_of(people.genesis);
-	let run = [people.genesis, asset_hub.genesis, bulletin.genesis];
+	let run = light.chains(routed);
 	let named = light.provider().light_specs();
 	for chain in &descriptor.chains {
 		let genesis = chain.genesis();
 		ensure!(
-			!(run.contains(&genesis) || relay == Some(genesis)) ||
-				named.iter().any(|spec| spec.genesis_hash == genesis),
+			!run.contains(&genesis) || named.iter().any(|spec| spec.genesis_hash == genesis),
 			"--chain-backend light-client cannot run {}: its descriptor names no lightSpec for {}; \
 			 use --chain-backend rpc",
 			descriptor.id,

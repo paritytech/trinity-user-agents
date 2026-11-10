@@ -159,7 +159,7 @@ async fn test_light_spec_wrong_or_unreachable() {
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect("a spec the server does not have is unreachable, not wrong");
 	let light = missing.light_client().expect("the stack runs on the light client");
-	let Roles { people, .. } = missing.genesis();
+	let people = missing.genesis().people;
 	assert_eq!(
 		[light.provider().relay_of(people).expect("People has a relay"), people]
 			.map(|genesis| light.provider().has_light_spec(genesis)),

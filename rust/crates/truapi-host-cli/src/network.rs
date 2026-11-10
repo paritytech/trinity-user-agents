@@ -21,7 +21,7 @@ mod stack;
 mod testing;
 
 #[cfg(test)]
-pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, serve_light_specs};
+pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs};
 
 pub use built_in::ensure_built_in_runnable;
 

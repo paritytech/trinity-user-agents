@@ -3,12 +3,10 @@ use std::sync::atomic::Ordering;
 use super::*;
 use crate::{
 	chain::ChainBackend,
-	network::{Network, PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, Stack, serve_light_specs},
+	network::{
+		Network, PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, Stack, light_spec_genesis, serve_light_specs,
+	},
 };
-
-fn genesis(spec: &str) -> [u8; 32] {
-	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")
-}
 
 /// The bundled paseo-next-v2 stack with its relay served at `relay_path` and
 /// People at `people_path` of `server`, keeping specs in `directory`.
@@ -44,12 +42,12 @@ async fn connecting_fetches_the_chain_and_its_relay_and_keeps_them_running() {
 	let directory = tempfile::tempdir().expect("temporary directory");
 	let stack = stack_served_by(&server, directory.path());
 	let light = light_client(&stack);
-	let people = genesis(PEOPLE_LIGHT_SPEC);
+	let people = light_spec_genesis(PEOPLE_LIGHT_SPEC);
 
 	drop(light.connect(people).await.expect("People syncs through the stack's relay"));
 
 	assert_eq!(requests.load(Ordering::Relaxed), 2, "the relay's spec and People's");
-	assert_eq!(light.provider().relay_of(people), Some(genesis(RELAY_LIGHT_SPEC)));
+	assert_eq!(light.provider().relay_of(people), Some(light_spec_genesis(RELAY_LIGHT_SPEC)));
 	assert!(light.provider().is_connected(people));
 }
 
@@ -61,7 +59,7 @@ async fn concurrent_loads_fetch_a_spec_once() {
 	let directory = tempfile::tempdir().expect("temporary directory");
 	let stack = stack_served_by(&server, directory.path());
 	let light = light_client(&stack);
-	let relay = genesis(RELAY_LIGHT_SPEC);
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 
 	let (first, second) = tokio::join!(light.load_spec(relay), light.load_spec(relay));
 
@@ -75,7 +73,7 @@ async fn concurrent_loads_fetch_a_spec_once() {
 async fn a_checked_spec_is_kept_for_the_next_run() {
 	let (server, requests) = serve_light_specs().await;
 	let directory = tempfile::tempdir().expect("temporary directory");
-	let relay = genesis(RELAY_LIGHT_SPEC);
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 
 	for _ in 0..2 {
 		let stack = stack_served_by(&server, directory.path());
@@ -94,7 +92,7 @@ async fn a_checked_spec_is_kept_for_the_next_run() {
 async fn a_kept_spec_that_fails_the_check_is_fetched_again() {
 	let (server, requests) = serve_light_specs().await;
 	let directory = tempfile::tempdir().expect("temporary directory");
-	let relay = genesis(RELAY_LIGHT_SPEC);
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 	let first = stack_served_by(&server, directory.path());
 	light_client(&first).load_spec(relay).await.expect("spec matches");
 	let [kept] = kept_specs(directory.path()).try_into().expect("one spec is kept");
@@ -113,7 +111,7 @@ async fn a_kept_spec_that_fails_the_check_is_fetched_again() {
 async fn a_wrong_spec_is_refused_and_an_unreachable_one_is_not_wrong() {
 	let (server, _) = serve_light_specs().await;
 	let directory = tempfile::tempdir().expect("temporary directory");
-	let relay = genesis(RELAY_LIGHT_SPEC);
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 
 	let swapped = stack_served_at(&server, "people.json", "relay.json", directory.path());
 	let wrong = light_client(&swapped).load_spec(relay).await;
