@@ -3,6 +3,7 @@ import PolkadotUI
 import Products
 import SnapKit
 import UIKit
+import UIKitExt
 import WebKit
 
 /// The Collectibles screen pushed over the Wallet, with the stash product filling it.
@@ -11,7 +12,7 @@ import WebKit
 /// once the load has finished. A load that does not finish in time fails the page instead.
 final class CollectiblesViewController: UIViewController {
     private let product: SPAViewProtocol
-    private weak var origin: CollectiblesOrigin?
+    private weak var origin: PocketOrigin?
 
     private let pageView = UIView()
     private let skeleton = CollectiblesSkeletonView(frame: .zero)
@@ -25,7 +26,7 @@ final class CollectiblesViewController: UIViewController {
     private var loadObservation: NSKeyValueObservation?
     private var loadTimeout: Task<Void, Never>?
 
-    init(product: SPAViewProtocol, origin: CollectiblesOrigin? = nil) {
+    init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
         self.origin = origin
 
@@ -59,17 +60,16 @@ final class CollectiblesViewController: UIViewController {
         }
     }
 
-    // Only the back button closes the screen, so the book can fly back to the Pocket.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        setSystemBackSwipesEnabled(false)
+        navigationController?.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        setSystemBackSwipesEnabled(true)
+        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func viewDidLayoutSubviews() {
@@ -81,31 +81,46 @@ final class CollectiblesViewController: UIViewController {
         layoutRestingPage()
     }
 
+    override func willMove(toParent parent: UIViewController?) {
+        super.willMove(toParent: parent)
+
+        guard parent != nil else { return }
+
+        origin?.setOpenItem(.collectibles)
+    }
+
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
 
         guard parent == nil else { return }
 
         stopWatchingLoad()
-        origin?.setCollectiblesBookLanded()
+        if let origin, origin.openItem == .collectibles {
+            origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
+            origin.setOpenItem(nil)
+        }
     }
 }
 
 extension CollectiblesViewController: TabBarRootStandIn {}
 
+extension CollectiblesViewController: PocketItemScreen {
+    var pocketItem: PocketItem {
+        .collectibles
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension CollectiblesViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
-        guard let origin else { return nil }
-
         switch operation {
         case .push:
-            return CollectiblesBookFlight(screen: self, origin: origin)
+            CollectiblesBookFlight(screen: self, origin: origin)
         case .pop:
-            return CollectiblesBookReturn(screen: self, origin: origin)
+            CollectiblesBookReturn(screen: self, origin: origin)
         default:
-            return nil
+            nil
         }
     }
 }
@@ -322,12 +337,5 @@ private extension CollectiblesViewController {
     func stopWatchingLoad() {
         loadObservation = nil
         loadTimeout?.cancel()
-    }
-
-    func setSystemBackSwipesEnabled(_ enabled: Bool) {
-        navigationController?.interactivePopGestureRecognizer?.isEnabled = enabled
-        if #available(iOS 26, *) {
-            navigationController?.interactiveContentPopGestureRecognizer?.isEnabled = enabled
-        }
     }
 }

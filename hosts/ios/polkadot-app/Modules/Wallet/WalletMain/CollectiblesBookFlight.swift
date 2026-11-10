@@ -1,35 +1,22 @@
 import DesignSystem
 import UIKit
 
-/// The Wallet a Collectibles screen opens from: where the Pocket's peek sits, and how it draws the peek while the
-/// screen is up.
-@MainActor
-protocol CollectiblesOrigin: AnyObject {
-    /// The peek's frame in window coordinates, or nil when the peek is not on screen to fly from.
-    var collectiblesBookFrame: CGRect? { get }
-
-    /// Hides the peek, since the book stands in its place while the screen is up.
-    func setCollectiblesBookLifted()
-
-    /// Shows the peek again once the book has landed on it, coloured, then fades it back to grey.
-    func setCollectiblesBookLanded()
-}
-
 /// Carries the Collectibles book from the Pocket's peek to the top of its screen. The book lifts out of the peek and
 /// settles on the page. A screen with no peek to fly from fades in instead.
 final class CollectiblesBookFlight: NSObject, UIViewControllerAnimatedTransitioning {
-    private static let duration: TimeInterval = 0.5
-
     private let screen: CollectiblesViewController
-    private let origin: CollectiblesOrigin
+    private let origin: PocketOrigin?
+    /// Read once, so the duration UIKit is told and the motion that runs agree.
+    private let reduceMotion: Bool
 
-    init(screen: CollectiblesViewController, origin: CollectiblesOrigin) {
+    init(screen: CollectiblesViewController, origin: PocketOrigin?) {
         self.screen = screen
         self.origin = origin
+        reduceMotion = UIAccessibility.isReduceMotionEnabled
     }
 
     func transitionDuration(using _: UIViewControllerContextTransitioning?) -> TimeInterval {
-        Self.duration
+        PocketFlight.duration(reduceMotion: reduceMotion)
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
@@ -38,56 +25,53 @@ final class CollectiblesBookFlight: NSObject, UIViewControllerAnimatedTransition
         container.addSubview(screen.view)
         screen.view.layoutIfNeeded()
 
-        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.collectiblesBookFrame else {
-            fadeIn(context)
-            return
+        switch PocketFlight.motion(
+            toSlot: slotOffset(of: screen, origin: origin, in: container),
+            reduceMotion: reduceMotion
+        ) {
+        case let .fly(offset):
+            screen.beginFlight(from: offset)
+
+            let backdrop = backdropFade(of: screen, to: .bgSurfaceMain)
+            let flight = flightAnimator(moving: screen, to: .zero)
+            flight.addCompletion { _ in
+                context.completeTransition(!context.transitionWasCancelled)
+            }
+
+            origin?.moveOpenItem(by: .zero, clearingPocket: true, animated: true)
+            backdrop.startAnimation()
+            flight.startAnimation()
+        case .fade,
+             .crossfade:
+            PocketFlight.fade(
+                context,
+                screen: screen,
+                origin: origin,
+                opening: true,
+                animator: PocketFlight.fallbackAnimator(reduceMotion: reduceMotion)
+            ) {
+                context.completeTransition(!context.transitionWasCancelled)
+            }
         }
-
-        let landing = screen.bookFrame(in: container)
-        let offset = offsetToSlot(container.convert(slot, from: nil), fromLanding: landing)
-
-        origin.setCollectiblesBookLifted()
-        screen.beginFlight(from: offset)
-
-        let backdrop = backdropFade(of: screen, to: .bgSurfaceMain)
-        let flight = flightAnimator(moving: screen, to: .zero)
-        flight.addCompletion { _ in
-            context.completeTransition(!context.transitionWasCancelled)
-        }
-
-        backdrop.startAnimation()
-        flight.startAnimation()
-    }
-
-    /// Where the book cannot fly, the screen fades in over the Wallet.
-    private func fadeIn(_ context: UIViewControllerContextTransitioning) {
-        screen.view.alpha = 0
-
-        let fade = UIViewPropertyAnimator(duration: CollectiblesBookTiming.backdropFade, curve: .linear) { [self] in
-            screen.view.alpha = 1
-        }
-        fade.addCompletion { _ in
-            context.completeTransition(!context.transitionWasCancelled)
-        }
-        fade.startAnimation()
     }
 }
 
 /// Carries the Collectibles book from the top of its screen back to the Pocket's peek, then closes the screen.
 /// A screen with no peek to fly to fades out instead.
 final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransitioning {
-    private static let duration: TimeInterval = 0.5
-
     private let screen: CollectiblesViewController
-    private let origin: CollectiblesOrigin
+    private let origin: PocketOrigin?
+    /// Read once, so the duration UIKit is told and the motion that runs agree.
+    private let reduceMotion: Bool
 
-    init(screen: CollectiblesViewController, origin: CollectiblesOrigin) {
+    init(screen: CollectiblesViewController, origin: PocketOrigin?) {
         self.screen = screen
         self.origin = origin
+        reduceMotion = UIAccessibility.isReduceMotionEnabled
     }
 
     func transitionDuration(using _: UIViewControllerContextTransitioning?) -> TimeInterval {
-        Self.duration
+        PocketFlight.duration(reduceMotion: reduceMotion)
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
@@ -97,42 +81,51 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
             wallet.view.frame = context.finalFrame(for: wallet)
         }
 
-        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin.collectiblesBookFrame else {
-            fadeOut(context)
-            return
-        }
-
-        screen.close { [self] in
-            flyBack(to: slot, context)
+        switch PocketFlight.motion(
+            toSlot: slotOffset(of: screen, origin: origin, in: container),
+            reduceMotion: reduceMotion
+        ) {
+        case let .fly(offset):
+            screen.close { [self] in
+                flyBack(to: offset, context)
+            }
+        case .fade,
+             .crossfade:
+            PocketFlight.fade(
+                context,
+                screen: screen,
+                origin: origin,
+                opening: false,
+                animator: PocketFlight.fallbackAnimator(reduceMotion: reduceMotion)
+            ) {
+                context.completeTransition(!context.transitionWasCancelled)
+            }
         }
     }
 
-    private func flyBack(to slot: CGRect, _ context: UIViewControllerContextTransitioning) {
-        let container = context.containerView
-        let landing = screen.bookFrame(in: container)
-        let offset = offsetToSlot(container.convert(slot, from: nil), fromLanding: landing)
-
+    private func flyBack(to offset: CGPoint, _ context: UIViewControllerContextTransitioning) {
         let backdrop = backdropFade(of: screen, to: .clear)
         let flight = flightAnimator(moving: screen, to: offset)
-        flight.addCompletion { [self] _ in
-            origin.setCollectiblesBookLanded()
+        flight.addCompletion { _ in
             context.completeTransition(!context.transitionWasCancelled)
         }
 
+        origin?.moveOpenItem(by: .zero, clearingPocket: false, animated: true)
         backdrop.startAnimation()
         flight.startAnimation()
     }
+}
 
-    /// Where the book cannot fly back, the screen fades out over the Wallet.
-    private func fadeOut(_ context: UIViewControllerContextTransitioning) {
-        let fade = UIViewPropertyAnimator(duration: CollectiblesBookTiming.backdropFade, curve: .linear) { [self] in
-            screen.view.alpha = 0
-        }
-        fade.addCompletion { [self] _ in
-            origin.setCollectiblesBookLanded()
-            context.completeTransition(!context.transitionWasCancelled)
-        }
-        fade.startAnimation()
+/// The offset that moves a book resting in `container` onto the Pocket's peek, or nil when the Pocket has no peek.
+/// The book's own frame is unchanged by the close that comes before a return, since the lift moves a subview.
+@MainActor
+private func slotOffset(
+    of screen: CollectiblesViewController,
+    origin: PocketOrigin?,
+    in container: UIView
+) -> CGPoint? {
+    origin?.frame(of: .collectibles).map { slot in
+        offsetToSlot(container.convert(slot, from: nil), fromLanding: screen.bookFrame(in: container))
     }
 }
 

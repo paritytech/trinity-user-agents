@@ -73,6 +73,16 @@ struct WalletMainPocketTests {
         #expect(try screen.wireframe.openedProduct == ProductId("stash.\(network)"))
     }
 
+    /// The Balance card opens its screen from the Wallet, so a tap on it must reach the wireframe that pushes it.
+    @Test
+    func openingTheBalanceCardShowsItsScreen() {
+        let screen = CollectiblesScreen(tld: StubDotNsTldProvider(tld: nil))
+
+        screen.presenter.showBalanceCard()
+
+        #expect(screen.wireframe.showedBalanceCard)
+    }
+
     /// The remote switch pulls the card from every installed app without a
     /// release. A switched-off app must not read the chain either, since the
     /// suffix read is retried for as long as it goes unanswered.
@@ -212,15 +222,20 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     }
 
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
-    func frame(of _: PocketCardKey) -> CGRect? { nil }
-    var openCard: PocketCardKey? { nil }
-    func setOpenCard(_: PocketCardKey?) {}
-    func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
+    func frame(of _: PocketItem) -> CGRect? { nil }
+    var openItem: PocketItem? { nil }
+    func setOpenItem(_: PocketItem?) {}
+    func moveOpenItem(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
     private(set) var openedProduct: ProductId?
+    private(set) var showedBalanceCard = false
+
+    func showBalanceCard() {
+        showedBalanceCard = true
+    }
 
     func showCollectibles(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
