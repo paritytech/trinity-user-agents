@@ -125,16 +125,16 @@ fn wire_index_derivation_matches_the_mobile_vector() {
 
 #[test]
 fn reserved_product_ids_cover_every_supported_network() {
-	let product_ids: Vec<[ProductId; 2]> = crate::dotns_name::DOTNS_TLDS
+	let product_ids: Vec<ProductId> = crate::dotns_name::DOTNS_TLDS
 		.iter()
-		.map(|suffix| [identity_product_id(suffix), personhood_product_id(suffix)])
+		.map(|suffix| personhood_product_id(suffix))
 		.collect();
 	assert_eq!(
 		product_ids,
 		[
-			[ProductId::for_test("uid.dot"), ProductId::for_test("peopl.dot")],
-			[ProductId::for_test("uid.paseo"), ProductId::for_test("peopl.paseo")],
-			[ProductId::for_test("uid.testnet"), ProductId::for_test("peopl.testnet")],
+			ProductId::for_test("peopl.dot"),
+			ProductId::for_test("peopl.paseo"),
+			ProductId::for_test("peopl.testnet"),
 		]
 	);
 }
@@ -227,19 +227,20 @@ fn ring_vrf_domain_entropy_derives_the_same_registered_key_as_the_root() {
 }
 
 #[test]
-fn identity_is_uid_dot_default_product_account_and_signs() {
+fn identity_is_peopl_dot_default_product_account_and_signs() {
 	let entropy = [0xAB; 16];
 	let identity = derive_identity_keypair(&entropy, "dot").unwrap();
 	let root = derive_root_keypair_from_entropy(&entropy).unwrap();
-	let uid_subtree = derive_hard_path_from_keypair(root, &[PRODUCT_JUNCTION, "uid.dot"]).unwrap();
-	let expected = uid_subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0;
+	let peopl_subtree =
+		derive_hard_path_from_keypair(root, &[PRODUCT_JUNCTION, "peopl.dot"]).unwrap();
+	let expected = peopl_subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0;
 	assert_eq!(identity.public, expected.public);
 	assert_eq!(
 		product_public_key_to_address(identity.public.to_bytes()),
-		"5ESC9GvvMe6troagKBHZHNAqw7kcpXafF9NvTgnnwCJATi8Z"
+		"5FhRx3HstiFQ8vx3fJhUHQpTJoEwG8RG6XSv48haMuzxrUGT"
 	);
 
-	let message = b"RFC-0022 identity signing vector";
+	let message = b"RFC-0028 identity signing vector";
 	let signature = identity.secret.sign_simple(SR25519_SIGNING_CONTEXT, message, &identity.public);
 	assert!(
 		identity
@@ -251,23 +252,23 @@ fn identity_is_uid_dot_default_product_account_and_signs() {
 
 #[test]
 fn identity_account_follows_the_network_suffix() {
-	// `//product//uid.<suffix>/index_bytes(0)`, one ordinary product
-	// account per network; addresses from the same independent
-	// implementation as the ring-VRF vectors above.
+	// `//product//peopl.<suffix>/index_bytes(0)`, one ordinary product
+	// account per network: the personhood product's account 0, which owns
+	// the person's usernames and is the wallet's main account.
 	let entropy = [0xAB; 16];
 	for (suffix, address) in [
-		("paseo", "5CtVJYWUwK7WksAU9CDm6u58ucgKkmWPE26TKhjjwiJKo2hW"),
-		("testnet", "5DhuA7ba5CxLtFjuU4YkAeCoCCH1YV1jjUUjFf3W5VSEmRxx"),
+		("paseo", "5CM1iRJQs1fceofARxxpvmUbaS7kU3WtKPj5QS6ihwWWtYBG"),
+		("testnet", "5DWk4cZyixLSTtudEUVjKYmJb5cjAjj5Vq7QpQSGaurN3FNf"),
 	] {
 		let identity = derive_identity_keypair(&entropy, suffix).unwrap();
 		assert_eq!(
 			product_public_key_to_address(identity.public.to_bytes()),
 			address,
-			"identity account under uid.{suffix}"
+			"identity account under peopl.{suffix}"
 		);
 		let subtree = derive_product_subtree_keypair(
 			&derive_root_keypair_from_entropy(&entropy).unwrap(),
-			&identity_product_id(suffix),
+			&personhood_product_id(suffix),
 		)
 		.unwrap();
 		assert_eq!(

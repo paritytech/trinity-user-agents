@@ -38,9 +38,11 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
-        guard rootView.viewModel.expandedSection == .collectiblesDetails else { return }
+        guard rootView.viewModel.collectiblesPeek != .lifted else { return }
 
-        collapseExpandedSection()
+        withTransaction(Transaction(animation: nil)) {
+            rootView.viewModel.collectiblesPeek = .resting
+        }
     }
 
     override func viewDidLoad() {
@@ -182,14 +184,17 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     private func openCollectibles() {
-        guard rootView.viewModel.expandedSection == .none else { return }
+        guard
+            rootView.viewModel.expandedSection == .none,
+            rootView.viewModel.collectiblesPeek == .resting
+        else { return }
 
-        rootView.viewModel.expandedSection = .collectiblesDetails
-        resetRightButton()
-        setTitleCenter(nil)
+        withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
+            rootView.viewModel.collectiblesPeek = .colouring
+        }
 
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(WalletView.sectionAnimationDuration))
+            try? await Task.sleep(for: .seconds(CollectiblesBookTiming.colourDuration))
             self?.presenter.showCollectibles()
         }
     }
@@ -215,5 +220,31 @@ extension WalletMainViewController: WalletMainViewProtocol {
         titleLabel.accessibilityLabel = title
         titleLabel.sizeToFit()
         navigationItem.titleView = titleLabel
+    }
+}
+
+extension WalletMainViewController: CollectiblesOrigin {
+    var collectiblesBookFrame: CGRect? {
+        let frame = rootView.viewModel.collectiblesFrame
+        return frame.isEmpty ? nil : frame
+    }
+
+    func setCollectiblesBookLifted() {
+        withTransaction(Transaction(animation: nil)) {
+            rootView.viewModel.collectiblesPeek = .lifted
+        }
+    }
+
+    func setCollectiblesBookLanded() {
+        guard rootView.viewModel.collectiblesPeek == .lifted else { return }
+
+        withTransaction(Transaction(animation: nil)) {
+            rootView.viewModel.collectiblesPeek = .colouring
+        }
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
+                self?.rootView.viewModel.collectiblesPeek = .resting
+            }
+        }
     }
 }

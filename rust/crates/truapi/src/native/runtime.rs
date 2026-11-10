@@ -15,7 +15,7 @@ use crate::{
 	},
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
@@ -329,30 +329,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.open_funding(direction, amount).await?)
 	}
 
-	/// Session `intent` as the core holds it, for the host's status and
-	/// history views.
-	pub fn funding_session(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_session(&intent)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost.
+	/// Every ended funding session, as summaries newest first. The host
+	/// reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.runtime.funding_history()
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history; until then it is handed over again on each resume.
+	/// Record that the host told the user how ended session `intent` went;
+	/// until then it is handed over again on each resume.
 	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
@@ -454,19 +438,25 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.set_funding_providers(providers)?)
 	}
 
-	/// The providers funding session `intent` can be handed to.
-	pub fn funding_candidates(
-		&self,
-		intent: String,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.runtime.funding_candidates(&intent)
+	/// Ask every funding provider to price `ask` for session `intent`. The
+	/// list arrives through `funding_quotes_changed`, and is asked for again
+	/// every minute until the session is handed to a provider, ends or
+	/// leaves the overlay, or the host asks for another `ask`. Returns the
+	/// request id every list of this request carries, so the host shows only
+	/// the latest request's lists.
+	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
+		self.runtime.request_funding_quotes(&intent, ask)
 	}
 
-	/// Ask every funding provider to price `ask` for funding session `intent`.
-	/// Each provider's row arrives through `funding_quote_changed`. A newer ask
-	/// for the session withdraws this one, so its late rows never arrive.
-	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
-		self.runtime.request_funding_quotes(&intent, ask);
+	/// Report what the user picked so far in session `intent`'s overlay. The
+	/// countries and amount limits it leads to arrive through
+	/// `funding_options_changed`.
+	pub fn select_funding_options(
+		&self,
+		intent: String,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.runtime.select_funding_options(&intent, selection);
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose, by
@@ -550,6 +540,14 @@ impl NativeTrUApiHostRuntime {
 	/// one [`Self::release_worker`].
 	pub fn acquire_worker(&self, product_id: ProductId) {
 		self.runtime.worker_ledger().acquire(&product_id);
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to: it crashed or the system killed it. While references remain, the
+	/// host is asked through [`HostCallbacks::request_worker_transition`] to
+	/// start it again.
+	pub fn worker_exited(&self, product_id: ProductId) {
+		self.runtime.worker_exited(&product_id);
 	}
 
 	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
@@ -636,7 +634,10 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, NativePairingError> {
-		self.runtime.resume_pairing(peer).await.map_err(NativePairingError::from)
+		self.runtime
+			.resume_pairing(peer)
+			.await
+			.map_err(|error| NativePairingError::Rejected { reason: error.to_string() })
 	}
 
 	/// Tell a paired host this signing host is ending their SSO session.

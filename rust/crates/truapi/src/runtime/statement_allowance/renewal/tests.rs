@@ -339,7 +339,11 @@ fn mid_list_failure_does_not_stop_the_pass() {
 				seq: 1,
 				collection: PersonhoodCollection::LitePeople,
 			}),
-			Err(RenewalFailure { reason: "rpc timeout".to_string(), slots_exhausted: false }),
+			Err(RenewalFailure {
+				reason: "rpc timeout".to_string(),
+				slots_exhausted: false,
+				wallet_changed: false,
+			}),
 			Ok(RegistrationOutcome::Registered {
 				block_hash: "0xabc".to_string(),
 				seq: 2,

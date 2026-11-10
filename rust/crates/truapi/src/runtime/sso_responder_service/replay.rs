@@ -29,6 +29,16 @@ impl SsoReplayScope {
 	}
 }
 
+/// The request a ledger entry records.
+#[derive(Clone, Copy)]
+pub struct ReplayRequest<'a> {
+	/// Statement request id, unique per peer.
+	pub id: &'a str,
+	/// When the request statement expires, which bounds how long its entry
+	/// is kept.
+	pub expires_at_unix_secs: Option<u64>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReplayExecution<T> {
 	Duplicate,
@@ -126,13 +136,19 @@ enum VersionedRequestLedger {
 	V1(RequestLedger),
 }
 
+/// Run `execute` for a request at most once across redeliveries.
+///
+/// The request is acknowledged after the ledger accepts it and before it is
+/// marked as started. A refused request is never acknowledged, and one whose
+/// acknowledgement failed runs when it is delivered again. A duplicate is
+/// acknowledged but not run.
 pub async fn execute_once<T, F, Fut>(
 	storage: &(impl CoreStorage + ?Sized),
 	locks: &SsoReplayLocks,
 	scope: SsoReplayScope,
-	request_id: &str,
-	expires_at_unix_secs: Option<u64>,
+	request: ReplayRequest<'_>,
 	now_unix_secs: u64,
+	acknowledge: impl Future<Output = Result<(), String>>,
 	execute: F,
 ) -> Result<ReplayExecution<T>, String>
 where
@@ -143,19 +159,21 @@ where
 	let _guard = request_lock.lock().await;
 	let mut ledger = read_ledger(storage, scope).await?;
 	let previous_len = ledger.entries.len();
-	if ledger.contains(request_id, now_unix_secs) {
+	if ledger.contains(request.id, now_unix_secs) {
 		if ledger.entries.len() != previous_len {
 			write_ledger(storage, scope, &ledger).await?;
 		}
+		acknowledge.await?;
 		return Ok(ReplayExecution::Duplicate);
 	}
 
-	ledger.start(request_id.to_string(), expires_at_unix_secs, now_unix_secs)?;
+	ledger.start(request.id.to_string(), request.expires_at_unix_secs, now_unix_secs)?;
+	acknowledge.await?;
 	write_ledger(storage, scope, &ledger).await?;
 	// This durable marker prevents a crash from replaying arbitrary side effects.
 	// A crash after this write can drop the request or its response.
 	let output = execute().await?;
-	ledger.complete(request_id);
+	ledger.complete(request.id);
 	write_ledger(storage, scope, &ledger).await?;
 	Ok(ReplayExecution::Executed(output))
 }
