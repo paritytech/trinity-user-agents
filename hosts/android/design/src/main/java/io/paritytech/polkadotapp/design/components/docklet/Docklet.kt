@@ -56,12 +56,13 @@ import kotlinx.collections.immutable.persistentListOf
 private val SlotIconSize = 28.dp
 private val HighlightMillis = DockletMotion.HighlightDuration.inWholeMilliseconds.toInt()
 
+enum class DockletSlotHighlight { None, Emphasized, Selected }
+
 @Immutable
 data class DockletSlot(
     val icon: ImageVector,
     val contentDescription: String,
-    val selected: Boolean,
-    val emphasized: Boolean,
+    val highlight: DockletSlotHighlight,
     val badgeCount: Int,
     val warning: Boolean,
     val onClick: () -> Unit,
@@ -110,19 +111,25 @@ private fun DockSurface(
             .clip(DockShape),
     ) {
         shelf()
-        SlotRow(
+        Box(
             modifier = Modifier
-                .padding(vertical = DockletGeometry.ItemRowPadding)
                 .fillMaxWidth()
-                .height(DockletGeometry.ItemRowHeight)
-                .graphicsLayer {
-                    val dim = cardProgress().coerceIn(0f, 1f)
-                    alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
-                    renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
-                },
-            slots = slots,
-            onSlotTap = onSlotTap,
-        )
+                .height(DockletGeometry.DockHeight),
+        ) {
+            SlotRow(
+                modifier = Modifier
+                    .padding(vertical = DockletGeometry.ItemRowPadding)
+                    .fillMaxWidth()
+                    .height(DockletGeometry.ItemRowHeight)
+                    .graphicsLayer {
+                        val dim = cardProgress().coerceIn(0f, 1f)
+                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
+                        renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
+                    },
+                slots = slots,
+                onSlotTap = onSlotTap,
+            )
+        }
     }
 }
 
@@ -135,7 +142,7 @@ private fun SlotRow(
     BoxWithConstraints(modifier = modifier) {
         val centres = DockletGeometry.slotCentres(maxWidth)
         val spans = DockletGeometry.touchSpans(maxWidth)
-        val selectedIndex = slots.indexOfFirst { it.selected }
+        val selectedIndex = slots.indexOfFirst { it.highlight == DockletSlotHighlight.Selected }
         val highlightCentre by animateDpAsState(
             targetValue = centres.getOrElse(selectedIndex) { centres.first() },
             animationSpec = tween(HighlightMillis, easing = DockletMotion.HighlightEasing),
@@ -165,7 +172,7 @@ private fun SlotRow(
 private fun SlotItem(span: DockletSpan, slot: DockletSlot, iconShift: Dp, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val selection by animateFloatAsState(
-        targetValue = if (slot.selected || slot.emphasized) 1f else 0f,
+        targetValue = if (slot.highlight == DockletSlotHighlight.None) 0f else 1f,
         animationSpec = tween(HighlightMillis, easing = DockletMotion.HighlightEasing),
         label = "DockletSlotSelection",
     )
@@ -220,10 +227,10 @@ private fun DockletPreview() {
                 .padding(DockletGeometry.ItemRowPadding)
                 .width(372.dp),
             slots = persistentListOf(
-                DockletSlot(NovaIcons.ChatFilled, "", selected = true, emphasized = false, badgeCount = 0, warning = false) {},
-                DockletSlot(NovaIcons.WalletFilled, "", selected = false, emphasized = false, badgeCount = 0, warning = true) {},
-                DockletSlot(NovaIcons.GlobeAltFilled, "", selected = false, emphasized = false, badgeCount = 3, warning = false) {},
-                DockletSlot(NovaIcons.SettingsFilled, "", selected = false, emphasized = false, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.ChatFilled, "", highlight = DockletSlotHighlight.Selected, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.WalletFilled, "", highlight = DockletSlotHighlight.None, badgeCount = 0, warning = true) {},
+                DockletSlot(NovaIcons.GlobeAltFilled, "", highlight = DockletSlotHighlight.None, badgeCount = 3, warning = false) {},
+                DockletSlot(NovaIcons.SettingsFilled, "", highlight = DockletSlotHighlight.Emphasized, badgeCount = 0, warning = false) {},
             ),
             cardProgress = { 0f },
             backdrop = null,

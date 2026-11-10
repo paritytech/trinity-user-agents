@@ -24,12 +24,11 @@ class DockletCardShape(private val pillShare: () -> Float) : Shape {
 }
 
 internal fun dockPath(size: Size, density: Float): Path {
-    val shelfHeight = size.height - DockletGeometry.DockHeight.value * density
+    val shelfHeight = DockletGeometry.shelfHeightPx(size.height, density)
     return if (shelfHeight > 0f) shelfDockPath(size, density, rowTop = shelfHeight) else restingDockPath(size, density)
 }
 
-// The notch stays with the slot row at the bottom; above it the shelf would paint over the Pill's ring,
-// so the notch becomes the round bowl the Pill sits in.
+// A full bowl, not the open cutout: the shelf above the row would otherwise paint over the Pill's ring.
 private fun shelfDockPath(size: Size, density: Float, rowTop: Float): Path {
     val outline = Path().apply {
         addRoundRect(RoundRect(size.toRect(), CornerRadius(DockletGeometry.DockHeight.value * density / 2)))

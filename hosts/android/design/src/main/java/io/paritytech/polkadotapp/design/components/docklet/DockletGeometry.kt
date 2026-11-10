@@ -117,6 +117,9 @@ object DockletGeometry {
         )
     }
 
+    internal fun shelfHeightPx(surfaceHeightPx: Float, density: Float): Float =
+        surfaceHeightPx - (DockHeight.value * density).roundToInt()
+
     fun slotCentres(dockWidth: Dp): List<Dp> {
         val centre = dockWidth / 2
         val half = SlotWidth / 2

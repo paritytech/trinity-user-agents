@@ -65,6 +65,7 @@ import io.paritytech.polkadotapp.app.root.presentation.main.compose.icon
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.title
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.components.ScanPanel
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotTarget
+import io.paritytech.polkadotapp.common.presentation.tabbar.dockletSlotHighlight
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
@@ -178,7 +179,6 @@ fun RootNavBar(
         LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
         LaunchedEffect(dock.right, density) { currentOnBarWidthChange(with(density) { dock.right.toPx() }) }
 
-        val selectedTarget = DockletSlotTarget.Tab(currentTab)
         val networkStatusOpen = networkStatusItem && networkStatusExpanded
         val targets = remember(networkStatusItem) {
             (BottomTab.availableEntries.map(DockletSlotTarget::Tab) +
@@ -186,13 +186,12 @@ fun RootNavBar(
         }
         val titles = targets.map { it.title() }
         val currentOnSlotClick by rememberUpdatedState(onSlotClick)
-        val slots = remember(targets, titles, selectedTarget, networkStatusOpen, apps.size, tabWarnings) {
+        val slots = remember(targets, titles, currentTab, networkStatusOpen, apps.size, tabWarnings) {
             targets.mapIndexed { index, target ->
                 DockletSlot(
                     icon = target.icon(),
                     contentDescription = titles[index],
-                    selected = target == selectedTarget,
-                    emphasized = target == DockletSlotTarget.NetworkStatus && networkStatusOpen,
+                    highlight = dockletSlotHighlight(target, currentTab, networkStatusOpen),
                     badgeCount = if (target == DockletSlotTarget.Tab(BottomTab.EXPLORE)) apps.size else 0,
                     warning = target is DockletSlotTarget.Tab && tabWarnings[target.tab] == true,
                     onClick = { currentOnSlotClick(target) },
@@ -209,8 +208,15 @@ fun RootNavBar(
                 .pullOutGestures(pullState, forceShown, density)
                 .grabBandAbove(SWIPE_AREA_EXPANSION),
         ) {
-            ExpandablePanel(visible = appsExpanded) {
-                OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
+            ExpandablePanel(visible = appsExpanded, bottomGap = PolkadotTheme.spacings.tiny) {
+                PolkadotSurface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(PanelCornerRadius),
+                    color = PolkadotTheme.colors.bg.surface.container,
+                    border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
+                ) {
+                    OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
+                }
             }
             VerticalSpacer { DockletGeometry.PillProud }
             Docklet(
@@ -230,7 +236,7 @@ fun RootNavBar(
                 backdrop = backdrop,
             ) {
                 if (networkStatusItem) {
-                    DockletShelf(visible = networkStatusExpanded) {
+                    ExpandablePanel(visible = networkStatusExpanded, bottomGap = DockletGeometry.NotchOverhang) {
                         ChainHealthPanel(model = chainsHealth)
                     }
                 }
@@ -279,28 +285,7 @@ private fun DockletSlotTarget.title() = when (this) {
 }
 
 @Composable
-private fun ExpandablePanel(visible: Boolean, content: @Composable () -> Unit) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
-        exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            PolkadotSurface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(PanelCornerRadius),
-                color = PolkadotTheme.colors.bg.surface.container,
-                border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
-            ) {
-                content()
-            }
-            VerticalSpacer { tiny }
-        }
-    }
-}
-
-@Composable
-private fun DockletShelf(visible: Boolean, content: @Composable () -> Unit) {
+private fun ExpandablePanel(visible: Boolean, bottomGap: Dp, content: @Composable () -> Unit) {
     AnimatedVisibility(
         visible = visible,
         enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
@@ -308,7 +293,7 @@ private fun DockletShelf(visible: Boolean, content: @Composable () -> Unit) {
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             content()
-            VerticalSpacer { DockletGeometry.NotchOverhang }
+            VerticalSpacer { bottomGap }
         }
     }
 }

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.common.presentation.tabbar
 
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.design.components.docklet.DockletSlotHighlight
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -61,6 +62,30 @@ class DockletSlotTapTest {
         assertEquals(
             DockletSlotAction.CloseCard,
             tap(DockletSlotTarget.Tab(BottomTab.SETTINGS), current = BottomTab.CHATS, onMain = true, cardOpen = true),
+        )
+    }
+
+    @Test
+    fun `keeps the pill on the current tab while the chain-health panel is open`() {
+        assertEquals(
+            DockletSlotHighlight.Selected,
+            dockletSlotHighlight(Chats, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+        )
+    }
+
+    @Test
+    fun `emphasizes Network Status without selecting it while its panel is open`() {
+        assertEquals(
+            DockletSlotHighlight.Emphasized,
+            dockletSlotHighlight(DockletSlotTarget.NetworkStatus, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+        )
+    }
+
+    @Test
+    fun `emphasizes nothing when the chain-health panel is closed`() {
+        assertEquals(
+            DockletSlotHighlight.None,
+            dockletSlotHighlight(DockletSlotTarget.NetworkStatus, currentTab = BottomTab.CHATS, networkStatusExpanded = false),
         )
     }
 
