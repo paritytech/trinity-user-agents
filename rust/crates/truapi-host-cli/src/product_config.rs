@@ -130,7 +130,7 @@ pub async fn apply(
 		storage
 			.write(
 				CoreStorageKey::product_manifest(&config.product_name),
-				encode_cached_root_manifest(Some(&manifest), now_secs),
+				encode_cached_root_manifest(Some(&manifest), now_secs, &stack.generation),
 			)
 			.await
 			.map_err(|error| anyhow::anyhow!("{error:?}"))

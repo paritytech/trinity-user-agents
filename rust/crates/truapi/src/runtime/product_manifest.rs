@@ -176,6 +176,10 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 /// reads today, so a later consumer needs no cache migration.
 #[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
+	/// The [`Stack::generation`](crate::platform::Stack::generation) whose
+	/// Asset Hub answered. An entry from another generation is not read: the
+	/// chain that answered it is gone.
+	pub generation: String,
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
 	/// The manifest JSON exactly as published, or `None` where the chain
@@ -192,8 +196,10 @@ pub struct CachedManifest {
 /// grant instead of resolving one.
 ///
 /// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
-/// manifest belongs to, in the stack the host runs. The core reads that entry before it consults
-/// the Asset Hub, so a seeded manifest answers a grant on a host with no dotNS access at
+/// manifest belongs to, in the stack the host runs. `generation` is that
+/// stack's [`Stack::generation`](crate::platform::Stack::generation); the core
+/// ignores an entry stamped with any other. The core reads that entry before it consults the Asset
+/// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
 /// either product is deployed.
 ///
@@ -208,8 +214,17 @@ pub struct CachedManifest {
 ///
 /// A Worker manifest is cached the same way, under
 /// [`worker_manifest_cache_key`].
-pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> Vec<u8> {
-	CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode()
+pub fn encode_cached_root_manifest(
+	json: Option<&str>,
+	fetched_at_secs: u64,
+	generation: &str,
+) -> Vec<u8> {
+	CachedManifest {
+		generation: generation.to_string(),
+		fetched_at_secs,
+		json: json.map(str::to_string),
+	}
+	.encode()
 }
 
 /// Why a grant lookup did not admit the caller.
@@ -742,7 +757,8 @@ pub enum DotnsRead {
 }
 
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
-/// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
+/// younger than [`MANIFEST_TTL_SECS`] and was read in the stack's current
+/// generation, and where it was read. Whatever `fetch`
 /// answers, including that there is nothing published, is cached for that
 /// lifetime.
 ///
@@ -759,6 +775,7 @@ where
 	F: Future<Output = Result<Option<String>, E>>,
 {
 	let storage = services.stack().storage(platform);
+	let generation = services.stack().generation();
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below
@@ -768,6 +785,7 @@ where
 	// costs one lookup and cannot be worse than that.
 	if let Ok(Some(bytes)) = storage.read(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
+		cached.generation == generation &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
@@ -775,7 +793,11 @@ where
 	}
 
 	let json = fetch().await?;
-	let entry = CachedManifest { fetched_at_secs: now, json: json.clone() };
+	let entry = CachedManifest {
+		generation: generation.to_string(),
+		fetched_at_secs: now,
+		json: json.clone(),
+	};
 	let _ = storage.write(key, entry.encode()).await;
 	Ok((json, DotnsRead::Fetched))
 }

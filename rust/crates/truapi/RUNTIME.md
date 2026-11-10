@@ -476,7 +476,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `StackStorageKey`: a `CoreStorageKey` slot together with the identity of the
   stack it belongs to (`Stack::id`, the stack's key in hex). The core reaches
   storage only through `Stack::storage`, which adds that identity, so a fork
-  and its source share nothing although their genesis hashes are equal.
+  and its source share nothing although their genesis hashes are equal. A
+  cached manifest also records the stack's `generation` and is not read under
+  another one, so a wipe drops what was read from the old chains and keeps
+  the session and the stored permissions.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

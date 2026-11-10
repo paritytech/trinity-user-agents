@@ -45,6 +45,7 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	let entry = crate::runtime::product_manifest::CachedManifest {
+		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
 		fetched_at_secs: crate::unix_time::current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
 	};

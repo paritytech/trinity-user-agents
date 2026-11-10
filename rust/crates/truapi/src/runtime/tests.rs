@@ -408,7 +408,11 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
+	let entry = CachedManifest {
+		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
+		fetched_at_secs,
+		json: Some(json),
+	};
 	futures::executor::block_on(platform.write_core_storage(
 		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
 			&ProductId::for_test(owner),
@@ -420,8 +424,11 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
-	let entry =
-		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
+	let entry = CachedManifest {
+		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
+		fetched_at_secs: current_unix_secs().saturating_sub(age_secs),
+		json,
+	};
 	futures::executor::block_on(platform.write_core_storage(
 		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
 			&ProductId::for_test(owner),
@@ -670,6 +677,7 @@ fn host_on_stack(platform: Arc<StubPlatform>, id: &str, generation: &str) -> Pro
 fn store_grant_and_permission(host: &ProductRuntimeHost) {
 	let storage = host.connection.services.storage();
 	let entry = CachedManifest {
+		generation: host.connection.services.stack().generation().to_string(),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
 	};
@@ -701,6 +709,27 @@ fn stored_identity_disclosure(host: &ProductRuntimeHost) -> PermissionAuthorizat
 		identity_disclosure_key(),
 	))
 	.expect("stub core storage reads")
+}
+
+/// A wipe restarts the stack's chains under a new generation. The Asset Hub
+/// that answered the cached grant is gone, so the grant is not honoured. The
+/// user's decision never came from a chain and still stands.
+#[test]
+fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
+	let platform = stub_platform();
+	seed_owner_value(&platform, "wallet.dot");
+	let before_wipe = host_on_stack(platform.clone(), "stack", "first");
+	store_grant_and_permission(&before_wipe);
+	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
+
+	let after_wipe = host_on_stack(platform, "stack", "second");
+	assert_eq!(
+		(
+			read_storage(&after_wipe, Some("wallet.dot"), "k").unwrap_err(),
+			stored_identity_disclosure(&after_wipe),
+		),
+		(access_not_granted(), PermissionAuthorizationStatus::Authorized)
+	);
 }
 
 /// A fork has its source's genesis hashes and its own identity. A host that

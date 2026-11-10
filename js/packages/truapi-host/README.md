@@ -52,7 +52,9 @@ The core keeps what it stores apart per stack. Every `coreStorage` callback
 takes a `StackStorageKey`, `{ stack, slot }`: the slot and the identity of the
 stack it belongs to, which is the key in the stack's pointer, or a test
 stack's `id`. Store each value under the whole key. A fork and its source then
-share nothing, although their genesis hashes are equal.
+share nothing, although their genesis hashes are equal. A manifest the core
+cached is not read after the stack's `generation` changes, as it does after a
+wipe; the session and stored permissions are kept.
 
 ## Bundler requirements
 
