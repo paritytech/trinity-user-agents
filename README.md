@@ -448,6 +448,8 @@ hosts cache records for one hour; `force` refreshes them. The returned avatar CI
 selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
 resolver reads the chain on each call.
 
+Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
