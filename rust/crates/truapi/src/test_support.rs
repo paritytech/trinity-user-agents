@@ -21,6 +21,7 @@ use crate::{
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
 		sso::pairing,
+		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	subscription::Spawner,
 };
@@ -214,6 +215,9 @@ pub struct StubPlatform {
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
+	/// Reasons the next `connect` calls fail with, in order, each as a
+	/// transport failure a later attempt can outlast. Then `connect` succeeds.
+	pub chain_connect_failures: Mutex<std::collections::VecDeque<&'static str>>,
 	/// When set, `connect` to this one chain fails, while every other chain
 	/// still connects.
 	pub unreachable_genesis: Option<[u8; 32]>,
@@ -226,6 +230,8 @@ pub struct StubPlatform {
 	/// Hold every core-storage read pending forever, standing in for a host
 	/// callback that is never answered.
 	pub core_storage_pending: bool,
+	/// Substitute storage for wallet lifecycle tests.
+	pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
 	pub chain_connect_pending: bool,
 	/// Set when a `chain_connect_pending` connect future is dropped.
 	pub pending_connect_dropped: Arc<AtomicBool>,
@@ -483,6 +489,29 @@ pub fn signed_test_statement(data: Vec<u8>) -> Vec<u8> {
 	)
 	.unwrap()
 	.encode()
+}
+
+/// JSON-RPC methods in the stub RPC log, in the order they were sent.
+pub fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
+	sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
+				.as_str()
+				.unwrap()
+				.to_string()
+		})
+		.collect()
+}
+
+/// How many requests in the stub RPC log called `method`.
+pub fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
+	recorded_rpc_methods(sent_rpc)
+		.iter()
+		.filter(|candidate| candidate.as_str() == method)
+		.count()
 }
 
 /// Last submitted SSO remote message decoded from the stub RPC log.
@@ -1093,6 +1122,9 @@ impl PlatformCoreStorage for StubPlatform {
 		&self,
 		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.read_core_storage(key).await;
+		}
 		if self.core_storage_pending {
 			futures::future::pending::<()>().await;
 		}
@@ -1123,6 +1155,9 @@ impl PlatformCoreStorage for StubPlatform {
 		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.write_core_storage(key, value).await;
+		}
 		if let CoreStorageKey::AuthSession = key {
 			self.session_writes
 				.lock()
@@ -1149,6 +1184,9 @@ impl PlatformCoreStorage for StubPlatform {
 	}
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+		if let Some(storage) = &self.core_storage_override {
+			return storage.clear_core_storage(key).await;
+		}
 		if let CoreStorageKey::AuthSession = key {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
@@ -1375,7 +1413,7 @@ fn sso_scripted_responses(
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
-					let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
+					let id = wait_for_rpc_method_id(sent.clone(), SUBMIT_STATEMENT_METHOD, 0).await;
 					Some((statement_submit_ack_frame(&id), 3))
 				},
 				3 => match &script {
@@ -1864,6 +1902,14 @@ impl ChainProvider for StubPlatform {
 			.push(genesis_hash);
 		if let Some(reason) = self.chain_connect_error {
 			return Err(ProviderError::Host { reason: reason.to_string() });
+		}
+		let failure = self
+			.chain_connect_failures
+			.lock()
+			.expect("chain connect failure mutex poisoned")
+			.pop_front();
+		if let Some(reason) = failure {
+			return Err(ProviderError::Transport { reason: reason.to_string() });
 		}
 		if self.unreachable_genesis == Some(genesis_hash) {
 			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });

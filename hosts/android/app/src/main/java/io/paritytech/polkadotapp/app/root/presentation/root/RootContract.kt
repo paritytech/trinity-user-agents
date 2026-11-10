@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.root.presentation.root
 
 import androidx.compose.ui.unit.Dp
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ interface RootContract {
     val chainsHealth: StateFlow<ChainHealthIndicatorsModel>
     val isNetworkStatusTooltipVisible: StateFlow<Boolean>
     val isPaymentsSetupNoticeVisible: StateFlow<Boolean>
+    val currentTab: StateFlow<BottomTab>
 
     fun onDevResetStartOverClick()
 

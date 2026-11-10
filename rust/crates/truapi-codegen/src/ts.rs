@@ -16,6 +16,7 @@ use crate::{RESERVED_PROTOCOL_ERROR_TRAIT_ID, rustdoc::*};
 mod examples;
 mod explorer;
 mod host_callbacks;
+mod markers;
 mod playground;
 mod visibility;
 
@@ -27,6 +28,7 @@ use visibility::{
 pub use examples::generate_client_examples;
 pub use explorer::generate_explorer;
 pub use host_callbacks::generate as generate_host_callbacks;
+pub use markers::generate as generate_markers;
 pub use playground::generate_playground_services;
 
 #[derive(Default)]

@@ -28,6 +28,8 @@ per surface gives a product one render callback and one action stream per surfac
 
 - **Surface-neutral.** A body is drawn and its actions reported the same way on every surface.
 - **Closed.** A product names layouts and tokens from a fixed vocabulary, never markup, stylesheets or URLs.
+  [Materials](materials.md) are the one exception: shader code the host runs only inside the node's bounds, with only
+  the inputs the host supplies, never able to fetch, read or act on anything else.
 - **Correlated.** An action carries enough for the product to find the body and the handler without a registry.
 - **Live.** A product redraws a displayed body in place, and no stream is open for a body off screen.
 - **Framed.** The host draws identity, bounds and dismissal around every body and interprets the tree itself.
@@ -330,15 +332,6 @@ pub struct ImageProps {
     pub fit: Option<ImageFit>,
 }
 
-/// A visual effect. Each variant names one effect and carries its parameters.
-pub enum Effect {
-    Rainbow,
-}
-
-pub struct EffectProps {
-    pub effect: Effect,
-}
-
 pub struct TextFieldProps {
     /// Current value.
     pub text: String,
@@ -403,10 +396,9 @@ pub enum RendererNode {
         modifiers: Vec<Modifier>,
         props: ImageProps,
     },
-    /// Applies its effect to its children. As large as its children, which it
-    /// places at the top start like a `Box`.
-    Effect {
-        props: EffectProps,
+    /// Runs materials over its children, as [Materials](materials.md) defines.
+    Materials {
+        props: MaterialsProps,
         children: Vec<RendererNode>,
     },
 }
@@ -463,5 +455,4 @@ messages is unaffected. Hosts ship `Renderer` and the `Chat` change together.
 
 ## Open questions
 
-- The `Effect` variants beyond `Rainbow`, and the parameters each carries.
 - Whether a pocket card drawn through `Renderer` needs a viewport signal beyond the stream closing.

@@ -19,7 +19,7 @@ protocol WalletMainPresenterProtocol: AnyObject {
 
 @MainActor
 protocol WalletMainWireframeProtocol: AnyObject {
-    func showProduct(page: ProductPage)
+    func showCollectibles(page: ProductPage)
     func showPocketCard(_ card: PocketCardViewModel)
     func confirmPocketCardRemoval(_ card: PocketCardViewModel, onConfirm: @escaping () -> Void)
 }

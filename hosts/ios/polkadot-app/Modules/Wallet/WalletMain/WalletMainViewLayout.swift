@@ -1,5 +1,6 @@
 import SwiftUI
 import PolkadotUI
+import Products
 
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
@@ -61,7 +62,7 @@ struct WalletView: View {
     /// native card is expanded so they do not sit under it.
     @ViewBuilder
     private var pocketCards: some View {
-        if viewModel.expandedSection.showsSection(.collectiblesDetails) {
+        if viewModel.expandedSection == .none {
             let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
             ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                 // A press takes the user into the product the card belongs
@@ -127,8 +128,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             1.0
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0.95
         }
     }
@@ -138,8 +138,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             1
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0
         }
     }
@@ -150,8 +149,7 @@ struct WalletView: View {
             0
         case .assetDetails:
             2
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0
         }
     }
@@ -161,8 +159,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             true
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             false
         }
     }
@@ -171,29 +168,35 @@ struct WalletView: View {
 private extension WalletView {
     @ViewBuilder
     var collectiblesCard: some View {
-        CollectiblesCardView(isExpanded: viewModel.expandedSection == .collectiblesDetails)
-            .padding(.horizontal, PocketCardSize.sideMargin)
-            .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
-            .alignmentGuide(.bottom) { dimensions in
-                switch viewModel.expandedSection {
-                case .none:
-                    dimensions[.top] + collectiblesPeekHeight
-                case .collectiblesDetails:
-                    dimensions[.bottom]
-                case .assetDetails,
-                     .identityDetails:
-                    dimensions[.top] - offScreenOffset
-                }
+        Button {
+            viewModel.onCollectibles?()
+        } label: {
+            CollectiblesCardView(isColoured: viewModel.collectiblesPeek != .resting)
+        }
+        .buttonStyle(CollectiblesPressStyle())
+        .accessibilityLabel(String(localized: .Products.collectibles))
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: {
+            viewModel.collectiblesFrame = $0
+        }
+        .padding(.horizontal, PocketCardSize.sideMargin)
+        .alignmentGuide(.bottom) { dimensions in
+            switch viewModel.expandedSection {
+            case .none:
+                dimensions[.top] + collectiblesPeekHeight
+            case .assetDetails,
+                 .identityDetails:
+                dimensions[.top] - offScreenOffset
             }
-            .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
-            .onTapGesture { viewModel.onCollectibles?() }
-            .allowsHitTesting(collectiblesHitTest)
+        }
+        .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : collectiblesOpacity)
+        .allowsHitTesting(collectiblesHitTest)
     }
 
     private var collectiblesOpacity: Double {
         switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
+        case .none:
             1
         case .assetDetails,
              .identityDetails:
@@ -203,8 +206,7 @@ private extension WalletView {
 
     private var collectiblesHitTest: Bool {
         switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
+        case .none:
             true
         case .assetDetails,
              .identityDetails:
@@ -268,5 +270,14 @@ private struct ConditionalOverlayModifier<V: View>: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// The Collectibles peek shrinks a little while it is pressed, as Android's does.
+private struct CollectiblesPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? CollectiblesBookTiming.pressedScale : 1)
+            .animation(.easeOut(duration: CollectiblesBookTiming.pressDuration), value: configuration.isPressed)
     }
 }

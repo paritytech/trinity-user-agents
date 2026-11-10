@@ -136,16 +136,16 @@ impl StatementStore for ProductRuntimeHost {
 				let encoded = signed_statement_to_scale(statement.clone())
 					.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 				self.statement_store_rpc()
-					.submit_sso(encoded, "statement-store")
+					.submit_sso(&encoded, "statement-store")
 					.await
-					.map_err(|reason| {
+					.map_err(|error| {
 						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-							statement_store_rpc::is_no_allowance_rejection(&reason)
+							error.is_no_allowance()
 						{
 							self.accounts.forget_statement_store_allowance_key(signer);
 						}
 						CallError::Domain(latest::GenericError {
-							reason: format!("statement-store submit failed: {reason}"),
+							reason: format!("statement-store submit failed: {error}"),
 						})
 					})?;
 				self.connection.services.cache_statement(statement);
@@ -343,7 +343,7 @@ fn create_statement_proof_with_key(
 ) -> Result<latest::StatementProof, StatementProofFailure> {
 	let fields =
 		statement_fields_from_v01(statement).map_err(StatementProofFailure::InvalidStatement)?;
-	let signed = sign_statement_fields(key.secret, key.public_key, fields)
+	let signed = sign_statement_fields(*key.as_secret_bytes(), key.public_key, fields)
 		.map_err(StatementProofFailure::UnableToSign)?;
 	signed
 		.into_iter()

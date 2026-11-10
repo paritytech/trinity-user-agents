@@ -50,7 +50,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
 | Docklet motion core: hide progress, settle (spring or Reduce Motion fade), release velocity, content fade target | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift`, `DockletSpring.swift`, `DockletReducedFade.swift`, `DockletDragSamples.swift` (pure value types) |
 | Path: pose, hold, aim, direction lock, Edge glow and Grab zone rects | `polkadot-app/Modules/MainTabBar/Chrome/DockletPath.swift`, `DockletDrawbridge*.swift`, `DockletHeldPose.swift`, `DockletAim.swift`, `DockletDirectionLock.swift`, `DockletGeometry.swift` (pure value types) |
-| Auto-hide and session nudge | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift`, `DockletTouchObserver.swift`, `DockletNudge.swift` |
+| Auto-hide and session peek | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift`, `DockletTouchObserver.swift`, `DockletPeek.swift` |
 | Edge glow profile | `polkadot-app/Modules/MainTabBar/Chrome/DockletGlowProfile.swift` (pure value type) |
 | Fold controller outputs and helpers | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController+Outputs.swift`, `Task+Delayed.swift`, `CGFloat+Easing.swift` |
 | Panel state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
@@ -87,7 +87,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 
 ## Bar Row
 
-`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them. Each slot is a `TabBarSlotView(index:model:)`, and each shelf cell takes its chip and the model. They call `TabBarBarViewModel` handlers at tap time, so no closures are passed to them.
+`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them. A build with Browse lists chat, wallet, browse and the Apps slot (`.action(.spaTabs)`). A build without Browse lists chat, wallet, settings and the Network slot (`.action(.connectionStatus)`). `FEATURE_PRODUCTS` picks the list. Each slot is a `TabBarSlotView(index:model:)`, and each shelf cell takes its chip and the model. They call `TabBarBarViewModel` handlers at tap time, so no closures are passed to them.
 
 
 
@@ -102,13 +102,14 @@ The bar row is an accessibility container with the tab-bar trait.
 - A tab: that tab's slot.
 - A mounted product with the shelf closed: the Apps slot.
 - A mounted product with the shelf open: no bar slot. The pill draws behind that product's cell in the shelf (`dsTabBarSelectionPill(isSelected:)`), so it is drawn once.
+- A build without Browse: the current content tab. A Presented product is never mounted, so the pill never moves to the Network slot.
 
 - A tab slot selects a tab. Taps are plain taps. There is no drag across tabs.
-- The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
+- The Apps slot opens the shelf (with Browse). It shows the open-product count and reads as active while the shelf is open or a product is mounted.
+- Without Browse, the Network slot opens the Shelf instead. It holds chain status rows, not products.
 - `TabBarSlotMap` converts between bar position (item index) and tab position (tab index). Only tab indices cross into `TabBarContainer`.
 - Titles appear under the icons only when the interactor enables labels (`setLabels(visible:)`).
 - While the bar is tucked, no slot is reachable. A drag from the grab zone restores the bar. Opening the Scan panel from a screen also restores it (`openPanelShowingDocklet`, used by "add contact" in Contacts), because the panel lives in the Docklet. A tap on the Edge glow, a Slot or a tip never restores it.
-- During a quiet hide, the icons and labels fade with the bar. See Quiet hide under Fold.
 
 ## Center Control and Center Panel
 
@@ -192,14 +193,16 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Tucked bar and VoiceOver.** While the bar is tucked, the Edge glow is its only accessibility element, and activating it restores the bar. Focus moves to the glow on tuck and back to the bar on restore. Auto-hide never runs while VoiceOver is on.
 
-**Reduce Motion.** Read live, and observed for changes. Moves that are not a drag fade (`DockletReducedFade`). A drag still follows the finger. Only the icons, labels and center glyph fade, and the Edge glow follows that fade. Turning Reduce Motion on during a settle ends that settle at its destination. The first-hide nudge does not play. A move between `shown` and `hidden` is written without animation.
+**Reduce Motion.** Read live, and observed for changes. Moves that are not a drag fade (`DockletReducedFade`). A drag still follows the finger. Only the icons, labels and center glyph fade, and the Edge glow follows that fade. Turning Reduce Motion on during a settle ends that settle at its destination. The first-hide peek does not play. A move between `shown` and `hidden` is written without animation.
 
 ## Shelf
 
-The Apps slot opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
+The Apps slot (with Browse) or the Network slot (without Browse) opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
 
 - The top row holds a connection status icon and a settings icon. Neither is a tab. Connection status opens as a page sheet. Settings opens as a modal navigation stack. Both close the shelf first. `MainTabBarWireframe` builds that stack through the injected `TabFactoryProtocol`. Opening device details while the Settings stack is the topmost presented controller pushes onto it.
 - The grid holds one cell per open product. Tapping a cell mounts that product and closes the shelf. A long press opens a context menu with Close. The cell's Close accessibility action does the same.
+
+Without Browse, the shelf holds only the chain status rows. `setChainStatus` feeds them from `MainTabBarViewController.showChainStatus`, and `ConnectionStatusPanelView(rows:)` draws them. It has no settings icon, no product cells and no grid. The Network slot toggles it, and it does not open the connection status sheet.
 
 ## Panels
 
@@ -274,24 +277,24 @@ A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHidde
 
 **Auto-hide.** A shown bar tucks itself without a drag, in two cases:
 
-- The first touch outside the Docklet tucks it at once.
+- Any touch that begins outside the Docklet tucks it at once: a tap, the start of a scroll or swipe, or a long press. The touch still reaches the screen beneath it.
 - Otherwise it tucks 3 s after the last touch or hardware key press.
 
-The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
+The Docklet is the bar, the open panel and the Grab zone. A touch counts as the bar only when it hit-tests into the bar host's views. The host's frame is sized for the centre panel and covers most of the screen, so its frame is never the test. The Edge glow strip does not count while the bar is shown. A tap that closes an open panel or a tip does not tuck the bar, because both are blockers. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
 
 Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, any TipKit tip on screen, R1 or Docklet (`tipShown`), and VoiceOver (`voiceOver`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
 
 `DockletAutoHide` is the pure policy, and `DockletTouchObserver` feeds it the touches.
 
-**Quiet hide.** The auto-hide tuck settles quietly, with no haptic. Only the content inside the glass fades (icons, labels and center glyph), because alpha on a visual effect view breaks the effect. The fade target is set once per transition, and it stays while the bar is tucked.
+**Quiet hide.** The auto-hide tuck settles on a softer spring, with no haptic. The content inside the glass stays visible.
 
-**Nudge.** The first tuck that lands in a launch, user or auto-hide, starts a nudge: the bar moves a short distance in from the Path's edge and back. It plays once per launch. A drag or a restore cancels it. It is off under Reduce Motion.
+**Peek.** The first tuck that lands in a launch, user or auto-hide, starts a peek. 700 ms later the hide progress goes from 1 to 0.86 and back to 1 over 400 ms, out and back on a cosine. The peek follows the same pose path as a pull, so the bar's top end shows about 15 to 20 pt past the edge. It plays once per launch. A touch on the Docklet, a drag, or a restore cancels it. It is off under Reduce Motion.
 
 ### Adding a Path
 
 A new Path adds one case to `DockletPath` and its own state type, as `DockletDrawbridgeState` does, and implements every `DockletPath` member. Keep `popoverArrowDirection` (`TabBarBottomChromeController.swift`) and `TabBarEdgeGlowView` in step with its edge.
 
-The shared code keeps the release rules, the settles, the haptics, Auto-hide, the Reduce Motion fade, and the nudge's distance and timing. The restore flick also measures inward from `edge`. Hidden is not a Path. It stays in `TabBarFoldController.hiddenTransform()`.
+The shared code keeps the release rules, the settles, the haptics, Auto-hide, the Reduce Motion fade, and the peek's depth and timing. The restore flick also measures inward from `edge`. Hidden is not a Path. It stays in `TabBarFoldController.hiddenTransform()`.
 
 ## Tips
 
@@ -357,6 +360,8 @@ A fixed-height strip sits at the top of the container. It shows one ring per con
 - The strip paints no fill. The container's background shows behind the system status bar and the strip.
 - `installStatusBar()` runs before `installChromeController()`, so the bar stays above the strip. Mounted children insert at index 0, so they sit below it.
 
+A Presented product covers the container, so it draws its own strip with the same parts: the `StatusBarTitleButton` menu, built by the shared `SPAMenuElements.swift`, and the `ChainConnectionStatusBarView` rings.
+
 ## Mounting and Re-tap
 
 `TabBarContainer` mounts one child at a time, full bleed into the container's view. A tab switch cross-fades. The outgoing view is removed when the fade completes. Non-animated mounts skip the fade.
@@ -375,14 +380,26 @@ While an SPA is mounted, a tap on the selected tab switches back to the tab. It 
 
 `TabBarContentSelection` is `.tab(Int)` or `.spa(UUID)`. An SPA is a peer of the tabs. It is not pushed onto a stack or presented over the container. `MainTabBarViewController` conforms to `SPAHosting`. `ModuleNavigator`, `ProductsNavigationRouter`, `SPAWireframe` and `ProductOpener` reach it through `UIApplication.shared.mainTabBarController`.
 
-Opening a product:
+Opening a product with Browse:
 
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
 2. `SPAControllerPool` vends one `SPAViewController` per tab id.
 3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and cross-fades the controller in.
 4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `tucked`. The bar tucks and contributes no clearance.
 
-`presentProduct(page:)` is the one-shot path for funding products. It presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
+`presentProduct(page:)` is the one-shot path for funding products. In both builds it presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
+
+Without Browse, `openProduct(page:)` never mounts a product. It looks for a Presented product over the container first. `presentedProduct(_:)` walks the presentation chain with `firstPresentedProduct(where:)` and returns the first `SPASimplifiedViewController` for that product. Three cases follow.
+
+- Same product already presented: `uncover(_:)` dismisses whatever covers it, then `navigate(to:)` moves it to the requested page. `SPASimplifiedViewController.navigate(to:)` skips the load when the target URL is the current one, so a repeated link does not reload the product.
+- Another full-screen Presented product is open: an alert asks `Open <B>?` with `<A> will close.` and offers Cancel and Open. Open dismisses A and everything above it, then presents B when that dismissal completes. So at most one full-screen Presented product is open.
+- Nothing presented: `presentFullScreenProduct(page:)` builds the product with `SPAViewFactory.createView(page:flowState:presentation:)` as `.fullScreen` and presents it on `UIWindow.keyWindow?.topmostViewController`.
+
+Product sheets from `presentProduct(page:)` are not `.fullScreen`, so the alert rule ignores them. The same-product case still reuses one.
+
+`ProductOpener.open(productId:)`, used by the game alarm and reminder auto-open, treats a Presented product like a Mounted product. It calls `uncover(_:)` and returns true only when something covered it. An auto-open therefore does not present a second copy or reload the product. If nothing covers it, `open(productId:)` returns false and does nothing else.
+
+It never enters the tab store, so there is no Mounted product, no chip and no Selection pill move. Its strip's Close app item dismisses it through `SPAWireframe.dismiss(view:)`.
 
 **Chips.** `MainTabBarInteractor` sends the open tabs to the presenter (`didReceiveSPATabs`). The presenter maps them through `SPATabChipViewModelFactory`, and the view passes them to the chrome as `TabBarShelfChip`. `applyChips()` runs on every mount and unmount, so the selected chip follows the mounted product.
 
@@ -395,11 +412,11 @@ The bar has four fixed slots. `DSTabBarContainer` lays out exactly four slot vie
 1. Add a case to `TabBarItem` with a localized `title` and an image.
 2. Build its controller in `TabFactory.view(for:)`.
 3. Add an entry to `AccessibilityID.Tab` so that `AccessibilityID.Tab.item(for:)` returns it.
-4. Place the new slot in the presenter's slot list. Its position in the list is its position in the bar.
+4. Place the new slot in `MainTabBarPresenter.slots` in both `#if FEATURE_PRODUCTS` arms, with Browse and without Browse. Its position in each list is its position in the bar.
 
 A fifth slot needs `DSTabBarContainer` to take a fifth view. Items past the fourth are not rendered, and a missing fourth item leaves a blank column.
 
 ## Gotchas
 
 - **Size the center panel from the chrome's width.** The hosting view has zero width when the chrome first lays out. A height computed from it starts the scan panel at the wrong size. SwiftUI then routes the first taps on the embedded UIKit panel to its own host view, so the search field ignores them until the panel is reopened.
-- **Two actions have no slot.** `TabBarAction.scan` and `TabBarAction.connectionStatus` have no bar slot. The center control and the shelf open them directly, so the branches for them in `handleAction` are not reached from a slot tap.
+- **Scan has no slot. Connection status has one only without Browse.** `TabBarAction.scan` has no bar slot in either build, so the center control opens it. With Browse, `TabBarAction.connectionStatus` has no slot. The shelf's top row opens it through `onShelfConnectionStatusTapped`, so the `.connectionStatus` branch of `handleAction` is not reached from a slot tap. Without Browse that branch is the Network slot, and it toggles the Shelf.

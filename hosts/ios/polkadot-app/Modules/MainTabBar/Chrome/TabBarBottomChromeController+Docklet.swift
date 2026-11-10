@@ -16,19 +16,6 @@ extension TabBarBottomChromeController {
             withAnimation(.linear(duration: duration)) {
                 barModel.contentFade.opacity = target.opacity
             }
-        case let .curve(firstControl, secondControl, duration, leadFrames):
-            let framesPerSecond = view.window?.windowScene?.screen.maximumFramesPerSecond ?? 60
-            let delay = Double(leadFrames) / Double(framesPerSecond)
-            let curve = Animation.timingCurve(
-                firstControl.x,
-                firstControl.y,
-                secondControl.x,
-                secondControl.y,
-                duration: duration
-            )
-            withAnimation(curve.delay(delay)) {
-                barModel.contentFade.opacity = target.opacity
-            }
         }
     }
 }
