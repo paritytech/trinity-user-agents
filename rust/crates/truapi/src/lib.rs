@@ -978,11 +978,22 @@ mod nft_purse;
 mod pocket_cards;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod bulletin_lookup;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod materials;
+
+#[cfg(feature = "runtime")]
 pub use spawner::Spawner;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 #[cfg(feature = "runtime")]
 pub use host_core::{
 	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,

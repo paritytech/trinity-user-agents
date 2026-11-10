@@ -23,7 +23,10 @@ rust/crates/
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `image_loader` module reads the
-                         images hosts draw from Bulletin by CID and checks them
+                         images hosts draw from Bulletin by CID and checks them; its
+                         `materials` module keeps the materials renderer trees name
+                         in the same database, read from Bulletin by its
+                         `bulletin_lookup` module
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
