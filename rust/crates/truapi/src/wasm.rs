@@ -608,8 +608,7 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 /// `bulletin` and the optional `assetHub` and `relay`, each `{ genesisHash }`,
 /// and `allowsReservedValues`, which defaults to false.
 ///
-/// `id` scopes everything the core stores, so two test stacks that must not
-/// share state take different ones.
+/// Give two test stacks different `id`s to keep their stored state apart.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {

@@ -172,7 +172,7 @@ pub struct CliPlatform {
 	/// `Features::feature_supported` answers from.
 	served_chains: Roles<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
-	/// Identity of the stack this host runs, which every core slot is keyed by.
+	/// The stack this host runs. Every core storage key includes its id.
 	stack_identity: StackIdentity,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,

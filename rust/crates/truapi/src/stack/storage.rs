@@ -4,19 +4,18 @@ use truapi::latest::GenericError;
 
 use crate::platform::{CoreStorage, CoreStorageKey, StackStorageKey};
 
-/// Host storage narrowed to one stack: every slot is read and written under
-/// that stack's identity.
+/// Host storage for one stack. It adds the stack's id to every key, so stacks
+/// do not share entries.
 ///
 /// Built by [`Stack::storage`](super::Stack::storage). The core stores nothing
-/// except through it, so nothing it stored for one stack is visible while it
-/// runs another.
+/// except through it.
 pub struct StackStorage<'a, S: CoreStorage + ?Sized> {
 	host: &'a S,
 	stack: &'a str,
 }
 
 impl<'a, S: CoreStorage + ?Sized> StackStorage<'a, S> {
-	/// The slots of the stack identified by `stack`, kept in `host`.
+	/// Storage in `host` for the stack with the id `stack`.
 	pub fn new(host: &'a S, stack: &'a str) -> Self {
 		Self { host, stack }
 	}

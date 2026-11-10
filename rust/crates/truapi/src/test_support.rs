@@ -374,7 +374,7 @@ impl PlatformCoreStorage for MemoryCoreStorage {
 	}
 }
 
-/// The [`test_stack`]'s slots in `host`, as the core reaches them.
+/// Core storage for the [`test_stack`], kept in `host`.
 pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
 	StackStorage::new(host, TEST_STACK_ID)
 }
