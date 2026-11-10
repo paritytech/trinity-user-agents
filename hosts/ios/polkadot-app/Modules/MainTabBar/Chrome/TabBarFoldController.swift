@@ -80,9 +80,7 @@ final class TabBarFoldController {
     /// width is unchanged and nothing needed doing.
     @discardableResult
     func reapplyForWidthChange() -> Bool {
-        guard chromeBounds().width != foldOffsetWidth else {
-            return false
-        }
+        guard chromeBounds().width != foldOffsetWidth else { return false }
         foldOffsetWidth = chromeBounds().width
         applyVisibility(state, from: state, animated: false, isUserDriven: false)
         rescheduleAutoHide()
@@ -114,9 +112,7 @@ final class TabBarFoldController {
 
     /// Records the user's choice for the current screen and moves the bar to it. Tapping a tucked bar restores it.
     func setUserOverride(_ override: TabBarFoldOverride) {
-        guard state != .hidden else {
-            return
-        }
+        guard state != .hidden else { return }
         userOverride = override
         apply(state: policyState, isUserDriven: true)
     }
@@ -151,9 +147,7 @@ final class TabBarFoldController {
             startSettling()
         }
         let tucks = motion.destination == .tucked
-        guard tucks != (state == .tucked) else {
-            return
-        }
+        guard tucks != (state == .tucked) else { return }
         userOverride = tucks ? .tucked : .shown
         pendingTuckKind = tucks ? .user : nil
         commit(tucks ? .tucked : .shown)
@@ -322,9 +316,7 @@ private extension TabBarFoldController {
     }
 
     func startSettling() {
-        guard displayLink == nil else {
-            return
-        }
+        guard displayLink == nil else { return }
         let frameTarget = DisplayLinkFrameTarget { [weak self] link in
             self?.tickSettle(at: link.targetTimestamp)
         }
@@ -461,9 +453,7 @@ private extension TabBarFoldController {
         autoHideTask?.cancel()
         autoHideTask = nil
         syncAutoHideBlockers()
-        guard let deadline = autoHide.deadline else {
-            return
-        }
+        guard let deadline = autoHide.deadline else { return }
         autoHideTask = Task.delayed(by: max(0, deadline - CACurrentMediaTime())) { [weak self] in
             self?.autoHideFired()
         }
