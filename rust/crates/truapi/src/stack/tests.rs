@@ -1,10 +1,10 @@
-use parity_scale_codec::Encode;
-use truapi::latest::GenericError;
-
 use super::*;
 use crate::{
-	platform::{CoreStorageKey, ProductId, StackStorageKey},
-	test_support::{sign_test_descriptor, test_descriptor, test_descriptor_chain, test_stack_link},
+	platform::{CoreStorageKey, ProductId},
+	test_support::{
+		MemoryCoreStorage, sign_test_descriptor, test_descriptor, test_descriptor_chain,
+		test_stack_link,
+	},
 };
 
 const POLKADOT_PEOPLE: [u8; 32] = [
@@ -192,34 +192,6 @@ fn an_all_zero_genesis_hash_is_refused() {
 	);
 }
 
-/// Host storage that keeps whatever key it is given.
-#[derive(Default)]
-struct MemoryStorage(std::sync::Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
-
-#[async_trait::async_trait]
-impl CoreStorage for MemoryStorage {
-	async fn read_core_storage(
-		&self,
-		key: StackStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: StackStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), GenericError> {
-		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
-		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-}
-
 /// The session, a stored permission, a cached manifest and the device key:
 /// one slot of each kind the core keeps.
 fn slots() -> [CoreStorageKey; 4] {
@@ -232,7 +204,7 @@ fn slots() -> [CoreStorageKey; 4] {
 	]
 }
 
-async fn read_slots(storage: &StackStorage<'_, MemoryStorage>) -> [Option<Vec<u8>>; 4] {
+async fn read_slots(storage: &StackStorage<'_, MemoryCoreStorage>) -> [Option<Vec<u8>>; 4] {
 	let mut values = [const { None }; 4];
 	for (value, slot) in values.iter_mut().zip(slots()) {
 		*value = storage.read(slot).await.expect("memory storage reads");
@@ -277,7 +249,7 @@ fn a_fork_and_its_source_share_no_stored_state() {
 			.expect("stack is valid")
 	};
 	let (source, fork) = (stack("source"), stack("fork"));
-	let host = MemoryStorage::default();
+	let host = MemoryCoreStorage::default();
 
 	futures::executor::block_on(async {
 		let source = source.storage(&host);

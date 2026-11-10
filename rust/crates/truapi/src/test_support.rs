@@ -2,6 +2,7 @@
 //! recording json-rpc connection, and SSO statement/frame builders.
 
 use std::{
+	collections::HashMap,
 	sync::{
 		Arc, Mutex,
 		atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -343,6 +344,34 @@ pub const TEST_STACK_GENERATION: &str = "test-generation";
 /// `slot` under [`TEST_STACK_ID`], the key a test host stores it by.
 pub fn test_storage_key(slot: CoreStorageKey) -> StackStorageKey {
 	StackStorageKey { stack: TEST_STACK_ID.to_string(), slot }
+}
+
+/// Host storage in memory that keeps a value under whatever key it is given.
+#[derive(Default)]
+pub struct MemoryCoreStorage(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl PlatformCoreStorage for MemoryCoreStorage {
+	async fn read_core_storage(
+		&self,
+		key: StackStorageKey,
+	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: StackStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+		Ok(())
+	}
+
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
 }
 
 /// The [`test_stack`]'s slots in `host`, as the core reaches them.

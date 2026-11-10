@@ -1,39 +1,5 @@
 use super::*;
-use std::{collections::HashMap, sync::Mutex};
-
 use crate::test_support::sso_session_info;
-
-#[derive(Default)]
-struct MemStorage {
-	inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-}
-
-#[async_trait::async_trait]
-impl CoreStorage for MemStorage {
-	async fn read_core_storage(
-		&self,
-		key: crate::platform::StackStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: crate::platform::StackStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), GenericError> {
-		self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(
-		&self,
-		key: crate::platform::StackStorageKey,
-	) -> Result<(), GenericError> {
-		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-}
 
 #[test]
 fn entries_stored_with_string_ids_read_and_write_unchanged() {
@@ -47,7 +13,7 @@ fn entries_stored_with_string_ids_read_and_write_unchanged() {
 
 #[test]
 fn stores_allowance_keys_by_product_and_resource() {
-	let storage = MemStorage::default();
+	let storage = crate::test_support::MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
@@ -108,7 +74,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 #[test]
 fn clears_session_allowance_keys() {
-	let storage = MemStorage::default();
+	let storage = crate::test_support::MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
