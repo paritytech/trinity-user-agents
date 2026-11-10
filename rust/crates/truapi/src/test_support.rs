@@ -400,6 +400,21 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// The test stack's descriptor as published at `sequence` in `generation`,
+/// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
+/// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
+/// another `people`.
+pub fn published_test_descriptor(
+	sequence: u32,
+	generation: &str,
+	people: [u8; 32],
+) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], Some([0xcc; 32]));
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = generation.into();
+	descriptor
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
