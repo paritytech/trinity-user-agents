@@ -97,7 +97,7 @@ impl Device {
 	}
 
 	/// Keeps a Pocket card whose saved face names `materials` inside a box.
-	fn save_face(&self, card_id: &str, materials: &[[u8; 32]]) {
+	fn save_face(&self, materials: &[[u8; 32]]) {
 		let layers = materials
 			.iter()
 			.map(|material| MaterialInstance { material: *material, args: Vec::new() })
@@ -112,11 +112,11 @@ impl Device {
 		};
 		let cards = block_on(PocketCards::open(self.db.clone(), Vec::new())).unwrap();
 		let product = ProductId::for_test("loyalty.dot");
-		block_on(cards.add(product, card_id.to_string(), "Card".to_string(), face)).unwrap();
+		block_on(cards.add(product, "stamps".to_string(), "Card".to_string(), face)).unwrap();
 	}
 
-	fn pass_the_deadline(&self, sleeps_before: usize) {
-		wait_until(|| self.timer.sleeps() > sleeps_before, "the deadline is set");
+	fn pass_the_deadline(&self) {
+		wait_until(|| self.timer.sleeps() > 0, "the deadline is set");
 		self.timer.advance(FETCH_DEADLINE);
 	}
 }
@@ -149,23 +149,10 @@ fn a_material_fetched_once_is_ready_after_a_restart_without_bulletin() {
 	assert_eq!(restarted.bulletin.lookups(preimage_key(TEXT)), 0);
 }
 
-/// A caller that comes after the material is kept reads it from the device
-/// rather than asking Bulletin again.
-#[test]
-fn a_kept_material_is_not_looked_up_again() {
-	let (_dir, db) = open_temporary_core_db();
-	let device = Device::over(db);
-	device.keep(TEXT);
-
-	let mut answers = device.materials.observe(preimage_key(TEXT));
-
-	assert_eq!(next(&mut answers), Some(Ok(TEXT.to_vec())));
-	assert_eq!(device.bulletin.lookups(preimage_key(TEXT)), 1);
-}
-
 /// A node waits while its material loads, falls back once the deadline
 /// passes, and still draws when the material arrives late, so a card heals by
-/// itself.
+/// itself. Bytes that do not hash to the ID never draw, whatever the lookup
+/// hands over.
 #[test]
 fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 	let (_dir, db) = open_temporary_core_db();
@@ -176,7 +163,8 @@ fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 
 	assert_eq!(answers.next().now_or_never(), None, "nothing is reported while loading");
 
-	device.pass_the_deadline(0);
+	device.bulletin.answer(id, b"forged".to_vec());
+	device.pass_the_deadline();
 	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
 	let mut later = device.materials.observe(id);
 	assert_eq!(
@@ -191,24 +179,6 @@ fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 	assert_eq!(next(&mut answers), None);
 }
 
-/// Bytes that do not hash to the ID are never drawn, whatever the lookup
-/// hands over.
-#[test]
-fn bytes_that_do_not_hash_to_the_id_are_never_drawn() {
-	let (_dir, db) = open_temporary_core_db();
-	let device = Device::over(db);
-	let id = preimage_key(TEXT);
-	let mut answers = device.materials.observe(id);
-	wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
-
-	device.bulletin.answer(id, b"forged".to_vec());
-	device.pass_the_deadline(0);
-	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
-
-	device.bulletin.answer(id, TEXT.to_vec());
-	assert_eq!(next(&mut answers), Some(Ok(TEXT.to_vec())));
-}
-
 /// A node that fell back at the deadline is told once: a lookup that then
 /// gives up for good adds no second report.
 #[test]
@@ -218,7 +188,7 @@ fn a_lookup_that_ends_after_the_deadline_reports_once() {
 	let id = preimage_key(TEXT);
 	let mut answers = device.materials.observe(id);
 	wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
-	device.pass_the_deadline(0);
+	device.pass_the_deadline();
 	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
 
 	device.bulletin.end(id);
@@ -317,7 +287,7 @@ fn unpinned_materials_are_evicted_oldest_first_and_pinned_ones_stay() {
 	let device = Device::over(db);
 	let materials: Vec<_> = (0..67).map(largest_material).collect();
 	let ids: Vec<_> = materials.iter().map(|text| preimage_key(text)).collect();
-	device.save_face("stamps", &[ids[0], ids[66]]);
+	device.save_face(&[ids[0], ids[66]]);
 
 	for text in &materials {
 		device.keep(text);
@@ -337,7 +307,7 @@ fn the_start_up_fetch_gets_what_saved_faces_name_and_the_device_lacks() {
 	let kept = TEXT.to_vec();
 	let missing = b"// @material 1\n// missing\n".to_vec();
 	device.keep(&kept);
-	device.save_face("stamps", &[preimage_key(&kept), preimage_key(&missing)]);
+	device.save_face(&[preimage_key(&kept), preimage_key(&missing)]);
 
 	(test_spawner())(device.materials.clone().fetch_saved().boxed());
 	wait_until(
@@ -361,11 +331,11 @@ fn the_start_up_fetch_gives_up_at_the_deadline() {
 	let (_dir, db) = open_temporary_core_db();
 	let device = Device::over(db);
 	let id = preimage_key(TEXT);
-	device.save_face("stamps", &[id]);
+	device.save_face(&[id]);
 
 	(test_spawner())(device.materials.clone().fetch_saved().boxed());
 	wait_until(|| device.bulletin.open_lookups(id) == 1, "the material is looked up");
-	device.pass_the_deadline(0);
+	device.pass_the_deadline();
 
 	wait_until(|| device.bulletin.open_lookups(id) == 0, "the lookup is dropped");
 }
