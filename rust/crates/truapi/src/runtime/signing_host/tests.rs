@@ -1,3 +1,4 @@
+use crate::test_support::test_storage;
 mod activation;
 mod allowance_keys;
 mod auto_signing;
@@ -291,7 +292,7 @@ fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
 		// Bare-labelled on both sides, as `ProductConsent::account_access`
 		// writes it in production.
 		crate::host_internal::permissions::set_authorization_status(
-			&crate::test_support::test_storage(platform),
+			&test_storage(platform),
 			CoreStorageKey::product_account_access_authorization(
 				&ProductId::for_test(caller),
 				&ProductId::for_test(target),
@@ -1100,7 +1101,7 @@ fn a_refusal_recorded_before_this_release_still_overrides_a_grant() {
 	cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 	// Written exactly as the previous release wrote it: full ids, both sides.
 	futures::executor::block_on(crate::host_internal::permissions::set_authorization_status(
-		&crate::test_support::test_storage(platform.as_ref()),
+		&test_storage(platform.as_ref()),
 		CoreStorageKey::account_access_authorization(
 			&ProductId::for_test("ordinary.dot"),
 			&ProductId::for_test("peopl.dot"),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::StubPlatform;
+use crate::test_support::{StubPlatform, paseo_test_stack, test_storage};
 use PermissionAuthorizationStatus::{Authorized, Denied};
 
 fn consent_answering(
@@ -9,7 +9,7 @@ fn consent_answering(
 		permission_confirmation_decisions: Mutex::new(decisions.into_iter().collect()),
 		..StubPlatform::default()
 	});
-	(platform.clone(), ProductConsent::new(platform, crate::test_support::paseo_test_stack()))
+	(platform.clone(), ProductConsent::new(platform, paseo_test_stack()))
 }
 
 fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
@@ -48,7 +48,7 @@ fn a_stored_decision_overrides_allow_once() {
 	let (platform, consent) = consent_answering([PermissionDecision::AllowOnce]);
 	access(&consent, "myapp.dot");
 	futures::executor::block_on(set_authorization_status(
-		&crate::test_support::test_storage(platform.as_ref()),
+		&test_storage(platform.as_ref()),
 		CoreStorageKey::product_account_access_authorization(
 			&ProductId::for_test("myapp.dot"),
 			&ProductId::for_test("peopl.dot"),
@@ -71,7 +71,7 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 		account_access_confirmation_gate: Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let consent = ProductConsent::new(platform.clone(), crate::test_support::paseo_test_stack());
+	let consent = ProductConsent::new(platform.clone(), paseo_test_stack());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let (first, second, ()) = futures::executor::block_on(async {
 		futures::join!(

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::test_support::StubPlatform;
+use crate::test_support::{StubPlatform, test_storage};
 
 /// A request that has not expired at any `now` these tests use.
 const REQUEST: ReplayRequest<'static> =
@@ -91,12 +91,10 @@ fn legacy_unbounded_entries_do_not_block_new_requests() {
 				})
 				.collect(),
 		};
-		write_ledger(&crate::test_support::test_storage(&platform), request_scope, &ledger)
-			.await
-			.unwrap();
+		write_ledger(&test_storage(&platform), request_scope, &ledger).await.unwrap();
 
 		let result = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&SsoReplayLocks::default(),
 			request_scope,
 			ReplayRequest { id: "fresh", expires_at_unix_secs: Some(200) },
@@ -109,9 +107,7 @@ fn legacy_unbounded_entries_do_not_block_new_requests() {
 
 		assert_eq!(result, ReplayExecution::Executed("executed"));
 		assert_eq!(
-			read_ledger(&crate::test_support::test_storage(&platform), request_scope)
-				.await
-				.unwrap(),
+			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: "fresh".to_string(),
@@ -147,15 +143,13 @@ fn full_ledger_rejects_before_acknowledging_or_executing_the_request() {
 		for index in 0..MAX_REQUEST_LEDGER_ENTRIES {
 			ledger.start(format!("request-{index}"), None, 0).unwrap();
 		}
-		write_ledger(&crate::test_support::test_storage(&platform), request_scope, &ledger)
-			.await
-			.unwrap();
+		write_ledger(&test_storage(&platform), request_scope, &ledger).await.unwrap();
 		let acknowledgements = AtomicUsize::new(0);
 		let executions = Arc::new(AtomicUsize::new(0));
 		let request_executions = executions.clone();
 
 		let error = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&SsoReplayLocks::default(),
 			request_scope,
 			ReplayRequest { id: "overflow", expires_at_unix_secs: None },
@@ -190,7 +184,7 @@ fn completed_request_survives_store_reconstruction() {
 		let locks = SsoReplayLocks::default();
 		let request_scope = scope(1, 2, 3);
 		let first = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&locks,
 			request_scope,
 			REQUEST,
@@ -202,9 +196,7 @@ fn completed_request_survives_store_reconstruction() {
 		.unwrap();
 		assert_eq!(first, ReplayExecution::Executed("executed"));
 		assert_eq!(
-			read_ledger(&crate::test_support::test_storage(&platform), request_scope)
-				.await
-				.unwrap(),
+			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: REQUEST.id.to_string(),
@@ -216,7 +208,7 @@ fn completed_request_survives_store_reconstruction() {
 
 		let reconstructed_locks = SsoReplayLocks::default();
 		let replay = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&reconstructed_locks,
 			request_scope,
 			REQUEST,
@@ -237,7 +229,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		let platform = StubPlatform::default();
 		let request_scope = scope(1, 2, 3);
 		let failure = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&SsoReplayLocks::default(),
 			request_scope,
 			REQUEST,
@@ -249,9 +241,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		.unwrap_err();
 		assert_eq!(failure, "simulated process failure");
 		assert_eq!(
-			read_ledger(&crate::test_support::test_storage(&platform), request_scope)
-				.await
-				.unwrap(),
+			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: REQUEST.id.to_string(),
@@ -264,7 +254,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		let executions = Arc::new(AtomicUsize::new(0));
 		let replay_executions = executions.clone();
 		let replay = execute_once(
-			&crate::test_support::test_storage(&platform),
+			&test_storage(&platform),
 			&SsoReplayLocks::default(),
 			request_scope,
 			REQUEST,
@@ -293,7 +283,7 @@ fn request_ids_are_isolated_by_root_and_peer() {
 		for request_scope in [scope(1, 2, 3), scope(2, 2, 3), scope(1, 4, 3), scope(1, 2, 4)] {
 			let executions = executions.clone();
 			let outcome = execute_once(
-				&crate::test_support::test_storage(&platform),
+				&test_storage(&platform),
 				&locks,
 				request_scope,
 				REQUEST,
@@ -325,7 +315,7 @@ fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 		for expected in [ReplayExecution::Executed(()), ReplayExecution::Duplicate] {
 			let executions = executions.clone();
 			let actual = execute_once(
-				&crate::test_support::test_storage(&platform),
+				&test_storage(&platform),
 				&locks,
 				scope(1, 2, 3),
 				REQUEST,
