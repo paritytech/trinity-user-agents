@@ -70,6 +70,10 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
+        if #available(iOS 26.0, *) {
+            rootView.webView.scrollView.topEdgeEffect.style = .hard
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {

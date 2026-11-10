@@ -50,6 +50,10 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
         super.viewDidLoad()
         addHandlers()
         setupOpeningIndicator()
+        setContentScrollView(rootView.collectionView, for: .top)
+        if #available(iOS 26.0, *) {
+            rootView.collectionView.topEdgeEffect.style = .hard
+        }
 
         presenter.setup()
     }

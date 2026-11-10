@@ -30,8 +30,10 @@ final class MainTabBarViewController: UIViewController {
     private var chainStatusAnchorWidth: Constraint?
     private var statusTitleLeading: Constraint?
     private var statusTitleCenterY: Constraint?
+    private var scrollEdgeInteraction: UIInteraction?
 
     private let statusBarTitleButton = StatusBarTitleButton()
+    private let statusStripContainer = UIView()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -130,6 +132,7 @@ final class MainTabBarViewController: UIViewController {
                 return
             }
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
+            bindScrollEdgeInteraction()
         }
 
         chromeController.onBottomClearanceInvalidated = { [weak self] in
@@ -174,9 +177,16 @@ private extension MainTabBarViewController {
     func installStatusBar() {
         additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight
 
+        view.addSubview(statusStripContainer)
+        statusStripContainer.backgroundColor = .clear
+        statusStripContainer.snp.makeConstraints { make in
+            make.leading.trailing.top.equalToSuperview()
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
+        }
+
         addChild(statusBarHost)
         statusBarHost.view.backgroundColor = .clear
-        view.addSubview(statusBarHost.view)
+        statusStripContainer.addSubview(statusBarHost.view)
         statusBarHost.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
@@ -189,7 +199,7 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
-        view.addSubview(statusBarTitleButton)
+        statusStripContainer.addSubview(statusBarTitleButton)
         statusBarTitleButton.snp.makeConstraints { make in
             statusTitleLeading = make.leading.equalTo(statusBarHost.view)
                 .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
@@ -201,6 +211,13 @@ private extension MainTabBarViewController {
         }
 
         statusBarHost.didMove(toParent: self)
+
+        if #available(iOS 26.0, *) {
+            let interaction = UIScrollEdgeElementContainerInteraction()
+            interaction.edge = .top
+            statusStripContainer.addInteraction(interaction)
+            scrollEdgeInteraction = interaction
+        }
     }
 
     static var statusTitleCenterInset: CGFloat {
@@ -435,6 +452,22 @@ extension MainTabBarViewController: TopmostChildProviding {
 }
 
 extension MainTabBarViewController {
+    func bindScrollEdgeInteraction() {
+        guard
+            #available(iOS 26.0, *),
+            let interaction = scrollEdgeInteraction as? UIScrollEdgeElementContainerInteraction
+        else {
+            return
+        }
+
+        let controller = container.selectedController
+        if let navigation = controller as? UINavigationController {
+            interaction.scrollView = navigation.topViewController?.contentScrollView(for: .top)
+        } else {
+            interaction.scrollView = controller?.contentScrollView(for: .top)
+        }
+    }
+
     func refreshChrome() {
         applyChrome(chromeContext(for: container.selectedController))
         applyChips()
