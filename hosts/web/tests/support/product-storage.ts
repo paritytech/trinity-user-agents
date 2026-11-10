@@ -1,6 +1,6 @@
 import type { HexString } from "@parity/truapi/scale";
 import { err, ok } from "neverthrow";
-import { ProductStorage } from "../../src/chat/worker/product-storage.js";
+import { ProductStorage } from "../../apps/shared/product-storage.js";
 
 /**
  * What a host keeps of one product's TrUAPI storage: it outlives the

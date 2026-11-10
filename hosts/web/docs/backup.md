@@ -76,9 +76,9 @@ What a restore from a snapshot taken at any moment does, by product:
   second, and sends and receives with the peer after each, over Kettle's real WebAssembly. From the last snapshot the
   second browser continues the same MLS group.
 - **Nova Chat:** the host keeps its peers and pending requests in one entry, and each request's notification account
-  comes from the request id and the day. `tests/unit/chat/nova-chat/host.test.ts` restores a copy taken at every write
-  of a request and checks that a pending request is posted again under the same account, so no new slot is claimed on
-  the same day.
+  comes from the request id and the day. `tests/unit/integrations/nova-chat/host.test.ts` restores a copy taken at every
+  write of a request and checks that a pending request is posted again under the same account, so no new slot is claimed
+  on the same day.
 - **Contact Chat:** a request's notification account comes from its post id and the day, so posting it again on the same
   day claims nothing new (`tests/unit/invitations/statement-delivery.test.ts`). A restore at every write is not tested.
 - Other products: as their storage survives a crash.

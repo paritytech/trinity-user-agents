@@ -7,7 +7,8 @@ import type {
   IdentityKeys,
   Person,
 } from "./ports.js";
-import { digest, fromHex, openSealedWith, toHex } from "./sealing.js";
+import { fromHex, toHex } from "../../bridges/primitives/bytes.js";
+import { digest, openSealedWith } from "./sealing.js";
 
 /**
  * PILOT, CLASSICAL. The host proof of the Establish Connection design

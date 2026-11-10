@@ -5,14 +5,15 @@ import {
   decodeStatement,
   encodeSigned,
   verifyStatement,
-} from "../platform/statement.js";
+} from "../../bridges/primitives/statement.js";
 import type { StatementStoreLike } from "../platform/statement-store.js";
 import { isStored } from "../platform/statement-store.js";
 import type { AllowanceGuard } from "../platform/allowance-usable.js";
 import { postWhenUsable, type FinalOutcome } from "../platform/guarded-post.js";
 import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import type { DeliveryReceiver, HostDelivery, IdentityKeys } from "./ports.js";
-import { digest, fromHex, toHex } from "./sealing.js";
+import { fromHex, toHex } from "../../bridges/primitives/bytes.js";
+import { digest } from "./sealing.js";
 
 /**
  * DRAFT ROUTE. A `HostDelivery` over the People chain's Statement Store: every

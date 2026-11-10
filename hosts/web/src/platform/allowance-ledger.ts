@@ -1,4 +1,4 @@
-import { Reader } from "./scale-reader.js";
+import { Reader } from "../../bridges/primitives/scale-reader.js";
 
 /** What the core promised to keep allowed, as it records it after an allocation. */
 export type LedgerTarget =

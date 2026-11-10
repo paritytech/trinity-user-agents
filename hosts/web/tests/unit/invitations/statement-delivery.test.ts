@@ -2,13 +2,13 @@ import { asProductId } from "@parity/truapi";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { NotificationClaim } from "@parity/truapi-host/web";
-import { equalBytes } from "../../../src/platform/codec.js";
+import { equalBytes } from "../../../bridges/primitives/codec.js";
 import type { StatementStoreLike } from "../../../src/platform/statement-store.js";
-import { decodeStatement } from "../../../src/platform/statement.js";
+import { decodeStatement } from "../../../bridges/primitives/statement.js";
 import {
   type CallResult,
   type HostMessage,
-} from "../../../src/invitations/contract.js";
+} from "../../../bridges/host-requests/contract.js";
 import {
   InvitationService,
   type ProductPort,
@@ -22,11 +22,11 @@ import {
   periodOf,
 } from "../../../src/invitations/statement-delivery.js";
 import type { InvitationEvent } from "../../../src/invitations/observer.js";
-import { cryptoRandom, toHex } from "../../../src/invitations/sealing.js";
+import { cryptoRandom, toHex } from "../../../bridges/primitives/bytes.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
-import { simpleText } from "../../../src/chat/contact-chat/simple-text.js";
+import { simpleText } from "../../../apps/contact-chat/simple-text.js";
 import {
   TEST_USERS,
   personOf as personOn,

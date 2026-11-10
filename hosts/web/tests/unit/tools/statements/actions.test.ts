@@ -9,7 +9,7 @@ import {
 import { StatementLedger } from "../../../../tools/statements/ledger.js";
 import { peopleTransport } from "../../../../tools/statements/transport.js";
 import { evidence } from "../../../../tools/statements/evidence.js";
-import { encodeSigned } from "../../../../src/platform/statement.js";
+import { encodeSigned } from "../../../../bridges/primitives/statement.js";
 
 const LIGHT_CLIENT = peopleTransport("light-client");
 

@@ -32,8 +32,11 @@ export interface WalletDelivery {
    * of payments, while a chat product runs over this delivery.
    */
   readonly hidesWalletContacts: boolean;
-  /** Why Nova Chat cannot run over this delivery, or null when it can. */
-  readonly novaProblem: string | null;
+  /**
+   * Why a chat product whose setup needs the network's own Statement Store,
+   * such as Nova Chat, cannot run over this delivery, or null when it can.
+   */
+  readonly networkOnlyProblem: string | null;
   /** What a chat product spends and exposes, for its prompts, or null when it spends nothing. */
   costs(encrypted: boolean): ChatCosts | null;
   /** The delivery of the user whose chat public key is `self`. */
@@ -213,7 +216,7 @@ export function networkDelivery(deps: NetworkDeliveryDeps): WalletDelivery {
     listSuffix: DAY_INBOX_LISTS,
     submits: true,
     hidesWalletContacts: true,
-    novaProblem: null,
+    networkOnlyProblem: null,
     costs: networkCosts,
     hostDelivery: (session) => statementStoreDelivery(session, true, deps),
     allowance: (session, seen) => conversationAllowance(session, true, seen),

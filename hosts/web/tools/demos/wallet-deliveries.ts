@@ -64,7 +64,7 @@ export function devWalletDelivery(
         listSuffix: "",
         submits: false,
         hidesWalletContacts: false,
-        novaProblem: NOVA_NEEDS_NETWORK,
+        networkOnlyProblem: NOVA_NEEDS_NETWORK,
         costs: () => null,
         hostDelivery: (_session, self) => deps.local(self),
         allowance: () => undefined,

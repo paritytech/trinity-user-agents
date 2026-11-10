@@ -6,12 +6,12 @@ import {
   BAD_RELAY_URL,
   relayUrlOf,
   type IrohRelays,
-} from "../../src/chat/kettle-chat/route.js";
+} from "../../apps/kettle-chat/route.js";
 import type { WorkerState } from "../../src/products/product-workers.js";
-import {
-  CONTACT_CHAT,
-  type ChatProductSpec,
-  type ContactChatOwner,
+import { CONTACT_CHAT } from "../../src/app/chat-products.js";
+import type {
+  ChatProductSpec,
+  ContactChatOwner,
 } from "../../src/invitations/wallet-chat.js";
 
 /**

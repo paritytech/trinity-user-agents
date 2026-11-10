@@ -10,7 +10,7 @@ import { loaderUrl, mountScope } from "./loader/mount.js";
 import { WORKER_SHELL, archivePath, contentTypeOf } from "./loader/serve.js";
 import type { ResolvedWorker, WorkerManifest } from "./worker-manifest.js";
 import type { WorkerConsoleEntry } from "./worker-console.js";
-import type { DiagnosticsReport } from "./diagnostics.js";
+import type { DiagnosticsReport } from "../../bridges/diagnostics.js";
 import {
   nextLoadId,
   type ProductLoadObserver,
@@ -116,11 +116,14 @@ export interface ProductWorkersDeps {
     disconnect(productId: string): void;
   };
   /**
-   * Where a worker's frame hands its port for the proposed host request
-   * service (`src/invitations/contract.ts`), which decides whether to serve
-   * it. The link ends when the worker stops.
+   * Where a worker's frame hands its port for the page's request services,
+   * such as the proposed host request service
+   * (`bridges/host-requests/contract.ts`): `accepts` says which window
+   * messages hand one over, and the service decides whether to serve it. The
+   * link ends when the worker stops.
    */
   invitations?: {
+    accepts(data: unknown, ports: readonly MessagePort[]): boolean;
     connect(productId: string, port: MessagePort): void;
     disconnect(productId: string): void;
   };
@@ -478,9 +481,12 @@ export class ProductWorkers {
           ...(this.deps.invitations === undefined
             ? {}
             : {
-                onInvitationsPort: (port: MessagePort) => {
-                  if (current()) this.deps.invitations?.connect(name, port);
-                  else port.close();
+                requestPorts: {
+                  accepts: this.deps.invitations.accepts,
+                  connect: (port: MessagePort) => {
+                    if (current()) this.deps.invitations?.connect(name, port);
+                    else port.close();
+                  },
                 },
               }),
           ...(this.deps.observer === undefined

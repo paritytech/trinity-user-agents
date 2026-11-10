@@ -80,12 +80,12 @@ history, and the host asks it for pages.
 
 - **Contract:** `paritytech/trinity-user-agents` branch `lc/chat-product` at `3b2316285` (`api/chat.rs`, `v01/chat.rs`,
   `api/call_media.rs`, `chat-queries.ts`, and the RFCs `chat-extension-v2.md`, `chat-extension-v2-additions.md`,
-  `call-media.md`). `src/chat/draft/contract.ts` copies its types. Nothing in this repository's crates or packages
+  `call-media.md`). `bridges/chat-v2/contract.ts` copies its types. Nothing in this repository's crates or packages
   changes.
 - **Connection:** only a `Worker` whose manifest includes chat. Its frame posts
   `{ type: "truapi-chat-v2-draft", protocol: "truapi-chat-v2-draft/1" }` with one `MessagePort`. The host takes it only
   from that frame and origin, binds it to the product id, and ends it with the worker or session. The product side is
-  `connectChatV2()` in `src/chat/draft/product.ts`.
+  `connectChatV2()` in `bridges/chat-v2/product.ts`.
 - **Scope:** the host scopes the bridge, not the core. A product reaches only its own rooms. The bridge carries no keys,
   entropy or grants. The inspector does not show it.
 - **Provider** (`chat-v2:<product>`):
@@ -131,7 +131,7 @@ Draft additions, beside the unmerged `setRoomContact` proposal (`lc/product-only
   product. Contact Chat reaches people only through its host's request service.
 - The people in a product's rooms appear only in the host's **+**. They never become `contacts.pick` results or payment
   recipients.
-- `src/chat/draft/conversations.ts` (`ConversationEngine`) shows any engine over the bridge.
+- `bridges/chat-v2/conversations.ts` (`ConversationEngine`) shows any engine over the bridge.
 
 ## Inbox (prototype)
 

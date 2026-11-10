@@ -16,6 +16,8 @@
   },
   "include": [
     "src",
+    "bridges",
+    "apps",
     "tools",
     "fixtures",
     "tests",

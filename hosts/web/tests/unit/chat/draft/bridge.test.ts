@@ -5,7 +5,7 @@ import {
   type ChatMessage,
   type ChatV2ActionItem,
   type HostChatRoomEventsSubscribeItem,
-} from "../../../../src/chat/draft/contract.js";
+} from "../../../../bridges/chat-v2/contract.js";
 import {
   ChatV2Host,
   type CallMediaEngine,
@@ -15,11 +15,11 @@ import {
 import {
   chatV2Over,
   type ChatV2Product,
-} from "../../../../src/chat/draft/product.js";
+} from "../../../../bridges/chat-v2/product.js";
 import {
   serveConversations,
   type ConversationEngine,
-} from "../../../../src/chat/draft/conversations.js";
+} from "../../../../bridges/chat-v2/conversations.js";
 
 const PRODUCT = "chat.paseo";
 const OTHER = "other.paseo";

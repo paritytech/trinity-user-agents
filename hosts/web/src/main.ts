@@ -26,10 +26,13 @@ import {
 import { bindRecentsMenu } from "./app/address-recents.js";
 import { bindChrome } from "./app/chrome.js";
 import { copyInPage } from "./app/copy.js";
-import { messagePortBridge } from "./chat/draft/contract.js";
+import { messagePortBridge } from "../bridges/chat-v2/contract.js";
+import { isProductHello } from "../bridges/host-requests/contract.js";
+import { isNovaHello } from "../bridges/nova-chat/contract.js";
 import { ChatV2Host } from "./chat/draft/host.js";
 import { demoAllowed } from "../tools/demos/local-demo-route.js";
 import { createHostCallbacks } from "./app/callbacks.js";
+import { CONTACT_CHAT } from "./app/chat-products.js";
 import { fetchPreimage, gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";
 import {
@@ -343,8 +346,11 @@ const productWorkers = new ProductWorkers({
       chatV2.connect(productId, messagePortBridge(port)),
     disconnect: (productId) => chatV2.disconnect(productId),
   },
-  // Only Contact Chat's worker is served these.
+  // Only the chat products' workers are served these: host requests, and
+  // Nova Chat's own port, which its integration serves.
   invitations: {
+    accepts: (data, ports) =>
+      isProductHello(data, ports) || isNovaHello(data, ports),
     connect: (productId, port) => contactChat.requests.connect(productId, port),
     disconnect: (productId) => contactChat.requests.disconnect(productId),
   },
@@ -523,11 +529,10 @@ const walletChat = new WalletChat({
       observe: statements.invitations,
     }),
   ...(devSession === null ? {} : { replySuite: devSession.replySuite }),
-  ...(chatModality === null
-    ? {}
-    : {
-        products: chatModality.walletProducts(devSession?.probe),
-      }),
+  products:
+    chatModality === null
+      ? [CONTACT_CHAT]
+      : chatModality.walletProducts(devSession?.probe),
 });
 /** Contact Chat in this tab: the invitation demo's test user's, or the signed-in wallet's. */
 const contactChat = devSession?.testChat ?? walletChat.owner;

@@ -6,7 +6,7 @@
  * set CHROMIUM_PATH.
  *
  * What runs for real: the dev server's archive of
- * `src/chat/contact-chat/worker.ts`, the archive check, the
+ * `apps/contact-chat/worker.ts`, the archive check, the
  * ordinary worker loader and frame, the product's TrUAPI storage, the core's
  * contact handles (the ones `contacts.pick` gives, which the host names
  * through the handles the core mints for it), the request service, the v2

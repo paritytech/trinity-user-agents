@@ -6,12 +6,12 @@ import {
   type ChatUserAction,
   type HostChatRoomEventsSubscribeItem,
   type ProductChatUserActionItem,
-} from "../../../../src/chat/draft/contract.js";
+} from "../../../../bridges/chat-v2/contract.js";
 import { ChatV2Host } from "../../../../src/chat/draft/host.js";
 import {
   chatV2Over,
   type ChatV2Product,
-} from "../../../../src/chat/draft/product.js";
+} from "../../../../bridges/chat-v2/product.js";
 import { ChatV2Provider } from "../../../../src/chat/draft/provider.js";
 
 const PRODUCT = "chat.paseo";

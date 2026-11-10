@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Frame, Page } from "playwright-core";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { decodeStatement, statementHash } from "../src/platform/statement.js";
-import { blake2b256 } from "../src/platform/crypto.js";
+import {
+  decodeStatement,
+  statementHash,
+} from "../bridges/primitives/statement.js";
+import { blake2b256 } from "../bridges/primitives/crypto.js";
 import { PEOPLE } from "./support/guarded-posting-harness.js";
 import {
   closeTools,
@@ -751,23 +754,21 @@ describe("guarded best-ready chat in isolated browsers", () => {
             ["bob", beforeB],
           ] as const) {
             const actor = run.chain.actor(name);
+            // Kettle may post something new first; wait for the republish itself.
             await until(
-              () => actor.posts.length > before.length,
+              () =>
+                signatures(actor.posts).some((post) =>
+                  before.some(
+                    (old) =>
+                      bytesToHex(old.statement.data) ===
+                        bytesToHex(post.statement.data) &&
+                      post.statement.expiry > old.statement.expiry &&
+                      post.hash !== old.hash,
+                  ),
+                ),
               "pending product republished",
             );
             expect(actor.claims.length).toBe(1);
-            const after = signatures(actor.posts);
-            expect(
-              after.some((post) =>
-                before.some(
-                  (old) =>
-                    bytesToHex(old.statement.data) ===
-                      bytesToHex(post.statement.data) &&
-                    post.statement.expiry > old.statement.expiry &&
-                    post.hash !== old.hash,
-                ),
-              ),
-            ).toBe(true);
           }
           await bob.reload();
           await ready(bob);

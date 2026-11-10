@@ -8,7 +8,7 @@
  * installs, or set CHROMIUM_PATH).
  *
  * What runs for real: the dev server's archive of
- * `src/chat/nova-chat/worker.ts`, the archive check, the ordinary worker
+ * `apps/nova-chat/worker.ts`, the archive check, the ordinary worker
  * loader and hidden frame, the host's Nova key boundary and its port
  * (`nova-chat/1`), the official apps' request, acceptance and device-route
  * bytes, the core's product accounts, `createProof`, storage and Statement

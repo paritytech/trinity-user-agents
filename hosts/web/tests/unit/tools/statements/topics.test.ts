@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
-import { encodeSigned } from "../../../../src/platform/statement.js";
+import { encodeSigned } from "../../../../bridges/primitives/statement.js";
 import type { StatementTraffic } from "../../../../src/platform/statement-observer.js";
 import {
   inboxTopic,

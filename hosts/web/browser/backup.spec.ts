@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { equalBytes } from "../src/platform/codec.js";
-import { blake2b256 } from "../src/platform/crypto.js";
-import { decodeStatement } from "../src/platform/statement.js";
+import { equalBytes } from "../bridges/primitives/codec.js";
+import { blake2b256 } from "../bridges/primitives/crypto.js";
+import { decodeStatement } from "../bridges/primitives/statement.js";
 import {
   type RunningHost,
   reveal,

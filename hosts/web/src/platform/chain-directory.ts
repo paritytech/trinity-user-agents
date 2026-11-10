@@ -15,7 +15,7 @@ import {
   readBytes,
   readOption,
   utf8,
-} from "./codec.js";
+} from "../../bridges/primitives/codec.js";
 
 /**
  * Read-only lookups the chat needs from chain, at the newest finalized block.

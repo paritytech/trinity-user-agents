@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { encodeSigned } from "../../../src/platform/statement.js";
+import { encodeSigned } from "../../../bridges/primitives/statement.js";
 import { MemoryWorld } from "../../../fixtures/invitations/shared-store.js";
 import { LocalStatementNode } from "../../../fixtures/statements/local-statement-node.js";
 

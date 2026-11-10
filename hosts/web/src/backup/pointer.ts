@@ -1,10 +1,10 @@
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
-import { equalBytes, utf8 } from "../platform/codec.js";
+import { equalBytes, utf8 } from "../../bridges/primitives/codec.js";
 import {
   decodeStatement,
   verifyStatement,
   type Statement,
-} from "../platform/statement.js";
+} from "../../bridges/primitives/statement.js";
 import {
   openPointer,
   sealPointer,

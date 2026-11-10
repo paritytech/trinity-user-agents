@@ -18,7 +18,7 @@ import {
   type ContactHandle,
   type HostMessage,
   type IncomingRequest,
-} from "../../../src/invitations/contract.js";
+} from "../../../bridges/host-requests/contract.js";
 import {
   InvitationService,
   REACH_RETRY_MS,
@@ -31,10 +31,12 @@ import {
   cryptoRandom,
   fromHex,
   fromUtf8,
-  sealTo,
-  sealToXWing,
   toHex,
   utf8,
+} from "../../../bridges/primitives/bytes.js";
+import {
+  sealTo,
+  sealToXWing,
   xwingPair,
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
@@ -44,7 +46,7 @@ import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import {
   simpleText,
   type Pending,
-} from "../../../src/chat/contact-chat/simple-text.js";
+} from "../../../apps/contact-chat/simple-text.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
   LocalDelivery,

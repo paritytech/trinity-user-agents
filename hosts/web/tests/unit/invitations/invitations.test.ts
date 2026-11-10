@@ -26,7 +26,7 @@ import {
   type CallResult,
   type ContactHandle,
   type HostMessage,
-} from "../../../src/invitations/contract.js";
+} from "../../../bridges/host-requests/contract.js";
 import {
   INTENT_TIMEOUT_MS,
   InvitationService,
@@ -39,12 +39,14 @@ import type {
 } from "../../../src/invitations/ports.js";
 import {
   cryptoRandom,
-  digest,
   fromHex,
-  sealTo,
-  sealToXWing,
   toHex,
   utf8,
+} from "../../../bridges/primitives/bytes.js";
+import {
+  digest,
+  sealTo,
+  sealToXWing,
   x25519Pair,
   xwingPair,
 } from "../../../src/invitations/sealing.js";

@@ -78,7 +78,7 @@ describe("a wallet's delivery", () => {
       lists: network.listSuffix,
       submits: network.submits,
       hides: network.hidesWalletContacts,
-      nova: network.novaProblem,
+      nova: network.networkOnlyProblem,
       messages: network.costs(false)?.messages,
       delivery:
         network.hostDelivery(session([]), "0xself") instanceof
@@ -101,7 +101,7 @@ describe("a wallet's delivery", () => {
     expect({
       lists: validate.listSuffix,
       hides: validate.hidesWalletContacts,
-      nova: validate.novaProblem,
+      nova: validate.networkOnlyProblem,
       submits: validate.submits,
       delivery:
         validate.hostDelivery(session([]), "0xself") instanceof
@@ -111,7 +111,7 @@ describe("a wallet's delivery", () => {
     }).toEqual({
       lists: network.listSuffix,
       hides: network.hidesWalletContacts,
-      nova: network.novaProblem,
+      nova: network.networkOnlyProblem,
       submits: false,
       delivery: true,
       messages: null,
@@ -139,7 +139,9 @@ describe("a wallet's delivery", () => {
       costs: null,
       allowance: { answer: "none", submitted: [] },
     });
-    expect(local.novaProblem).toContain("Nova Chat needs the network delivery");
+    expect(local.networkOnlyProblem).toContain(
+      "Nova Chat needs the network delivery",
+    );
   });
 
   test("in this browser with chat claims validated keeps the local lists, and validates each chat account's claim", async () => {
@@ -148,13 +150,13 @@ describe("a wallet's delivery", () => {
     expect({
       lists: localValidate.listSuffix,
       hides: localValidate.hidesWalletContacts,
-      nova: localValidate.novaProblem,
+      nova: localValidate.networkOnlyProblem,
       delivery: localValidate.hostDelivery(session([]), "0xself"),
       request: localValidate.costs(false)?.request,
     }).toEqual({
       lists: local.listSuffix,
       hides: true,
-      nova: local.novaProblem,
+      nova: local.networkOnlyProblem,
       delivery: localDelivery,
       request: "Nothing: the request stays in this browser.",
     });

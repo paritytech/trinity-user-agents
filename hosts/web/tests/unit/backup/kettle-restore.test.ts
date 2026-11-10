@@ -1,6 +1,6 @@
 /**
  * A wallet's backup restores Kettle Chat's real MLS state: Kettle's engine as
- * `npm run build:kettle` builds it (`kettle-chat-wasm/`), run over Kettle
+ * `npm run build:kettle` builds it (`apps/kettle-chat/wasm/`), run over Kettle
  * Chat's own ports and the host's own product storage, with a statement
  * store in memory. Skipped until Kettle is built.
  *
@@ -16,21 +16,21 @@ import { existsSync, readFileSync } from "node:fs";
 import * as sr25519 from "@scure/sr25519";
 import { asProductId, type ProductId } from "@parity/truapi";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
-import { concat, utf8 } from "../../../src/platform/codec.js";
-import { blake2b256 } from "../../../src/platform/crypto.js";
-import { signingPayload } from "../../../src/platform/statement.js";
+import { concat, utf8 } from "../../../bridges/primitives/codec.js";
+import { blake2b256 } from "../../../bridges/primitives/crypto.js";
+import { signingPayload } from "../../../bridges/primitives/statement.js";
 import { HostStorage } from "../../../src/platform/storage.js";
 import {
   KETTLE_GLUE,
   KETTLE_WASM,
   KETTLE_WASM_PACKAGE,
-} from "../../../src/chat/kettle-chat/route.js";
+} from "../../../apps/kettle-chat/route.js";
 import {
   conversationPorts,
   type KettleEvent,
   type KettleModule,
   type KettleNode,
-} from "../../../src/chat/kettle-chat/ports.js";
+} from "../../../apps/kettle-chat/ports.js";
 import {
   applySnapshot,
   collectSnapshot,

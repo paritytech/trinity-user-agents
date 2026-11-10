@@ -1,6 +1,7 @@
 import type { HexString } from "@parity/truapi/scale";
 import { HostContacts, contactHandle } from "../../src/contacts/contacts.js";
-import { digest, toHex } from "../../src/invitations/sealing.js";
+import { toHex } from "../../bridges/primitives/bytes.js";
+import { digest } from "../../src/invitations/sealing.js";
 import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js";
 import {
   TEST_USERS,

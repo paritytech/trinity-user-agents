@@ -1,11 +1,11 @@
-import { equalBytes } from "../../src/platform/codec.js";
+import { equalBytes } from "../../bridges/primitives/codec.js";
 import type {
   AccountNames,
   ChainDirectory,
   PeopleConsumer,
 } from "../../src/platform/chain-directory.js";
 import type { StatementStoreLike } from "../../src/platform/statement-store.js";
-import { decodeStatement } from "../../src/platform/statement.js";
+import { decodeStatement } from "../../bridges/primitives/statement.js";
 import type {
   SubmitResult,
   TopicFilter,

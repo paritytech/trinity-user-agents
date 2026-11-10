@@ -1,5 +1,5 @@
 import { bytesToHex } from "@parity/truapi/scale";
-import { blake2b256 } from "./crypto.js";
+import { blake2b256 } from "../../bridges/primitives/crypto.js";
 import type { ChainProvider, JsonRpcConnection } from "@parity/truapi-host";
 
 /**

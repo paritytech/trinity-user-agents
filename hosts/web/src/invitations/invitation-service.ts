@@ -23,7 +23,7 @@ import {
   type OutgoingView,
   type ProductCall,
   type RequestHandle,
-} from "./contract.js";
+} from "../../bridges/host-requests/contract.js";
 import { Outbox, isPending, type OutgoingRequest } from "./outbox.js";
 import type {
   ContactService,
@@ -35,7 +35,12 @@ import type {
 } from "./ports.js";
 import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import { ReceivedRequests, type ReceivedRequest } from "./received.js";
-import { digest, fromHex, toHex, type RandomBytes } from "./sealing.js";
+import {
+  fromHex,
+  toHex,
+  type RandomBytes,
+} from "../../bridges/primitives/bytes.js";
+import { digest } from "./sealing.js";
 
 /**
  * One user's host side of the proposed request service (`contract.ts`) for

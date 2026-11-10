@@ -28,7 +28,7 @@ import {
   type ChatResource,
   type ChatRoomContact,
   type ProductChatStartConversationRequest,
-} from "./contract.js";
+} from "../../../bridges/chat-v2/contract.js";
 import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
 
 /**

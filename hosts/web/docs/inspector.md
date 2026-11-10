@@ -53,7 +53,7 @@ Every fact has a source tag:
 - `src/platform/statement-observer.ts` wraps every People connection. It reads only `statement_*` traffic, and passes
   every message on unchanged, in order, with no delay.
 - The request service and network delivery report facts (`src/invitations/observer.ts`). Workers may report
-  conversations (`src/products/diagnostics.ts`).
+  conversations (`bridges/diagnostics.ts`).
 
 ### Transport
 

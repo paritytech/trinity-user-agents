@@ -2,8 +2,8 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import type { ChainDirectory } from "../../../src/platform/chain-directory.js";
-import { concat, text } from "../../../src/platform/codec.js";
-import { keyedBlake2b256 } from "../../../src/platform/crypto.js";
+import { concat, text } from "../../../bridges/primitives/codec.js";
+import { keyedBlake2b256 } from "../../../bridges/primitives/crypto.js";
 import {
   openReply,
   openRequest,
@@ -19,10 +19,12 @@ import {
 } from "../../../src/invitations/published-keys.js";
 import {
   cryptoRandom,
-  digest,
   fromHex,
-  sealTo,
   toHex,
+} from "../../../bridges/primitives/bytes.js";
+import {
+  digest,
+  sealTo,
   x25519Agree,
   x25519Pair,
   xwingPair,

@@ -12,7 +12,7 @@ npm run test:browser   # every spec under browser/, in headless Chrome
 - CI runs only `typecheck` and `npm test` (the `host-web` job in `.github/workflows/ci.yml`). The build and browser
   tests need the signing core's WASM bundle. Run them by hand when the host or the core changes.
 - These gates catch a broken host, not a hostile product.
-- [`tests/unit/chat/kettle-chat/wasm.test.ts`](../tests/unit/chat/kettle-chat/wasm.test.ts) runs Kettle's WebAssembly
+- [`tests/unit/apps/kettle-chat/wasm.test.ts`](../tests/unit/apps/kettle-chat/wasm.test.ts) runs Kettle's WebAssembly
   over scripted ports, and [`tests/unit/backup/kettle-restore.test.ts`](../tests/unit/backup/kettle-restore.test.ts)
   restores its real MLS state from a backup. Both are skipped until `npm run build:kettle` has run, so CI skips them.
 

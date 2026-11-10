@@ -28,18 +28,18 @@ import {
 } from "./no-submit.js";
 import type { InvitationObserver } from "../../src/invitations/observer.js";
 import { sessionChatKeys } from "../../src/invitations/chat-keys.js";
-import { cryptoRandom } from "../../src/invitations/sealing.js";
+import { cryptoRandom } from "../../bridges/primitives/bytes.js";
 import { WalletIdentityAuth } from "../../src/invitations/wallet-auth.js";
 import {
   ownIdentityProblem,
   type IdentityProblem,
 } from "../../src/invitations/published-keys.js";
 import { startContactChatHost } from "../../src/invitations/contact-chat-host.js";
+import { CONTACT_CHAT } from "../../src/app/chat-products.js";
+import { NOVA_COSTS } from "../../src/integrations/nova-chat/start.js";
 import {
-  CONTACT_CHAT,
   confirmAccept,
   confirmSend,
-  NOVA_COSTS,
   contactChatOwner,
   type ChatProductSpec,
   type RunningChat,
@@ -62,16 +62,16 @@ import {
 import { novaChat } from "../chat/nova.js";
 import * as sr25519 from "@scure/sr25519";
 import { hexToBytes } from "@parity/truapi/scale";
-import { NovaBoundary } from "../../src/chat/nova-chat/boundary.js";
+import { NovaBoundary } from "../../src/integrations/nova-chat/boundary.js";
 import {
   startNovaChatHost,
   type NovaChatHostOptions,
-} from "../../src/invitations/nova-chat-host.js";
+} from "../../src/integrations/nova-chat/host.js";
 import { deriveHardSecret } from "../../src/invitations/chat-keys.js";
 import { lookupChatIdentity } from "../../src/platform/chain-directory.js";
 import { kettleChat } from "../chat/kettle.js";
 import { backupTestNetwork, type BackupTestNetwork } from "./backup-demo.js";
-import type { IrohRelays } from "../../src/chat/kettle-chat/route.js";
+import type { IrohRelays } from "../../apps/kettle-chat/route.js";
 import type { ChatProductKey } from "../chat/products.js";
 import {
   PART_VERSION,
@@ -110,7 +110,7 @@ import {
  * fixture contacts never reach a wallet's contacts or a transaction it signs.
  *
  * The demo runs the chat products the Chat tab turned on: Contact Chat
- * (`src/chat/contact-chat/`) by default, each a chat worker with its own
+ * (`apps/contact-chat/`) by default, each a chat worker with its own
  * request service. It runs for the test user as an
  * ordinary product worker. The host's Chat shows its conversations and names
  * each person from the contact handle the product holds, through the host's

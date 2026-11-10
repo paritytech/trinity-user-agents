@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
-import { equalBytes } from "../../../src/platform/codec.js";
-import { blake2b256 } from "../../../src/platform/crypto.js";
-import { decodeStatement } from "../../../src/platform/statement.js";
+import { equalBytes } from "../../../bridges/primitives/codec.js";
+import { blake2b256 } from "../../../bridges/primitives/crypto.js";
+import { decodeStatement } from "../../../bridges/primitives/statement.js";
 import { productSlotPrefix } from "../../../src/platform/storage.js";
 import {
   BACKUP_SWITCH_KEY,

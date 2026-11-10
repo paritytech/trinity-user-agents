@@ -4,7 +4,7 @@ import {
   readPayload,
   readPurpose,
   PAYLOAD_MAX_BYTES,
-} from "./contract.js";
+} from "../../bridges/host-requests/contract.js";
 import type {
   AuthEvidence,
   EvidenceKind,
@@ -13,20 +13,22 @@ import type {
   Product,
 } from "./ports.js";
 import {
-  digest,
   fromHex,
   fromUtf8,
+  toHex,
+  utf8,
+  type RandomBytes,
+} from "../../bridges/primitives/bytes.js";
+import {
+  digest,
   isXWingPublic,
   openSealed,
   openXWingSealed,
   sealTo,
   sealToXWing,
-  toHex,
-  utf8,
   x25519Pair,
   xwingPair,
   XWING_PUBLIC_BYTES,
-  type RandomBytes,
 } from "./sealing.js";
 
 /**

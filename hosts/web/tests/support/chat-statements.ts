@@ -1,10 +1,15 @@
 import * as sr25519 from "@scure/sr25519";
-import { signingPayload } from "../../src/platform/statement.js";
-import { blake2b256, sr25519Verify } from "../../src/platform/crypto.js";
-import { concat, fromHex, toHex, utf8 } from "../../src/invitations/sealing.js";
+import { signingPayload } from "../../bridges/primitives/statement.js";
+import { blake2b256, sr25519Verify } from "../../bridges/primitives/crypto.js";
+import {
+  concat,
+  fromHex,
+  toHex,
+  utf8,
+} from "../../bridges/primitives/bytes.js";
 import type { ConversationAllowance } from "../../src/invitations/ports.js";
-import type { Heard, Post } from "../../src/chat/contact-chat/protocol.js";
-import type { Statements } from "../../src/chat/contact-chat/transport.js";
+import type { Heard, Post } from "../../apps/contact-chat/protocol.js";
+import type { Statements } from "../../apps/contact-chat/transport.js";
 
 /**
  * A Statement Store in memory as Contact Chat's products reach it through

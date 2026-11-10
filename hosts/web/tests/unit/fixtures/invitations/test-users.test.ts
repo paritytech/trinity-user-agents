@@ -6,7 +6,7 @@ import {
   deriveChatSecret,
   deriveIdentitySecret,
 } from "../../../../src/invitations/chat-keys.js";
-import { x25519PublicKey } from "../../../../src/platform/crypto.js";
+import { x25519PublicKey } from "../../../../bridges/primitives/crypto.js";
 import {
   TEST_USERS,
   chatContactsOf,

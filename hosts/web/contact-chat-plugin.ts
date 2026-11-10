@@ -4,27 +4,25 @@ import { fileURLToPath } from "node:url";
 import { type Plugin, build } from "vite";
 import { cidToString } from "./src/products/archive/cid.js";
 import { Blocks, car } from "./fixtures/archive/builders.js";
-import {
-  CONTACT_CHAT_PATH,
-  type ContactChatWorkerAnswer,
-} from "./src/chat/contact-chat/route.js";
+import { CONTACT_CHAT_PATH } from "./apps/contact-chat/route.js";
+import type { BundledWorkerAnswer } from "./src/products/worker-manifest.js";
 import {
   KETTLE_CHAT_PATH,
   KETTLE_GLUE,
   KETTLE_WASM,
   KETTLE_WASM_PACKAGE,
-} from "./src/chat/kettle-chat/route.js";
-import { NOVA_CHAT_PATH } from "./src/chat/nova-chat/route.js";
+} from "./apps/kettle-chat/route.js";
+import { NOVA_CHAT_PATH } from "./apps/nova-chat/route.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 
 /** Contact Chat's worker entry module. */
-const ENTRY = "src/chat/contact-chat/worker.ts";
+const ENTRY = "apps/contact-chat/worker.ts";
 
 /** Kettle Chat's worker entry module. */
-const KETTLE_ENTRY = "src/chat/kettle-chat/worker.ts";
+const KETTLE_ENTRY = "apps/kettle-chat/worker.ts";
 /** Nova Chat's worker entry. */
-const NOVA_ENTRY = "src/chat/nova-chat/worker.ts";
+const NOVA_ENTRY = "apps/nova-chat/worker.ts";
 
 /**
  * `1` builds Kettle Chat, and the developer tools' Chat tab that turns it
@@ -93,7 +91,7 @@ function pack(code: string, files: Record<string, Uint8Array> = {}): Built {
   };
 }
 
-const answer = (cid: string, record: string): ContactChatWorkerAnswer => ({
+const answer = (cid: string, record: string): BundledWorkerAnswer => ({
   record,
   cid,
   kind: "car",

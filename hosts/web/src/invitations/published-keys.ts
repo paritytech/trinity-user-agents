@@ -2,7 +2,7 @@ import {
   lookupChatIdentity,
   type ChainDirectory,
 } from "../platform/chain-directory.js";
-import { equalBytes } from "../platform/codec.js";
+import { equalBytes } from "../../bridges/primitives/codec.js";
 import type { WalletKeys } from "./wallet-auth.js";
 
 /**

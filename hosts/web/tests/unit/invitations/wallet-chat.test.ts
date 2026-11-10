@@ -29,6 +29,7 @@ import {
 } from "../../../fixtures/invitations/test-users.js";
 import { memoryDirectory } from "../../support/statement-memory.js";
 import { MemoryStorage } from "../../support/test-support.js";
+import { CONTACT_CHAT } from "../../../src/app/chat-products.js";
 
 /**
  * Contact Chat for the signed-in wallet: over the delivery the page hands it,
@@ -82,7 +83,7 @@ function walletChat(
     showChat: () => {},
     log: (line) => log.push(line),
     delivery: delivery ?? networkDelivery({ log: (line) => log.push(line) }),
-    ...(products === undefined ? {} : { products }),
+    products: products ?? [CONTACT_CHAT],
   };
   return { chat: new WalletChat(deps), log };
 }

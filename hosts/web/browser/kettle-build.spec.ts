@@ -25,12 +25,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Browser } from "playwright-core";
 import { build, preview, type PreviewServer } from "vite";
-import type { ContactChatWorkerAnswer } from "../src/chat/contact-chat/route.js";
+import type { BundledWorkerAnswer } from "../src/products/worker-manifest.js";
 import {
   KETTLE_CHAT_PATH,
   KETTLE_WASM,
   KETTLE_WASM_PACKAGE,
-} from "../src/chat/kettle-chat/route.js";
+} from "../apps/kettle-chat/route.js";
 import { parseCidString, verifyBlock } from "../src/products/archive/cid.js";
 import { SEED_ENV } from "../browse-seed-plugin.js";
 import { KETTLE_CHAT_ENV } from "../contact-chat-plugin.js";
@@ -125,7 +125,7 @@ describe("a build made with Kettle Chat", () => {
     () => {
       const answer = JSON.parse(
         readFileSync(join(outDir, KETTLE_CHAT_PATH), "utf8"),
-      ) as ContactChatWorkerAnswer;
+      ) as BundledWorkerAnswer;
       expect(answer.kind).toBe("car");
       expect(JSON.parse(answer.manifest)).toMatchObject({
         kind: "worker",

@@ -1,12 +1,12 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { JsonRpcConnection } from "@parity/truapi-host";
-import { equalBytes } from "../../src/platform/codec.js";
+import { equalBytes } from "../../bridges/primitives/codec.js";
 import {
   decodeStatement,
   statementHash,
   verifyStatement,
   type SignedStatement,
-} from "../../src/platform/statement.js";
+} from "../../bridges/primitives/statement.js";
 import type { SharedStore } from "../invitations/shared-store.js";
 
 /**

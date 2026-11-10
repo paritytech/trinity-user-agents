@@ -34,10 +34,7 @@ import {
   useInvitationDemo,
   probeChatWorkers,
 } from "./support/fixtures.js";
-import {
-  KETTLE_WASM,
-  KETTLE_WASM_PACKAGE,
-} from "../src/chat/kettle-chat/route.js";
+import { KETTLE_WASM, KETTLE_WASM_PACKAGE } from "../apps/kettle-chat/route.js";
 import { NETWORKS } from "../src/platform/network-config.js";
 
 const STEP_MS = 60_000;

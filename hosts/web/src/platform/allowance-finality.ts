@@ -2,7 +2,7 @@ import { hexToBytes, type HexString } from "@parity/truapi/scale";
 import type { ChainProvider, JsonRpcConnection } from "@parity/truapi-host";
 import { allowanceKey } from "./chain-directory.js";
 import { abortion, readStorageValues } from "./people-chain.js";
-import { Reader } from "./scale-reader.js";
+import { Reader } from "../../bridges/primitives/scale-reader.js";
 
 /**
  * What the People runtime grants a Statement Store account, read at the

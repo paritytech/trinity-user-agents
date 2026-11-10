@@ -2,8 +2,11 @@ import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hexToBytes, type HexString } from "@parity/truapi/scale";
-import { concat, equalBytes, utf8 } from "../platform/codec.js";
-import { cryptoRandom, type RandomBytes } from "../platform/crypto.js";
+import { concat, equalBytes, utf8 } from "../../bridges/primitives/codec.js";
+import {
+  cryptoRandom,
+  type RandomBytes,
+} from "../../bridges/primitives/crypto.js";
 
 /**
  * The backup's keys and envelopes. Every key is derived from the wallet's

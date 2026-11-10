@@ -1,5 +1,5 @@
-import { blake2b256 } from "../../src/platform/crypto.js";
-import { Reader } from "../../src/platform/scale-reader.js";
+import { blake2b256 } from "../../bridges/primitives/crypto.js";
+import { Reader } from "../../bridges/primitives/scale-reader.js";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 
 /**

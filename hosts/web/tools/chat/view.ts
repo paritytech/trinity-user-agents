@@ -19,7 +19,7 @@ import {
 
 /**
  * The inspector's Chat view: the conversations product workers report about
- * themselves (`src/products/diagnostics.ts`), and the host's requests that
+ * themselves (`bridges/diagnostics.ts`), and the host's requests that
  * set them up. The host reads no chat payload to fill it: protocol, counts
  * and protocol details are what a product reported, and say so.
  *

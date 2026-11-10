@@ -1,5 +1,5 @@
 import type { CallSupport, CallView } from "../provider.js";
-import type { ChatRoomCall } from "./contract.js";
+import type { ChatRoomCall } from "../../../bridges/chat-v2/contract.js";
 import type { ChatV2Host } from "./host.js";
 
 const RING_MS = 60_000;

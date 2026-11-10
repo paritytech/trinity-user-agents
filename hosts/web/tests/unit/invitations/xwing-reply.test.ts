@@ -18,16 +18,18 @@ import {
 import { ChatKeys } from "../../../src/invitations/chat-keys.js";
 import type { Person } from "../../../src/invitations/ports.js";
 import {
-  XWING_SEAL_OVERHEAD,
   cryptoRandom,
-  digest,
   fromHex,
+  toHex,
+  utf8,
+} from "../../../bridges/primitives/bytes.js";
+import {
+  XWING_SEAL_OVERHEAD,
+  digest,
   isXWingPublic,
   openXWingSealed,
   sealTo,
   sealToXWing,
-  toHex,
-  utf8,
   x25519Pair,
   xwingPair,
 } from "../../../src/invitations/sealing.js";

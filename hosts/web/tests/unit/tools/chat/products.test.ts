@@ -13,7 +13,7 @@ import {
   irohOfParams,
   irohParams,
   relayUrlOf,
-} from "../../../../src/chat/kettle-chat/route.js";
+} from "../../../../apps/kettle-chat/route.js";
 import { kettleChat } from "../../../../tools/chat/kettle.js";
 
 describe("the chat products a tab runs", () => {

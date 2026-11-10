@@ -1,10 +1,10 @@
 /**
  * A product worker for the browser test of the inspector's Statements view.
- * It posts one diagnostics report (`src/products/diagnostics.ts`) about a
+ * It posts one diagnostics report (`bridges/diagnostics.ts`) about a
  * made-up conversation, as a chat product would, and posts the report again
  * when `window.__diagnosticsWorker.report(state)` is called with a new state.
  */
-import { postDiagnostics } from "../../src/products/diagnostics.js";
+import { postDiagnostics } from "../../bridges/diagnostics.js";
 
 const report = (state: string) =>
   postDiagnostics({

@@ -1,5 +1,5 @@
 import type { ProductId } from "@parity/truapi";
-import type { ContactHandle } from "./contract.js";
+import type { ContactHandle } from "../../bridges/host-requests/contract.js";
 
 /**
  * What the request service needs from the rest of the host. Each is a

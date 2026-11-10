@@ -2,7 +2,7 @@
 
 **Prototype. Not yet tested with a Nova app on a phone.**
 
-Nova Chat (`src/chat/nova-chat/`) is a chat product that speaks the official Nova (Polkadot) apps' person-to-person
+Nova Chat (`apps/nova-chat/`) is a chat product that speaks the official Nova (Polkadot) apps' person-to-person
 chat: their V2 chat requests, their acceptance (`DeviceChatAccepted`, kind 20) and their multi-device route. It runs
 from the developer tools' **Chat** tab (dev server, or a build with `WEB_SIGNING_KETTLE_CHAT=1`), for a signed-in wallet
 over the network, or for the invitation demo over the simulated Statement Store.
@@ -12,11 +12,12 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
 
 ## Who does what
 
-- **The host keeps every key** of the user's (`src/chat/nova-chat/boundary.ts`): the identity's sr25519 key, its chat
-  X25519 key, this device's X25519 key (the `chat-device` ECDH domain), and every secret made from them.
-- **The host** (`src/invitations/nova-chat-host.ts`) reads the identity's request topics with its own Statement Store
-  client, checks each request (statement proof, inner signature, identity proof against the sender's on-chain chat key)
-  and lists it in the Inbox. It sends a request only after **Send** and an acceptance only after **Accept**.
+- **The host keeps every key** of the user's (`src/integrations/nova-chat/boundary.ts`): the identity's sr25519 key, its
+  chat X25519 key, this device's X25519 key (the `chat-device` ECDH domain), and every secret made from them.
+- **The host** (`src/integrations/nova-chat/host.ts`, started by `start.ts`) reads the identity's request topics with
+  its own Statement Store client, checks each request (statement proof, inner signature, identity proof against the
+  sender's on-chain chat key) and lists it in the Inbox. It sends a request only after **Send** and an acceptance only
+  after **Accept**.
 - Each is signed by a notification account the core registers for the day: the apps' `//chat-request//<id>//<day>` and
   `//chat-accept//<their id>//<day>`. Both use the [guarded posting rule](contact-chat.md#allowance-wait). An acceptance
   posted at best establishes the chat locally so either side can write. Its Inbox row stays pending, with its
@@ -44,10 +45,10 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
   once the tries ran out, and **Waiting** once the store took it. A request cancelled under **Sent**, or to a person
   blocked meanwhile, is not submitted.
 - Decline in the Inbox forgets the request, and a repost of it is not listed again.
-- **The worker** (`src/chat/nova-chat/worker.ts`, `session.ts`) keeps the conversations, history, acknowledgements and
+- **The worker** (`apps/nova-chat/worker.ts`, `session.ts`) keeps the conversations, history, acknowledgements and
   retries. It follows its conversations' topics and posts through its own TrUAPI Statement Store, one product account
   per conversation, signed with `createProof`. It knows people only by contact handle.
-- **`nova-chat/1`** (`src/chat/nova-chat/contract.ts`) is the page-local port between them. Draft, not TrUAPI. The host
+- **`nova-chat/1`** (`bridges/nova-chat/contract.ts`) is the page-local port between them. Draft, not TrUAPI. The host
   serves it only to `nova-chat.<suffix>`. The worker asks the host to `request`, `seal` a frame for a person, `open` a
   statement it read, give a conversation account its allowance, and to list its people.
 - The worker posts one conversation's statements one at a time, with a rising expiry per channel. It acknowledges every
@@ -89,7 +90,7 @@ user writes.
 ## Diagnostics (draft)
 
 The worker reports each listed conversation for the [Chat view](inspector.md#chat), over the same
-`product-diagnostics/draft-1` message as Contact Chat (`src/products/diagnostics.ts`), at most twice a second
+`product-diagnostics/draft-1` message as Contact Chat (`bridges/diagnostics.ts`), at most twice a second
 (`NovaSession.diagnostics`).
 
 - Id: the contact handle. Protocol `nova-apps/chat-session`. State: the host's `outgoing`, `incoming`, `established`,
@@ -110,9 +111,11 @@ The worker reports each listed conversation for the [Chat view](inspector.md#cha
 
 ## Tests
 
-- `tests/unit/chat/nova-chat/`: the key boundary's checks, both directions against the independent
-  `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), the host side with the worker session over
-  an in-memory store, and a New chat through the draft bridge whose finality wait outlasts the start's 30 s.
+- `tests/unit/integrations/nova-chat/`: the key boundary's checks, both directions against the independent
+  `tests/unit/fixtures/nova-chat/native-peer.py` (run it with `NOVA_PEER=1`), and the host side with the worker session
+  over an in-memory store.
+- `tests/unit/apps/nova-chat/`: the worker session, and a New chat through the draft bridge whose finality wait outlasts
+  the start's 30 s.
 - [`browser/nova-chat.spec.ts`](../browser/nova-chat.spec.ts): three demo users over the simulated store, both
   directions, with a reload; on Playwright's clock, a Send prompt left open past the start's 30 s, cancelled once and
   then sent; and, with no worker test probe, the Chat view's card through a request, a chat and a reload.

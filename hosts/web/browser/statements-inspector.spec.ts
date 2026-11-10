@@ -49,7 +49,7 @@ const VIEW_PAGE = `<!doctype html>
       import { mountStatementsView } from "/tools/statements/view.ts";
       import { mountChatView } from "/tools/chat/view.ts";
       import { observedConnection } from "/src/platform/statement-observer.ts";
-      import { encodeSigned } from "/src/platform/statement.ts";
+      import { encodeSigned } from "/bridges/primitives/statement.ts";
       import { isNoSubmitRefusal } from "/tools/demos/no-submit.ts";
       import { inboxTopic, periodOf } from "/src/invitations/statement-delivery.ts";
 

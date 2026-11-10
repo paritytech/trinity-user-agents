@@ -1,5 +1,5 @@
 import type { RequestContext } from "./binding.js";
-import type { RequestHandle } from "./contract.js";
+import type { RequestHandle } from "../../bridges/host-requests/contract.js";
 
 /**
  * The requests a user's host received, by the host's own handle for each:

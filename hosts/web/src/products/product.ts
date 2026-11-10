@@ -2,14 +2,15 @@ import { asProductId, type ProductId } from "@parity/truapi";
 import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
-import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "../chat/draft/contract.js";
+import {
+  CHAT_V2_CONNECT,
+  CHAT_V2_DRAFT,
+} from "../../bridges/chat-v2/contract.js";
 import type { FrameTap } from "./tap.js";
 import {
   readDiagnosticsMessage,
   type DiagnosticsReport,
-} from "./diagnostics.js";
-import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
-import { isNovaHello } from "../chat/nova-chat/contract.js";
+} from "../../bridges/diagnostics.js";
 import { readLoadMessage, type ProductLoadSummary } from "./load-observer.js";
 import {
   readConsoleMessage,
@@ -121,11 +122,15 @@ export interface OpenProductOptions {
    */
   onChatV2Port?(port: MessagePort): void;
   /**
-   * Called with the port the frame hands over for invitations
-   * (`src/invitations/contract.ts`). Heard as {@link onChatV2Port} is;
-   * without this the port is closed unanswered.
+   * The page's request services, such as `host-requests/1`
+   * (`bridges/host-requests/contract.ts`): `accepts` says which window
+   * messages hand over a port for them, and `connect` takes that port. Heard
+   * as {@link onChatV2Port} is; without this the message is ignored.
    */
-  onInvitationsPort?(port: MessagePort): void;
+  requestPorts?: {
+    accepts(data: unknown, ports: readonly MessagePort[]): boolean;
+    connect(port: MessagePort): void;
+  };
   /**
    * Called with each console line the frame's worker shell forwards
    * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
@@ -170,7 +175,7 @@ export async function openProduct(
     mounted = false,
     executionKind = "App",
     onChatV2Port,
-    onInvitationsPort,
+    requestPorts,
     onConsole,
     onDiagnostics,
   } = options;
@@ -250,12 +255,8 @@ export async function openProduct(
         return;
       }
     }
-    if (
-      isInvitationsHello(data, event.ports) ||
-      isNovaHello(data, event.ports)
-    ) {
-      if (onInvitationsPort === undefined) event.ports[0].close();
-      else onInvitationsPort(event.ports[0]);
+    if (requestPorts?.accepts(data, event.ports)) {
+      requestPorts.connect(event.ports[0]);
       return;
     }
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
@@ -267,7 +268,7 @@ export async function openProduct(
     onSandboxStatus ||
     onLoadSummary ||
     onChatV2Port ||
-    onInvitationsPort ||
+    requestPorts ||
     onConsole ||
     onDiagnostics
   )

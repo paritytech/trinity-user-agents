@@ -132,6 +132,21 @@ export interface ResolvedWorker {
   startParams?: Readonly<Record<string, string>>;
 }
 
+/**
+ * What the host serves at the path of a worker it builds itself, a chat
+ * product it bundles (`contact-chat-plugin.ts`): a description of the
+ * worker's app archive, whose blocks it serves at `/ipfs/<cid>` on its origin.
+ */
+export interface BundledWorkerAnswer {
+  /** Where the content came from, for the screen. */
+  record: string;
+  /** The archive's CID, whose blocks the host serves at `/ipfs/<cid>`. */
+  cid: string;
+  kind: "car";
+  /** The executable manifest, as a `worker.<name>` text record holds it. */
+  manifest: string;
+}
+
 /** What resolving reads from the outside, so tests can stand in for it. */
 export interface WorkerReaders {
   readCid(record: string): Promise<string | null>;

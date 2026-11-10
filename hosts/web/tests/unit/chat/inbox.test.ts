@@ -2,9 +2,9 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
 import { ChatInbox, type InboxChange } from "../../../src/chat/inbox.js";
-import { messagePortBridge } from "../../../src/chat/draft/contract.js";
+import { messagePortBridge } from "../../../bridges/chat-v2/contract.js";
 import { ChatV2Host } from "../../../src/chat/draft/host.js";
-import { chatV2Over } from "../../../src/chat/draft/product.js";
+import { chatV2Over } from "../../../bridges/chat-v2/product.js";
 import { ProductChat, productChatKey } from "../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../support/test-support.js";
 

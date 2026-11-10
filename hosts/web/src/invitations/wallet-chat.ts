@@ -1,4 +1,3 @@
-import { asProductId } from "@parity/truapi";
 import type {
   NotificationClaim,
   StatementAccountClaim,
@@ -7,10 +6,6 @@ import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import { ask } from "../app/prompt.js";
 import type { PromptField } from "../app/reviews.js";
 import type { ChatV2ProviderOptions } from "../chat/draft/provider.js";
-import {
-  CONTACT_CHAT_PATH,
-  type ContactChatWorkerAnswer,
-} from "../chat/contact-chat/route.js";
 import type { HandleNames } from "../contacts/contacts.js";
 import type { NotificationStore } from "../notifications/notifications.js";
 import type { NotificationActions } from "../notifications/screen.js";
@@ -18,6 +13,7 @@ import type { ChainDirectory } from "../platform/chain-directory.js";
 import type { StatementStoreLike } from "../platform/statement-store.js";
 import {
   parseWorkerManifest,
+  type BundledWorkerAnswer,
   type ResolvedWorker,
 } from "../products/worker-manifest.js";
 import type { ReplySuite } from "./binding.js";
@@ -27,12 +23,6 @@ import {
   type ContactChatHost,
 } from "./contact-chat-host.js";
 import { DirectoryContacts } from "./directory-contacts.js";
-import { NovaBoundary } from "../chat/nova-chat/boundary.js";
-import { deriveHardSecret } from "./chat-keys.js";
-import { lookupChatIdentity } from "../platform/chain-directory.js";
-import { startNovaChatHost } from "./nova-chat-host.js";
-import * as sr25519 from "@scure/sr25519";
-import { hexToBytes } from "@parity/truapi/scale";
 import type { AcceptPrompt, SendPrompt } from "./invitation-service.js";
 import type { InvitationObserver } from "./observer.js";
 import type { Product } from "./ports.js";
@@ -40,8 +30,6 @@ import { ownIdentityProblem } from "./published-keys.js";
 import { WalletIdentityAuth } from "./wallet-auth.js";
 import type { AllowanceGuard } from "../platform/allowance-usable.js";
 import {
-  CHAT_ACCOUNT_COST,
-  conversationAllowance,
   type AllowanceSeen,
   type ChatCosts,
   type WalletDelivery,
@@ -62,12 +50,6 @@ import {
  * How requests travel is the {@link WalletDelivery} the page hands it: the
  * network's (`./wallet-delivery.ts`), or one the dev server's tools chose.
  */
-
-/** Contact Chat's product id and name on a network. */
-export const contactChat = (networkSuffix: string): Product => ({
-  id: asProductId(`contact-chat.${networkSuffix}`),
-  name: "Contact Chat",
-});
 
 /**
  * One chat product the host runs for a session: its product id, where its
@@ -91,20 +73,25 @@ export interface ChatProductSpec {
    */
   allowanceSeen?: AllowanceSeen;
   /**
-   * How it sets up chats. Absent: the host request service
-   * (`host-requests/1`). `nova`: the official Nova apps' own chat requests,
-   * through the host's Nova key boundary (`./nova-chat-host.ts`).
+   * How it sets up chats, for a product with a setup of its own, such as
+   * Nova Chat (`src/integrations/nova-chat/`). Absent: the host request
+   * service (`host-requests/1`).
    */
-  setup?: "nova";
+  start?(context: ChatProductStart): ContactChatHost;
 }
 
-/** Contact Chat, the chat product every session runs. */
-export const CONTACT_CHAT: ChatProductSpec = {
-  product: (networkSuffix) => contactChat(networkSuffix),
-  workerPath: CONTACT_CHAT_PATH,
-  lists: "contact-chat",
-  messagesEncrypted: false,
-};
+/**
+ * What the host lends a chat product that sets up its own chats
+ * ({@link ChatProductSpec.start}): the wallet's session and keys, the people
+ * it knows, and the page's services.
+ */
+export interface ChatProductStart {
+  session: WalletRequestsSession;
+  spec: ChatProductSpec;
+  contacts: DirectoryContacts;
+  keys: ChatKeys;
+  deps: WalletChatDeps;
+}
 
 /** A wallet session the core reports, as Contact Chat's requests need it. */
 export interface WalletRequestsSession {
@@ -171,7 +158,7 @@ export interface ContactChatOwner {
 /** Contact Chat's worker, as the host describes the archive it serves under `base`. */
 export async function resolveContactChatWorker(
   base: string,
-  path: string = CONTACT_CHAT_PATH,
+  path: string,
 ): Promise<ResolvedWorker> {
   const response = await fetch(`${base}${path}`, {
     cache: "no-store",
@@ -180,7 +167,7 @@ export async function resolveContactChatWorker(
     throw new Error(
       `This host does not serve Contact Chat: ${response.status} ${await response.text()}`,
     );
-  const answer = (await response.json()) as ContactChatWorkerAnswer;
+  const answer = (await response.json()) as BundledWorkerAnswer;
   return {
     record: answer.record,
     cid: answer.cid,
@@ -302,11 +289,11 @@ export interface WalletChatDeps {
   /** The reply-key suite of each new request. Absent: the request service's default. */
   replySuite?(): ReplySuite;
   /**
-   * The chat products a developer runs for the wallet on the dev server, the
-   * one New chat starts in first; none runs for an empty list. Absent:
-   * Contact Chat alone.
+   * The chat products the wallet runs, the one New chat starts in first;
+   * none runs for an empty list. The page passes Contact Chat alone
+   * (`src/app/chat-products.ts`) unless the developer tools chose others.
    */
-  products?: readonly ChatProductSpec[];
+  products: readonly ChatProductSpec[];
   /** How the wallet's requests travel, and what that spends. */
   delivery: WalletDelivery;
 }
@@ -334,7 +321,7 @@ export class WalletChat {
 
   /** The chat products the wallet runs, the one New chat starts in first. */
   private products(): readonly ChatProductSpec[] {
-    return this.deps.products ?? [CONTACT_CHAT];
+    return this.deps.products;
   }
 
   /**
@@ -452,14 +439,14 @@ export class WalletChat {
     return this.products().map((spec, index) => {
       const costs = delivery.costs(spec.messagesEncrypted);
       const accounts = delivery.allowance(session, spec.allowanceSeen ?? null);
-      if (spec.setup === "nova")
+      if (spec.start !== undefined)
         return {
           workerPath: spec.workerPath,
           ...(spec.workerParams === undefined
             ? {}
             : { workerParams: spec.workerParams }),
           startsChats: index === 0,
-          host: this.startNova(session, spec, contacts, keys),
+          host: spec.start({ session, spec, contacts, keys, deps: this.deps }),
         };
       return {
         workerPath: spec.workerPath,
@@ -499,116 +486,9 @@ export class WalletChat {
       };
     });
   }
-
-  /**
-   * Nova Chat for `session`: the official Nova apps' chat requests, sealed
-   * and opened by the wallet's keys in the host, read and posted on the
-   * network's Statement Store. It does not run over a delivery that says
-   * why it cannot ({@link WalletDelivery.novaProblem}).
-   */
-  private startNova(
-    session: WalletRequestsSession,
-    spec: ChatProductSpec,
-    contacts: DirectoryContacts,
-    keys: ChatKeys,
-  ): ContactChatHost {
-    const { deps } = this;
-    const { submits: submit } = deps.delivery;
-    const novaProblem = deps.delivery.novaProblem;
-    const product = spec.product(session.networkSuffix);
-    const chatKeyOf = async (account: Uint8Array) =>
-      (await lookupChatIdentity(session.directory, account))?.chatKey ?? null;
-    return startNovaChatHost({
-      product,
-      storageKey: `truapi-web-signing-host:network:${session.network}:nova-chat:${session.walletId}:v1`,
-      boundary: NovaBoundary.fromEntropy(
-        session.entropy,
-        session.networkSuffix,
-        chatKeyOf,
-      ),
-      handles: deps.handles,
-      nameOf: (account) => contacts.nameOf(account),
-      lookupName: async (account) =>
-        (
-          await lookupChatIdentity(
-            session.directory,
-            hexToBytes(account as HexString),
-          ).catch(() => null)
-        )?.name ?? null,
-      onNamesChange: (listener) => deps.names.onChange(listener),
-      blocked: deps.blocked,
-      notifications: deps.notifications,
-      verify: () =>
-        novaProblem !== null
-          ? Promise.resolve({ reason: novaProblem, again: false })
-          : ownIdentityProblem(session.directory, keys),
-      openStore: () => session.openStatementStore(),
-      notificationSigner: (kind, requestId, period) => {
-        const secret = deriveHardSecret(session.entropy, [
-          kind,
-          requestId,
-          String(period),
-        ]);
-        return {
-          public: sr25519.getPublicKey(secret),
-          sign: (payload) => sr25519.sign(secret, payload),
-        };
-      },
-      claimNotification: async (account, period) => {
-        const claim = await session.claimNotificationAccount(account, submit);
-        if (claim.period !== period)
-          throw new Error("the day changed while the account was claimed");
-        if (!submit)
-          throw new Error(
-            `claims are only validated in this tab: today's claim would take slot ${claim.seq}.`,
-          );
-        return {
-          line: `notification account ${claim.outcome} for day ${claim.period}, slot ${claim.seq}.`,
-          seq: claim.seq,
-          ...(claim.collection === undefined
-            ? {}
-            : { collection: claim.collection }),
-          ...(claim.blockHash === undefined
-            ? {}
-            : { blockHash: claim.blockHash }),
-        };
-      },
-      notificationGuard: async (claim, request) => {
-        const usable = await session.usableAllowance(claim, {
-          ...request,
-          wording: {
-            account: "Nova Chat's account",
-            retry: "it may be tried again",
-          },
-        });
-        spec.allowanceSeen?.(usable);
-        return usable;
-      },
-      accounts: conversationAllowance(
-        session,
-        submit,
-        spec.allowanceSeen ?? null,
-      ),
-      confirmSend: (prompt) => confirmSend(prompt, NOVA_COSTS),
-      confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
-      showChat: deps.showChat,
-      onSenders: deps.namedChanged,
-      log: deps.log,
-    });
-  }
 }
 
 const CANCEL = "Cancel it under Sent in your Inbox.";
-
-/** What Nova Chat spends and exposes, for its prompts. Each request and acceptance is posted once. */
-export const NOVA_COSTS: ChatCosts = {
-  summary: "Uses daily slots · Messages are end-to-end encrypted",
-  request: "1 notification slot, once. It is not posted again on a later day.",
-  reply: "1 notification slot, once, for the acceptance.",
-  chat: CHAT_ACCOUNT_COST,
-  messages:
-    "End-to-end encrypted, as the Nova apps do. Who posts, to which topics, when and how much is public.",
-};
 
 /** The chat's costs, under the request's or reply's own line, folded under the summary. */
 function costDetails(

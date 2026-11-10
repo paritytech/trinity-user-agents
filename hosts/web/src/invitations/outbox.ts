@@ -3,7 +3,7 @@ import type {
   ContactHandle,
   OutgoingStatus,
   RequestHandle,
-} from "./contract.js";
+} from "../../bridges/host-requests/contract.js";
 
 /**
  * The requests a user's product sent, as the sender's host keeps them. Host

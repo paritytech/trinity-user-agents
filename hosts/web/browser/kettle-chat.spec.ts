@@ -8,7 +8,7 @@
  * it is skipped.
  *
  * What runs for real: the dev server's archive of
- * `src/chat/kettle-chat/worker.ts` with Kettle's WebAssembly beside it, the
+ * `apps/kettle-chat/worker.ts` with Kettle's WebAssembly beside it, the
  * archive check, the ordinary worker loader and frame, Kettle's engine
  * (`paritytech/kettle-core`) one node per conversation account, the core's
  * product accounts, `createProof`, entropy and storage, the core's
@@ -35,10 +35,7 @@ import {
   TEST_USERS,
   testUserAccount,
 } from "../fixtures/invitations/test-users.js";
-import {
-  KETTLE_WASM,
-  KETTLE_WASM_PACKAGE,
-} from "../src/chat/kettle-chat/route.js";
+import { KETTLE_WASM, KETTLE_WASM_PACKAGE } from "../apps/kettle-chat/route.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 300_000;

@@ -16,9 +16,9 @@ import {
   decodeStatement,
   encodeSigned,
   verifyStatement,
-} from "../../../src/platform/statement.js";
+} from "../../../bridges/primitives/statement.js";
 import type { SubmitResult } from "../../../src/platform/statement-store.js";
-import { toHex } from "../../../src/invitations/sealing.js";
+import { toHex } from "../../../bridges/primitives/bytes.js";
 import { usable } from "../../support/allowance.js";
 
 /**

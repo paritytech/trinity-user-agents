@@ -1,10 +1,10 @@
 import { hexToBytes } from "@parity/truapi/scale";
 import type { ChainDirectory } from "../platform/chain-directory.js";
 import type { HandleNames } from "../contacts/contacts.js";
-import type { ContactHandle } from "./contract.js";
+import type { ContactHandle } from "../../bridges/host-requests/contract.js";
 import type { ContactService, Person } from "./ports.js";
 import { publishedChatKey } from "./published-keys.js";
-import { toHex } from "./sealing.js";
+import { toHex } from "../../bridges/primitives/bytes.js";
 
 /**
  * The request service's people (`ContactService`) over a chain directory:

@@ -1,6 +1,9 @@
 import type { ClaimedAccount } from "./allowance-finality.js";
 import type { AllowanceGuard, UsableAllowance } from "./allowance-usable.js";
-import { decodeStatement, encodeSigned } from "./statement.js";
+import {
+  decodeStatement,
+  encodeSigned,
+} from "../../bridges/primitives/statement.js";
 import { isStored, type SubmitResult } from "./statement-store.js";
 
 /**

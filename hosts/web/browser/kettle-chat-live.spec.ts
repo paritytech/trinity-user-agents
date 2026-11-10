@@ -44,12 +44,9 @@ import {
   decodeStatement,
   statementHash,
   verifyStatement,
-} from "../src/platform/statement.js";
-import type { KettleSubmission } from "../src/chat/kettle-chat/ports.js";
-import {
-  KETTLE_WASM,
-  KETTLE_WASM_PACKAGE,
-} from "../src/chat/kettle-chat/route.js";
+} from "../bridges/primitives/statement.js";
+import type { KettleSubmission } from "../apps/kettle-chat/ports.js";
+import { KETTLE_WASM, KETTLE_WASM_PACKAGE } from "../apps/kettle-chat/route.js";
 
 const LIVE =
   process.env.TRUAPI_LIVE === "1" && process.env.TRUAPI_LIVE_SUBMIT === "1";

@@ -1,17 +1,17 @@
 import type { StatementAccountClaim } from "@parity/truapi-host/web";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
-import { equalBytes, utf8 } from "../platform/codec.js";
+import { equalBytes, utf8 } from "../../bridges/primitives/codec.js";
 import {
   blake2b256,
   cryptoRandom,
   type RandomBytes,
-} from "../platform/crypto.js";
+} from "../../bridges/primitives/crypto.js";
 import {
   decodeStatement,
   encodeSigned,
   signingPayload,
   verifyStatement,
-} from "../platform/statement.js";
+} from "../../bridges/primitives/statement.js";
 import {
   isStored,
   type StatementStoreLike,

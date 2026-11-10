@@ -9,7 +9,7 @@ import type { InvitationEvent } from "../../src/invitations/observer.js";
 import type {
   ConversationDiagnostics,
   DiagnosticsReport,
-} from "../../src/products/diagnostics.js";
+} from "../../bridges/diagnostics.js";
 import { redactUrls } from "../../src/platform/activity.js";
 import { bytesToHex } from "@parity/truapi/scale";
 import {
@@ -41,7 +41,7 @@ import type { PeopleTransport } from "./transport.js";
  * - the core's claim results, as the host received them;
  * - the host's own request service and delivery (`src/invitations/observer.ts`);
  * - grant reads at a block, made on demand;
- * - what a product reported about itself (`src/products/diagnostics.ts`).
+ * - what a product reported about itself (`bridges/diagnostics.ts`).
  *
  * What it derives from them, such as an account's latest observed
  * statements, describes what this tab saw and when, never what the network

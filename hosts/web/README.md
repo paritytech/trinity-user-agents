@@ -150,14 +150,25 @@ answers, real worker archives and an isolated browser clock. It sends nothing ou
 
 ## Layout
 
-- `src/main.ts`: the composition root. `src/app/`: the shell.
-- `src/platform/`: network, storage, wallets, the core's Web Worker, Statement Store access.
-- `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`, `src/backup/`:
-  features.
+Three owners, kept apart by `tests/unit/boundaries.test.ts`:
+
+- `src/`: the host. `src/main.ts` is the composition root and `src/app/` the shell; `src/app/chat-products.ts` names the
+  chat product every build bundles (Contact Chat).
+  - `src/platform/`: network, storage, wallets, the core's Web Worker, Statement Store access.
+  - `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`,
+    `src/backup/`: features. The host side of each bridge lives here too, such as `src/chat/draft/`.
+  - `src/integrations/nova-chat/`: the host side of Nova Chat's own protocol (prototype): the key boundary that holds
+    the user's keys, the request host, and `start.ts`, which the Chat tab's Nova Chat spec hands the host. Only the
+    composition wires it in.
+- `apps/`: the products the host runs, each in its own folder: `contact-chat/`, `kettle-chat/` (with Kettle's engine as
+  WebAssembly in `wasm/`, built with `npm run build:kettle`) and `nova-chat/`. `apps/shared/` is code the chat products
+  share.
+- `bridges/`: what both sides read: the draft contracts between the host and its products (`chat-v2/`, `host-requests/`,
+  `nova-chat/`, `diagnostics.ts`, `worker-probe.ts`) and the pure byte, SCALE, hash and statement code they are written
+  with (`primitives/`).
 - `tools/`: developer tools. `tools/demos/` is dev-server only.
-- `fixtures/`: synthetic data. `tests/`, `browser/`: tests.
-- `*-plugin.ts`: Vite plugins.
-- `kettle-chat-wasm/`: Kettle's engine as WebAssembly, built with `npm run build:kettle`.
+- `fixtures/`: synthetic data and test products. `tests/`, `browser/`: tests.
+- `*-plugin.ts`: Vite plugins. `contact-chat-plugin.ts` builds the bundled chat products' workers.
 
 Rules and the full map: [AGENTS.md](AGENTS.md), [docs/layout.md](docs/layout.md).
 

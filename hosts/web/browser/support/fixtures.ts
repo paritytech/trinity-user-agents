@@ -73,7 +73,7 @@ export function testBrowser(): Promise<Browser> {
 
 /**
  * Start the chat workers of the host tabs in `context` with their test probe
- * (`src/chat/worker/probe.ts`), so a test can read what each keeps on its
+ * (`bridges/worker-probe.ts`), so a test can read what each keeps on its
  * window. Only the dev server's host reads the choice; a build's workers have
  * no probe.
  */

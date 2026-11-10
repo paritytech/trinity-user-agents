@@ -24,17 +24,17 @@ import {
   type UsernameDirectory,
   fixtureDirectory,
 } from "../../src/contacts/username-directory.js";
-import { messagePortBridge } from "../../src/chat/draft/contract.js";
+import { messagePortBridge } from "../../bridges/chat-v2/contract.js";
 import {
   serveConversations,
   type ConversationEngine,
   type ServedConversations,
-} from "../../src/chat/draft/conversations.js";
+} from "../../bridges/chat-v2/conversations.js";
 import { ChatV2Host } from "../../src/chat/draft/host.js";
 import {
   chatV2Over,
   type ChatV2Product,
-} from "../../src/chat/draft/product.js";
+} from "../../bridges/chat-v2/product.js";
 import { ChatV2Provider } from "../../src/chat/draft/provider.js";
 import {
   startSyntheticChatProduct,

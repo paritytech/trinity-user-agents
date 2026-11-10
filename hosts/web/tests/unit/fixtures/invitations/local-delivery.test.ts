@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { IdentityKeys } from "../../../../src/invitations/ports.js";
-import { cryptoRandom } from "../../../../src/invitations/sealing.js";
+import { cryptoRandom } from "../../../../bridges/primitives/bytes.js";
 import {
   LocalDelivery,
   type ReturnRoutes,

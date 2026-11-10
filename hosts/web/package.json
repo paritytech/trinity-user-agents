@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test ./tests/unit --timeout 60000",
     "test:browser": "bun test ./browser --timeout 180000",
-    "build:kettle": "CARGO_TARGET_DIR=\"$PWD/../../target/kettle-chat-wasm\" wasm-pack build kettle-chat-wasm --target web --release --no-typescript --no-pack --out-dir pkg --out-name kettle_chat"
+    "build:kettle": "CARGO_TARGET_DIR=\"$PWD/../../target/kettle-chat-wasm\" wasm-pack build apps/kettle-chat/wasm --target web --release --no-typescript --no-pack --out-dir pkg --out-name kettle_chat"
   },
   "dependencies": {
     "@noble/ciphers": "^2.4.0",

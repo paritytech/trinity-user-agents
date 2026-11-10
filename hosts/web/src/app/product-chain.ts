@@ -4,7 +4,7 @@ import type { HexString } from "@parity/truapi/scale";
 import type { ChainProvider } from "@parity/truapi-host";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import { mapKey, readStorageValues } from "../platform/people-chain.js";
-import { Reader } from "../platform/scale-reader.js";
+import { Reader } from "../../bridges/primitives/scale-reader.js";
 import type { VersionRow } from "./versions.js";
 
 /**

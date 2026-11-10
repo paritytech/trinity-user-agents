@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CONTACT_CHAT } from "../../../../src/invitations/wallet-chat.js";
+import { CONTACT_CHAT } from "../../../../src/app/chat-products.js";
 import {
   WORKER_PROBES_KEY,
   withWorkerProbe,

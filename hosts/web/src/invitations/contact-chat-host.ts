@@ -19,7 +19,7 @@ import type {
 } from "./ports.js";
 import type { InvitationObserver } from "./observer.js";
 import type { ReplySuite } from "./binding.js";
-import { cryptoRandom } from "./sealing.js";
+import { cryptoRandom } from "../../bridges/primitives/bytes.js";
 import type { NotificationStore } from "../notifications/notifications.js";
 import type { IdentityProblem } from "./published-keys.js";
 import type { HostNotification } from "../notifications/notifications.js";

@@ -1,8 +1,8 @@
 # Request service and invitation demo (prototype)
 
-The request service (`host-requests/1`, `src/invitations/contract.ts`) lets two hosts set up a chat. It follows the v3
-"Establish Connection" design: the product gives an opaque payload, and the hosts own the request, the return route and
-the keys, and authenticate both directions. Nothing in it is an agreed API.
+The request service (`host-requests/1`, `bridges/host-requests/contract.ts`) lets two hosts set up a chat. It follows
+the v3 "Establish Connection" design: the product gives an opaque payload, and the hosts own the request, the return
+route and the keys, and authenticate both directions. Nothing in it is an agreed API.
 
 ## API
 
@@ -152,10 +152,11 @@ several people.
 
 ## Code
 
-- `src/invitations/`: `contract.ts`, `ports.ts`, `binding.ts`, `sealing.ts`, `wallet-auth.ts`, `published-keys.ts`,
+- `bridges/host-requests/`: `contract.ts` (the wire contract) and `product.ts` (a product's end of it).
+- `src/invitations/`: `ports.ts`, `binding.ts`, `sealing.ts`, `wallet-auth.ts`, `published-keys.ts`,
   `directory-contacts.ts`, `statement-delivery.ts`, `invitation-service.ts`, `outbox.ts`, `received.ts`,
   `contact-chat-host.ts`, `wallet-chat.ts`, `wallet-delivery.ts`, `chat-keys.ts`, `gate.ts`, `observer.ts`.
 - Dev and test only: `fixtures/invitations/`, `fixtures/notifications/`, `tools/demos/dev-tools.ts`,
   `tools/demos/wallet-deliveries.ts`.
 - End-to-end unit tests: `tests/unit/invitations/invitation-flow.test.ts` (two and three users),
-  `statement-delivery.test.ts` (network delivery, in memory), `tests/unit/chat/contact-chat/contact-chat.test.ts`.
+  `statement-delivery.test.ts` (network delivery, in memory), `tests/unit/apps/contact-chat/contact-chat.test.ts`.

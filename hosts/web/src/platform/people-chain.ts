@@ -2,7 +2,7 @@ import { blake2b } from "@noble/hashes/blake2.js";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChainProvider, JsonRpcConnection } from "@parity/truapi-host";
-import { Reader } from "./scale-reader.js";
+import { Reader } from "../../bridges/primitives/scale-reader.js";
 
 /**
  * Read-only reads of one account's standing on the People chain.

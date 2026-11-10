@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { hexToBytes } from "@parity/truapi/scale";
 import { bytesToHex } from "@parity/truapi/scale";
-import { concat, text } from "../../../src/platform/codec.js";
+import { concat, text } from "../../../bridges/primitives/codec.js";
 import {
   accountNamesKey,
   chatKeyOf,

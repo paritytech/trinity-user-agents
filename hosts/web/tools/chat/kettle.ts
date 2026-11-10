@@ -5,10 +5,10 @@ import {
   KETTLE_CHAT_PATH,
   irohParams,
   type IrohRelays,
-} from "../../src/chat/kettle-chat/route.js";
+} from "../../apps/kettle-chat/route.js";
 
 /**
- * PROTOTYPE. Kettle Chat (`src/chat/kettle-chat/`) as the host runs it when
+ * PROTOTYPE. Kettle Chat (`apps/kettle-chat/`) as the host runs it when
  * the Chat tab (`./products.ts`) turns it on: its product, and a record of
  * where each of its accounts became usable, for its live test.
  */

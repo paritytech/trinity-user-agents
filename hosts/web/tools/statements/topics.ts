@@ -2,7 +2,7 @@ import {
   inboxTopic,
   periodOf,
 } from "../../src/invitations/statement-delivery.js";
-import { toHex } from "../../src/invitations/sealing.js";
+import { toHex } from "../../bridges/primitives/bytes.js";
 import {
   short,
   type StatementLedger,

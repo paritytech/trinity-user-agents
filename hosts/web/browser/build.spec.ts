@@ -23,10 +23,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Browser, Page } from "playwright-core";
 import { build, preview, type PreviewServer } from "vite";
-import {
-  CONTACT_CHAT_PATH,
-  type ContactChatWorkerAnswer,
-} from "../src/chat/contact-chat/route.js";
+import { CONTACT_CHAT_PATH } from "../apps/contact-chat/route.js";
+import type { BundledWorkerAnswer } from "../src/products/worker-manifest.js";
 import {
   cidToString,
   parseCidString,
@@ -125,7 +123,7 @@ describe("the production build", () => {
   test("serves Contact Chat's worker archive itself, and holds none of the dev server's demos or controls", () => {
     const answer = JSON.parse(
       readFileSync(join(outDir, CONTACT_CHAT_PATH), "utf8"),
-    ) as ContactChatWorkerAnswer;
+    ) as BundledWorkerAnswer;
     expect(answer.kind).toBe("car");
     expect(JSON.parse(answer.manifest)).toMatchObject({
       kind: "worker",

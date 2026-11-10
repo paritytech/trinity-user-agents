@@ -2,7 +2,7 @@
 
 **Prototype. It uses the network. Messages are NOT ENCRYPTED.**
 
-Contact Chat (`src/chat/contact-chat/`) is the host's own chat product. It is a worker that knows people only by the
+Contact Chat (`apps/contact-chat/`) is the host's own chat product. It is a worker that knows people only by the
 contact handles that its host gives it. It runs for every wallet signed in from the Account picker, in every build.
 
 Two registered wallets can find each other in Chat's **+** by full username, send a request, accept it in the Inbox and
@@ -151,11 +151,11 @@ Host requests, Nova requests and acceptances, and conversation accounts use the 
 - Protocol details for `simple-text/1`: the last post's batch against the limit (20 messages or 16 KiB), and the 48 h
   expiry. Peers may evict sooner.
 - No report carries message text.
-- A report is a `product-diagnostics/draft-1` window message (`src/products/diagnostics.ts`). The host reads it within
+- A report is a `product-diagnostics/draft-1` window message (`bridges/diagnostics.ts`). The host reads it within
   bounds, assigns it to the sending frame, and acts on none of it. A stopped worker's report is stale.
 - Each chat worker (Contact, Kettle and Nova Chat) says on its console that it runs, why it failed, and the errors it
   reports; Kettle Chat also says which Kettle it loaded. The Workers view shows these lines
-  (`src/chat/worker/probe.ts`).
+  (`bridges/worker-probe.ts`).
 - A worker keeps more for a browser test, such as what it received and its stored record, only with its test probe: the
   dev server built it and the tab asked for it (`tools/demos/worker-probes.ts`). A build's archives hold no probe.
 
@@ -183,12 +183,12 @@ The developer tools' **Chat** tab (`tools/chat/products.ts`) holds them, for thi
 
 ## Kettle Chat (dev server prototype)
 
-The Chat tab's **Kettle Chat** switch runs Kettle Chat (`src/chat/kettle-chat/`), a chat product of its own, alone or
+The Chat tab's **Kettle Chat** switch runs Kettle Chat (`apps/kettle-chat/`), a chat product of its own, alone or
 beside Contact Chat: product id `kettle-chat.<network suffix>` (`kettle-chat.paseo` on Paseo Next v2), its own worker,
 request service and request lists (`…:kettle-chat:sent|received:v1`), and its own storage and conversation accounts,
 which the core keys by the product id. With both on, New chat starts in the product the Chat tab names; each product's
 rooms are listed under its own provider. A request carries its product id, so each host hands it to that product only.
-It runs Kettle (`paritytech/kettle-core`, pinned in `kettle-chat-wasm/Cargo.toml`): MLS groups over Statement Store
+It runs Kettle (`paritytech/kettle-core`, pinned in `apps/kettle-chat/wasm/Cargo.toml`): MLS groups over Statement Store
 outboxes, end-to-end encrypted.
 
 - Build its WebAssembly once: `npm run build:kettle` (Rust, `wasm32-unknown-unknown`, `wasm-pack`, SSH access to the

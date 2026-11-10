@@ -2,13 +2,13 @@ import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha512 } from "@noble/hashes/sha2.js";
 import * as sr25519 from "@scure/sr25519";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
-import { concat, text, u64, utf8 } from "../platform/codec.js";
+import { concat, text, u64, utf8 } from "../../bridges/primitives/codec.js";
 import {
   blake2b256,
   keyedBlake2b256,
   x25519Agree,
   x25519PublicKey,
-} from "../platform/crypto.js";
+} from "../../bridges/primitives/crypto.js";
 import { chatRefusal } from "./gate.js";
 
 /**

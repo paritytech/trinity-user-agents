@@ -1,6 +1,6 @@
 /**
  * A synthetic chat product, written against the Chat Extension v2 draft
- * bridge's product API (`src/chat/draft/product.ts`). It is a test fixture: its
+ * bridge's product API (`bridges/chat-v2/product.ts`). It is a test fixture: its
  * people (Ada, Grace, Lin) and messages are made up and kept in memory, it
  * plays the network with timers, and nothing leaves it. It is not a chat
  * engine and speaks no peer protocol.
@@ -21,8 +21,8 @@ import type {
   ChatMessageBody,
   ChatRoomFeatures,
   HostChatCapabilitiesResponse,
-} from "../../src/chat/draft/contract.js";
-import type { ChatV2Product } from "../../src/chat/draft/product.js";
+} from "../../bridges/chat-v2/contract.js";
+import type { ChatV2Product } from "../../bridges/chat-v2/product.js";
 
 const PEOPLE: Record<string, string> = {
   ada: "Ada",

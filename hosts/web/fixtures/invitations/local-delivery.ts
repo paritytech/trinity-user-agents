@@ -1,14 +1,11 @@
-import { hexBytes } from "../../src/invitations/contract.js";
+import { hexBytes } from "../../bridges/host-requests/contract.js";
 import type {
   DeliveryReceiver,
   HostDelivery,
   IdentityKeys,
 } from "../../src/invitations/ports.js";
-import {
-  digest,
-  toHex,
-  type RandomBytes,
-} from "../../src/invitations/sealing.js";
+import { toHex, type RandomBytes } from "../../bridges/primitives/bytes.js";
+import { digest } from "../../src/invitations/sealing.js";
 import type { SharedStore } from "./shared-store.js";
 
 /**

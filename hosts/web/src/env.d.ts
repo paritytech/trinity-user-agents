@@ -11,7 +11,7 @@ declare global {
   /**
    * Injected by `contact-chat-plugin.ts` into the chat workers it bundles:
    * true when the dev server builds them, so they may install a test probe
-   * (`chat/worker/probe.ts`); false in a build's archives.
+   * (`bridges/worker-probe.ts`); false in a build's archives.
    */
   const __WORKER_PROBE__: boolean;
 }

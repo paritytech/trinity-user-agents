@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
-import { encodeSigned } from "../../../../src/platform/statement.js";
-import { compact, concat, u64 } from "../../../../src/platform/codec.js";
+import { encodeSigned } from "../../../../bridges/primitives/statement.js";
+import { compact, concat, u64 } from "../../../../bridges/primitives/codec.js";
 import {
   readFilter,
   readPage,

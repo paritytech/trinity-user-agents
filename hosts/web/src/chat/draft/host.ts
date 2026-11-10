@@ -30,10 +30,10 @@ import {
   type ProductCalls,
   type ProductMethod,
   type QueryMethod,
-} from "./contract.js";
+} from "../../../bridges/chat-v2/contract.js";
 
 /**
- * The host's end of the Chat Extension v2 draft bridge (`./contract.ts`).
+ * The host's end of the Chat Extension v2 draft bridge (`bridges/chat-v2/contract.ts`).
  *
  * It keeps what each product declared for its rooms (metadata, preview,
  * configuration, features and call), a page cache of each product-source

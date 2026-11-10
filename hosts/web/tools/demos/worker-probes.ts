@@ -1,10 +1,10 @@
-import { PROBE_PARAM } from "../../src/chat/worker/probe.js";
+import { PROBE_PARAM } from "../../bridges/worker-probe.js";
 import type { ChatProductSpec } from "../../src/invitations/wallet-chat.js";
 import type { ChatProductKey } from "../chat/products.js";
 
 /**
  * DEV ONLY. sessionStorage key: the chat products whose workers this tab
- * starts with their test probe (`src/chat/worker/probe.ts`), comma
+ * starts with their test probe (`bridges/worker-probe.ts`), comma
  * separated, such as `contact-chat,kettle-chat`. Absent: none. Only a
  * browser test sets it.
  */
