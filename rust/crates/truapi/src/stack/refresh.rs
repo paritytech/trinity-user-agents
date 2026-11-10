@@ -8,9 +8,9 @@ use core::time::Duration;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use futures::{
-	StreamExt,
+	FutureExt, StreamExt,
 	channel::mpsc,
-	future::{Either, select},
+	future::{Either, pending, select},
 };
 use trinity_stack::{FetchRequest, Served};
 
@@ -28,9 +28,6 @@ const MAX_DESCRIPTOR_BYTES: u32 = 1024 * 1024;
 
 /// How long the host has to answer a fetch before it counts as unreachable.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// How long the loop waits before it asks again whether a fetch is due.
-const DUE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// What a host does for the stack the core runs: fetch its descriptor, and
 /// show what the core reports about it.
@@ -152,7 +149,11 @@ impl Shared {
 					host.stack_changed(reported.clone());
 				}
 			}
-			force = match select(self.timer.sleep(DUE_CHECK_INTERVAL), forced.next()).await {
+			let until_due = match self.source().next_fetch_in(now()) {
+				Some(wait) => self.timer.sleep(wait),
+				None => pending().boxed(),
+			};
+			force = match select(until_due, forced.next()).await {
 				Either::Left(_) => false,
 				Either::Right((Some(()), _)) => true,
 				Either::Right((None, _)) => return,
