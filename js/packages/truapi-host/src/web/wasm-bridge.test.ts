@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
+import type { ReservedValues } from "../runtime.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -145,6 +146,45 @@ suite("real WASM core ↔ createMockHost bridge", () => {
           },
         ),
     ).toThrow("runtimeConfig.stack: stack pointer has no key");
+  });
+
+  it("holds a stack to the reserved values its build adds", async () => {
+    // A build reserves the values of a network it ships so that no other
+    // stack passes for that network. Previewnet runs on `testnet`, so a build
+    // that reserves that TLD or one of previewnet's genesis hashes starts it
+    // only when it allows the stack reserved values.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const envelope = JSON.parse(
+      new TextDecoder().decode(hostConfig.stack.descriptor),
+    );
+    const previewnetGenesis: string = JSON.parse(atob(envelope.payload))
+      .chains[0].genesisHash;
+    const start = (reservedValues: ReservedValues) =>
+      new WasmPairingHostRuntime(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+        },
+        { ...hostConfig, stack: { ...hostConfig.stack, reservedValues } },
+      );
+
+    expect(() => start({ extraTlds: ["testnet"] })).toThrow(
+      "runtimeConfig.stack: stack uses the reserved tld testnet",
+    );
+    expect(() => start({ extraGenesisHashes: [previewnetGenesis] })).toThrow(
+      `runtimeConfig.stack: stack uses the reserved genesis hash ${previewnetGenesis}`,
+    );
+    expect(() =>
+      start({
+        allowed: true,
+        extraTlds: ["testnet"],
+        extraGenesisHashes: [previewnetGenesis],
+      }),
+    ).not.toThrow();
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {

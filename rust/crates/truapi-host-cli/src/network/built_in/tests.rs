@@ -240,13 +240,15 @@ fn test_refresh_expired_error() {
 fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 	for network in Network::value_variants() {
 		let built_in = network.built_in_stack();
-		let bundled = truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, true)
-			.expect("the bundled copy starts an app");
+		let allowed = truapi::platform::ReservedValues { allowed: true, ..Default::default() };
+		let bundled =
+			truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, &allowed)
+				.expect("the bundled copy starts an app");
 		let expected = truapi::platform::Stack::new(
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
-			true,
+			&allowed,
 		);
 
 		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");

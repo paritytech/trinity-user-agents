@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
+		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId, ReservedValues,
 		RuntimeConfigValidationError, SigningHostConfig, Stack,
 	},
 	pocket_cards::PinnedPocketCard,
@@ -47,7 +47,7 @@ pub struct HostRuntimeConfig {
 }
 
 /// The stack a host build ships: its pointer, its signed descriptor, and
-/// whether the build lets it use Polkadot's reserved values.
+/// what the build decides about reserved values for it.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
@@ -56,9 +56,9 @@ pub struct BundledStack {
 	/// The bundled descriptor's bytes, as served: a signed envelope that
 	/// verifies under the pointer's key.
 	pub descriptor: Vec<u8>,
-	/// Whether this build may run a stack that uses Polkadot's genesis hashes
-	/// or the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it.
-	pub allows_reserved_values: bool,
+	/// Whether the stack may name a reserved value, and the values this build
+	/// reserves besides the core's.
+	pub reserved_values: ReservedValues,
 }
 
 /// Trusted identity attached by a native host to one executable connection.
@@ -136,8 +136,8 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = config.stack;
-		let stack = Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+		let BundledStack { pointer, descriptor, reserved_values } = config.stack;
+		let stack = Stack::bundled(&pointer, &descriptor, &reserved_values)
 			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
 		let signing = SigningHostConfig::new(
 			HostInfo {

@@ -29,8 +29,8 @@ use crate::platform::StackChains;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
-	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform, Stack,
+	ProductContext, ProductId, ProductIdError, ProviderError, ReservedValues,
+	RuntimeConfigValidationError, ScannerPlatform, Stack,
 };
 use futures::{
 	channel::mpsc,
@@ -594,19 +594,41 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		.dyn_into::<Uint8Array>()
 		.map_err(|_| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?
 		.to_vec();
-	let allows_reserved_values = get_optional_bool_at(
-		&stack,
-		"allowsReservedValues",
-		"runtimeConfig.stack.allowsReservedValues",
-	)?
-	.unwrap_or(false);
-	Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+	let reserved_values = reserved_values_from_js(&stack, "runtimeConfig.stack.reservedValues")?;
+	Stack::bundled(&pointer, &descriptor, &reserved_values)
 		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
 }
 
+/// A stack's `reservedValues`, at `path`: `allowed`, which defaults to false,
+/// and the `extraGenesisHashes` and `extraTlds` the build reserves besides the
+/// core's, which default to none.
+fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValues, JsValue> {
+	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
+		return Ok(ReservedValues::default());
+	};
+	let entries =
+		|name: &str| get_optional_array_at(&reserved_values, name, &format!("{path}.{name}"));
+	Ok(ReservedValues {
+		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
+			.unwrap_or(false),
+		extra_genesis_hashes: entries("extraGenesisHashes")?
+			.into_iter()
+			.map(|hash| bytes32_from_js(hash, &format!("{path}.extraGenesisHashes")))
+			.collect::<Result<_, _>>()?,
+		extra_tlds: entries("extraTlds")?
+			.into_iter()
+			.map(|tld| {
+				tld.as_string().ok_or_else(|| {
+					JsValue::from_str(&format!("{path}.extraTlds must hold strings"))
+				})
+			})
+			.collect::<Result<_, _>>()?,
+	})
+}
+
 /// `runtimeConfig.testStack`: `network`, `tld`, `people`, `bulletin` and the
-/// optional `assetHub` and `relay`, each `{ genesisHash }`, and
-/// `allowsReservedValues`, which defaults to false.
+/// optional `assetHub` and `relay`, each `{ genesisHash }`, and the optional
+/// `reservedValues`.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {
@@ -632,12 +654,7 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,
-		get_optional_bool_at(
-			stack,
-			"allowsReservedValues",
-			"runtimeConfig.testStack.allowsReservedValues",
-		)?
-		.unwrap_or(false),
+		&reserved_values_from_js(stack, "runtimeConfig.testStack.reservedValues")?,
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
@@ -775,18 +792,33 @@ fn get_optional_bytes32_at(
 	if property.is_null() || property.is_undefined() {
 		return Ok(None);
 	}
-	if let Some(hex) = property.as_string() {
-		return parse_hex32(&hex)
-			.map(Some)
-			.map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
+	bytes32_from_js(property, path).map(Some)
+}
+
+/// A 32-byte value given as a hex string or a `Uint8Array`.
+fn bytes32_from_js(value: JsValue, path: &str) -> Result<[u8; 32], JsValue> {
+	if let Some(hex) = value.as_string() {
+		return parse_hex32(&hex).map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
 	}
-	let array = property
+	let array = value
 		.dyn_into::<Uint8Array>()
 		.map_err(|_| JsValue::from_str(&format!("{path} must be hex or Uint8Array")))?;
 	let bytes = array.to_vec();
-	bytes.try_into().map(Some).map_err(|bytes: Vec<u8>| {
+	bytes.try_into().map_err(|bytes: Vec<u8>| {
 		JsValue::from_str(&format!("{path} must be exactly 32 bytes, got {}", bytes.len()))
 	})
+}
+
+/// The entries of an optional array property, none when it is absent.
+fn get_optional_array_at(value: &JsValue, name: &str, path: &str) -> Result<Vec<JsValue>, JsValue> {
+	let property = Reflect::get(value, &JsValue::from_str(name))?;
+	if property.is_null() || property.is_undefined() {
+		return Ok(Vec::new());
+	}
+	if !Array::is_array(&property) {
+		return Err(JsValue::from_str(&format!("{path} must be an array")));
+	}
+	Ok(Array::from(&property).to_vec())
 }
 
 #[cfg(feature = "test-host")]
@@ -795,7 +827,6 @@ fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
-#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {

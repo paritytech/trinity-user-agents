@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError};
+use truapi::platform::{
+	ChainExtensionVersion, ExtensionVersionMap, ReservedValues, StackChains, StackError,
+};
 
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -159,8 +161,9 @@ impl Stack {
 	/// The stack the core runs on: the descriptor's `network` and TLD, and the
 	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
 	///
-	/// Allows Polkadot's reserved values, which the CLI checks itself, so call
-	/// it only on a stack from [`NetworkSource::resolve_checked`].
+	/// Allows the core's reserved values, which the CLI checks itself, so call
+	/// it only on a stack from [`NetworkSource::resolve_checked`]. The CLI
+	/// reserves none of its own.
 	pub fn core_stack(&self) -> Result<truapi::platform::Stack, StackError> {
 		let genesis = self.genesis();
 		let chains = StackChains {
@@ -173,7 +176,7 @@ impl Stack {
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
-			true,
+			&ReservedValues { allowed: true, ..Default::default() },
 		)
 	}
 

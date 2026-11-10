@@ -101,9 +101,11 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD.
+- `reservedValues` is what the build decides about reserved values, which are
+  Polkadot's genesis hashes and the `dot` TLD plus the `extraGenesisHashes` and
+  `extraTlds` the build adds. A build can only add to the core's list. The core
+  refuses a stack that names a reserved value unless `allowed` is true, which it
+  is only in a Polkadot or Polkadot-fork build.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -612,7 +614,7 @@ let runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer: "polkadotapp://stack?key=0x…&url=…",
         descriptor: try Data(contentsOf: descriptorURL),
-        allowsReservedValues: false
+        reservedValues: ReservedValues(allowed: false, extraGenesisHashes: [], extraTlds: [])
     )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)

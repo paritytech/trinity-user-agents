@@ -3,8 +3,9 @@
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
-//! chain's genesis hash, and answers `get_chain_info`.
+//! link and against the reserved values, the core's and those the build adds in
+//! its [`ReservedValues`]. The [`Stack`] it returns holds the network, the
+//! dotNS TLD and each chain's genesis hash, and answers `get_chain_info`.
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
@@ -46,6 +47,52 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
+
+/// What a host build decides about reserved values for the stack it starts.
+///
+/// The reserved values are the core's own list, Polkadot's genesis hashes and
+/// the `dot` TLD, plus the ones the build names here. A build can only add to
+/// the core's list. A stack that names a reserved value starts only when
+/// `allowed` is set.
+#[derive(Clone, Default)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReservedValues {
+	/// Whether the stack may name a reserved value, the core's or the build's.
+	/// Only a Polkadot or Polkadot-fork build sets it.
+	pub allowed: bool,
+	/// Genesis hashes the build reserves besides the core's.
+	pub extra_genesis_hashes: Vec<[u8; 32]>,
+	/// dotNS TLDs the build reserves besides the core's, without the leading
+	/// dot.
+	pub extra_tlds: Vec<String>,
+}
+
+impl ReservedValues {
+	fn refuse_tld(&self, tld: &str) -> Result<(), StackError> {
+		let is_reserved =
+			tld == RESERVED_TLD || self.extra_tlds.iter().any(|reserved| reserved == tld);
+		if is_reserved && !self.allowed {
+			return Err(StackError::ReservedTld { tld: tld.to_owned() });
+		}
+		Ok(())
+	}
+
+	fn refuse_genesis(
+		&self,
+		genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
+	) -> Result<(), StackError> {
+		let is_reserved = |genesis_hash: &[u8; 32]| {
+			RESERVED_GENESIS_HASHES.contains(genesis_hash) ||
+				self.extra_genesis_hashes.contains(genesis_hash)
+		};
+		match genesis_hashes.into_iter().find(is_reserved) {
+			Some(genesis_hash) if !self.allowed => {
+				Err(StackError::ReservedGenesis { genesis_hash })
+			},
+			_ => Ok(()),
+		}
+	}
+}
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
@@ -108,13 +155,16 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The stack runs on Polkadot's TLD, which this build does not allow.
-	#[display("stack uses Polkadot's reserved tld {RESERVED_TLD}, which this build does not allow")]
-	ReservedTld,
-	/// A chain, under any role, has one of Polkadot's genesis hashes, which
-	/// this build does not allow.
+	/// The stack runs on a reserved TLD, which this build does not allow it.
+	#[display("stack uses the reserved tld {tld}, which this build does not allow")]
+	ReservedTld {
+		/// The reserved TLD.
+		tld: String,
+	},
+	/// A chain, under any role, has a reserved genesis hash, which this build
+	/// does not allow the stack.
 	#[display(
-		"stack uses Polkadot's reserved genesis hash 0x{}, which this build does not allow",
+		"stack uses the reserved genesis hash 0x{}, which this build does not allow",
 		hex::encode(genesis_hash)
 	)]
 	ReservedGenesis {
@@ -126,8 +176,8 @@ pub enum StackError {
 impl Stack {
 	/// The stack a host build bundles: `pointer` is the stack's link
 	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// build ships, and `reserved_values` the values the stack may name only
+	/// when the build allows it.
 	///
 	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
 	/// and `expiresAt` are not checked, because the bundled copy is the only one
@@ -135,16 +185,14 @@ impl Stack {
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValues,
 	) -> Result<Self, StackError> {
 		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
 		if pointer.key().is_none() {
 			return Err(StackError::Unsigned);
 		}
 		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
-		if !allows_reserved_values {
-			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
-		}
+		reserved_values.refuse_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		let genesis_of =
 			|chain: ChainIdentifier| descriptor.chain(chain.into()).map(Chain::genesis);
 		let required = |chain| genesis_of(chain).ok_or(StackError::MissingChain { chain });
@@ -154,7 +202,7 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		Self::new(descriptor.network, descriptor.tld, chains, reserved_values)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -166,7 +214,7 @@ impl Stack {
 		network: String,
 		tld: String,
 		chains: StackChains,
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValues,
 	) -> Result<Self, StackError> {
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
@@ -180,14 +228,9 @@ impl Stack {
 		{
 			return Err(StackError::ZeroGenesis { chain });
 		}
-		if !allows_reserved_values {
-			if tld == RESERVED_TLD {
-				return Err(StackError::ReservedTld);
-			}
-			refuse_reserved_genesis(
-				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
-			)?;
-		}
+		reserved_values.refuse_tld(&tld)?;
+		reserved_values
+			.refuse_genesis([relay, asset_hub].into_iter().flatten().chain([people, bulletin]))?;
 		Ok(Self { network, tld, chains })
 	}
 
@@ -234,15 +277,6 @@ impl Stack {
 				genesis_hash,
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
-	}
-}
-
-fn refuse_reserved_genesis(
-	genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
-) -> Result<(), StackError> {
-	match genesis_hashes.into_iter().find(|hash| RESERVED_GENESIS_HASHES.contains(hash)) {
-		Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
-		None => Ok(()),
 	}
 }
 

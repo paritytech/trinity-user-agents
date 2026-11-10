@@ -85,7 +85,7 @@ class TrUAPIHostRuntimeProviderTest {
     fun `starts the core on the stack its chain environment bundles`() = runTest {
         val started = TestnetEnvironment.entries.associateWith { environment ->
             provider(environment = environment).runtime().getOrThrow()
-            runtimeConfig.captured.stack.let { StartedStack(it.tld(), it.allowsReservedValues) }
+            runtimeConfig.captured.stack.let { StartedStack(it.tld(), it.reservedValues.allowed) }
         }
 
         assertEquals(

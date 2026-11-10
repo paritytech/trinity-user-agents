@@ -540,7 +540,11 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 /// `descriptor` signed, as a native host bundles it.
 fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
-	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
+	crate::native::BundledStack {
+		pointer,
+		descriptor,
+		reserved_values: crate::platform::ReservedValues::default(),
+	}
 }
 
 pub fn native_execution_config(
@@ -1845,7 +1849,7 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 }
 
 #[test]
-fn runtime_config_passes_the_reserved_values_flag_through() {
+fn runtime_config_passes_the_reserved_values_through() {
 	// A testnet build must not run a stack on `dot`; a Polkadot build may.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], None,
@@ -1854,7 +1858,7 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 		stack: stack.clone(),
 		..native_host_runtime_config()
 	});
-	stack.allows_reserved_values = true;
+	stack.reserved_values.allowed = true;
 	let allowed = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
 		stack,
 		..native_host_runtime_config()
@@ -1864,11 +1868,33 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 		(refused.err(), allowed.map(|resolved| resolved.signing.stack.tld().to_owned()).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
-				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+				reason: "stack uses the reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
 			Some("dot".to_string()),
 		),
+	);
+}
+
+#[test]
+fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
+	// A build that reserves a TLD of its own must not start another stack on
+	// it.
+	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa1; 32], [0xb2; 32], None,
+	));
+	stack.reserved_values.extra_tlds = vec!["paseo".to_string()];
+	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
+		stack,
+		..native_host_runtime_config()
+	});
+
+	assert_eq!(
+		refused.err(),
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: "stack uses the reserved tld paseo, which this build does not allow"
+				.to_string(),
+		}),
 	);
 }
 
