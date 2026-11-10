@@ -89,6 +89,8 @@ fn every_body_rule_refuses_with_invalid_source() {
 		"vec3 material(vec2 uv) {\n  return vec3(1.0);\n}".to_string(),
 		format!("{ENTRY}\nvec4 material(float x) {{\n  return vec4(x);\n}}"),
 		"vec4 shade(vec2 uv) {\n  return vec4(1.0);\n}".to_string(),
+		format!("uni\\\nform float k;\n{ENTRY}"),
+		format!("/* a *\\\n/ uniform float k; */\n{ENTRY}"),
 	];
 	for keyword in ["uniform", "layout", "attribute", "varying", "buffer", "shared", "precision"] {
 		refused.push(format!("{keyword} float k;\n{ENTRY}"));

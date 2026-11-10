@@ -44,7 +44,10 @@ enum Token<'a> {
 
 /// Whether `body` keeps every body rule and declares `vec4 material(vec2)`.
 pub fn follows_body_rules(body: &str) -> bool {
-	let Some(tokens) = tokenize(body) else {
+	// The compiler joins a line ending in a backslash to the next before reading
+	// anything, so a banned word or a comment's end can be split across lines.
+	let joined = body.replace("\\\n", "");
+	let Some(tokens) = tokenize(&joined) else {
 		return false;
 	};
 	let words_allowed = tokens.iter().all(|token| match token {
