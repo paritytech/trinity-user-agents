@@ -66,6 +66,8 @@ mod stack;
 #[cfg(feature = "smoldot")]
 mod storage;
 #[cfg(all(test, feature = "smoldot"))]
+mod test_specs;
+#[cfg(all(test, feature = "smoldot"))]
 mod test_stack;
 #[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
 mod tls;

@@ -101,9 +101,7 @@ pub fn known_networks() -> impl Iterator<Item = &'static str> {
 }
 
 fn genesis(chain: &ChainDef) -> Result<[u8; 32], ProviderError> {
-	hex::decode(chain.genesis_hex.trim_start_matches("0x"))
-		.ok()
-		.and_then(|bytes| bytes.try_into().ok())
+	crate::config::genesis_from_hex(chain.genesis_hex)
 		.ok_or_else(|| ProviderError::MalformedGenesis { hex: chain.genesis_hex.to_owned() })
 }
 

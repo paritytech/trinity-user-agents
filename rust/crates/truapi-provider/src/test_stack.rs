@@ -6,8 +6,8 @@ use trinity_stack::Descriptor;
 
 use crate::LightStack;
 
-pub const RELAY_SPEC: &str = include_str!("../tests/fixtures/paseo.json");
-pub const PEOPLE_SPEC: &str = include_str!("../tests/fixtures/paseo_people.json");
+pub use crate::test_specs::{PARACHAIN_SPEC as PEOPLE_SPEC, RELAY_SPEC};
+
 pub const ASSET_HUB_SPEC: &str = include_str!("../networks/paseo-next-v2-asset-hub.json");
 
 /// What identifies the test stack.

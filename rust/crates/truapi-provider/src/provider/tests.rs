@@ -83,24 +83,19 @@ fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
 	);
 }
 
-/// A relay and a parachain on it, registered under made-up genesis hashes: the
-/// registry keys a chain by whatever hash its host names.
-#[cfg(feature = "smoldot")]
-const RELAY: [u8; 32] = [1; 32];
-#[cfg(feature = "smoldot")]
-const PARACHAIN: [u8; 32] = [2; 32];
-#[cfg(feature = "smoldot")]
-const RELAY_SPEC: &str = include_str!("../../tests/fixtures/paseo.json");
-#[cfg(feature = "smoldot")]
-const PARACHAIN_SPEC: &str = include_str!("../../tests/fixtures/paseo_people.json");
-
 /// The parachain with `parachain_spec`, its relay seeded with a blob.
 #[cfg(feature = "smoldot")]
 fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainProvider {
+	use crate::test_specs::{PARACHAIN_GENESIS, RELAY_GENESIS, RELAY_SPEC};
+
 	EmbeddedChainProvider::builder()
-		.chain(RELAY, ChainSource::light_client(RELAY_SPEC).build())
-		.parachain(PARACHAIN, ChainSource::light_client(parachain_spec).build(), RELAY)
-		.database(RELAY, "relay-blob".to_owned())
+		.chain(RELAY_GENESIS, ChainSource::light_client(RELAY_SPEC).build())
+		.parachain(
+			PARACHAIN_GENESIS,
+			ChainSource::light_client(parachain_spec).build(),
+			RELAY_GENESIS,
+		)
+		.database(RELAY_GENESIS, "relay-blob".to_owned())
 		.build()
 }
 
@@ -109,12 +104,14 @@ fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainP
 #[cfg(feature = "smoldot")]
 #[test]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
+	use crate::test_specs::{PARACHAIN_GENESIS, PARACHAIN_SPEC, RELAY_GENESIS};
+
 	let provider = parachain_with_a_seeded_relay(PARACHAIN_SPEC);
 
-	let _connection = futures::executor::block_on(provider.connect(PARACHAIN))
+	let _connection = futures::executor::block_on(provider.connect(PARACHAIN_GENESIS))
 		.expect("the parachain syncs through its relay");
 
-	assert!(!provider.has_database(RELAY), "the relay took its blob");
+	assert!(!provider.has_database(RELAY_GENESIS), "the relay took its blob");
 }
 
 /// The relay is the chain that warp syncs, so losing its blob to a parachain
@@ -122,11 +119,13 @@ fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 #[cfg(feature = "smoldot")]
 #[test]
 fn a_failed_parachain_connect_keeps_the_relays_blob() {
+	use crate::test_specs::{PARACHAIN_GENESIS, RELAY_GENESIS};
+
 	let provider = parachain_with_a_seeded_relay("not a chain spec");
 
-	assert!(futures::executor::block_on(provider.connect(PARACHAIN)).is_err());
+	assert!(futures::executor::block_on(provider.connect(PARACHAIN_GENESIS)).is_err());
 
-	assert!(provider.has_database(RELAY));
+	assert!(provider.has_database(RELAY_GENESIS));
 }
 
 /// The snapshot round trip resolves against a live light client, and the
