@@ -1,0 +1,58 @@
+import { Badge, Tabs } from '@novasamatech/tr-ui';
+
+import { TEST_IDS } from '@/shared/test-ids';
+import { useTranslation } from '@/shared/translation';
+import { type Environment } from '@/domains/application';
+import { type Chain, type ConnectionMode, connectionService, useChainConnectionMode } from '@/domains/network';
+import { networkConnectionService } from '../service';
+
+type Props = {
+  chain: Chain;
+  environment: Environment | null;
+  onModeRequested: (chain: Chain, mode: ConnectionMode) => void;
+};
+
+export const ChainConnectionRow = ({ chain, environment, onModeRequested }: Props) => {
+  const { t } = useTranslation();
+  const mode = useChainConnectionMode(chain.genesisHash);
+
+  const roles = networkConnectionService.rolesForChain(chain.genesisHash, environment);
+
+  const handleChange = (raw: string) => {
+    if (!connectionService.isConnectionMode(raw) || raw === mode.effective) return;
+
+    onModeRequested(chain, raw);
+  };
+
+  return (
+    <div data-testid={TEST_IDS.networkConnectionChainRow} className="flex items-center gap-4 rounded-xl py-2 pr-3 pl-10">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate text-sm leading-5 text-fg-primary">{chain.name}</span>
+        <div className="flex items-center gap-1">
+          {roles.map(role => (
+            <Badge key={role} variant="secondary">
+              {t(`feature.networkConnection.role.${role}`)}
+            </Badge>
+          ))}
+          {/* A network with no bundled chain spec cannot serve a light client — say
+              so rather than leaving a tab that silently resolves to the other one. */}
+          {!mode.lightClientAvailable && (
+            <span className="truncate text-xs leading-4 text-fg-tertiary">{t('feature.networkConnection.noLightClient')}</span>
+          )}
+        </div>
+      </div>
+      {/* `effective`, not `requested`: a network that cannot serve a light client
+          must show the tab it is actually on, not the one it asked for. */}
+      {/* `manual`: Radix activates a focused tab by default, so arrowing across the
+          row would ask to restart the app without the user choosing anything. */}
+      <Tabs activationMode="manual" value={mode.effective} onValueChange={handleChange}>
+        <Tabs.List data-testid={TEST_IDS.networkConnectionChainTabs}>
+          <Tabs.Trigger disabled={!mode.lightClientAvailable} value="light-client">
+            {t('feature.networkConnection.mode.lightClient')}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="rpc">{t('feature.networkConnection.mode.rpc')}</Tabs.Trigger>
+        </Tabs.List>
+      </Tabs>
+    </div>
+  );
+};

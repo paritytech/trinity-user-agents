@@ -1,0 +1,232 @@
+name: PR Build (manual)
+
+# Manually build installable artifacts from a PR's head commit and post a
+# sticky comment on the PR with a link to download them. Independent from the
+# release-pipeline / create-release-tag workflows: only fires on
+# workflow_dispatch and never publishes to GitHub Releases or Telegram.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        type: string
+        description: PR number to build and comment on (required)
+        required: true
+      version_label:
+        type: string
+        description: Optional version suffix (e.g. "alpha1"). Defaults to pr<N>.<short_sha>.
+        required: false
+      build_type:
+        type: choice
+        description: Build type. "dev" keeps dev/test affordances (network picker, onboarding skip) that production builds hide; "production" matches release builds.
+        options:
+          - dev
+          - production
+        default: dev
+      build_macos:
+        type: boolean
+        description: Build macOS (signed + notarized)
+        default: true
+      build_linux_x64:
+        type: boolean
+        description: Build Linux x64 AppImage
+        default: true
+      build_linux_arm64:
+        type: boolean
+        description: Build Linux arm64 AppImage
+        default: true
+      build_windows:
+        type: boolean
+        description: Build Windows installer (unsigned)
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: build-pr-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: '--max-old-space-size=8192'
+  CI: true
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Resolve PR head commit
+        id: pr
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            core.setOutput('head_sha', pr.data.head.sha);
+
+      - name: Checkout PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+
+      - name: Compute version
+        id: version
+        shell: bash
+        env:
+          LABEL: ${{ github.event.inputs.version_label }}
+          SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          SHORT_SHA=$(printf '%s' "$SHA" | cut -c1-7)
+          if [ -n "$LABEL" ]; then
+            CLEAN=$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9.-' '-' | sed 's/^-*//; s/-*$//')
+          else
+            CLEAN="pr${PR_NUMBER}.${SHORT_SHA}"
+          fi
+          echo "version=${BASE}-${CLEAN}" >> "$GITHUB_OUTPUT"
+
+      - name: Build matrix
+        id: matrix
+        shell: bash
+        env:
+          MAC: ${{ github.event.inputs.build_macos }}
+          LX64: ${{ github.event.inputs.build_linux_x64 }}
+          LARM: ${{ github.event.inputs.build_linux_arm64 }}
+          WIN: ${{ github.event.inputs.build_windows }}
+        run: |
+          ENTRIES=()
+          if [ "$MAC" = "true" ]; then ENTRIES+=('{"os":"parity-macos","arch":"","artifact_suffix":"macOS"}'); fi
+          if [ "$LX64" = "true" ]; then ENTRIES+=('{"os":"ubuntu-latest","arch":"--x64","artifact_suffix":"Linux-x64"}'); fi
+          if [ "$LARM" = "true" ]; then ENTRIES+=('{"os":"ubuntu-24.04-arm","arch":"--arm64","artifact_suffix":"Linux-arm64"}'); fi
+          if [ "$WIN" = "true" ]; then ENTRIES+=('{"os":"windows-latest","arch":"","artifact_suffix":"Windows"}'); fi
+          if [ ${#ENTRIES[@]} -eq 0 ]; then
+            echo "No platforms selected." >&2
+            exit 1
+          fi
+          JOINED=$(IFS=,; echo "${ENTRIES[*]}")
+          echo "matrix={\"include\":[${JOINED}]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.artifact_suffix }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Build app
+        uses: ./.github/actions/build-app
+        with:
+          apple_id: ${{ secrets.APPLE_ID }}
+          apple_app_specific_password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          apple_team_id: ${{ secrets.APPLE_TEAM_ID }}
+          apple_certificate_base64: ${{ secrets.CERTIFICATE_OSX_APPLICATION }}
+          apple_certificate_password: ${{ secrets.CERTIFICATE_PASSWORD }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          update_repo_owner: ${{ vars.UPDATE_REPO_OWNER }}
+          update_repo_name: ${{ vars.UPDATE_REPO_NAME }}
+          auto_update_url: ${{ secrets.AUTO_UPDATE_URL }}
+          app_id: ${{ vars.APP_ID }}
+          product_name: ${{ vars.PRODUCT_NAME }}
+          app_name: ${{ vars.APP_NAME }}
+          app_id_develop: ${{ vars.APP_ID_DEVELOP }}
+          product_name_develop: ${{ vars.PRODUCT_NAME_DEVELOP }}
+          app_name_develop: ${{ vars.APP_NAME_DEVELOP }}
+          app_author: ${{ vars.APP_AUTHOR }}
+          environments: ${{ vars.VITE_ENVIRONMENTS }}
+          firebase_api_key: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          firebase_project_id: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          firebase_app_id: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          webrtc_turn_host: ${{ secrets.VITE_WEBRTC_TURN_HOST }}
+          webrtc_turn_secret: ${{ secrets.VITE_WEBRTC_TURN_SECRET }}
+          webrtc_turn_ttl: ${{ secrets.VITE_WEBRTC_TURN_TTL }}
+          sandbox_ipfs_allowlist: ${{ secrets.SANDBOX_IPFS_ALLOWLIST }}
+          sandbox_relay_allowlist: ${{ secrets.SANDBOX_RELAY_ALLOWLIST }}
+          version: ${{ needs.prepare.outputs.version }}
+          build_type: ${{ github.event.inputs.build_type }}
+          include_dist_artifacts: true
+          arch: ${{ matrix.arch }}
+          artifact_suffix: ${{ matrix.artifact_suffix }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          sentry_org: ${{ secrets.SENTRY_ORG }}
+          sentry_project: ${{ secrets.SENTRY_PROJECT }}
+          sentry_required: 'false'
+
+  comment:
+    name: Post PR comment
+    needs: [prepare, build]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upsert sticky comment on PR
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          BUILD_TYPE: ${{ github.event.inputs.build_type }}
+        with:
+          script: |
+            const marker = '<!-- pr-build-comment -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const result = process.env.BUILD_RESULT;
+            const heading = result === 'success'
+              ? 'PR build succeeded'
+              : `PR build finished (status: ${result})`;
+            const body = [
+              marker,
+              `### ${heading}`,
+              ``,
+              `- **Version:** \`${process.env.VERSION}\``,
+              `- **Build type:** \`${process.env.BUILD_TYPE}\` ${process.env.BUILD_TYPE === 'production' ? '' : '(dev/test affordances enabled)'}`,
+              `- **Commit:** \`${process.env.HEAD_SHA}\``,
+              `- **Run:** [#${context.runId}](${runUrl})`,
+              `- **Download:** open the [run artifacts](${runUrl}#artifacts) section and grab \`build-artifacts-*\` (one per platform).`,
+              ``,
+              `_Artifact links require a GitHub account with read access to this repo. macOS is signed + notarized; Windows is unsigned (SmartScreen will warn on first launch)._`,
+            ].join('\n');
+
+            const pr_number = Number(process.env.PR_NUMBER);
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr_number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr_number,
+                body,
+              });
+            }

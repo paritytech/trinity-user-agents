@@ -166,6 +166,7 @@ ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over Un
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
 hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
+hosts/desktop/             Desktop host app (Electron)
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README

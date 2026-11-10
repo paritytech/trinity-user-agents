@@ -1,0 +1,1225 @@
+{
+  "common": {
+    "action": {
+      "back": "Geri",
+      "moreDetails": "Daha fazla ayrıntı",
+      "hideDetails": "Ayrıntıları gizle",
+      "cancel": "İptal",
+      "allow": "İzin ver",
+      "skip": "Atla (yalnızca geliştirici)",
+      "sign": "İmzala",
+      "signing": "İmzalanıyor...",
+      "reply": "Yanıtla",
+      "copyText": "Metni kopyala",
+      "forward": "İlet",
+      "select": "Seç",
+      "delete": "Sil",
+      "add": "Ekle",
+      "search": "Ara...",
+      "writeMessage": "Bir mesaj yaz...",
+      "retry": "Yeniden dene",
+      "disconnect": "Bağlantıyı kes",
+      "all": "Tümü",
+      "electronics": "Elektronik",
+      "fashion": "Moda",
+      "downloadLogs": "Günlükleri indir"
+    },
+    "label": {
+      "signer": "İmzalayan",
+      "chain": "Zincir",
+      "method": "Yöntem",
+      "arguments": "Argümanlar",
+      "callData": "Çağrı verisi",
+      "message": "Mesaj"
+    },
+    "status": {
+      "loading": "Yükleniyor...",
+      "noProductFound": "Ürün bulunamadı",
+      "unknownUser": "Bilinmeyen kullanıcı",
+      "online": "çevrimiçi",
+      "live": "Canlı",
+      "daysLeft": "{count} gün kaldı"
+    },
+    "error": {
+      "somethingWentWrong": "Hay aksi! Bir şeyler ters gitti",
+      "tryAgain": "Lütfen yeniden dene ya da daha sonra tekrar gel",
+      "logsHelpText": "Günlükleri geliştiricilerle paylaşmak bu sorunun çözülmesine yardımcı olur"
+    },
+    "aria": {
+      "openFullscreen": "Tam ekranda aç",
+      "reloadWidget": "Widget'ı yeniden yükle",
+      "close": "Kapat",
+      "clear": "Temizle",
+      "reload": "Yeniden yükle"
+    },
+    "cancel": "İptal",
+    "web3summitEnded": {
+      "ariaLabel": "Web3 Summit sona erdi",
+      "title": "Web3 Summit sona erdi",
+      "subtitle": "Yeni gelişmeler için takipte kal"
+    }
+  },
+  "feature": {
+    "favorites": {
+      "title": "Favoriler",
+      "searchPlaceholder": "Ara",
+      "searchAriaLabel": "Favorilerde ara",
+      "emptyTitle": "Henüz favori uygulama yok",
+      "emptyDescription": "Favori uygulamalarını kaydet, hızlıca eriş",
+      "browseApps": "Uygulamalara göz at",
+      "searchNoResults": {
+        "title": "Sonuç yok",
+        "description": "Aramanı değiştirmeyi dene."
+      },
+      "openFullscreenAria": "Favorileri aç",
+      "addAria": "Favorilere ekle",
+      "removeAria": "Favorilerden çıkar",
+      "addDialog": {
+        "title": "Favorilere ekle",
+        "searchPlaceholder": "Ara",
+        "searchAriaLabel": "Ürünlerde ara",
+        "loadingAria": "Uygulamalar yükleniyor",
+        "nothingToAdd": {
+          "title": "Eklenecek bir şey yok",
+          "description": "Mevcut tüm uygulamalar zaten favorilerinde"
+        },
+        "noResults": {
+          "title": "Sonuç yok",
+          "description": "Aramanı değiştirmeyi dene."
+        },
+        "error": {
+          "title": "Bir şeyler ters gitti",
+          "retry": "Yeniden dene"
+        }
+      }
+    },
+    "call": {
+      "audioCall": "Sesli arama",
+      "videoCall": "Görüntülü arama",
+      "returnToCall": "Aramaya dön"
+    },
+    "browser": {
+      "addressPlaceholder": "{tld} adresi gir",
+      "navigationBackAria": "Geri git",
+      "navigationForwardAria": "İleri git",
+      "addressWelcome": "Polkadot'a hoş geldin! Buraya bir .dot adresi gir",
+      "removeFromDashboard": "Ürünü panodan kaldır",
+      "addressSuggestions": "Tüm uygulamalar",
+      "addressNoResults": "Uygulama bulunamadı",
+      "recentlyOpened": "Son açılanlar",
+      "recentClearedTitle": "Son açılan sekmeler başarıyla temizlendi",
+      "undoLabel": "Geri al {seconds} sn",
+      "ramUsage": "RAM kullanımı: {value}",
+      "ramUsageUnavailable": "RAM kullanımı: —",
+      "newTab": "Yeni sekme",
+      "newTabPrompt": "{tld} adresi gir",
+      "closeTab": "Sekmeyi kapat",
+      "signTransaction": "İşlemi imzala",
+      "signingRequestTitle": "{call} imzalama isteği",
+      "operationTitle": {
+        "utilityBatchAll": "Utility Batch All",
+        "utilityBatch": "Utility Batch",
+        "utilityForceBatch": "Utility Force Batch"
+      },
+      "batchBehavior": {
+        "revertOnError": "Dahil edilen işlemler hata durumunda geri alınır",
+        "executeUntilError": "Dahil edilen işlemler hata oluşana kadar yürütülür",
+        "ignoreErrors": "Dahil edilen işlemler hataları yok sayar"
+      },
+      "signMessageRequestTitle": "Ham mesaj imzalama isteği",
+      "rawMessageNotReadableCaption": "Bu mesaj okunabilir bir biçimde gösterilemiyor",
+      "copyMessage": "Mesajı kopyala",
+      "account": "Hesap",
+      "accountAddress": "Hesap adresi",
+      "network": "Ağ",
+      "networkFee": "Ağ ücreti",
+      "transactionDetailsTitle": "İşlem ayrıntıları",
+      "copyArguments": "Argümanları kopyala",
+      "copyCallData": "Çağrı verisini kopyala",
+      "signingByAppAccount": "{index} indeksli uygulama hesabıyla imzalanıyor",
+      "accountAddressUnavailable": "Hesap adresi kullanılamıyor — Polkadot App'i yeniden bağla",
+      "copyAccountAddress": "Hesap adresini kopyala",
+      "polkadotAppHint": "Bir işlemi imzalamak için lütfen Polkadot App'i aç",
+      "polkadotAppRawMessageHint": "Bu mesajı imzalamak için lütfen Polkadot App'i aç",
+      "continueToSign": "Devam",
+      "signPolkadotAppTitle": "İşlemi imzala",
+      "signPolkadotAppLine1": "Cihazında Polkadot uygulamasını aç,",
+      "signPolkadotAppLine2": "ardından İmzala veya Reddet'e dokun",
+      "signPolkadotAppDeviceLabel": "Polkadot App",
+      "signPolkadotAppSignButton": "İmzala",
+      "signPolkadotAppRejectButton": "Reddet",
+      "signPolkadotAppValidFor": "{time} boyunca geçerli",
+      "openMobileAppTitle": "Mobil uygulamayı aç",
+      "openMobileAppLine1": "Polkadot uygulamasının kurulu olduğundan emin ol,",
+      "openMobileAppLine2": "sonra devam etmek için uygulamayı aç",
+      "signingTimedOutTitle": "İmzalama isteği zaman aşımına uğradı",
+      "signingTimedOutBody": "İstek zamanında tamamlanmadı",
+      "transactionSigningRejected": "İşlem imzalama iptal edildi",
+      "transactionSigned": "İşlem imzalandı",
+      "messageSigned": "Mesaj imzalandı",
+      "signingFailedTitle": "İşlem imzalanamadı",
+      "signingFailedBody": "Bir şeyler ters gitti. Daha fazla bilgi için Ayrıntılar'ı aç.",
+      "signingErrorToastDetails": "Ayrıntılar",
+      "signingErrorDetailsLabel": "Ayrıntılar",
+      "signingErrorCopyDetails": "Hata ayrıntılarını kopyala",
+      "havingTroubleSigning": "Mobilde onaylarken sorun mu yaşıyorsun?",
+      "havingTroubleSigningDialog": {
+        "title": "Onaylarken sorun mu yaşıyorsun?",
+        "description": "Uygulamayı yeniden yükle ve bu işlemi tekrar dene. Bu işe yaramazsa — lütfen çıkış yapıp yeniden giriş yapmayı dene",
+        "troubleshootingGuide": "Sorun Giderme Kılavuzu",
+        "reload": "Yeniden yükle"
+      },
+      "noAllowanceErrorTitle": "Hesap henüz hazır değil",
+      "noAllowanceErrorDescription": "Hesabını hazırlıyoruz. Lütfen birazdan tekrar dene.",
+      "statementStoreErrorTitle": "Statement store hatası",
+      "feeUnavailable": "—",
+      "customChainSigningWarning": "Bu özel zincir için işlem ayrıntıları kullanılamıyor. İmzalamadan önce ham çağrı verisini incele.",
+      "webVersionNotification": "Uygulamanın web sürümünü kullanıyorsun. Ürünlerle etkileşim için lütfen masaüstü sürümünü kullan.",
+      "findPlaceholder": "Sayfada bul",
+      "findCount": "{current}/{total}",
+      "findNoResults": "Sonuç yok",
+      "findNext": "Sonraki eşleşme",
+      "findPrevious": "Önceki eşleşme",
+      "findClose": "Bulma çubuğunu kapat",
+      "zoomIn": "Yakınlaştır",
+      "zoomOut": "Uzaklaştır",
+      "zoomReset": "Yakınlaştırmayı sıfırla",
+      "zoomPercent": "%{percent}",
+      "clearRecent": "Temizle"
+    },
+    "userManager": {
+      "connectionStatus": {
+        "connected": "Bağlandı",
+        "reconnecting": "Yeniden bağlanılıyor…",
+        "offline": "Çevrimdışısın",
+        "noConnection": "Bağlı değil — giriş yapmak için tıkla"
+      },
+      "aria": {
+        "account": "Hesap",
+        "connectAccount": "Hesabı bağla"
+      },
+      "banner": {
+        "connectedTitle": "{networkName} ağına bağlanıldı",
+        "connectedSubtitle": "Masaüstü, mobil ile eşleştirildi",
+        "reconnectingTitle": "{networkName} ağına yeniden bağlanılıyor…",
+        "reconnectingSubtitle": "Düğüme yeniden ulaşılmaya çalışılıyor",
+        "offlineTitle": "Çevrimdışısın",
+        "offlineSubtitle": "İnternet bağlantını kontrol et ve yeniden dene",
+        "noConnectionTitle": "Bağlı değil",
+        "noConnectionSubtitle": "Hesabını eşleştirmek için giriş yap"
+      },
+      "popover": {
+        "settings": "Ayarlar"
+      }
+    },
+    "chat": {
+      "proceedInChat": {
+        "menuItem": "Sohbette devam et",
+        "toast": {
+          "errorTitle": "Sohbet odası oluşturulamadı"
+        }
+      },
+      "title": "Sohbet",
+      "widgetTitle": "Son sohbetler",
+      "fullscreenTitle": "Sohbetler",
+      "unreadMessagesAria": "Okunmamış mesajlar",
+      "category": "İLETİŞİM",
+      "replyToYourself": "Kendine yanıt ver",
+      "replyTo": "{name} kişisine yanıt ver",
+      "noConversations": "Henüz görüşme yok",
+      "startNewChat": "Yeni bir görüşme başlat",
+      "searchPlaceholder": "Görüşmelerde ara...",
+      "searchByUsernameOrMessages": "Kullanıcı adına veya mesajlara göre ara",
+      "searchChatsAndContacts": "Sohbetler ve kişiler",
+      "searchMessages": "Mesajlar",
+      "sayHelloOptional": "Selam ver... (isteğe bağlı)",
+      "sending": "Gönderiliyor...",
+      "sendRequest": "İstek gönder",
+      "search": "Ara",
+      "noResults": "\"{query}\" için sonuç bulunamadı",
+      "results": "Sonuçlar ({count})",
+      "recent": "Son kullanılanlar",
+      "clear": "Temizle",
+      "contacts": "Kişiler",
+      "noMessages": "Henüz mesaj yok",
+      "thisIsChat": "Bu bir sohbet",
+      "noResultsFound": "Sonuç bulunamadı",
+      "noResultsDescription": "Aramanla eşleşen bir şey bulamadık. Farklı anahtar kelimeler dene.",
+      "quickChat": "Hızlı sohbet",
+      "viewMore": "Daha fazla göster",
+      "syncStatus": {
+        "outOfSync": {
+          "title": "Mesajlar eşitlenmemiş olabilir",
+          "subtitle": "Mesajları eşitlemek için mobil uygulamayı aç"
+        },
+        "syncing": {
+          "title": "En son mesajlar alınıyor",
+          "subtitle": "Mesajlar mobilden eşitleniyor…"
+        },
+        "synced": {
+          "title": "Mesajlar güncel",
+          "subtitle": "Mobil çevrimiçi"
+        },
+        "error": {
+          "title": "Eşitleme başarısız",
+          "subtitle": "Her iki uygulamayı da yeniden başlat"
+        }
+      },
+      "sendMessageToBegin": "Görüşmeyi başlatmak için bir mesaj gönder",
+      "mediaMobileOnly": "Bu mesaj yalnızca mobil uygulamada görüntülenebilir",
+      "noChatsYet": "Henüz sohbet yok",
+      "yourChatWillAppear": "Sohbetin burada görünecek",
+      "yourChatsWillAppear": "Sohbetlerin burada görünecek",
+      "noChatSelected": "Seçili sohbet yok",
+      "selectChatToView": "Görüşmeyi görmek için bir sohbet seç",
+      "request": {
+        "entryTitle": "Mesaj istekleri",
+        "listHint": "Kişi listende olmayan kişilerden gelen mesaj istekleri burada görünür",
+        "messageHidden": "Mesaj gizlendi",
+        "messageHiddenFull": "Mesaj, varsayılan ayarlarına göre gizlendi",
+        "viewMessage": "Mesajı gör",
+        "banner": "Sohbet isteğini kabul etmek için <b>{name}</b> kişisini kişilerine ekle.<br></br>Sen kabul edene kadar mesajını gördüğünü bilmeyecek.",
+        "accept": "Kabul et",
+        "decline": "Reddet",
+        "declinedToast": "{name} kişisinden gelen istek reddedildi",
+        "youApproved": "İsteği onayladın",
+        "peerApproved": "{name} mesaj isteğini onayladı",
+        "youSent": "<b>Sen</b> mesaj isteği gönderdin",
+        "leftChat": "{name} sohbetten ayrıldı",
+        "modalTitle": "Sohbete başlamak için yeni bir kişi eklensin mi?",
+        "modalBody": "Sohbete girdikten sonra <b>{name}</b> kişisinin de seninle bir sohbet başlattığından emin ol, yoksa mesajın görülmeyebilir.",
+        "cancel": "İptal",
+        "continue": "Devam",
+        "inviteTitle": "{name} kişisini sohbete davet et",
+        "inviteHint": "Bu davette yalnızca bir mesaj gönderebilirsin",
+        "inviteFailed": "Davet gönderilemedi. Bağlantını kontrol et ve yeniden dene.",
+        "waitForAccept": "Sonraki mesajı göndermeden önce <b>{name}</b> kişisinin isteğini kabul etmesini bekle.",
+        "today": "Bugün"
+      },
+      "contactSearch": {
+        "searchEntry": "Ara",
+        "placeholder": "Kullanıcı adına veya mesajlara göre ara",
+        "tabChats": "Sohbetler",
+        "tabApps": "Uygulamalar",
+        "groupChatsAndContacts": "Sohbetler ve kişiler",
+        "groupMessages": "Mesajlar",
+        "recent": "Son kullanılanlar",
+        "clear": "Temizle",
+        "appsComingSoon": "Uygulama araması yakında geliyor",
+        "noResultsTitle": "Sonuç yok",
+        "noResultsHint": "Aramanı değiştirmeyi dene"
+      },
+      "settings": {
+        "title": "Sohbetler",
+        "subtitle": "Sohbetlerin ve mesaj isteklerinin nasıl davranacağını yönet",
+        "messageRequestsSection": "Mesaj istekleri",
+        "hideByDefault": "Mesaj isteklerini varsayılan olarak gizle",
+        "hideByDefaultHint": "Yeni istekler, sen açıp Mesajı gör'e dokunana kadar gizli kalır"
+      },
+      "editMessage": "Düzenle",
+      "editingMessage": "Mesaj düzenleniyor",
+      "edited": "(düzenlendi)",
+      "editHistory": "Düzenleme geçmişi",
+      "currentMessage": "Güncel",
+      "earlierVersion": "Önceki sürüm",
+      "viewEditHistory": "Düzenleme geçmişini gör",
+      "originalMessage": "Orijinal",
+      "leaveChat": "Sohbetten ayrıl",
+      "blockUser": "Kullanıcıyı engelle",
+      "unblockUser": "Engeli kaldır",
+      "blockedNotice": "{name} kişisinin engelini kaldırana kadar mesaj veya istek almayacaksın.",
+      "unblock": "Engeli kaldır",
+      "transfer": {
+        "youSent": "Gönderdin",
+        "sent": "Gönderildi",
+        "received": "Alındı",
+        "coinage": {
+          "submitting": "İletiliyor",
+          "sending": "Gönderiliyor",
+          "sent": "Gönderildi",
+          "delivered": "Teslim edildi",
+          "claimed": "Alındı"
+        }
+      },
+      "call": {
+        "title": {
+          "incomingVoice": "Gelen sesli arama",
+          "outgoingVoice": "Giden sesli arama",
+          "incomingVideo": "Gelen görüntülü arama",
+          "outgoingVideo": "Giden görüntülü arama",
+          "ongoingVoice": "Devam eden sesli arama",
+          "ongoingVideo": "Devam eden görüntülü arama",
+          "voice": "Sesli arama",
+          "video": "Görüntülü arama",
+          "missedVoice": "Cevapsız sesli arama",
+          "missedVideo": "Cevapsız görüntülü arama",
+          "canceledVoice": "İptal edilen sesli arama",
+          "canceledVideo": "İptal edilen görüntülü arama"
+        },
+        "subtitle": {
+          "openToCall": "Aramak için mobil uygulamayı aç",
+          "openToReturn": "Dönmek için mobil uygulamayı aç",
+          "openToCallBack": "Geri aramak için mobil uygulamayı aç",
+          "openToCallAgain": "Yeniden aramak için mobil uygulamayı aç",
+          "tapToCall": "Aramak için dokun",
+          "tapToReturn": "Geri dönmek için dokun",
+          "tapToCallBack": "Geri aramak için dokun",
+          "tapToCallAgain": "Tekrar aramak için dokun"
+        }
+      }
+    },
+    "productActionsMenu": {
+      "trigger": "Ürün işlemleri",
+      "openSettings": "Ayarları aç"
+    },
+    "onboarding": {
+      "logoText": "İnsanlar için ürünler",
+      "mainText": "Polkadot'u keşfetmek için giriş yap",
+      "description": "Giriş yapmak için kameranı kullan",
+      "phoneHint": "Bu, Polkadot App'i açacak",
+      "errorTitle": "Kimlik doğrulama hatası",
+      "error": "Kimlik doğrulama sırasında bir şeyler ters gitti",
+      "errorNoFreeSlotsTitle": "Sınıra ulaşıldı",
+      "errorNoFreeSlotsDescription": "8'den fazla cihaz ekleyemezsin. Yeni bir cihaz eklemek için Polkadot App'te cihazlardan birinin bağlantısını kes.",
+      "loggingInToast": "Giriş yapılıyor... Bir saniye",
+      "completingPairing": "Eşleştirme tamamlanıyor…",
+      "connection": {
+        "offline": {
+          "title": "Çevrimdışısın",
+          "subtitle": "İnternet bağlantını kontrol et ve yeniden dene"
+        },
+        "reaching": {
+          "title": "Polkadot'a yeniden bağlanılıyor…",
+          "subtitle": "Düğüme yeniden ulaşılmaya çalışılıyor"
+        },
+        "restored": {
+          "title": "Polkadot'a yeniden bağlanılıyor…",
+          "subtitle": "İnternet bağlantısı geri geldi"
+        },
+        "accountSetup": {
+          "title": "Hesabın hâlâ hazırlanıyor",
+          "subtitle": "Lütfen daha sonra yeniden dene"
+        }
+      }
+    },
+    "dashboard": {
+      "title": "Pano",
+      "toolbar": {
+        "ariaLabel": "Pano işlemleri",
+        "pagesLabel": "Pano sayfaları",
+        "switchToPage": "{number}. sayfaya geç"
+      },
+      "menu": {
+        "addToFavorites": "Favorilere ekle",
+        "removeFromFavorites": "Favorilerden çıkar",
+        "toast": {
+          "addedToFavorites": "{productName} favorilere eklendi",
+          "removedFromFavorites": "{productName} favorilerden çıkarıldı"
+        }
+      },
+      "addWidget": {
+        "title": "Widget ekle",
+        "sizeAndType": "Boyut ve tür",
+        "selectWidget": "Listeden bir widget seç",
+        "noWidgetsAvailable": "Kullanılabilir widget yok.",
+        "noSearchResults": "Aramanla eşleşen widget yok.",
+        "loading": "Widget'lar yükleniyor…",
+        "loadFailed": "Widget'lar yüklenemedi. Daha sonra yeniden dene.",
+        "createFolder": "Yeni klasör",
+        "createFolderDescription": "Bu widget ile yeni bir klasör oluştur",
+        "addToFavorites": "Favorilere ekle",
+        "addedToFavoritesButton": "Favorilere eklendi",
+        "done": "Bitti",
+        "add": "Ekle",
+        "open": "Aç",
+        "noSupportedSizes": "Widget'ın eklenebilecek desteklenen bir boyutu yok.",
+        "searchPlaceholder": "Uygulamaları bulmak için {tld} adresi gir",
+        "searchAriaLabel": "Uygulamalarda ara",
+        "cards": {
+          "product": {
+            "title": "Ürün widget'ı",
+            "description": "Panodan hızlı erişim widget'ı"
+          },
+          "chat": {
+            "title": "Sohbet widget'ı",
+            "description": "Sohbetlerine hızlı erişim"
+          },
+          "favorites": {
+            "title": "Favoriler",
+            "description": "Favori ürün kısayolların için klasör"
+          }
+        },
+        "toast": {
+          "widgetAddedProduct": "{widgetTitle} {sizeLabel} widget'ı panoya başarıyla eklendi",
+          "addedToFavorites": "{productName} favorilere eklendi",
+          "widgetAddFailed": "Widget eklenemedi. Yeniden dene ya da mevcut bir widget'ı düzenlemek için panoyu aç.",
+          "favoritesAddFailed": "Favorilere eklenemedi. Yeniden dene.",
+          "viewAction": "Gör"
+        }
+      },
+      "addToDashboard": {
+        "label": "Panoya ekle",
+        "toast": {
+          "targetUnresolved": "Bu öğe için panoya ekleme penceresi açılamadı."
+        }
+      },
+      "domainNotFound": "Alan adı bulunamadı",
+      "placeholder": {
+        "widgetNotFound": "Widget artık mevcut değil",
+        "widgetUnavailable": "Widget şu anda kullanılamıyor",
+        "deleteWidget": "Widget'ı sil"
+      },
+      "favorites": {
+        "title": "Favoriler",
+        "removeFolder": "Klasörü kaldır",
+        "removeProduct": "Widget'ı kaldır",
+        "empty": "Henüz favori yok",
+        "emptyPlaceholder": "Favori uygulamalarını kaydet, hızlıca eriş",
+        "browseApps": "Uygulamalara göz at",
+        "viewMore": "Daha fazla göster"
+      },
+      "empty": {
+        "title": "Ürün widget'ları burada görünecek.",
+        "description": "Başlamak için ilkini ekle."
+      },
+      "widgetMenu": {
+        "sizeLabel": "Boyut",
+        "sizeSmall": "Küçük",
+        "sizeMedium": "Orta",
+        "sizeLarge": "Büyük",
+        "sizeHorizontal": "Yatay",
+        "cleanup": "Panoyu düzenle",
+        "reload": "Widget'ı yeniden yükle",
+        "removeWidget": "Widget'ı kaldır"
+      }
+    },
+    "ticketApp": {
+      "title": "Ticket App",
+      "category": "ETKİNLİKLER",
+      "daysLeft": "Kalan gün",
+      "upcoming": "YAKLAŞAN ETKİNLİKLER",
+      "entryTicket": "Giriş bileti"
+    },
+    "shopping": {
+      "title": "Mark3t",
+      "category": "ALIŞVERİŞ",
+      "totalSaved": "Toplam tasarruf",
+      "thisMonth": "Bu ay"
+    },
+    "hackm3": {
+      "title": "Hackm3",
+      "category": "BELGELER",
+      "online": "{count} çevrimiçi",
+      "live": "Canlı",
+      "docs": "Belgeler",
+      "shared": "Paylaşılan"
+    },
+    "user": {
+      "welcomeBack": "Tekrar hoş geldin",
+      "logOut": "Çıkış yap",
+      "logIn": "Giriş yap"
+    },
+    "settings": {
+      "title": "Ayarlar",
+      "testnetEndpoints": "Testnet uç noktaları",
+      "endpointStable": "Kararlı",
+      "group": {
+        "preferences": "Tercihler",
+        "privacy": "Gizlilik ve güvenlik",
+        "development": "Geliştirme"
+      }
+    },
+    "themeToggle": {
+      "title": "Görünüm",
+      "appearance": "Tema",
+      "colorMode": "Renk modu",
+      "device": "Cihaz",
+      "day": "Gündüz",
+      "night": "Gece",
+      "berlin": "Berlin",
+      "tokyo": "Tokyo",
+      "lisbon": "Lizbon",
+      "malta": "Malta",
+      "preview": {
+        "outgoingFirst": "Selam, Polkadot Summit'e geliyor musun? 🎉",
+        "incoming": "Tabii ki! Ya sen?",
+        "outgoingSecond": "Kaçırmam 👋 Orada görüşürüz!"
+      }
+    },
+    "updateCheck": {
+      "title": "Güncelleme",
+      "channel": {
+        "title": "Güncelleme kanalı",
+        "stable": "Kararlı",
+        "experimental": "Deneysel",
+        "stableHint": "Doğrulanmış sürümler. Günlük kullanım için önerilir.",
+        "experimentalHint": "Doğrudan geliştirmeden gelen en yeni sürümler. Kararsız olabilir."
+      },
+      "checkForUpdates": "Güncellemeleri denetle",
+      "checking": "Güncelleme denetleniyor…",
+      "checkingHint": "Bu biraz sürebilir",
+      "upToDate": "Polkadot Desktop güncel!",
+      "upToDateHint": "Polkadot Desktop'ın en son sürümünü kullanıyorsun. {version} sürümü kurulu",
+      "upToDateHintNoVersion": "Polkadot Desktop'ın en son sürümünü kullanıyorsun.",
+      "downloading": "Güncelleme indiriliyor…",
+      "downloadingHint": "Bu biraz sürebilir",
+      "progress": "İlerleme",
+      "downloadingPercent": "%{percent}",
+      "readyToInstall": "Güncelleme hazır",
+      "readyToInstallHint": "En son sürümü uygulamak için Polkadot Desktop'ı yeniden başlat",
+      "installNow": "Yeniden başlat",
+      "notNow": "Daha sonra",
+      "error": "Güncelleme başarısız",
+      "errorHint": "Lütfen yeniden dene ya da geliştirme ekibiyle iletişime geç",
+      "unsupported": "Güncellemeler kullanılamıyor",
+      "unsupportedHint": "Polkadot Desktop'ın bu sürümü kendini güncelleyemez.",
+      "close": "Kapat",
+      "updateAvailable": "Yeni Polkadot Desktop güncellemesi!",
+      "updateAvailableHint": "{version} sürümü kullanılabilir",
+      "updated": "Polkadot Desktop güncellendi!",
+      "updatedHint": "{version} sürümü kuruldu",
+      "relaunch": "Yeniden başlat"
+    },
+    "productSettings": {
+      "title": "Uygulamalar",
+      "subtitle": "Etkileşimde bulunduğun uygulamalar",
+      "searchPlaceholder": "Ada veya {tld} adresine göre ara",
+      "searchAriaLabel": "Uygulamaları ada veya {tld} adresine göre ara",
+      "clearCache": "Önbelleği temizle",
+      "forgetApp": "Uygulamayı unut",
+      "requestedPermissions": "İstenen izinler",
+      "noPermissions": "İstenen izin yok",
+      "toast": {
+        "appReset": "{productName} sıfırlandı",
+        "cacheCleared": "{productName} önbelleği temizlendi"
+      },
+      "clearCacheDialog": {
+        "title": "{productName} önbelleği temizlensin mi?",
+        "description": "Önbelleğe alınmış veriler bu cihazdan kaldırılacak. Buna geçici dosyalar ve yerel olarak saklanan içerik dahildir."
+      },
+      "forgetDialog": {
+        "title": "{productName} unutulsun mu?",
+        "description": "Bu işlem {productName} için tüm site verilerini siler ve izinleri sıfırlar. Sekme açık kalır; bir sonraki açışında her şey yeniden yüklenir."
+      },
+      "webDomains": {
+        "dialogTitle": "{productName} için web alan adı erişimini yönet"
+      },
+      "appPermission": {
+        "title": "{productName} {permission} erişimi",
+        "description": "Bu ayarlar, {productName} uygulaması ve tek tek modları için {permission} erişimini denetler",
+        "resetToDefault": "Varsayılana sıfırla",
+        "noDomainsRequested": "Henüz alan adı istenmedi"
+      },
+      "aliasPermission": {
+        "label": "Takma ad",
+        "description": "Bu uygulama için uygulamalar arası takma ad erişimini yönet",
+        "contextsLabel": "Takma ad bağlamları",
+        "contextsDescription": "Erişimi bağlam bazında yönet",
+        "noContextsRequested": "Henüz takma ad bağlamı istenmedi",
+        "dialogTitle": "{productName} uygulaması için takma ad bağlamı erişimini yönet"
+      }
+    },
+    "productPermissions": {
+      "permissionRequest": {
+        "productKindLabel": "Ürün",
+        "closeDialog": "Kapat",
+        "title": "{label} erişimine izin verilsin mi?",
+        "deny": "İzin verme",
+        "allowOnce": "Bir kez izin ver",
+        "allowAlways": "Her zaman izin ver",
+        "domainsLabel": "Alan adları",
+        "permission": {
+          "Camera": "Kamera",
+          "Microphone": "Mikrofon",
+          "Bluetooth": "Bluetooth",
+          "Location": "Konum",
+          "Notifications": "Bildirimler",
+          "Clipboard": "Pano",
+          "OpenUrl": "Harici URL açma",
+          "Biometrics": "Biyometri",
+          "Motion": "Hareket Sensörleri",
+          "NFC": "NFC",
+          "Files": "Dosyalar",
+          "Remote": "Web alan adları",
+          "WebRtc": "WebRTC",
+          "ChainSubmit": "Zincire gönderim",
+          "PreimageSubmit": "Preimage gönderimi",
+          "StatementSubmit": "Statement gönderimi",
+          "BalanceAccess": "Bakiye",
+          "UserIdentity": "Kimlik"
+        },
+        "reason": {
+          "Camera": "Görüntülü arama, QR tarama ve medya çekimi gibi özellikler için kullanılır",
+          "Microphone": "Sesli arama, mesajlaşma ve ses kaydı gibi özellikler için kullanılır",
+          "Bluetooth": "Yakındaki cihazlara bağlanmak ve veri aktarmak için kullanılır",
+          "Location": "Konum tabanlı hizmetler ve içerik kişiselleştirme için kullanılır",
+          "Notifications": "Sana güncellemeler, uyarılar ve önemli bilgiler göndermek için kullanılır",
+          "Clipboard": "Paylaşmayı seçtiğin içeriği kopyalayıp yapıştırmak için kullanılır",
+          "OpenUrl": "Harici bağlantıları varsayılan tarayıcında açmak için kullanılır",
+          "Biometrics": "Kimliğinin doğrulanmasını gerektiren özellikler için kullanılır",
+          "Motion": "Cihazını nasıl hareket ettirdiğine veya eğdiğine yanıt veren özellikler için kullanılır",
+          "NFC": "Yakındaki etiketler ve cihazlarla temassız okuma ve yazma için kullanılır",
+          "Files": "Dosya yükleme, indirme ve yönetme gibi özellikler için kullanılır",
+          "Remote": "Aşağıdaki alan adlarına istek göndermek için kullanılır",
+          "WebRtc": "Sesli ve görüntülü arama gibi gerçek zamanlı iletişim özellikleri için kullanılır",
+          "ChainSubmit": "İmzalanmış işlemleri herhangi bir Substrate zincirine yayınlamak için kullanılır",
+          "PreimageSubmit": "Preimage verisini bulletin zincirine göndermek için kullanılır",
+          "StatementSubmit": "Statement'ları statement store'a göndermek için kullanılır",
+          "BalanceAccess": "Harcanabilir bakiyeni okumak ve bakiye çok düşük olduğu için bir ödemenin başarısız olduğunu anlamak için kullanılır. Harcama yapmaya izin vermez",
+          "UserIdentity": "Kimlik doğrulaması için birincil kullanıcı adına erişim gereklidir. Bunu daha sonra Ayarlar'dan yönetebilirsin."
+        }
+      },
+      "remotePermissionRequest": {
+        "title": "Uzak izin isteği",
+        "description": "{permission} için uzaktan erişim istiyor.",
+        "deny": "Reddet"
+      },
+      "externalBlockedToast": "{origin} adresine yapılan ağ isteği engellendi. Uygulama İzinleri'nden değiştirebilirsin.",
+      "settings": {
+        "heading": "İzinler",
+        "subheading": "Bu uygulamaya verilen izinleri görüntüle ve yönet",
+        "remoteHeading": "Uzak izinler",
+        "remoteSubheading": "Uzak ağ özelliklerine erişim izinleri"
+      }
+    },
+    "customChains": {
+      "title": "Özel zincirler",
+      "addSection": "Zincir ekle",
+      "registeredSection": "Kayıtlı zincirler",
+      "endpointLabel": "WebSocket uç noktası",
+      "endpointPlaceholder": "ws://localhost:9944",
+      "nameLabel": "Ad (isteğe bağlı)",
+      "namePlaceholder": "Düğümden otomatik algılanır",
+      "addButton": "Zincir ekle",
+      "addingButton": "Bağlanılıyor…",
+      "emptyState": "Eklenmiş özel zincir yok. Yerel bir Substrate düğümüne veya kendi barındırdığın bir zincire bağlan.",
+      "errors": {
+        "invalidUrlTitle": "Geçersiz URL",
+        "invalidUrlDescription": "ws:// veya wss:// ile başlayan bir URL olmalı",
+        "duplicateBuiltinTitle": "Zaten kayıtlı",
+        "duplicateBuiltinDescription": "Bu zincir zaten yerleşik bir zincir",
+        "duplicateCustomTitle": "Zaten kayıtlı",
+        "duplicateCustomDescription": "Bu zincir zaten özel zincirlerinde mevcut",
+        "connectionFailedTitle": "Bağlantı başarısız",
+        "unknownError": "Bilinmeyen hata"
+      },
+      "addedToastTitle": "Zincir eklendi",
+      "addedToastDescription": "{name} ({genesisHash})",
+      "removeChainAriaLabel": "{name} zincirini kaldır"
+    },
+    "permissionSettings": {
+      "navItem": "İzinler",
+      "heading": "İzinler",
+      "subheading": "Uygulamaların özelliklere ve verilere erişimini incele ve yönet",
+      "categoryHeading": "{name}:",
+      "appCount": "{count, plural, =0 {Uygulama yok} one {# uygulama} other {# uygulama}}",
+      "category": {
+        "device": "Cihaz ve sistem erişimi",
+        "onchain": "Zincir üstü işlemler",
+        "service": "Hizmetlere erişim"
+      },
+      "status": {
+        "ask": "Sor (varsayılan)",
+        "granted": "İzin verildi",
+        "denied": "Reddedildi"
+      },
+      "detail": {
+        "rulesTitle": "Kurallar ve güvenceler",
+        "appsLabel": "Uygulamalar:",
+        "noApps": "Bu izni isteyen uygulama yok",
+        "allowedFor": "{modalities} için izin verildi",
+        "appSubtitle": "{baseName} • {allowed}"
+      },
+      "permission": {
+        "Clipboard": {
+          "label": "Pano",
+          "description": "Paylaşmayı seçtiğin içeriği kopyalayıp yapıştırmak için kullanılır",
+          "rule": {
+            "1": "Yalnızca açık bir kullanıcı işleminden sonra erişilir (ör. yapıştırma)",
+            "2": "Arka planda okuma yapılmaz",
+            "3": "Veriler izin olmadan saklanmaz veya iletilmez",
+            "4": "Erişim etkin oturumla sınırlıdır"
+          }
+        },
+        "Microphone": {
+          "label": "Mikrofon",
+          "description": "Sesli arama, mesajlaşma ve ses kaydı gibi özellikler için kullanılır",
+          "rule": {
+            "1": "Bas-konuş veya açık kayıt başlatma gerekir",
+            "2": "Arka planda dinleme yapılmaz",
+            "3": "Etkinken görsel gösterge bulunur",
+            "4": "Erişim yalnızca ana uygulama aracılığıyla olur"
+          }
+        },
+        "Camera": {
+          "label": "Kamera",
+          "description": "Görüntülü arama, QR tarama ve medya çekimi gibi özellikler için kullanılır",
+          "rule": {
+            "1": "Yalnızca kamerayı etkin olarak kullandığında erişilir",
+            "2": "Arka planda kayıt yapılmaz",
+            "3": "Kamera etkinken görsel gösterge bulunur",
+            "4": "İznin olmadan veri saklanmaz veya paylaşılmaz"
+          }
+        },
+        "Notifications": {
+          "label": "Bildirimler",
+          "description": "Sana güncellemeler, uyarılar ve önemli bilgiler göndermek için kullanılır",
+          "rule": {
+            "1": "Aşırı veya spam bildirim gönderilmez",
+            "2": "Bildirimler üzerinden hassas verilere erişilmez"
+          }
+        },
+        "Bluetooth": {
+          "label": "Bluetooth",
+          "description": "Yakındaki cihazlara bağlanmak ve veri aktarmak için kullanılır",
+          "rule": {
+            "1": "Yalnızca yakındaki cihazlara erişilir",
+            "2": "Sen bir işlem yapmadan arka planda bağlantı kurulmaz",
+            "3": "İzin olmadan hassas verilere erişilmez"
+          }
+        },
+        "Location": {
+          "label": "Konum",
+          "description": "Konum tabanlı hizmetler ve içerik kişiselleştirme için kullanılır",
+          "rule": {
+            "1": "Konum arka planda kullanılmaz",
+            "2": "Konum yalnızca belirli özellikler için gerektiğinde kullanılır",
+            "3": "Konum verisi izin olmadan saklanmaz veya paylaşılmaz"
+          }
+        },
+        "Biometrics": {
+          "label": "Biyometri",
+          "description": "Kimliğinin doğrulanmasını gerektiren özellikler için kullanılır",
+          "rule": {
+            "1": "Yalnızca açık kimlik doğrulamandan sonra kullanılır (ör. Face ID veya Touch ID)",
+            "2": "Bu ürün biyometrik verilere hiçbir zaman erişmez ve bunları saklamaz",
+            "3": "Kimlik doğrulama cihazın tarafından güvenli şekilde yapılır",
+            "4": "Yalnızca kilit açma veya işlem onaylama için kullanılır"
+          }
+        },
+        "Motion": {
+          "label": "Hareket Sensörleri",
+          "description": "Cihazını nasıl hareket ettirdiğine veya eğdiğine yanıt veren özellikler için kullanılır",
+          "rule": {
+            "1": "Yalnızca cihazın hareketini ve yönünü okur",
+            "2": "Konumuna veya kamerana erişim yoktur",
+            "3": "Erişimi daha sonra Ayarlar’dan iptal edebilirsin"
+          }
+        },
+        "OpenExternalUrl": {
+          "label": "Harici URL açma",
+          "description": "Harici bağlantıları varsayılan tarayıcında açmak için kullanılır",
+          "rule": {
+            "1": "Bağlantılar yalnızca sen bir işlem yaptıktan sonra açılır",
+            "2": "Otomatik yönlendirme veya arka plan işlemi yapılmaz",
+            "3": "Yalnızca açıkça istenen URL'ler açılır",
+            "4": "İznin olmadan veri paylaşılmaz"
+          }
+        },
+        "ExternalRequest": {
+          "label": "Web alan adları",
+          "description": "Aşağıdaki alan adlarına HTTP isteği göndermek için kullanılır",
+          "rule": {
+            "1": "İstekler yalnızca belirtilen alan adlarıyla sınırlıdır",
+            "2": "Kullanıcı işlemi olmadan otomatik veri paylaşımı yapılmaz",
+            "3": "Tüm istekler ana uygulama aracılığıyla geçer",
+            "4": "Varsayılan olarak yerel veya hassas verilere erişilmez"
+          }
+        },
+        "WebRtc": {
+          "label": "WebRTC",
+          "description": "Sesli ve görüntülü arama gibi gerçek zamanlı iletişim özellikleri için kullanılır",
+          "rule": {
+            "1": "Yalnızca etkin iletişim sırasında kullanılır",
+            "2": "Sen bir işlem yapmadan arka planda bağlantı kurulmaz",
+            "3": "Doğrudan bağlantılar yalnızca gerektiğinde kurulur",
+            "4": "Kullanım sırasında IP adresini açığa çıkarabilir"
+          }
+        },
+        "ChainSubmit": {
+          "label": "Zincire gönderim",
+          "description": "İmzalanmış işlemleri herhangi bir Substrate zincirine yayınlamak için kullanılır",
+          "rule": {
+            "1": "Yalnızca imzalanmış işlemler gönderilebilir",
+            "2": "İşlemler otomatik olarak oluşturulmaz veya değiştirilmez",
+            "3": "Gönderim yalnızca senin onayından sonra gerçekleşir",
+            "4": "Özel anahtarlarına veya hassas verilerine erişilmez"
+          }
+        },
+        "PreimageSubmit": {
+          "label": "Preimage gönderimi",
+          "description": "Preimage verisini bulletin zincirine göndermek için kullanılır",
+          "rule": {
+            "1": "Depolanan veriler Bulletin zincirinde herkese açıktır",
+            "2": "Her zaman izin ver tüm yüklemeleri kapsar; Bir kez izin ver tek bir yüklemeyi kapsar",
+            "3": "Veriler sağlandığı gibi, değiştirilmeden gönderilir",
+            "4": "Özel anahtarlarına veya hassas verilerine erişilmez"
+          }
+        },
+        "StatementSubmit": {
+          "label": "Statement gönderimi",
+          "description": "Statement'ları statement store'a göndermek için kullanılır",
+          "rule": {
+            "1": "Yalnızca imzalanmış işlemler gönderilebilir",
+            "2": "İşlemler otomatik olarak oluşturulmaz veya değiştirilmez",
+            "3": "Gönderim yalnızca senin onayından sonra gerçekleşir",
+            "4": "Özel anahtarlarına veya hassas verilerine erişilmez"
+          }
+        },
+        "BalanceAccess": {
+          "label": "Bakiye",
+          "description": "Harcanabilir bakiyeni okumak için kullanılır",
+          "rule": {
+            "1": "Ödemeler için kullanılabilir bakiyeyi gösterir",
+            "2": "Ürünün para harcamasına veya taşımasına izin vermez",
+            "3": "Bakiyen çok düşük olduğu için bir ödemenin reddedildiğini anlayabilir",
+            "4": "Erişimi iptal etmek bakiye güncellemelerini durdurur"
+          }
+        },
+        "UserIdentity": {
+          "label": "Kimlik",
+          "description": "Birincil kullanıcı adının paylaşılması",
+          "rule": {
+            "1": "Birincil kullanıcı adını ürüne açıklar",
+            "2": "Yalnızca kimlik doğrulama amacıyla kullanılır",
+            "3": "Başka kişisel veri paylaşılmaz",
+            "4": "Erişimi daha sonra Ayarlar'dan iptal edebilirsin"
+          }
+        },
+        "Files": {
+          "label": "Dosyalar",
+          "description": "Dosya yükleme, indirme ve yönetme gibi özellikler için kullanılır",
+          "rule": {
+            "1": "Yalnızca açıkça seçtiğin dosyalara erişilir",
+            "2": "Dosyalarına arka planda erişilmez",
+            "3": "Sen bir işlem yapmadan dosyalar değiştirilmez",
+            "4": "İznin olmadan dosya paylaşılmaz"
+          }
+        }
+      }
+    },
+    "statementStoreNetwork": {
+      "title": "Testnet uç noktası",
+      "changeNetworkDialog": {
+        "title": "Testnet uç noktası değiştirilip çıkış yapılsın mı?",
+        "description": "Uç noktayı değiştirmek oturumunu kapatır ve uygulamayı yeniden yükler. Yeniden giriş yapman gerekecek.",
+        "confirm": "Uç noktayı değiştir"
+      },
+      "options": {
+        "endpointStable": "Kararlı"
+      }
+    },
+    "offlineAccess": {
+      "menu": {
+        "enable": "Çevrimdışı erişimi etkinleştir",
+        "remove": "Çevrimdışı erişimi kaldır",
+        "update": "Uygulama sürümünü güncelle"
+      },
+      "updateDescription": "Daha yeni bir sürüm mevcut. Sabitlenen sürümü en sonuna güncelle.",
+      "section": {
+        "title": "Çevrimdışı erişim",
+        "description": "Uygulamayı internet olmadan kullanmak için saklar",
+        "enable": "Etkinleştir",
+        "remove": "Kaldır",
+        "updateTitle": "{modality} güncellemesi mevcut",
+        "updateReady": "{fromVersion} sürümünden {toVersion} sürümüne güncelleme kuruluma hazır",
+        "update": "Güncelle",
+        "modality": {
+          "app": "Uygulama",
+          "widget": "Widget",
+          "worker": "Arka plan hizmetleri (ör. sohbet odaları)"
+        }
+      },
+      "enableDialog": {
+        "title": "Çevrimdışı erişimi etkinleştir",
+        "description": "Bu işlem, internet bağlantısı olmadan kullanmak için mevcut uygulama sürümünü saklar",
+        "confirm": "Etkinleştir"
+      },
+      "removeDialog": {
+        "title": "Çevrimdışı erişimi kaldır",
+        "description": "Bu işlem {name} ile bağlantını keser ve uygulamayı internet bağlantısı olmadan kullanamazsın. Bu ayarı daha sonra istediğin zaman yeniden açabilirsin.",
+        "confirm": "Kaldır"
+      },
+      "updateDialog": {
+        "title": "{version} için uygulama sürümünü güncelle",
+        "description": "Bu işlem, internet olmadan kullanmak için {version} uygulama sürümünü saklar",
+        "confirm": "Güncelle"
+      },
+      "toast": {
+        "enabled": "{name} artık çevrimdışı kullanılabilir",
+        "removed": "{name} için çevrimdışı kullanım kaldırıldı",
+        "updated": "{name} en son sürüme güncellendi",
+        "noVersion": "Ürün şu anda çalışmıyor",
+        "error": "Çevrimdışı erişim değiştirilemedi",
+        "updateError": "Sürüm güncellenemedi",
+        "modalityUpdate": {
+          "title": "{modality} güncellemesi mevcut",
+          "description": "{version} sürümü kuruluma hazır",
+          "action": "Güncelle"
+        }
+      }
+    },
+    "languageSettings": {
+      "title": "Dil",
+      "locale": {
+        "en": "İngilizce",
+        "es": "İspanyolca",
+        "fr": "Fransızca",
+        "de": "Almanca",
+        "it": "İtalyanca",
+        "pt": "Portekizce",
+        "zh-Hans": "Çince (Basitleştirilmiş)",
+        "ja": "Japonca",
+        "ko": "Korece",
+        "ru": "Rusça",
+        "ar": "Arapça",
+        "hi": "Hintçe",
+        "tr": "Türkçe"
+      }
+    },
+    "inputModality": {
+      "title": "Ara",
+      "placeholder": "Ara veya {tld} adresi gir",
+      "attach": "Dosya ekle",
+      "removeAttachment": "Eki kaldır",
+      "loadingAttachment": "Ek yükleniyor…",
+      "asked": "Bu ekrandaki {count} ürüne soruldu…",
+      "noContext": "Bu ekranda buna yanıt verebilecek bir şey yok.",
+      "noCandidates": "Bunu işleyebilecek bir şey yok.",
+      "goTo": "Şuraya git",
+      "pickerPrompt": "“{fileName}” hangi ürüne gitsin?",
+      "pickerEmpty": "Bu ekrandaki hiçbir ürün bu dosya türünü kabul etmiyor.",
+      "attachmentTooLarge": "Yönlendirmek için çok büyük: {fileName}",
+      "scan": "Kod tara",
+      "scanPrompt": "Taranan kod",
+      "scanWillOpen": "Bu, {productId} uygulamasını açacak.",
+      "scanWillAsk": "Bu, ekrandaki ürünlere sorulacak.",
+      "scanConfirm": "Devam et",
+      "scanCancel": "İptal",
+      "scanUnavailable": "Bu cihazda kullanılabilir kamera yok.",
+      "scanDenied": "Kamera erişimi reddedildi.",
+      "fromThisScreen": "Bu ekrandan",
+      "recentlyVisited": "Son açılanlar",
+      "clearRecent": "Temizle",
+      "addressFavorites": "Favoriler",
+      "suggestionSeparator": "—"
+    },
+    "networkConnection": {
+      "title": "Ağ bağlantıları",
+      "chainsLoading": "Ağlar yükleniyor…",
+      "chainsEmpty": "Yapılandırılmış ağ yok.",
+      "noLightClient": "Kullanılabilir hafif istemci yok",
+      "mode": {
+        "lightClient": "Hafif istemci",
+        "rpc": "Güvenilir sağlayıcılar",
+        "lightClientHint": "Sağlayıcılara güvenmeden ağ verilerini doğrudan cihazında doğrula",
+        "rpcHint": "Güvenilir sağlayıcılar üzerinden daha hızlı erişim, ancak daha az gizlilik"
+      },
+      "advanced": {
+        "title": "Gelişmiş",
+        "description": "Bağlantı yöntemlerini yapılandır"
+      },
+      "slowLoad": {
+        "title": "Yükleme her zamankinden uzun sürüyor",
+        "description": "Beklemeyi atla ve bu oturumda güvenilir sağlayıcılarla daha hızlı yükle",
+        "action": "Daha hızlı yükle"
+      },
+      "loadFailed": {
+        "title": "Bu sayfa yüklenemedi",
+        "description": "Bağlantı çok uzun sürdü. Yeniden dene veya daha hızlı bir bağlantı kullan.",
+        "descriptionReloadOnly": "Bağlantı çok uzun sürdü. Sayfayı yeniden yüklemeyi dene.",
+        "reload": "Sayfayı yeniden yükle"
+      },
+      "role": {
+        "identity": "Kimlik",
+        "apps": "Uygulamalar",
+        "transactions": "İşlemler"
+      }
+    },
+    "productRuntime": {
+      "permissionDenied": {
+        "systemDeviceSettings": "Cihaz ayarları",
+        "Camera": {
+          "title": "Kamera erişimi gerekli",
+          "description": "Görüntülü arama, QR tarama ve medya çekimi gibi özellikler için kullanılır"
+        },
+        "Microphone": {
+          "title": "Mikrofon erişimi gerekli",
+          "description": "Sesli arama, mesajlaşma ve ses kaydı gibi özellikler için kullanılır"
+        }
+      },
+      "review": {
+        "deny": "Reddet",
+        "signPayload": {
+          "title": "İşlem yükünü imzala",
+          "subtitle": "İmzalanmadan önce yükü gözden geçir."
+        },
+        "signRaw": {
+          "title": "Mesajı imzala",
+          "subtitle": "İmzalanmadan önce mesajı gözden geçir."
+        },
+        "createTransaction": {
+          "title": "İşlem oluştur",
+          "subtitle": "Gönderilmeden önce işlemi gözden geçir."
+        },
+        "signVrf": {
+          "title": "VRF dökümünü imzala",
+          "subtitle": "İmzalanmadan önce dökümü gözden geçir."
+        },
+        "allowance": {
+          "title": "Kaynak ayır",
+          "subtitle": "Bu uygulamanın istediği kaynakları gözden geçir."
+        },
+        "statementSign": {
+          "title": "Beyanı imzala",
+          "subtitle": "İmzalanmadan önce beyanı gözden geçir."
+        },
+        "createProof": {
+          "title": "Kanıt oluştur",
+          "subtitle": "Bu uygulamanın istediği kanıtı gözden geçir."
+        },
+        "legacyAccountNotice": "Eski bir hesapla imzalanıyor.",
+        "resource": {
+          "statementStore": "Beyan deposu alanı",
+          "bulletin": "Bulletin depolama alanı",
+          "smartContract": "{account} hesabı için akıllı sözleşme gazı",
+          "autoSigning": "Her seferinde sormadan senin adına imzala"
+        },
+        "accountAccess": {
+          "title": "{targetIdentifier} hesabına erişim izni verilsin mi?",
+          "subtitle": "Bu uygulamanın, başka bir uygulamaya ait bir hesapla işlem yapmasına izin verir",
+          "warning": "Buna izin verirsen bu uygulama, diğer uygulamanın hesabını senin adına kullanabilir"
+        },
+        "identityDisclosure": {
+          "title": "Kullanıcı adın bu uygulamayla paylaşılsın mı?",
+          "subtitle": "Bu uygulama birincil kullanıcı adını görecek",
+          "warning": "Buna izin verirsen bu uygulama seni kullanıcı adınla tanıyabilir"
+        },
+        "productSubtree": {
+          "title": "Bu uygulamanın kendi hesabına erişmesine izin verilsin mi?",
+          "subtitle": "Bu uygulamanın hesabını eşleştirilmiş cihazından alır"
+        }
+      }
+    }
+  },
+  "widget": {
+    "permission": {
+      "modality": {
+        "app": {
+          "label": "Uygulama",
+          "description": "Tam ekran modunda {productName} için {permission} erişimini yönet"
+        },
+        "widget": {
+          "label": "Widget'lar",
+          "description": "Panodaki {productName} widget'ları için {permission} erişimini yönet"
+        }
+      }
+    },
+    "rateLimiter": {
+      "description": "{limiterType} sınırına ulaşıldı",
+      "types": {
+        "rpc": "RPC",
+        "featureSupport": "Özellik desteği",
+        "navigation": "Gezinme",
+        "localStorageRead": "Yerel depolamadan okuma",
+        "localStorageWrite": "Yerel depolamaya yazma",
+        "pushNotification": "Anlık bildirim",
+        "pushNotificationCancel": "Anlık bildirim iptali",
+        "permissions": "İzinler",
+        "legacyAccounts": "Eski hesaplar",
+        "identityAccount": "Kimlik hesabı",
+        "productAccounts": "Ürün hesapları",
+        "alias": "Takma ad",
+        "proof": "Kanıt",
+        "signVrf": "VRF imzalama",
+        "ringVrfRegister": "Ring VRF anahtarı kaydı",
+        "ringVrfList": "Ring VRF anahtarı listeleme",
+        "ringVrfSign": "Ring VRF imzalama",
+        "entropy": "Entropi",
+        "login": "Giriş",
+        "preimage": "Preimage"
+      }
+    },
+    "webview": {
+      "error": {
+        "domainResolve": "Ürün bulunamıyor.",
+        "fetchingFailed": "Ürün getirilemiyor.",
+        "loadFailed": "Yüklenemedi: {description} ({code})"
+      },
+      "loading": {
+        "reaching": "{identifier} adresine ulaşılıyor",
+        "reachingGeneric": "Ulaşılıyor"
+      },
+      "crash": {
+        "title": "Ürün çalışmayı durdurdu",
+        "subtitle": "Sayfayı yeniden yüklemeyi dene.",
+        "reload": "Yeniden yükle",
+        "advanced": "Ayrıntıları göster",
+        "reason": "Neden: {reason}",
+        "exitCode": "Çıkış kodu: {code}"
+      },
+      "unresponsive": {
+        "title": "Sayfa yanıt vermiyor",
+        "subtitle": "Kendiliğinden düzelebilir ya da şimdi yeniden yükleyebilirsin.",
+        "reload": "Yeniden yükle",
+        "advanced": "Ayrıntıları göster"
+      },
+      "degraded": {
+        "title": "Ürün yavaş yanıt veriyor",
+        "reload": "Yeniden yükle",
+        "dismiss": "Kapat"
+      }
+    },
+    "productContainerBinding": {
+      "aliasPermission": {
+        "title": "{requestedIdentifier} içindeki takma adına erişime izin verilsin mi?",
+        "subtitle": "Kimlik hesabını uygulamalar arasında ilişkilendirmek için kullanılır",
+        "keyOwner": "{keyOwner} anahtarı kullanılıyor",
+        "requestingProduct": "İstekte bulunan ürün",
+        "requestedContext": "İstenen bağlam",
+        "warning": "Buna izin verirsen, bu uygulama seni tanıyabilir ve başka bir uygulamadaki etkinliğini izleyebilir",
+        "deny": "İzin verme",
+        "allowOnce": "Bir kez izin ver",
+        "allowAlways": "Her zaman izin ver"
+      },
+      "proofPermission": {
+        "title": "{requestedIdentifier} bir insan olduğunu kanıtlasın mı?",
+        "subtitle": "Kimliğini açıklamadan benzersiz bir insan olduğunu kanıtlar",
+        "warning": "Buna izin verirsen, bu uygulama senin adına imzalanmış bir kişilik kanıtı oluşturabilir",
+        "deny": "İzin verme",
+        "allow": "İzin ver"
+      },
+      "signVrf": {
+        "title": "{requestingIdentifier} doğrulanabilir rastgele imza oluştursun mu?",
+        "subtitle": "Ürün hesabına bağlı, çekiliş tarzı bir VRF imzası üretir",
+        "account": "İmzalayan hesap",
+        "transcript": "Transkript",
+        "transcriptLabel": "etiket",
+        "warning": "Buna izin verirsen, bu uygulama senin adına imzalanmış bir VRF imzası oluşturabilir",
+        "deny": "İzin verme",
+        "allow": "İzin ver"
+      },
+      "allocationRequest": {
+        "title": "Kota isteği",
+        "description": "{productName} kaynak tahsisi istiyor",
+        "requestedResources": "İstenen kaynaklar",
+        "polkadotAppHint": "Polkadot App'te onaylamaya hazırlan",
+        "grantAccess": "Devam",
+        "pending": "Tahsis ediliyor...",
+        "polkadotAppLine1": "Telefonunda Polkadot uygulamasını aç,",
+        "polkadotAppLine2": "ardından onayla veya reddet",
+        "polkadotAppApproveButton": "Onayla",
+        "allocationRejected": "Kota isteği iptal edildi",
+        "smartContractDetailsIntro": "Aşağıdaki hesaplar sözleşme çağrılarını otomatik olarak imzalayacak:",
+        "appAccountWithIndex": "{index} indeksli uygulama hesabı",
+        "copyAccountAddress": "Hesap adresini kopyala",
+        "resource": {
+          "StatementStoreAllowance": "Senin adına statement yayımlama",
+          "BulletinAllowance": "Senin adına Bulletin zincirine yayımlama",
+          "SmartContractAllowance": "Akıllı sözleşme çağrılarını otomatik imzalama",
+          "AutoSigning": "İşlemleri otomatik imzalama"
+        }
+      }
+    }
+  }
+}

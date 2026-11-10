@@ -1,0 +1,1225 @@
+{
+  "common": {
+    "action": {
+      "back": "Indietro",
+      "moreDetails": "Più dettagli",
+      "hideDetails": "Nascondi dettagli",
+      "cancel": "Annulla",
+      "allow": "Consenti",
+      "skip": "Salta (solo Dev)",
+      "sign": "Firma",
+      "signing": "Firma in corso...",
+      "reply": "Rispondi",
+      "copyText": "Copia testo",
+      "forward": "Inoltra",
+      "select": "Seleziona",
+      "delete": "Elimina",
+      "add": "Aggiungi",
+      "search": "Cerca...",
+      "writeMessage": "Scrivi un messaggio...",
+      "retry": "Riprova",
+      "disconnect": "Disconnetti",
+      "all": "Tutti",
+      "electronics": "Elettronica",
+      "fashion": "Moda",
+      "downloadLogs": "Scarica i log"
+    },
+    "label": {
+      "signer": "Firmatario",
+      "chain": "Chain",
+      "method": "Metodo",
+      "arguments": "Argomenti",
+      "callData": "Dati della call",
+      "message": "Messaggio"
+    },
+    "status": {
+      "loading": "Caricamento...",
+      "noProductFound": "Nessun prodotto trovato",
+      "unknownUser": "Utente sconosciuto",
+      "online": "online",
+      "live": "Live",
+      "daysLeft": "{count} giorni rimasti"
+    },
+    "error": {
+      "somethingWentWrong": "Ops! Qualcosa è andato storto",
+      "tryAgain": "Riprova o torna più tardi",
+      "logsHelpText": "Condividere i log con gli sviluppatori aiuterà a risolvere il problema"
+    },
+    "aria": {
+      "openFullscreen": "Apri a schermo intero",
+      "reloadWidget": "Ricarica widget",
+      "close": "Chiudi",
+      "clear": "Cancella",
+      "reload": "Ricarica"
+    },
+    "cancel": "Annulla",
+    "web3summitEnded": {
+      "ariaLabel": "Web3 Summit terminato",
+      "title": "Web3 Summit terminato",
+      "subtitle": "Resta sintonizzato per altri aggiornamenti"
+    }
+  },
+  "feature": {
+    "favorites": {
+      "title": "Preferiti",
+      "searchPlaceholder": "Cerca",
+      "searchAriaLabel": "Cerca nei preferiti",
+      "emptyTitle": "Ancora nessuna app preferita",
+      "emptyDescription": "Salva le tue app preferite per accedervi rapidamente",
+      "browseApps": "Esplora le app",
+      "searchNoResults": {
+        "title": "Nessun risultato",
+        "description": "Prova a modificare la ricerca."
+      },
+      "openFullscreenAria": "Apri Preferiti",
+      "addAria": "Aggiungi ai preferiti",
+      "removeAria": "Rimuovi dai preferiti",
+      "addDialog": {
+        "title": "Aggiungi ai preferiti",
+        "searchPlaceholder": "Cerca",
+        "searchAriaLabel": "Cerca prodotti",
+        "loadingAria": "Caricamento app",
+        "nothingToAdd": {
+          "title": "Niente da aggiungere",
+          "description": "Tutte le app disponibili sono già nei tuoi preferiti"
+        },
+        "noResults": {
+          "title": "Nessun risultato",
+          "description": "Prova a modificare la ricerca."
+        },
+        "error": {
+          "title": "Qualcosa è andato storto",
+          "retry": "Riprova"
+        }
+      }
+    },
+    "call": {
+      "audioCall": "Chiamata vocale",
+      "videoCall": "Videochiamata",
+      "returnToCall": "Torna alla chiamata"
+    },
+    "browser": {
+      "addressPlaceholder": "Inserisci un indirizzo {tld}",
+      "navigationBackAria": "Torna indietro",
+      "navigationForwardAria": "Vai avanti",
+      "addressWelcome": "Benvenuto in Polkadot! Inserisci qui un indirizzo .dot",
+      "removeFromDashboard": "Rimuovi il prodotto dalla dashboard",
+      "addressSuggestions": "Tutte le app",
+      "addressNoResults": "Nessuna app trovata",
+      "recentlyOpened": "Aperti di recente",
+      "recentClearedTitle": "Le schede aperte di recente sono state cancellate correttamente",
+      "undoLabel": "Annulla {seconds}s",
+      "ramUsage": "Utilizzo RAM: {value}",
+      "ramUsageUnavailable": "Utilizzo RAM: —",
+      "newTab": "Nuova scheda",
+      "newTabPrompt": "Inserisci un indirizzo {tld}",
+      "closeTab": "Chiudi scheda",
+      "signTransaction": "Firma transazione",
+      "signingRequestTitle": "Richiesta di firma {call}",
+      "operationTitle": {
+        "utilityBatchAll": "Utility Batch All",
+        "utilityBatch": "Utility Batch",
+        "utilityForceBatch": "Utility Force Batch"
+      },
+      "batchBehavior": {
+        "revertOnError": "Le transazioni incluse vengono annullate in caso di errore",
+        "executeUntilError": "Le transazioni incluse vengono eseguite fino al primo errore",
+        "ignoreErrors": "Le transazioni incluse ignorano gli errori"
+      },
+      "signMessageRequestTitle": "Richiesta di firma di un messaggio grezzo",
+      "rawMessageNotReadableCaption": "Questo messaggio non può essere mostrato in un formato leggibile",
+      "copyMessage": "Copia messaggio",
+      "account": "Account",
+      "accountAddress": "Indirizzo dell'account",
+      "network": "Rete",
+      "networkFee": "Commissione di rete",
+      "transactionDetailsTitle": "Dettagli della transazione",
+      "copyArguments": "Copia argomenti",
+      "copyCallData": "Copia i dati della call",
+      "signingByAppAccount": "Firma con l'account App con indice {index}",
+      "accountAddressUnavailable": "Indirizzo dell'account non disponibile — riconnetti la tua Polkadot App",
+      "copyAccountAddress": "Copia indirizzo dell'account",
+      "polkadotAppHint": "Per firmare una transazione, apri la Polkadot App",
+      "polkadotAppRawMessageHint": "Per firmare questo messaggio, apri la Polkadot App",
+      "continueToSign": "Continua",
+      "signPolkadotAppTitle": "Firma transazione",
+      "signPolkadotAppLine1": "Apri l'app Polkadot sul tuo dispositivo,",
+      "signPolkadotAppLine2": "poi tocca Firma o Rifiuta",
+      "signPolkadotAppDeviceLabel": "Polkadot App",
+      "signPolkadotAppSignButton": "Firma",
+      "signPolkadotAppRejectButton": "Rifiuta",
+      "signPolkadotAppValidFor": "Valida per {time}",
+      "openMobileAppTitle": "Apri l'app mobile",
+      "openMobileAppLine1": "Assicurati di avere installata l'app Polkadot,",
+      "openMobileAppLine2": "poi aprila per continuare",
+      "signingTimedOutTitle": "Richiesta di firma scaduta",
+      "signingTimedOutBody": "La richiesta non è stata completata in tempo",
+      "transactionSigningRejected": "Firma della transazione annullata",
+      "transactionSigned": "Transazione firmata",
+      "messageSigned": "Messaggio firmato",
+      "signingFailedTitle": "Impossibile firmare la transazione",
+      "signingFailedBody": "Qualcosa è andato storto. Apri i dettagli per maggiori informazioni.",
+      "signingErrorToastDetails": "Dettagli",
+      "signingErrorDetailsLabel": "Dettagli",
+      "signingErrorCopyDetails": "Copia i dettagli dell'errore",
+      "havingTroubleSigning": "Problemi con la conferma su mobile?",
+      "havingTroubleSigningDialog": {
+        "title": "Problemi con la conferma?",
+        "description": "Ricarica l'app e riprova a eseguire l'operazione. Se non funziona — prova a disconnetterti e ad accedere di nuovo",
+        "troubleshootingGuide": "Guida alla risoluzione dei problemi",
+        "reload": "Ricarica"
+      },
+      "noAllowanceErrorTitle": "L'account non è ancora pronto",
+      "noAllowanceErrorDescription": "Stiamo configurando il tuo account. Riprova tra un momento.",
+      "statementStoreErrorTitle": "Errore dello statement store",
+      "feeUnavailable": "—",
+      "customChainSigningWarning": "I dettagli della transazione non sono disponibili per questa chain personalizzata. Controlla i dati grezzi della call prima di firmare.",
+      "webVersionNotification": "Stai usando la versione web dell'app. Usa la versione desktop per interagire con i prodotti.",
+      "findPlaceholder": "Trova nella pagina",
+      "findCount": "{current}/{total}",
+      "findNoResults": "Nessun risultato",
+      "findNext": "Risultato successivo",
+      "findPrevious": "Risultato precedente",
+      "findClose": "Chiudi la barra di ricerca",
+      "zoomIn": "Ingrandisci",
+      "zoomOut": "Riduci",
+      "zoomReset": "Reimposta zoom",
+      "zoomPercent": "{percent}%",
+      "clearRecent": "Cancella"
+    },
+    "userManager": {
+      "connectionStatus": {
+        "connected": "Connesso",
+        "reconnecting": "Riconnessione…",
+        "offline": "Sei offline",
+        "noConnection": "Non connesso — clicca per accedere"
+      },
+      "aria": {
+        "account": "Account",
+        "connectAccount": "Connetti account"
+      },
+      "banner": {
+        "connectedTitle": "Connesso a {networkName}",
+        "connectedSubtitle": "Desktop abbinato al dispositivo mobile",
+        "reconnectingTitle": "Riconnessione a {networkName}…",
+        "reconnectingSubtitle": "Nuovo tentativo di raggiungere il nodo",
+        "offlineTitle": "Sei offline",
+        "offlineSubtitle": "Controlla la connessione a internet e riprova",
+        "noConnectionTitle": "Non connesso",
+        "noConnectionSubtitle": "Accedi per abbinare il tuo account"
+      },
+      "popover": {
+        "settings": "Impostazioni"
+      }
+    },
+    "chat": {
+      "proceedInChat": {
+        "menuItem": "Continua nella chat",
+        "toast": {
+          "errorTitle": "Impossibile creare la stanza di chat"
+        }
+      },
+      "title": "Chat",
+      "widgetTitle": "Ultime chat",
+      "fullscreenTitle": "Chat",
+      "unreadMessagesAria": "Messaggi non letti",
+      "category": "COMUNICAZIONI",
+      "replyToYourself": "Rispondi a te stesso",
+      "replyTo": "Rispondi a {name}",
+      "noConversations": "Ancora nessuna conversazione",
+      "startNewChat": "Inizia una nuova conversazione",
+      "searchPlaceholder": "Cerca nelle conversazioni...",
+      "searchByUsernameOrMessages": "Cerca per nome utente o nei messaggi",
+      "searchChatsAndContacts": "Chat e contatti",
+      "searchMessages": "Messaggi",
+      "sayHelloOptional": "Saluta... (facoltativo)",
+      "sending": "Invio in corso...",
+      "sendRequest": "Invia richiesta",
+      "search": "Cerca",
+      "noResults": "Nessun risultato per \"{query}\"",
+      "results": "Risultati ({count})",
+      "recent": "Recenti",
+      "clear": "Cancella",
+      "contacts": "Contatti",
+      "noMessages": "Ancora nessun messaggio",
+      "thisIsChat": "Questa è una chat",
+      "noResultsFound": "Nessun risultato trovato",
+      "noResultsDescription": "Non abbiamo trovato nulla che corrisponda alla tua ricerca. Prova con parole chiave diverse.",
+      "quickChat": "Chat rapida",
+      "viewMore": "Mostra altro",
+      "syncStatus": {
+        "outOfSync": {
+          "title": "I messaggi potrebbero non essere sincronizzati",
+          "subtitle": "Apri l'app mobile per sincronizzare i messaggi"
+        },
+        "syncing": {
+          "title": "Recupero degli ultimi messaggi",
+          "subtitle": "Sincronizzazione dei messaggi dal dispositivo mobile…"
+        },
+        "synced": {
+          "title": "I messaggi sono aggiornati",
+          "subtitle": "Dispositivo mobile online"
+        },
+        "error": {
+          "title": "Sincronizzazione non riuscita",
+          "subtitle": "Riavvia entrambe le app"
+        }
+      },
+      "sendMessageToBegin": "Invia un messaggio per iniziare la conversazione",
+      "mediaMobileOnly": "Questo messaggio può essere visualizzato solo nell'app mobile",
+      "noChatsYet": "Ancora nessuna chat",
+      "yourChatWillAppear": "La tua chat apparirà qui",
+      "yourChatsWillAppear": "Le tue chat appariranno qui",
+      "noChatSelected": "Nessuna chat selezionata",
+      "selectChatToView": "Seleziona una chat per vedere la conversazione",
+      "request": {
+        "entryTitle": "Richieste di messaggio",
+        "listHint": "Le richieste di messaggio da persone che non sono nella tua lista contatti appaiono qui",
+        "messageHidden": "Messaggio nascosto",
+        "messageHiddenFull": "Messaggio nascosto in base alle tue impostazioni predefinite",
+        "viewMessage": "Vedi messaggio",
+        "banner": "Aggiungi <b>{name}</b> ai tuoi contatti per accettare la richiesta di chat.<br></br>Non saprà che hai visto il suo messaggio finché non accetti.",
+        "accept": "Accetta",
+        "decline": "Rifiuta",
+        "declinedToast": "La richiesta di {name} è stata rifiutata",
+        "youApproved": "Hai accettato la richiesta",
+        "peerApproved": "{name} ha accettato la richiesta di messaggio",
+        "youSent": "<b>Tu</b> hai inviato una richiesta di messaggio",
+        "leftChat": "{name} ha lasciato la chat",
+        "modalTitle": "Aggiungere un nuovo contatto per iniziare a chattare?",
+        "modalBody": "Dopo essere entrato nella chat, assicurati che anche <b>{name}</b> ne avvii una con te, altrimenti il tuo messaggio potrebbe non essere visto.",
+        "cancel": "Annulla",
+        "continue": "Continua",
+        "inviteTitle": "Invita {name} a chattare",
+        "inviteHint": "In questo invito puoi inviare un solo messaggio",
+        "inviteFailed": "Impossibile inviare l'invito. Controlla la connessione e riprova.",
+        "waitForAccept": "Attendi che <b>{name}</b> accetti la tua richiesta prima di inviare il messaggio successivo.",
+        "today": "Oggi"
+      },
+      "contactSearch": {
+        "searchEntry": "Cerca",
+        "placeholder": "Cerca per nome utente o nei messaggi",
+        "tabChats": "Chat",
+        "tabApps": "App",
+        "groupChatsAndContacts": "Chat e contatti",
+        "groupMessages": "Messaggi",
+        "recent": "Recenti",
+        "clear": "Cancella",
+        "appsComingSoon": "La ricerca delle app arriverà presto",
+        "noResultsTitle": "Nessun risultato",
+        "noResultsHint": "Prova a modificare la ricerca"
+      },
+      "settings": {
+        "title": "Chat",
+        "subtitle": "Gestisci il comportamento delle chat e delle richieste di messaggio",
+        "messageRequestsSection": "Richieste di messaggio",
+        "hideByDefault": "Nascondi le richieste di messaggio per impostazione predefinita",
+        "hideByDefaultHint": "Le nuove richieste restano nascoste finché non le apri e tocchi Vedi messaggio"
+      },
+      "editMessage": "Modifica",
+      "editingMessage": "Modifica del messaggio",
+      "edited": "(modificato)",
+      "editHistory": "Cronologia delle modifiche",
+      "currentMessage": "Attuale",
+      "earlierVersion": "Versione precedente",
+      "viewEditHistory": "Vedi la cronologia delle modifiche",
+      "originalMessage": "Originale",
+      "leaveChat": "Lascia la chat",
+      "blockUser": "Blocca utente",
+      "unblockUser": "Sblocca utente",
+      "blockedNotice": "Non riceverai messaggi o richieste finché non sblocchi {name}.",
+      "unblock": "Sblocca",
+      "transfer": {
+        "youSent": "Hai inviato",
+        "sent": "Inviato",
+        "received": "Ricevuto",
+        "coinage": {
+          "submitting": "Invio in corso",
+          "sending": "Spedizione",
+          "sent": "Inviato",
+          "delivered": "Consegnato",
+          "claimed": "Riscosso"
+        }
+      },
+      "call": {
+        "title": {
+          "incomingVoice": "Chiamata vocale in arrivo",
+          "outgoingVoice": "Chiamata vocale in uscita",
+          "incomingVideo": "Videochiamata in arrivo",
+          "outgoingVideo": "Videochiamata in uscita",
+          "ongoingVoice": "Chiamata vocale in corso",
+          "ongoingVideo": "Videochiamata in corso",
+          "voice": "Chiamata vocale",
+          "video": "Videochiamata",
+          "missedVoice": "Chiamata vocale persa",
+          "missedVideo": "Videochiamata persa",
+          "canceledVoice": "Chiamata vocale annullata",
+          "canceledVideo": "Videochiamata annullata"
+        },
+        "subtitle": {
+          "openToCall": "Apri l'app mobile per chiamare",
+          "openToReturn": "Apri l'app mobile per tornare",
+          "openToCallBack": "Apri l'app mobile per richiamare",
+          "openToCallAgain": "Apri l'app mobile per chiamare di nuovo",
+          "tapToCall": "Tocca per chiamare",
+          "tapToReturn": "Tocca per tornare",
+          "tapToCallBack": "Tocca per richiamare",
+          "tapToCallAgain": "Tocca per chiamare di nuovo"
+        }
+      }
+    },
+    "productActionsMenu": {
+      "trigger": "Azioni del prodotto",
+      "openSettings": "Apri impostazioni"
+    },
+    "onboarding": {
+      "logoText": "Prodotti per le persone",
+      "mainText": "Accedi per esplorare Polkadot",
+      "description": "Usa la fotocamera per accedere",
+      "phoneHint": "Questo aprirà la Polkadot App",
+      "errorTitle": "Errore di autenticazione",
+      "error": "Qualcosa è andato storto durante l'autenticazione",
+      "errorNoFreeSlotsTitle": "Limite raggiunto",
+      "errorNoFreeSlotsDescription": "Non puoi aggiungere più di 8 dispositivi. Disconnetti uno dei dispositivi nella Polkadot App per aggiungerne uno nuovo.",
+      "loggingInToast": "Accesso in corso... Solo un momento",
+      "completingPairing": "Completamento dell'abbinamento…",
+      "connection": {
+        "offline": {
+          "title": "Sei offline",
+          "subtitle": "Controlla la connessione a internet e riprova"
+        },
+        "reaching": {
+          "title": "Riconnessione a Polkadot…",
+          "subtitle": "Nuovo tentativo di raggiungere il nodo"
+        },
+        "restored": {
+          "title": "Riconnessione a Polkadot…",
+          "subtitle": "Connessione a internet ripristinata"
+        },
+        "accountSetup": {
+          "title": "Il tuo account è ancora in fase di configurazione",
+          "subtitle": "Riprova più tardi"
+        }
+      }
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "toolbar": {
+        "ariaLabel": "Azioni della dashboard",
+        "pagesLabel": "Pagine della dashboard",
+        "switchToPage": "Passa alla pagina {number}"
+      },
+      "menu": {
+        "addToFavorites": "Aggiungi ai preferiti",
+        "removeFromFavorites": "Rimuovi dai preferiti",
+        "toast": {
+          "addedToFavorites": "{productName} è stato aggiunto ai preferiti",
+          "removedFromFavorites": "{productName} è stato rimosso dai preferiti"
+        }
+      },
+      "addWidget": {
+        "title": "Aggiungi widget",
+        "sizeAndType": "Dimensione e tipo",
+        "selectWidget": "Seleziona un widget dall'elenco",
+        "noWidgetsAvailable": "Nessun widget disponibile.",
+        "noSearchResults": "Nessun widget corrisponde alla tua ricerca.",
+        "loading": "Caricamento dei widget…",
+        "loadFailed": "Impossibile caricare i widget. Riprova più tardi.",
+        "createFolder": "Nuova cartella",
+        "createFolderDescription": "Crea una nuova cartella con questo widget",
+        "addToFavorites": "Aggiungi ai preferiti",
+        "addedToFavoritesButton": "Aggiunto ai preferiti",
+        "done": "Fatto",
+        "add": "Aggiungi",
+        "open": "Apri",
+        "noSupportedSizes": "Il widget non ha dimensioni supportate per l'aggiunta.",
+        "searchPlaceholder": "Inserisci un indirizzo {tld} per trovare le app",
+        "searchAriaLabel": "Cerca app",
+        "cards": {
+          "product": {
+            "title": "Widget prodotto",
+            "description": "Widget di accesso rapido dalla dashboard"
+          },
+          "chat": {
+            "title": "Widget chat",
+            "description": "Accesso rapido alle tue chat"
+          },
+          "favorites": {
+            "title": "Preferiti",
+            "description": "Cartella per le scorciatoie dei tuoi prodotti preferiti"
+          }
+        },
+        "toast": {
+          "widgetAddedProduct": "Il widget {widgetTitle} {sizeLabel} è stato aggiunto alla dashboard",
+          "addedToFavorites": "{productName} è stato aggiunto ai preferiti",
+          "widgetAddFailed": "Impossibile aggiungere il widget. Riprova oppure apri la dashboard per modificarne uno esistente.",
+          "favoritesAddFailed": "Impossibile aggiungere ai preferiti. Riprova.",
+          "viewAction": "Vedi"
+        }
+      },
+      "addToDashboard": {
+        "label": "Aggiungi alla dashboard",
+        "toast": {
+          "targetUnresolved": "Impossibile aprire la finestra di aggiunta alla dashboard per questo elemento."
+        }
+      },
+      "domainNotFound": "Dominio non trovato",
+      "placeholder": {
+        "widgetNotFound": "Il widget non esiste più",
+        "widgetUnavailable": "Il widget non è attualmente disponibile",
+        "deleteWidget": "Elimina widget"
+      },
+      "favorites": {
+        "title": "Preferiti",
+        "removeFolder": "Rimuovi cartella",
+        "removeProduct": "Rimuovi widget",
+        "empty": "Ancora nessun preferito",
+        "emptyPlaceholder": "Salva le tue app preferite per accedervi rapidamente",
+        "browseApps": "Esplora le app",
+        "viewMore": "Mostra altro"
+      },
+      "empty": {
+        "title": "I widget dei prodotti appariranno qui.",
+        "description": "Aggiungi il primo per iniziare."
+      },
+      "widgetMenu": {
+        "sizeLabel": "Dimensione",
+        "sizeSmall": "Piccolo",
+        "sizeMedium": "Medio",
+        "sizeLarge": "Grande",
+        "sizeHorizontal": "Orizzontale",
+        "cleanup": "Riordina la dashboard",
+        "reload": "Ricarica widget",
+        "removeWidget": "Rimuovi widget"
+      }
+    },
+    "ticketApp": {
+      "title": "Ticket App",
+      "category": "EVENTI",
+      "daysLeft": "Giorni rimasti",
+      "upcoming": "PROSSIMI EVENTI",
+      "entryTicket": "Biglietto d'ingresso"
+    },
+    "shopping": {
+      "title": "Mark3t",
+      "category": "SHOPPING",
+      "totalSaved": "Totale risparmiato",
+      "thisMonth": "Questo mese"
+    },
+    "hackm3": {
+      "title": "Hackm3",
+      "category": "DOCUMENTI",
+      "online": "{count} online",
+      "live": "Live",
+      "docs": "Documenti",
+      "shared": "Condivisi"
+    },
+    "user": {
+      "welcomeBack": "Bentornato",
+      "logOut": "Esci",
+      "logIn": "Accedi"
+    },
+    "settings": {
+      "title": "Impostazioni",
+      "testnetEndpoints": "Endpoint testnet",
+      "endpointStable": "Stabile",
+      "group": {
+        "preferences": "Preferenze",
+        "privacy": "Privacy e sicurezza",
+        "development": "Sviluppo"
+      }
+    },
+    "themeToggle": {
+      "title": "Aspetto",
+      "appearance": "Tema",
+      "colorMode": "Modalità colore",
+      "device": "Dispositivo",
+      "day": "Giorno",
+      "night": "Notte",
+      "berlin": "Berlino",
+      "tokyo": "Tokyo",
+      "lisbon": "Lisbona",
+      "malta": "Malta",
+      "preview": {
+        "outgoingFirst": "Ehi, vieni al Polkadot Summit? 🎉",
+        "incoming": "Certo! E tu?",
+        "outgoingSecond": "Non me lo perderei 👋 Ci vediamo lì!"
+      }
+    },
+    "updateCheck": {
+      "title": "Aggiornamento",
+      "channel": {
+        "title": "Canale di aggiornamento",
+        "stable": "Stabile",
+        "experimental": "Sperimentale",
+        "stableHint": "Build verificate. Consigliate per l'uso quotidiano.",
+        "experimentalHint": "Le build più recenti direttamente dallo sviluppo. Potrebbero essere instabili."
+      },
+      "checkForUpdates": "Controlla gli aggiornamenti",
+      "checking": "Ricerca di aggiornamenti…",
+      "checkingHint": "Potrebbe richiedere qualche istante",
+      "upToDate": "Polkadot Desktop è aggiornato!",
+      "upToDateHint": "Hai l'ultima versione di Polkadot Desktop. Versione {version} installata",
+      "upToDateHintNoVersion": "Hai l'ultima versione di Polkadot Desktop.",
+      "downloading": "Download dell'aggiornamento…",
+      "downloadingHint": "Potrebbe richiedere qualche istante",
+      "progress": "Avanzamento",
+      "downloadingPercent": "{percent}%",
+      "readyToInstall": "L'aggiornamento è pronto",
+      "readyToInstallHint": "Riavvia Polkadot Desktop per applicare l'ultima versione",
+      "installNow": "Riavvia",
+      "notNow": "Più tardi",
+      "error": "Aggiornamento non riuscito",
+      "errorHint": "Riprova o contatta il team di sviluppo",
+      "unsupported": "Gli aggiornamenti non sono disponibili",
+      "unsupportedHint": "Questa build di Polkadot Desktop non può aggiornarsi da sola.",
+      "close": "Chiudi",
+      "updateAvailable": "Nuovo aggiornamento di Polkadot Desktop!",
+      "updateAvailableHint": "La versione {version} è disponibile",
+      "updated": "Polkadot Desktop aggiornato!",
+      "updatedHint": "Versione {version} installata",
+      "relaunch": "Riavvia"
+    },
+    "productSettings": {
+      "title": "App",
+      "subtitle": "App con cui hai interagito",
+      "searchPlaceholder": "Cerca per nome o indirizzo {tld}",
+      "searchAriaLabel": "Cerca app per nome o indirizzo {tld}",
+      "clearCache": "Svuota la cache",
+      "forgetApp": "Dimentica l'app",
+      "requestedPermissions": "Autorizzazioni richieste",
+      "noPermissions": "Nessuna autorizzazione richiesta",
+      "toast": {
+        "appReset": "{productName} è stata reimpostata",
+        "cacheCleared": "Cache di {productName} svuotata"
+      },
+      "clearCacheDialog": {
+        "title": "Svuotare la cache di {productName}?",
+        "description": "I dati memorizzati nella cache verranno rimossi da questo dispositivo. Sono inclusi i file temporanei e i contenuti salvati localmente."
+      },
+      "forgetDialog": {
+        "title": "Dimenticare {productName}?",
+        "description": "Questo cancellerà tutti i dati del sito e reimposterà le autorizzazioni per {productName}. La scheda resta aperta; alla prossima apertura verrà ricaricato tutto da zero."
+      },
+      "webDomains": {
+        "dialogTitle": "Gestisci l'accesso ai domini web per {productName}"
+      },
+      "appPermission": {
+        "title": "Accesso a {permission} per {productName}",
+        "description": "Queste impostazioni controllano l'accesso a {permission} per l'app {productName} e le sue singole modalità",
+        "resetToDefault": "Ripristina i valori predefiniti",
+        "noDomainsRequested": "Nessun dominio ancora richiesto"
+      },
+      "aliasPermission": {
+        "label": "Alias",
+        "description": "Gestisci l'accesso all'alias tra le app per questa app",
+        "contextsLabel": "Contesti alias",
+        "contextsDescription": "Gestisci l'accesso per ogni contesto alias",
+        "noContextsRequested": "Nessun contesto alias ancora richiesto",
+        "dialogTitle": "Gestisci l'accesso ai contesti alias per l'app {productName}"
+      }
+    },
+    "productPermissions": {
+      "permissionRequest": {
+        "productKindLabel": "Prodotto",
+        "closeDialog": "Chiudi",
+        "title": "Consentire l'accesso a {label}?",
+        "deny": "Non consentire",
+        "allowOnce": "Consenti una volta",
+        "allowAlways": "Consenti sempre",
+        "domainsLabel": "Domini",
+        "permission": {
+          "Camera": "Fotocamera",
+          "Microphone": "Microfono",
+          "Bluetooth": "Bluetooth",
+          "Location": "Posizione",
+          "Notifications": "Notifiche",
+          "Clipboard": "Appunti",
+          "OpenUrl": "Apri URL esterni",
+          "Biometrics": "Biometria",
+          "Motion": "Sensori di movimento",
+          "NFC": "NFC",
+          "Files": "File",
+          "Remote": "Domini web",
+          "WebRtc": "WebRTC",
+          "ChainSubmit": "Invio su chain",
+          "PreimageSubmit": "Invio di preimage",
+          "StatementSubmit": "Invio di statement",
+          "BalanceAccess": "Saldo",
+          "UserIdentity": "Identità"
+        },
+        "reason": {
+          "Camera": "Usata per funzioni come videochiamate, scansione di QR e acquisizione di contenuti",
+          "Microphone": "Usato per funzioni come chiamate vocali, messaggi e registrazione audio",
+          "Bluetooth": "Usato per connettersi ai dispositivi nelle vicinanze e trasferire dati",
+          "Location": "Usata per servizi basati sulla posizione e per personalizzare i contenuti",
+          "Notifications": "Usate per inviarti aggiornamenti, avvisi e informazioni importanti",
+          "Clipboard": "Usati per copiare e incollare i contenuti che scegli di condividere",
+          "OpenUrl": "Usato per aprire link esterni nel tuo browser predefinito",
+          "Biometrics": "Usata per funzioni che richiedono di verificare la tua identità",
+          "Motion": "Usato per funzioni che reagiscono a come muovi o inclini il dispositivo",
+          "NFC": "Usato per leggere e scrivere senza contatto con tag e dispositivi nelle vicinanze",
+          "Files": "Usato per funzioni come caricamento, download e gestione dei file",
+          "Remote": "Usati per effettuare richieste ai seguenti domini",
+          "WebRtc": "Usato per funzioni di comunicazione in tempo reale come chiamate vocali e videochiamate",
+          "ChainSubmit": "Usato per trasmettere transazioni firmate a qualsiasi chain Substrate",
+          "PreimageSubmit": "Usato per inviare dati preimage alla bulletin chain",
+          "StatementSubmit": "Usato per inviare statement allo statement store",
+          "BalanceAccess": "Usato per leggere il tuo saldo disponibile e rilevare quando un pagamento fallisce perché il saldo è troppo basso. Non consente di spendere",
+          "UserIdentity": "L'accesso al tuo nome utente principale è necessario per l'identificazione. Potrai gestirlo in seguito nelle Impostazioni."
+        }
+      },
+      "remotePermissionRequest": {
+        "title": "Richiesta di autorizzazione remota",
+        "description": "sta richiedendo l'accesso remoto a {permission}.",
+        "deny": "Nega"
+      },
+      "externalBlockedToast": "Richiesta di rete a {origin} bloccata. Modificala nelle autorizzazioni dell'app.",
+      "settings": {
+        "heading": "Autorizzazioni",
+        "subheading": "Visualizza e gestisci le autorizzazioni concesse a questa app",
+        "remoteHeading": "Autorizzazioni remote",
+        "remoteSubheading": "Autorizzazioni per accedere alle funzioni di rete remote"
+      }
+    },
+    "customChains": {
+      "title": "Chain personalizzate",
+      "addSection": "Aggiungi chain",
+      "registeredSection": "Chain registrate",
+      "endpointLabel": "Endpoint WebSocket",
+      "endpointPlaceholder": "ws://localhost:9944",
+      "nameLabel": "Nome (facoltativo)",
+      "namePlaceholder": "Rilevato automaticamente dal nodo",
+      "addButton": "Aggiungi chain",
+      "addingButton": "Connessione…",
+      "emptyState": "Nessuna chain personalizzata aggiunta. Connettiti a un nodo Substrate locale o a una chain ospitata personalizzata.",
+      "errors": {
+        "invalidUrlTitle": "URL non valido",
+        "invalidUrlDescription": "Deve essere un URL ws:// o wss://",
+        "duplicateBuiltinTitle": "Già registrata",
+        "duplicateBuiltinDescription": "Questa chain è già una chain integrata",
+        "duplicateCustomTitle": "Già registrata",
+        "duplicateCustomDescription": "Questa chain è già tra le tue chain personalizzate",
+        "connectionFailedTitle": "Connessione non riuscita",
+        "unknownError": "Errore sconosciuto"
+      },
+      "addedToastTitle": "Chain aggiunta",
+      "addedToastDescription": "{name} ({genesisHash})",
+      "removeChainAriaLabel": "Rimuovi {name}"
+    },
+    "permissionSettings": {
+      "navItem": "Autorizzazioni",
+      "heading": "Autorizzazioni",
+      "subheading": "Controlla e gestisci l'accesso delle app a funzioni e dati",
+      "categoryHeading": "{name}:",
+      "appCount": "{count, plural, =0 {Nessuna app} one {# app} other {# app}}",
+      "category": {
+        "device": "Accesso a dispositivo e sistema",
+        "onchain": "Azioni on-chain",
+        "service": "Accesso ai servizi"
+      },
+      "status": {
+        "ask": "Chiedi (predefinito)",
+        "granted": "Consentito",
+        "denied": "Negato"
+      },
+      "detail": {
+        "rulesTitle": "Regole e tutele",
+        "appsLabel": "App:",
+        "noApps": "Nessuna app ha richiesto questa autorizzazione",
+        "allowedFor": "Consentito per {modalities}",
+        "appSubtitle": "{baseName} • {allowed}"
+      },
+      "permission": {
+        "Clipboard": {
+          "label": "Appunti",
+          "description": "Usati per copiare e incollare i contenuti che scegli di condividere",
+          "rule": {
+            "1": "Accesso solo dopo un'azione esplicita dell'utente (es. incolla)",
+            "2": "Nessuna lettura in background",
+            "3": "I dati non vengono archiviati né trasmessi senza autorizzazione",
+            "4": "Accesso limitato alla sessione attiva"
+          }
+        },
+        "Microphone": {
+          "label": "Microfono",
+          "description": "Usato per funzioni come chiamate vocali, messaggi e registrazione audio",
+          "rule": {
+            "1": "Push-to-talk o avvio esplicito della registrazione",
+            "2": "Nessun ascolto in background",
+            "3": "Indicatore visivo quando è attivo",
+            "4": "Accesso solo tramite la mediazione dell'host"
+          }
+        },
+        "Camera": {
+          "label": "Fotocamera",
+          "description": "Usata per funzioni come videochiamate, scansione di QR e acquisizione di contenuti",
+          "rule": {
+            "1": "Accesso solo quando usi attivamente la fotocamera",
+            "2": "Nessuna registrazione in background",
+            "3": "Indicatore visivo quando la fotocamera è attiva",
+            "4": "Nessun dato viene archiviato o condiviso senza la tua autorizzazione"
+          }
+        },
+        "Notifications": {
+          "label": "Notifiche",
+          "description": "Usate per inviarti aggiornamenti, avvisi e informazioni importanti",
+          "rule": {
+            "1": "Nessuna notifica eccessiva o di spam",
+            "2": "Nessun accesso a dati sensibili tramite le notifiche"
+          }
+        },
+        "Bluetooth": {
+          "label": "Bluetooth",
+          "description": "Usato per connettersi ai dispositivi nelle vicinanze e trasferire dati",
+          "rule": {
+            "1": "Accesso solo ai dispositivi nelle vicinanze",
+            "2": "Nessuna connessione in background senza la tua interazione",
+            "3": "Nessun accesso a dati sensibili senza autorizzazione"
+          }
+        },
+        "Location": {
+          "label": "Posizione",
+          "description": "Usata per servizi basati sulla posizione e per personalizzare i contenuti",
+          "rule": {
+            "1": "La posizione non viene usata in background",
+            "2": "La posizione viene usata solo quando serve per funzioni specifiche",
+            "3": "I dati sulla posizione non vengono archiviati né condivisi senza autorizzazione"
+          }
+        },
+        "Biometrics": {
+          "label": "Biometria",
+          "description": "Usata per funzioni che richiedono di verificare la tua identità",
+          "rule": {
+            "1": "Usata solo dopo la tua autenticazione esplicita (es. Face ID o Touch ID)",
+            "2": "I dati biometrici non vengono mai letti né archiviati da questo prodotto",
+            "3": "L'autenticazione è gestita in modo sicuro dal tuo dispositivo",
+            "4": "Usata solo per sbloccare o approvare azioni"
+          }
+        },
+        "Motion": {
+          "label": "Sensori di movimento",
+          "description": "Usato per funzioni che reagiscono a come muovi o inclini il dispositivo",
+          "rule": {
+            "1": "Legge solo il movimento e l'orientamento del dispositivo",
+            "2": "Nessun accesso alla tua posizione o alla fotocamera",
+            "3": "Puoi revocare l'accesso in seguito nelle Impostazioni"
+          }
+        },
+        "OpenExternalUrl": {
+          "label": "Apri URL esterni",
+          "description": "Usato per aprire link esterni nel tuo browser predefinito",
+          "rule": {
+            "1": "I link vengono aperti solo dopo la tua interazione",
+            "2": "Nessun reindirizzamento automatico o azione in background",
+            "3": "Vengono aperti solo gli URL richiesti esplicitamente",
+            "4": "Nessun dato viene condiviso senza la tua autorizzazione"
+          }
+        },
+        "ExternalRequest": {
+          "label": "Domini web",
+          "description": "Usati per effettuare richieste HTTP ai seguenti domini",
+          "rule": {
+            "1": "Le richieste sono limitate ai soli domini specificati",
+            "2": "Nessuna condivisione automatica di dati senza un'azione dell'utente",
+            "3": "Tutte le richieste passano dalla mediazione dell'host",
+            "4": "Nessun accesso a dati locali o sensibili per impostazione predefinita"
+          }
+        },
+        "WebRtc": {
+          "label": "WebRTC",
+          "description": "Usato per funzioni di comunicazione in tempo reale come chiamate vocali e videochiamate",
+          "rule": {
+            "1": "Usato solo durante una comunicazione attiva",
+            "2": "Nessuna connessione in background senza la tua interazione",
+            "3": "Le connessioni dirette vengono stabilite solo quando serve",
+            "4": "Può esporre il tuo indirizzo IP durante l'uso"
+          }
+        },
+        "ChainSubmit": {
+          "label": "Invio su chain",
+          "description": "Usato per trasmettere transazioni firmate a qualsiasi chain Substrate",
+          "rule": {
+            "1": "È possibile inviare solo transazioni firmate",
+            "2": "Nessuna transazione viene creata o modificata automaticamente",
+            "3": "L'invio avviene solo dopo la tua conferma",
+            "4": "Nessun accesso alle tue chiavi private o a dati sensibili"
+          }
+        },
+        "PreimageSubmit": {
+          "label": "Invio di preimage",
+          "description": "Usato per inviare dati preimage alla bulletin chain",
+          "rule": {
+            "1": "I dati archiviati sono pubblici sulla chain Bulletin",
+            "2": "Consenti sempre copre ogni caricamento; Consenti una volta copre un solo caricamento",
+            "3": "I dati vengono inviati esattamente come forniti, senza modifiche",
+            "4": "Nessun accesso alle tue chiavi private o a dati sensibili"
+          }
+        },
+        "StatementSubmit": {
+          "label": "Invio di statement",
+          "description": "Usato per inviare statement allo statement store",
+          "rule": {
+            "1": "È possibile inviare solo transazioni firmate",
+            "2": "Nessuna transazione viene creata o modificata automaticamente",
+            "3": "L'invio avviene solo dopo la tua conferma",
+            "4": "Nessun accesso alle tue chiavi private o a dati sensibili"
+          }
+        },
+        "BalanceAccess": {
+          "label": "Saldo",
+          "description": "Usato per leggere il tuo saldo disponibile",
+          "rule": {
+            "1": "Mostra il saldo disponibile per i pagamenti",
+            "2": "Non permette al prodotto di spendere o spostare fondi",
+            "3": "Può rilevare quando un pagamento è stato rifiutato perché il saldo era troppo basso",
+            "4": "Revocando l'accesso gli aggiornamenti del saldo si interrompono"
+          }
+        },
+        "UserIdentity": {
+          "label": "Identità",
+          "description": "Divulgazione del nome utente principale",
+          "rule": {
+            "1": "Rivela al prodotto il tuo nome utente principale",
+            "2": "Usato solo a scopo di identificazione",
+            "3": "Nessun altro dato personale viene condiviso",
+            "4": "Puoi revocare l'accesso in seguito nelle Impostazioni"
+          }
+        },
+        "Files": {
+          "label": "File",
+          "description": "Usato per funzioni come caricamento, download e gestione dei file",
+          "rule": {
+            "1": "Accesso solo ai file che selezioni esplicitamente",
+            "2": "Nessun accesso in background ai tuoi file",
+            "3": "I file non vengono modificati senza una tua azione",
+            "4": "Nessun file viene condiviso senza la tua autorizzazione"
+          }
+        }
+      }
+    },
+    "statementStoreNetwork": {
+      "title": "Endpoint testnet",
+      "changeNetworkDialog": {
+        "title": "Cambiare l'endpoint testnet e disconnettersi?",
+        "description": "Cambiando l'endpoint verrai disconnesso e l'app si ricaricherà. Dovrai accedere di nuovo.",
+        "confirm": "Cambia endpoint"
+      },
+      "options": {
+        "endpointStable": "Stabile"
+      }
+    },
+    "offlineAccess": {
+      "menu": {
+        "enable": "Attiva l'accesso offline",
+        "remove": "Rimuovi l'accesso offline",
+        "update": "Aggiorna la versione dell'app"
+      },
+      "updateDescription": "È disponibile una versione più recente. Aggiorna la versione bloccata all'ultima disponibile.",
+      "section": {
+        "title": "Accesso offline",
+        "description": "Salva l'app per usarla senza internet",
+        "enable": "Attiva",
+        "remove": "Rimuovi",
+        "updateTitle": "Aggiornamento disponibile per {modality}",
+        "updateReady": "L'aggiornamento dalla versione {fromVersion} alla {toVersion} è pronto per l'installazione",
+        "update": "Aggiorna",
+        "modality": {
+          "app": "App",
+          "widget": "Widget",
+          "worker": "Servizi in background (es. stanze di chat)"
+        }
+      },
+      "enableDialog": {
+        "title": "Attiva l'accesso offline",
+        "description": "Questo salverà la versione attuale dell'app per usarla senza connessione a internet",
+        "confirm": "Attiva"
+      },
+      "removeDialog": {
+        "title": "Rimuovi l'accesso offline",
+        "description": "Questo ti disconnetterà da {name} e non potrai più usare l'app senza una connessione a internet. Puoi riattivare questa impostazione in qualsiasi momento.",
+        "confirm": "Rimuovi"
+      },
+      "updateDialog": {
+        "title": "Aggiorna la versione dell'app per {version}",
+        "description": "Questo salverà la versione {version} dell'app per usarla senza internet",
+        "confirm": "Aggiorna"
+      },
+      "toast": {
+        "enabled": "{name} ora è disponibile offline",
+        "removed": "Uso offline rimosso per {name}",
+        "updated": "{name} aggiornato all'ultima versione",
+        "noVersion": "Il prodotto non è attualmente in esecuzione",
+        "error": "Impossibile modificare l'accesso offline",
+        "updateError": "Impossibile aggiornare la versione",
+        "modalityUpdate": {
+          "title": "Aggiornamento disponibile per {modality}",
+          "description": "La versione {version} è pronta per l'installazione",
+          "action": "Aggiorna"
+        }
+      }
+    },
+    "languageSettings": {
+      "title": "Lingua",
+      "locale": {
+        "en": "Inglese",
+        "es": "Spagnolo",
+        "fr": "Francese",
+        "de": "Tedesco",
+        "it": "Italiano",
+        "pt": "Portoghese",
+        "zh-Hans": "Cinese (semplificato)",
+        "ja": "Giapponese",
+        "ko": "Coreano",
+        "ru": "Russo",
+        "ar": "Arabo",
+        "hi": "Hindi",
+        "tr": "Turco"
+      }
+    },
+    "inputModality": {
+      "title": "Cerca",
+      "placeholder": "Cerca o inserisci un indirizzo {tld}",
+      "attach": "Allega file",
+      "removeAttachment": "Rimuovi allegato",
+      "loadingAttachment": "Caricamento allegato…",
+      "asked": "Richiesta inviata a {count} prodotti su questa schermata…",
+      "noContext": "Niente in questa schermata può rispondere.",
+      "noCandidates": "Niente può gestire questo.",
+      "goTo": "Vai a",
+      "pickerPrompt": "Quale prodotto deve ricevere «{fileName}»?",
+      "pickerEmpty": "Nessun prodotto in questa schermata accetta questo tipo di file.",
+      "attachmentTooLarge": "Troppo grande per essere inoltrato: {fileName}",
+      "scan": "Scansiona un codice",
+      "scanPrompt": "Codice scansionato",
+      "scanWillOpen": "Questo aprirà {productId}.",
+      "scanWillAsk": "Verrà chiesto ai prodotti di questa schermata.",
+      "scanConfirm": "Continua",
+      "scanCancel": "Annulla",
+      "scanUnavailable": "Questo dispositivo non ha una fotocamera disponibile.",
+      "scanDenied": "Accesso alla fotocamera negato.",
+      "fromThisScreen": "Da questa schermata",
+      "recentlyVisited": "Aperti di recente",
+      "clearRecent": "Cancella",
+      "addressFavorites": "Preferiti",
+      "suggestionSeparator": "—"
+    },
+    "networkConnection": {
+      "title": "Connessioni di rete",
+      "chainsLoading": "Caricamento delle reti…",
+      "chainsEmpty": "Nessuna rete configurata.",
+      "noLightClient": "Nessun light client disponibile",
+      "mode": {
+        "lightClient": "Light client",
+        "rpc": "Provider affidabili",
+        "lightClientHint": "Verifica i dati della rete direttamente sul tuo dispositivo senza affidarti ai provider",
+        "rpcHint": "Accesso più rapido tramite provider affidabili, ma meno privacy"
+      },
+      "advanced": {
+        "title": "Avanzate",
+        "description": "Configura i metodi di connessione"
+      },
+      "slowLoad": {
+        "title": "Il caricamento sta richiedendo più tempo del solito",
+        "description": "Salta l’attesa e carica più velocemente usando provider affidabili per questa sessione",
+        "action": "Carica più veloce"
+      },
+      "loadFailed": {
+        "title": "Impossibile caricare questa pagina",
+        "description": "La connessione ha impiegato troppo tempo. Riprova o usa una connessione più veloce.",
+        "descriptionReloadOnly": "La connessione ha impiegato troppo tempo. Prova a ricaricare la pagina.",
+        "reload": "Ricarica la pagina"
+      },
+      "role": {
+        "identity": "Identità",
+        "apps": "App",
+        "transactions": "Transazioni"
+      }
+    },
+    "productRuntime": {
+      "permissionDenied": {
+        "systemDeviceSettings": "Impostazioni del dispositivo",
+        "Camera": {
+          "title": "Accesso alla fotocamera richiesto",
+          "description": "Usata per funzioni come videochiamate, scansione di QR e acquisizione di contenuti"
+        },
+        "Microphone": {
+          "title": "Accesso al microfono richiesto",
+          "description": "Usato per funzioni come chiamate vocali, messaggi e registrazione audio"
+        }
+      },
+      "review": {
+        "deny": "Rifiuta",
+        "signPayload": {
+          "title": "Firma il payload della transazione",
+          "subtitle": "Controlla il payload prima della firma."
+        },
+        "signRaw": {
+          "title": "Firma messaggio",
+          "subtitle": "Controlla il messaggio prima della firma."
+        },
+        "createTransaction": {
+          "title": "Crea transazione",
+          "subtitle": "Controlla la transazione prima dell’invio."
+        },
+        "signVrf": {
+          "title": "Firma trascrizione VRF",
+          "subtitle": "Controlla la trascrizione prima della firma."
+        },
+        "allowance": {
+          "title": "Assegna risorse",
+          "subtitle": "Controlla le risorse richieste da questa app."
+        },
+        "statementSign": {
+          "title": "Firma dichiarazione",
+          "subtitle": "Controlla la dichiarazione prima della firma."
+        },
+        "createProof": {
+          "title": "Crea prova",
+          "subtitle": "Controlla la prova richiesta da questa app."
+        },
+        "legacyAccountNotice": "Firma con un account legacy.",
+        "resource": {
+          "statementStore": "Slot dello statement store",
+          "bulletin": "Slot di archiviazione Bulletin",
+          "smartContract": "Gas dello smart contract per l’account {account}",
+          "autoSigning": "Firma per tuo conto senza chiedere ogni volta"
+        },
+        "accountAccess": {
+          "title": "Consentire l’accesso all’account di {targetIdentifier}?",
+          "subtitle": "Consente a questa app di agire con un account che appartiene a un’altra app",
+          "warning": "Consentendolo, questa app potrà usare l’account dell’altra app per tuo conto"
+        },
+        "identityDisclosure": {
+          "title": "Condividere il tuo nome utente con questa app?",
+          "subtitle": "Questa app vedrà il tuo nome utente principale",
+          "warning": "Consentendolo, questa app potrà riconoscerti dal tuo nome utente"
+        },
+        "productSubtree": {
+          "title": "Consentire a questa app di accedere al suo account?",
+          "subtitle": "Recupera l’account di questa app dal tuo dispositivo associato"
+        }
+      }
+    }
+  },
+  "widget": {
+    "permission": {
+      "modality": {
+        "app": {
+          "label": "App",
+          "description": "Gestisci l'accesso a {permission} per {productName} in modalità a schermo intero"
+        },
+        "widget": {
+          "label": "Widget",
+          "description": "Gestisci l'accesso a {permission} per i widget di {productName} sulla dashboard"
+        }
+      }
+    },
+    "rateLimiter": {
+      "description": "Il limite per {limiterType} è stato raggiunto",
+      "types": {
+        "rpc": "RPC",
+        "featureSupport": "Supporto delle funzioni",
+        "navigation": "Navigazione",
+        "localStorageRead": "Lettura dall'archivio locale",
+        "localStorageWrite": "Scrittura nell'archivio locale",
+        "pushNotification": "Notifica push",
+        "pushNotificationCancel": "Annullamento della notifica push",
+        "permissions": "Autorizzazioni",
+        "legacyAccounts": "Account legacy",
+        "identityAccount": "Account identità",
+        "productAccounts": "Account prodotto",
+        "alias": "Alias",
+        "proof": "Prova",
+        "signVrf": "Firma VRF",
+        "ringVrfRegister": "Registrazione delle chiavi Ring VRF",
+        "ringVrfList": "Elenco delle chiavi Ring VRF",
+        "ringVrfSign": "Firma Ring VRF",
+        "entropy": "Entropia",
+        "login": "Accesso",
+        "preimage": "Preimage"
+      }
+    },
+    "webview": {
+      "error": {
+        "domainResolve": "Impossibile trovare il prodotto.",
+        "fetchingFailed": "Impossibile recuperare il prodotto.",
+        "loadFailed": "Caricamento non riuscito: {description} ({code})"
+      },
+      "loading": {
+        "reaching": "Connessione a {identifier}",
+        "reachingGeneric": "Connessione in corso"
+      },
+      "crash": {
+        "title": "Il prodotto ha smesso di funzionare",
+        "subtitle": "Prova a ricaricare la pagina.",
+        "reload": "Ricarica",
+        "advanced": "Mostra dettagli",
+        "reason": "Motivo: {reason}",
+        "exitCode": "Codice di uscita: {code}"
+      },
+      "unresponsive": {
+        "title": "La pagina non risponde",
+        "subtitle": "Potrebbe riprendersi da sola, oppure puoi ricaricarla ora.",
+        "reload": "Ricarica",
+        "advanced": "Mostra dettagli"
+      },
+      "degraded": {
+        "title": "Il prodotto risponde lentamente",
+        "reload": "Ricarica",
+        "dismiss": "Ignora"
+      }
+    },
+    "productContainerBinding": {
+      "aliasPermission": {
+        "title": "Consentire l'accesso al tuo alias in {requestedIdentifier}?",
+        "subtitle": "Usato per collegare il tuo account identità tra le app",
+        "keyOwner": "Usando la chiave di {keyOwner}",
+        "requestingProduct": "Prodotto richiedente",
+        "requestedContext": "Contesto richiesto",
+        "warning": "Consentendolo, permetti a questa app di riconoscerti e di tracciare la tua attività in un'altra app",
+        "deny": "Non consentire",
+        "allowOnce": "Consenti una volta",
+        "allowAlways": "Consenti sempre"
+      },
+      "proofPermission": {
+        "title": "Consentire a {requestedIdentifier} di dimostrare che sei una persona?",
+        "subtitle": "Dimostra che sei un essere umano unico senza rivelare la tua identità",
+        "warning": "Consentendolo, questa app può generare una prova di personalità firmata a tuo nome",
+        "deny": "Non consentire",
+        "allow": "Consenti"
+      },
+      "signVrf": {
+        "title": "Consentire a {requestingIdentifier} di creare una firma casuale verificabile?",
+        "subtitle": "Produce una firma VRF in stile lotteria legata al tuo account prodotto",
+        "account": "Account firmatario",
+        "transcript": "Trascrizione",
+        "transcriptLabel": "etichetta",
+        "warning": "Consentendolo, questa app può generare una firma VRF firmata a tuo nome",
+        "deny": "Non consentire",
+        "allow": "Consenti"
+      },
+      "allocationRequest": {
+        "title": "Richiesta di allowance",
+        "description": "{productName} richiede un'allocazione di risorse",
+        "requestedResources": "Risorse richieste",
+        "polkadotAppHint": "Preparati ad approvare nella Polkadot App",
+        "grantAccess": "Continua",
+        "pending": "Allocazione in corso...",
+        "polkadotAppLine1": "Apri l'app Polkadot sul tuo telefono,",
+        "polkadotAppLine2": "poi approvala o rifiutala",
+        "polkadotAppApproveButton": "Approva",
+        "allocationRejected": "Richiesta di allowance annullata",
+        "smartContractDetailsIntro": "I seguenti account firmeranno automaticamente le chiamate ai contratti:",
+        "appAccountWithIndex": "Account App con indice {index}",
+        "copyAccountAddress": "Copia indirizzo dell'account",
+        "resource": {
+          "StatementStoreAllowance": "Pubblicare statement a tuo nome",
+          "BulletinAllowance": "Pubblicare sulla Bulletin chain a tuo nome",
+          "SmartContractAllowance": "Firmare automaticamente le chiamate agli smart contract",
+          "AutoSigning": "Firmare automaticamente le transazioni"
+        }
+      }
+    }
+  }
+}

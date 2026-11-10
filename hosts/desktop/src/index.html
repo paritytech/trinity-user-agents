@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- `dir` is set alongside `lang` so ltr:/rtl: variant rules resolve on the first paint.
+     TranslationProvider rewrites both attributes when a non-English catalog loads. -->
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="msapplication-TileColor" content="#da532c" />
+    <!-- `connect-src` allows plain `ws:` because the smoldot light client dials chain peers
+         directly over unencrypted WebSocket (`ws://<ip>:<port>`), and those peers come from the
+         chain spec bootnodes and the DHT at runtime — there is no host list to enumerate here. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss: ws: http://localhost:* data:; img-src 'self' data: blob: https://raw.githubusercontent.com; media-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self' polkadot: http://localhost:*;"
+    />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#7b29ff" />
+    <meta name="title" content="Polkadot Desktop" />
+    <meta
+      name="description"
+      content="Enterprise desktop wallet for Polkadot supporting multisigs, staking, light clients and more"
+    />
+
+    <title>Polkadot Desktop</title>
+
+    <!-- FAVICONS -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+
+    <script type="module" src="index.tsx" defer></script>
+  </head>
+  <!-- `app-region` is inherited, so it sits on the app root rather than on <body>:
+     every Radix/sonner layer is portaled to <body> as a sibling of #app, and a
+     draggable <body> made those layers window chrome — Chromium handed presses on
+     a popover's own buttons to the OS (a double press maximized the window). Kept
+     inline so the window is draggable before the stylesheet loads. -->
+  <body>
+    <div id="app" class="h-full overflow-hidden" style="app-region: drag"></div>
+  </body>
+</html>

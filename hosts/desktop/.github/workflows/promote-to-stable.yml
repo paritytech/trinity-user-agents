@@ -1,0 +1,251 @@
+name: Promote to Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      VERSION:
+        type: string
+        description: Version to promote (e.g. 0.1.5 — without leading "v"). A GitHub release tagged v<VERSION> must already exist and be greater than the current stable version.
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gh-promote-stable
+  cancel-in-progress: false
+
+env:
+  VERSION_TO_PROMOTE: ${{ github.event.inputs.VERSION }}
+  # Only read by the static-feed steps below, which are skipped unless UPDATE_S3_BUCKET is set.
+  AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  AWS_DEFAULT_REGION: ${{ vars.UPDATE_S3_REGION }}
+  S3_ENDPOINT: ${{ vars.UPDATE_S3_ENDPOINT }}
+  S3_BUCKET: ${{ vars.UPDATE_S3_BUCKET }}
+  STATIC_FEED: ${{ vars.UPDATE_S3_BUCKET != '' }}
+
+jobs:
+  promote:
+    name: Mark release as Latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    outputs:
+      version: ${{ env.VERSION_TO_PROMOTE }}
+      previous-stable: ${{ steps.read-current.outputs.version }}
+
+    steps:
+      - name: Validate version format
+        env:
+          VERSION: ${{ env.VERSION_TO_PROMOTE }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.].+)?$'; then
+            echo "Invalid version format: $VERSION (expected something like 0.1.5)"
+            exit 1
+          fi
+
+      - name: Verify the release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.VERSION_TO_PROMOTE }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            echo "GitHub release v$VERSION not found in $REPO"
+            exit 1
+          fi
+          echo "Found release v$VERSION"
+
+      # Read from whichever channel this deployment actually serves: the release GitHub marks as
+      # Latest, or `stable/latest.yml` in the bucket.
+      - name: Read current stable version
+        id: read-current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CURRENT=""
+          if [ "$STATIC_FEED" = true ]; then
+            if aws s3 cp --endpoint-url "$S3_ENDPOINT" \
+              "s3://$S3_BUCKET/stable/latest.yml" /tmp/current-stable.yml 2>/dev/null; then
+              CURRENT=$(grep -E '^version:' /tmp/current-stable.yml | head -n1 | sed -E 's/^version:[[:space:]]*//' || echo "")
+            fi
+          elif CURRENT_TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null); then
+            CURRENT="${CURRENT_TAG#v}"
+          fi
+          if [ -n "$CURRENT" ]; then
+            echo "Current stable: $CURRENT"
+          else
+            echo "No current stable (first promote)"
+          fi
+          echo "version=$CURRENT" >> $GITHUB_OUTPUT
+
+      - name: Require new version greater than current stable
+        env:
+          NEW: ${{ env.VERSION_TO_PROMOTE }}
+          OLD: ${{ steps.read-current.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OLD" ]; then
+            echo "No current stable — allowing promote of $NEW"
+            exit 0
+          fi
+          if [ "$NEW" = "$OLD" ]; then
+            echo "Version $NEW is already the current stable"
+            exit 1
+          fi
+          HIGHEST=$(printf '%s\n%s\n' "$NEW" "$OLD" | sort -V | tail -n1)
+          if [ "$HIGHEST" != "$NEW" ]; then
+            echo "New version $NEW is lower than current stable $OLD — refusing to downgrade"
+            exit 1
+          fi
+          echo "OK: $NEW > $OLD"
+
+      # Mirrors the release pipeline's `mirror-static-feed` job and is skipped on the same switch.
+      # The archive holds versioned filenames while the channel serves unversioned ones, so each
+      # object is renamed on the way across; the metadata already points at the unversioned names,
+      # having been rewritten when the release was published.
+      - name: Promote the static feed to stable
+        if: vars.UPDATE_S3_BUCKET != ''
+        env:
+          V: ${{ env.VERSION_TO_PROMOTE }}
+        run: |
+          set -euo pipefail
+          SRC="s3://$S3_BUCKET/releases/$V"
+          DST="s3://$S3_BUCKET/stable"
+
+          if [ "$(aws s3 ls --endpoint-url "$S3_ENDPOINT" "$SRC/" | wc -l)" -eq 0 ]; then
+            echo "No objects found under $SRC/"
+            exit 1
+          fi
+
+          # "<source basename>|<destination basename>|<required|optional>", the same set the release
+          # pipeline publishes to /latest/.
+          ENTRIES=(
+            "Polkadot Desktop-$V-x64.exe|Polkadot-Desktop.exe|required"
+            "Polkadot Desktop-$V-x64.exe.blockmap|Polkadot-Desktop.exe.blockmap|optional"
+            "Polkadot Desktop-$V-x64.dmg|Polkadot-Desktop-x64.dmg|required"
+            "Polkadot Desktop-$V-arm64.dmg|Polkadot-Desktop-arm64.dmg|required"
+            "Polkadot Desktop-$V-x64.zip|Polkadot-Desktop-x64.zip|optional"
+            "Polkadot Desktop-$V-x64.zip.blockmap|Polkadot-Desktop-x64.zip.blockmap|optional"
+            "Polkadot Desktop-$V-arm64.zip|Polkadot-Desktop-arm64.zip|optional"
+            "Polkadot Desktop-$V-arm64.zip.blockmap|Polkadot-Desktop-arm64.zip.blockmap|optional"
+            "Polkadot Desktop-$V-x86_64.AppImage|Polkadot-Desktop-x86_64.AppImage|required"
+            "Polkadot Desktop-$V-x86_64.AppImage.blockmap|Polkadot-Desktop-x86_64.AppImage.blockmap|optional"
+            "Polkadot Desktop-$V-arm64.AppImage|Polkadot-Desktop-arm64.AppImage|optional"
+            "Polkadot Desktop-$V-arm64.AppImage.blockmap|Polkadot-Desktop-arm64.AppImage.blockmap|optional"
+            "latest.yml|latest.yml|required"
+            "latest-mac.yml|latest-mac.yml|required"
+            "latest-linux-x64.yml|latest-linux-x64.yml|required"
+            "latest-linux-arm64.yml|latest-linux-arm64.yml|optional"
+            "latest-linux.yml|latest-linux.yml|optional"
+          )
+
+          for entry in "${ENTRIES[@]}"; do
+            IFS='|' read -r source destination requirement <<< "$entry"
+            if ! aws s3 ls --endpoint-url "$S3_ENDPOINT" "$SRC/$source" >/dev/null 2>&1; then
+              if [ "$requirement" = required ]; then
+                echo "Missing required object: $SRC/$source" >&2
+                exit 1
+              fi
+              echo "✗ skip missing: $source"
+              continue
+            fi
+            echo "→ $source → stable/$destination"
+            aws s3 cp --endpoint-url "$S3_ENDPOINT" --acl public-read \
+              --cache-control "public, max-age=60, must-revalidate" \
+              "$SRC/$source" "$DST/$destination"
+          done
+
+      # Read by the download page, not by the updater.
+      - name: Update /stable/versions.json
+        if: vars.UPDATE_S3_BUCKET != ''
+        env:
+          VERSION: ${{ env.VERSION_TO_PROMOTE }}
+        run: |
+          set -euo pipefail
+          if aws s3 cp --endpoint-url "$S3_ENDPOINT" \
+            "s3://$S3_BUCKET/stable/versions.json" /tmp/versions.json 2>/dev/null; then
+            echo "Existing versions.json found"
+          else
+            echo "[]" > /tmp/versions.json
+            echo "No existing versions.json — starting fresh"
+          fi
+
+          node <<'EOF'
+          const fs = require('fs');
+          const version = process.env.VERSION;
+          let list;
+          try {
+            list = JSON.parse(fs.readFileSync('/tmp/versions.json', 'utf8'));
+            if (!Array.isArray(list)) list = [];
+          } catch {
+            list = [];
+          }
+          const filtered = list.filter(v => v !== version);
+          filtered.unshift(version);
+          fs.writeFileSync('/tmp/versions.json', JSON.stringify(filtered, null, 2));
+          console.log(`versions.json now has ${filtered.length} entries, head: ${filtered[0]}`);
+          EOF
+
+          aws s3 cp --endpoint-url "$S3_ENDPOINT" \
+            --acl public-read \
+            --content-type application/json \
+            --cache-control "public, max-age=60" \
+            /tmp/versions.json \
+            "s3://$S3_BUCKET/stable/versions.json"
+
+      # This single flag IS the promotion: `allowPrerelease = false` (the stable channel) makes
+      # electron-updater read /releases/latest, and clearing `prerelease` takes the release out of
+      # the experimental-only state the release pipeline created it in.
+      - name: Mark GitHub release as "Latest"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.VERSION_TO_PROMOTE }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          echo "Promoting GitHub release $TAG to Latest in $REPO"
+          gh release edit "$TAG" --repo "$REPO" --latest --draft=false --prerelease=false
+          echo "✓ $TAG is now marked as Latest"
+
+
+  notify:
+    name: Telegram notification
+    needs: promote
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Send success message
+        if: needs.promote.result == 'success'
+        uses: appleboy/telegram-action@78e5f2ccac7c07db6afc0e8a0f9055f8f6aef7b1 # master
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          format: markdown
+          message: |
+            ✅ *Promoted to Stable*
+
+            *Version:* v${{ needs.promote.outputs.version }}
+            *Previous stable:* ${{ needs.promote.outputs.previous-stable != '' && format('v{0}', needs.promote.outputs.previous-stable) || '—' }}
+            *GitHub release:* ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.promote.outputs.version }}
+            *Workflow run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Send failure message
+        if: needs.promote.result != 'success'
+        uses: appleboy/telegram-action@78e5f2ccac7c07db6afc0e8a0f9055f8f6aef7b1 # master
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          format: markdown
+          message: |
+            ❌ *Promote to Stable failed*
+
+            *Attempted version:* v${{ github.event.inputs.VERSION }}
+            *Workflow run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

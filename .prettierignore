@@ -12,3 +12,4 @@ js/packages/truapi/node_modules/
 rust/crates/truapi-host-cli/js/script-types.d.ts
 REVIEW_TODO*.md
 hosts/android/
+hosts/desktop/
