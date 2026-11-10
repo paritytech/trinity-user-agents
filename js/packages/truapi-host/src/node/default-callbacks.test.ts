@@ -100,6 +100,23 @@ describe("createHeadlessHostCallbacks", () => {
     ).rejects.toThrow(/headless host/);
   });
 
+  it("builds V4 everywhere unless the host lists its V5 chains", async () => {
+    const v5 = {
+      async transactionExtensionVersions() {
+        return { chains: [] };
+      },
+    };
+    expect({
+      default:
+        await createHeadlessHostCallbacks(
+          hostCallbacks,
+        ).extrinsicVersion.transactionExtensionVersions(),
+      passedThrough:
+        createHeadlessHostCallbacks({ ...hostCallbacks, extrinsicVersion: v5 })
+          .extrinsicVersion === v5,
+    }).toEqual({ default: { chains: [] }, passedThrough: true });
+  });
+
   // The core reads the first item as the current value and keeps the stream
   // open for changes, so a stream that ended would read as "unsubscribed".
   it("emits theme once, then stays open until the consumer closes it", async () => {

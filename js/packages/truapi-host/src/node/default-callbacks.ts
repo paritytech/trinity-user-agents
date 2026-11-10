@@ -10,6 +10,7 @@ import type {
   AuthPresenter,
   ChainProvider,
   CoreStorage,
+  ExtrinsicVersionHost,
   HostChainSet,
   Permissions,
   ProductStorage,
@@ -36,6 +37,11 @@ export interface HeadlessHostOptions {
   userConfirmation: Required<UserConfirmation>;
   /** The user's answer to permissions, such as `ChainSubmit` before signing. */
   permissions: Permissions;
+  /**
+   * The chains the host builds V5 transactions for. Without it every chain
+   * builds V4.
+   */
+  extrinsicVersion?: Required<ExtrinsicVersionHost>;
 }
 
 const unsupported = (capability: string) =>
@@ -118,6 +124,11 @@ export function createHeadlessHostCallbacks(
         return { id: nextOperationId++ };
       },
       async endOperation() {},
+    },
+    extrinsicVersion: host.extrinsicVersion ?? {
+      async transactionExtensionVersions() {
+        return { chains: [] };
+      },
     },
     theme: {
       subscribeTheme() {

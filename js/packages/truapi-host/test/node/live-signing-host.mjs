@@ -18,7 +18,7 @@ import { createClient, createTransport } from "@parity/truapi";
 import {
   createNodePairingHostRuntime,
   createHeadlessHostCallbacks,
-} from "../../dist/node/index.js";
+} from "@parity/truapi-host/node";
 
 const { TRUAPI_HOST_CLI, TRUAPI_HOST_BASE, TRUAPI_HOST_SESSION } = process.env;
 

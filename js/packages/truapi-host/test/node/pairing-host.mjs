@@ -10,7 +10,7 @@ import { createClient, createTransport } from "@parity/truapi";
 import {
   createNodePairingHostRuntime,
   createHeadlessHostCallbacks,
-} from "../../dist/node/index.js";
+} from "@parity/truapi-host/node";
 import { wasmIsBuilt } from "../../dist/testing/require-wasm.js";
 
 const PEOPLE =

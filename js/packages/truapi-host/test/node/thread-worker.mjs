@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
-import { createNodePairingHostRuntime } from "../../dist/node/index.js";
+import { createNodePairingHostRuntime } from "@parity/truapi-host/node";
 import { ThreadWorker } from "../../dist/node/thread-worker.js";
 
 const dirs = [];
@@ -74,8 +74,33 @@ test("an exception in one listener neither ends the process nor stops the others
   }
 });
 
+const openPorts = () =>
+  process.getActiveResourcesInfo().filter((r) => r === "MessagePort").length;
+
+/** Resolves once no more ports are open than `baseline`, or fails after 2s. */
+async function portsBackTo(baseline) {
+  const deadline = Date.now() + 2000;
+  while (openPorts() > baseline) {
+    if (Date.now() > deadline)
+      assert.fail(`${openPorts() - baseline} worker thread(s) still running`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 // The thread starts before the runtime is set up; if setup fails it must stop,
-// or it keeps the process alive and this file never finishes.
+// or it keeps the process alive.
 test("a runtime that fails to set up stops its thread", async () => {
+  const baseline = openPorts();
   await assert.rejects(createNodePairingHostRuntime({}, undefined));
+  await portsBackTo(baseline);
+});
+
+test("a runtime whose callbacks cannot be read rejects and stops its thread", async () => {
+  const baseline = openPorts();
+  let pending;
+  assert.doesNotThrow(() => {
+    pending = createNodePairingHostRuntime(null, { hostConfig: {} });
+  });
+  await assert.rejects(pending);
+  await portsBackTo(baseline);
 });

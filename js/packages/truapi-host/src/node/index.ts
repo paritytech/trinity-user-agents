@@ -33,9 +33,9 @@ export function createNodePairingHostRuntime(
   const thread = new ThreadWorker(new URL("./worker.js", import.meta.url));
   // A browser worker left behind costs nothing, but a thread keeps the process
   // alive, so stop it whenever setup fails.
-  const stopThread = (error: unknown): never => {
+  const stopThread = (error: unknown): Promise<never> => {
     thread.terminate();
-    throw error;
+    return Promise.reject(error);
   };
   try {
     return createWebWorkerPairingHostRuntime(

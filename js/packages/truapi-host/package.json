@@ -93,7 +93,7 @@
     "typecheck:harness": "tsc -p tsconfig.harness.json",
     "build:wasm": "node scripts/build-wasm.mjs",
     "test": "bun test && npm run test:node",
-    "test:node": "node --test test/node/*.mjs"
+    "test:node": "node --test --test-timeout=60000 --test-force-exit test/node/*.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",

@@ -362,7 +362,8 @@ await client.account.requestLogin({});
 
 `createHeadlessHostCallbacks` fills in what a host without a screen cannot do:
 navigation and push notifications reject, and theme, locale and preimage lookup
-answer with fixed values. The host still passes `userConfirmation` and
+answer with fixed values. Every chain builds V4 transactions unless the host
+passes `extrinsicVersion` with the chains it builds as V5. The host still passes `userConfirmation` and
 `permissions`, because they are the user's answers: `getAccount` asks to
 disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
 permission and a signing review. A CLI asks at its prompt. A host with a UI
