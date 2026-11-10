@@ -53,6 +53,9 @@ pub struct FundingQuoteAsk {
 	/// Symbol the user pays with (In) or receives (Out), as the provider's
 	/// manifest names it.
 	pub asset: String,
+	/// Crypto only: the network the asset moves on, one the provider's route
+	/// declares, such as `polkadot`.
+	pub network: Option<String>,
 	/// Amount in the user's payment balance units: credited for In, debited
 	/// for Out.
 	pub amount: u128,
@@ -80,6 +83,9 @@ pub struct FundingQuote {
 	pub eta_secs: Option<u64>,
 	/// When the provider stops honouring the quote, in Unix milliseconds.
 	pub expires_at: Option<u64>,
+	/// Decimals of the ask's asset, so the host shows its amounts without
+	/// knowing the asset.
+	pub asset_decimals: u8,
 }
 
 /// Why a provider will not price an ask.
@@ -162,6 +168,17 @@ pub enum FundingUpdate {
 		/// transfer reference.
 		reference: Option<String>,
 	},
+	/// What the provider is doing within the current step, for the line
+	/// under the host's status, such as the deposit's confirmations. Allowed
+	/// while the provider works on the session, as often as it checks; the
+	/// latest is shown until the session moves to another step. Each one
+	/// counts as hearing from the provider but is not kept in the session's
+	/// history.
+	#[codec(index = 4)]
+	Progress {
+		/// The fact and its time.
+		detail: FundingDetail,
+	},
 }
 
 /// A step of an inbound session: the user pays the provider, which credits
@@ -220,6 +237,130 @@ pub enum FundingOutboundUpdate {
 		payment_id: [u8; 32],
 		/// Amount the payment asks for.
 		amount: u128,
+	},
+	/// After release, the provider is converting what it collected before
+	/// paying the user out. Reported at most once, before `Payout`.
+	#[codec(index = 1)]
+	Converting,
+	/// How the provider's payout went after the session was released.
+	/// Allowed once, after `Released`.
+	#[codec(index = 2)]
+	Payout {
+		/// The payout's outcome.
+		outcome: FundingPayout,
+	},
+	/// After a failed payout, or a cancel the user accepted, the provider
+	/// started a top-up with `payment.topUp` to give the user back what it
+	/// holds. Allowed once. The session records what the top-up claimed as
+	/// refunded.
+	#[codec(index = 3)]
+	Refunding {
+		/// Id the top-up was started with.
+		top_up_id: [u8; 32],
+		/// Amount the top-up asks to credit.
+		amount: u128,
+	},
+	/// A payout attempt failed and the provider is trying again. Allowed
+	/// after `Released` and before `Payout`, as often as it retries.
+	#[codec(index = 4)]
+	PayoutRetrying,
+}
+
+/// The line under a session's status: a fact about the current step, and
+/// when it happened or is due. The host words it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingDetail {
+	/// What the provider reports.
+	pub fact: FundingFact,
+	/// When it happened, in Unix milliseconds, shown as an age ("3s ago"),
+	/// or when it is due, shown as a countdown ("about 12s left").
+	pub at_ms: Option<u64>,
+}
+
+/// A fact a provider reports within a step, which the host words in the
+/// user's language.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingFact {
+	/// The provider checked and nothing changed: "Checked with the
+	/// provider".
+	#[codec(index = 0)]
+	Checked,
+	/// A crypto transfer's confirmations: "Confirmation 7 of 13", with the
+	/// time of the last block. Crypto sessions only.
+	#[codec(index = 1)]
+	Confirmations {
+		/// Confirmations so far, at most `required`.
+		done: u32,
+		/// Confirmations needed, more than zero.
+		required: u32,
+	},
+	/// The provider is waiting for a stable price: "Price checked".
+	#[codec(index = 2)]
+	PriceChecked,
+	/// The conversion runs in parts: "Part 2 of 4", with the time of the
+	/// last part.
+	#[codec(index = 3)]
+	Parts {
+		/// Parts done, at most `total`.
+		done: u32,
+		/// Parts in all, more than zero.
+		total: u32,
+	},
+	/// The next step is scheduled: "About 12s left" until `at_ms`.
+	#[codec(index = 4)]
+	Scheduled,
+	/// The user's bank sent the transfer: "Sent by your bank", at `at_ms`.
+	/// Inbound bank sessions only.
+	#[codec(index = 5)]
+	SentByBank,
+	/// The money is expected to arrive by `at_ms`: "Expected by Thu 3 Nov".
+	#[codec(index = 6)]
+	ExpectedBy,
+	/// The provider is reviewing the payment: "The provider is reviewing
+	/// the payment".
+	#[codec(index = 7)]
+	InReview,
+	/// The provider is retrying: "Attempt 2 of 3", with the next try at
+	/// `at_ms`.
+	#[codec(index = 8)]
+	Attempt {
+		/// This attempt, from 1.
+		n: u32,
+		/// Attempts it will make, when it knows, at least `n`.
+		of: Option<u32>,
+	},
+	/// Last resort, for a step none of the others describes. Shown as given,
+	/// so not translated: at most [`FUNDING_DETAIL_MAX_CHARS`] characters
+	/// and [`FUNDING_DETAIL_MAX_BYTES`] bytes of plain text on one line.
+	#[codec(index = 9)]
+	Other {
+		/// The text.
+		text: String,
+	},
+}
+
+/// Most characters a provider's update text holds: a [`FundingFact::Other`]
+/// text, or a transaction id, reference or address.
+pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
+/// Most UTF-8 bytes a provider's update text holds.
+pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
+
+/// How a provider's payout to the user went after an outbound session was
+/// released.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingPayout {
+	/// The funds reached the user's bank, card or wallet.
+	#[codec(index = 0)]
+	PaidOut,
+	/// The payout failed; the provider holds the funds until it refunds
+	/// them, reported with `Refunding`.
+	#[codec(index = 1)]
+	Failed {
+		/// Human-readable reason.
+		reason: String,
 	},
 }
 
@@ -334,7 +475,8 @@ pub struct ProductFundingSettleCancelRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum FundingCancelDecision {
 	/// Accepted on these terms, as the host showed them. The provider returns
-	/// `refund` and reports `Failed`.
+	/// `refund`: it refunds an outbound session with `Refunding`, or ends an
+	/// inbound one with `Failed { Refunded }`.
 	#[codec(index = 0)]
 	Accepted {
 		/// What the provider keeps, in the user's payment balance units.
@@ -371,10 +513,12 @@ pub enum HostFundingReportError {
 	/// it was assigned, asks a different amount, or was already named.
 	#[codec(index = 2)]
 	NotStarted,
-	/// A `Details` or `Deposit` update that breaks its limits: a text too
-	/// long, on several lines or with control or invisible characters,
-	/// deposit instructions that name nothing to pay, have expired or do not
-	/// match the quote the user chose, or more of them than a session keeps.
+	/// An update that breaks its limits: a `Progress` fact that does not fit
+	/// the session, such as a count past its total or a fact for another
+	/// rail; a text too long, on several lines or with control or invisible
+	/// characters; deposit instructions that name nothing to pay, have
+	/// expired or do not match the quote the user chose; or more `Details`
+	/// or `Deposit` updates than a session keeps.
 	#[codec(index = 4)]
 	InvalidDetail,
 	/// Catch-all.
@@ -457,6 +601,31 @@ pub enum HostFundingPresentFrameError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// An App route from a provider that ships no App; such a provider shows
+	/// external pages instead.
+	#[codec(index = 3)]
+	NoApp,
+}
+
+/// Request to close the provider screen open for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingCloseFrameRequest {
+	/// Session the screen belongs to.
+	pub intent: String,
+}
+
+/// Error from [`crate::api::FundingProvider::close_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingCloseFrameError {
+	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
+	NotFound,
+	/// Catch-all.
+	#[codec(index = 1)]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// An ask for the provider to price.
@@ -465,13 +634,6 @@ pub struct ProductFundingQuoteRequest {
 	/// What the user wants to move, by which rail, in which country.
 	pub ask: FundingQuoteAsk,
 }
-
-/// Longest text a provider's update may carry, in characters, such as a
-/// transaction id, a reference or an address.
-pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
-
-/// Longest text a provider's update may carry, in UTF-8 bytes.
-pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
 
 /// Longest payment URI deposit instructions may carry, in UTF-8 bytes.
 pub const FUNDING_DEPOSIT_URI_MAX_BYTES: usize = 512;

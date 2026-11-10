@@ -30,48 +30,7 @@ enum WidgetNodeRaster {
         return try buckets(of: #require(renderer.uiImage?.cgImage)).mapValues(\.count)
     }
 
-    /// The view drawn on screen in the app's own window under the picked
-    /// theme, as RGBA bytes row by row. Offscreen rendering leaves text fields
-    /// without the colours a window gives them, so colour checks draw here.
-    static func pixels(of view: some View, in size: CGSize, under theme: ThemeSelection) throws -> [UInt8] {
-        let window = try window(showing: view, in: size, under: theme)
-        defer { window.isHidden = true }
-
-        return try pixels(of: snapshot(of: window))
-    }
-
     private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
-
-    private static func window(
-        showing view: some View,
-        in size: CGSize,
-        under theme: ThemeSelection? = nil
-    ) throws -> UIWindow {
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = RootWindow(windowScene: scene)
-        window.frame = CGRect(origin: .zero, size: size)
-        if let theme {
-            window.traitOverrides.appTheme = theme
-        }
-
-        let host = UIHostingController(rootView: view)
-        host.safeAreaRegions = []
-        host.view.backgroundColor = .black
-        window.rootViewController = host
-        window.isHidden = false
-        return window
-    }
-
-    private static func snapshot(of window: UIWindow) throws -> CGImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.preferredRange = .standard
-        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-
-        return try #require(image.cgImage)
-    }
 
     private static func pixels(of image: CGImage) -> [UInt8] {
         let width = image.width

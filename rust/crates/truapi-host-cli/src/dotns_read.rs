@@ -2,9 +2,10 @@
 //!
 //! The transport half of username resolution. This module supplies the two RPC
 //! primitives, over a connection from the CLI's chain provider.
-//! `truapi::host_logic::dotns_gateway` walks the contract
-//! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
-//! resolve identically.
+//! `truapi::host_logic::dotns_gateway` walks the contract chain over them,
+//! starting from the stack's `dotns.popController`. The signing host's core
+//! instead discovers its controller on chain, so the two resolve through
+//! different controllers when the stack and the chain disagree.
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -12,52 +13,30 @@ use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
-		DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, classify_labels,
-		discover_pop_controller, label_available, lite_label_owner_key, resolve_labels,
-		timestamp_now_key,
+		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, claim_blocker,
+		classify_labels, label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,
 	},
 };
 
-use crate::{chain::CliChainProvider, network::NetworkConfig};
-
-/// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
-/// discovery.
-///
-/// Discovery reads `DotnsGateway.DispatcherAddress`, which holds either a
-/// dispatcher or the controller itself, and resolves whichever it is; the
-/// override is for networks where that fails. A stack's descriptor carries its
-/// controller as `dotns.popController`, and the polkadot network carries its own
-/// from its deployment manifest. `DEPLOYMENTS.md` in paritytech/dotns is the
-/// authority per network.
-pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
+use crate::{chain::CliChainProvider, network::Stack};
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.
 pub struct AssetHubReader {
 	rpc: RpcClient,
-	/// `DotnsPopController` once resolved; it does not change within a run.
-	pop_controller: Option<[u8; 20]>,
-	/// The network's controller, used only when discovery finds none.
-	pop_controller_fallback: Option<[u8; 20]>,
+	/// The stack's `DotnsPopController`.
+	pop_controller: [u8; 20],
 }
 
 impl AssetHubReader {
 	/// Connects to the network's Asset Hub.
-	pub async fn connect(network: &NetworkConfig) -> Result<Self> {
+	pub async fn connect(network: &Stack) -> Result<Self> {
 		let chains = CliChainProvider::new(network);
-		let location = chains.location(network.asset_hub_genesis);
+		let location = chains.location(network.genesis().asset_hub);
 		let rpc = chains
-			.rpc_client(network.asset_hub_genesis)
+			.rpc_client(network.genesis().asset_hub)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({location})"))?;
-		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
-	}
-
-	/// Connects to the network's Asset Hub, falling back to its known
-	/// `DotnsPopController` when the chain does not name one.
-	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
-		let mut reader = Self::connect(network).await?;
-		reader.pop_controller_fallback = network.dotns_pop_controller;
-		Ok(reader)
+		Ok(Self { rpc, pop_controller: network.pop_controller() })
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is
@@ -90,7 +69,7 @@ impl AssetHubReader {
 	/// Usernames of `account` as recorded by the dotNS contracts, or `None`
 	/// when none of its labels is a username.
 	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<Option<DotnsIdentity>> {
-		let controller = self.pop_controller().await?;
+		let controller = self.pop_controller;
 		let labels = resolve_labels(self, &controller, account).await?;
 		Ok(classify_labels(self, &controller, labels).await?)
 	}
@@ -98,45 +77,27 @@ impl AssetHubReader {
 	/// Whether the registrar would still mint `label` under the network TLD.
 	/// `false` once the name is registered, whichever flow minted it.
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
-		let controller = self.pop_controller().await?;
+		let controller = self.pop_controller;
 		Ok(label_available(self, &controller, label).await?)
 	}
 
-	/// `DotnsPopController` address, resolved once per reader. The env override
-	/// wins, then on-chain discovery from `DotnsGateway.DispatcherAddress`, then
-	/// the network's own controller.
-	async fn pop_controller(&mut self) -> Result<[u8; 20]> {
-		if let Some(controller) = self.pop_controller {
-			return Ok(controller);
-		}
-		let controller = self.resolve_pop_controller().await?;
-		self.pop_controller = Some(controller);
-		Ok(controller)
+	/// Why a gateway claim of `label` by `claimant` would revert on the name's
+	/// reservation queue, or `None` when it can go through.
+	pub async fn claim_blocker(
+		&mut self,
+		label: &str,
+		claimant: &[u8; 20],
+	) -> Result<Option<ClaimBlocker>> {
+		let controller = self.pop_controller;
+		let now = self.timestamp_secs().await?;
+		claim_blocker(self, &controller, label, claimant, now)
+			.await
+			.with_context(|| format!("read the reservation queue of {label:?}"))
 	}
 
-	async fn resolve_pop_controller(&mut self) -> Result<[u8; 20]> {
-		if let Ok(value) = std::env::var(DOTNS_POP_CONTROLLER_ENV) {
-			let trimmed = value.trim();
-			if !trimmed.is_empty() {
-				let bytes = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))
-					.with_context(|| format!("{DOTNS_POP_CONTROLLER_ENV} is not valid hex"))?;
-				return bytes.try_into().map_err(|bytes: Vec<u8>| {
-					anyhow::anyhow!(
-						"{DOTNS_POP_CONTROLLER_ENV} must be 20 bytes, got {}",
-						bytes.len()
-					)
-				});
-			}
-		}
-		discover_pop_controller(self)
-			.await?
-			.or(self.pop_controller_fallback)
-			.with_context(|| {
-				format!(
-					"dotNS gateway has no reachable controller; set \
-                     {DOTNS_POP_CONTROLLER_ENV} to the DotnsPopController H160"
-				)
-			})
+	/// The stack's `DotnsPopController`.
+	pub fn pop_controller(&self) -> [u8; 20] {
+		self.pop_controller
 	}
 
 	/// One `state_getStorage` read at the best block.

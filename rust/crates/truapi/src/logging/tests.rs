@@ -1,6 +1,152 @@
 use super::*;
 use std::sync::Mutex;
 
+/// Both sigils a `tracing` field can use have to redact, or the safe
+/// spelling is the one the author has to remember.
+#[test]
+fn an_account_prints_as_a_handle_under_either_sigil() {
+	let account = [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45];
+
+	assert_eq!(Account::new(&account).to_string(), "abcdef01");
+	assert_eq!(format!("{:?}", Account::new(&account)), "abcdef01");
+}
+
+/// The whole account is still reachable, by a name that says so.
+#[test]
+fn an_account_names_itself_in_full_only_when_asked() {
+	let account = [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45];
+
+	assert_eq!(Account::new(&account).in_full(), "abcdef012345");
+}
+
+/// An account shorter than the handle is printed whole rather than
+/// panicking on the slice.
+#[test]
+fn a_short_account_does_not_panic() {
+	assert_eq!(Account::new(&[0xab, 0xcd]).to_string(), "abcd");
+	assert_eq!(Account::new(&[]).to_string(), "");
+}
+
+/// A foreign exception description can be several lines, and a detail the
+/// sink forwards is one.
+#[test]
+fn host_text_is_written_on_one_line() {
+	let thrown = "NSError Domain=Host\nCode=3\r\n\tUserInfo={}";
+
+	assert_eq!(
+		HostText::new(thrown).to_string(),
+		r#""NSError Domain=Host\nCode=3\r\n\tUserInfo={}""#
+	);
+}
+
+/// `char::is_control` is category Cc alone, so the separators and the
+/// bidirectional overrides have to be escaped by something that knows
+/// about them.
+#[test]
+fn host_text_escapes_what_is_control_misses() {
+	for (raw, escaped) in [
+		("a\u{2028}b", r#""a\u{2028}b""#),
+		("a\u{2029}b", r#""a\u{2029}b""#),
+		("safe\u{202e}txet", r#""safe\u{202e}txet""#),
+		("a\u{200b}b", r#""a\u{200b}b""#),
+		("a\u{feff}b", r#""a\u{feff}b""#),
+	] {
+		assert!(!raw.chars().any(char::is_control), "{raw:?} would need no help");
+		assert_eq!(HostText::new(raw).to_string(), escaped);
+	}
+}
+
+/// A detail is `name=value` pairs joined by commas, so unquoted host text
+/// can be read as the fields beside it.
+#[test]
+fn host_text_cannot_forge_a_field() {
+	let thrown = "denied, user=admin, level=error";
+
+	assert_eq!(HostText::new(thrown).to_string(), r#""denied, user=admin, level=error""#);
+}
+
+/// One foreign string must not crowd the fields beside it out of the
+/// detail the sink forwards.
+#[test]
+fn host_text_stops_at_the_bound() {
+	let thrown = "e".repeat(HOST_TEXT_MAX_CHARS + 20);
+
+	let written = HostText::new(&thrown).to_string();
+
+	// The bound counts the escaped text, with the quotes and the mark on
+	// top of it.
+	assert_eq!(written.chars().count(), HOST_TEXT_MAX_CHARS + 3);
+	assert!(written.ends_with("\u{2026}"), "{written}");
+}
+
+/// An escape is written whole or not at all, so the bound cannot leave a
+/// half-written `\u{...}` behind.
+#[test]
+fn host_text_does_not_cut_an_escape_in_half() {
+	// Each separator escapes to eight characters, so the bound falls
+	// inside one of them rather than between two.
+	let thrown = "\u{2028}".repeat(30);
+
+	let written = HostText::new(&thrown).to_string();
+
+	assert_eq!(written.matches(r"\u{2028}").count(), HOST_TEXT_MAX_CHARS / 8);
+	assert!(written.ends_with("\u{2026}"), "{written}");
+}
+
+/// Text already within the bound is written as the host wrote it, with no
+/// mark suggesting something was dropped.
+#[test]
+fn host_text_within_the_bound_is_untouched() {
+	assert_eq!(HostText::new("keychain unavailable").to_string(), r#""keychain unavailable""#);
+	assert_eq!(format!("{:?}", HostText::new("keychain unavailable")), r#""keychain unavailable""#);
+}
+
+/// The bound counts characters, so text under it in characters and over
+/// it in bytes is complete and must not be marked as cut.
+#[test]
+fn host_text_bounds_characters_not_bytes() {
+	let under_in_chars_over_in_bytes = "\u{e9}".repeat(100);
+	assert!(under_in_chars_over_in_bytes.len() > HOST_TEXT_MAX_CHARS);
+
+	let written = HostText::new(&under_in_chars_over_in_bytes).to_string();
+
+	assert_eq!(written, format!("\"{under_in_chars_over_in_bytes}\""));
+	assert!(!written.ends_with("\u{2026}"), "{written}");
+}
+
+/// Text exactly at the bound is complete, so it carries no mark either.
+#[test]
+fn host_text_exactly_at_the_bound_is_not_marked() {
+	let thrown = "e".repeat(HOST_TEXT_MAX_CHARS);
+
+	let written = HostText::new(&thrown).to_string();
+
+	assert_eq!(written, format!("\"{thrown}\""));
+}
+
+/// What is kept is bounded the same way as what is logged, so a warning
+/// raised about this error later is safe without knowing where the
+/// string came from.
+#[test]
+fn kept_host_text_is_bounded_like_the_line_that_names_it() {
+	let thrown = format!("SQLiteFullException\n\tat Foo.bar\u{2028}{}", "e".repeat(400));
+
+	let kept = bound_host_text(&thrown);
+
+	assert!(!kept.chars().any(char::is_control), "{kept}");
+	assert!(!kept.contains('\u{2028}'), "{kept}");
+	assert_eq!(kept.chars().count(), HOST_TEXT_MAX_CHARS + 1);
+	assert!(kept.ends_with('\u{2026}'), "{kept}");
+}
+
+/// What is kept is read by a person and returned to a product, so it is
+/// not quoted the way the log field is.
+#[test]
+fn kept_host_text_is_not_quoted() {
+	assert_eq!(bound_host_text("keychain unavailable"), "keychain unavailable");
+	assert_eq!(HostText::new("keychain unavailable").to_string(), r#""keychain unavailable""#);
+}
+
 /// The host sink is process-wide, so a test that installs one has to own it
 /// for the whole of its run or a sibling's teardown reads as its own.
 static SINK_TESTS: Mutex<()> = Mutex::new(());

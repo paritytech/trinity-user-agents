@@ -183,11 +183,14 @@ final class TabBarFoldController {
         writeTransform(dockletTransform())
     }
 
-    /// Feeds a touch to the auto-hide. A touch on the Docklet cancels a pending outside-touch tuck and the peek.
+    /// Feeds a touch to the auto-hide. A touch on the Docklet cancels the peek. A touch outside tucks the Docklet
+    /// at once unless a blocker holds; the blockers are synced first, so a drag or settle that already ended never
+    /// drops that tuck.
     func recordTouch(isOnDocklet: Bool) {
         if isOnDocklet {
             cancelPeek()
         }
+        syncAutoHideBlockers()
         autoHide.touch(isOnDocklet: isOnDocklet, at: CACurrentMediaTime())
         rescheduleAutoHide()
     }
