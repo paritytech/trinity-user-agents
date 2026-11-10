@@ -20,7 +20,7 @@ fn registration_params_have_expected_shapes_and_verify() {
 	assert_eq!(
 		reg.candidate_public_key,
 		derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap().public.to_bytes(),
-		"registration uses the network's uid.paseo identity account"
+		"registration uses the network's peopl.paseo identity account"
 	);
 	let lite_entropy = derive_lite_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX);
 	assert_eq!(

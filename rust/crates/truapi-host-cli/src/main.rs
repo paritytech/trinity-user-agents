@@ -67,7 +67,7 @@ use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
 	PairingProposal, ResponderExit, ResumePairingError, SigningHostConfig, SigningHostRuntime,
 	StatementRenewalTarget, WsDebugSink,
-	chain::ExtrinsicService,
+	chain::{EvmContractCaller, ExtrinsicService},
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
@@ -294,7 +294,7 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
-	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// Attest a mnemonic's `peopl.<tld>` identity for a lite username, wait until
 	/// it is a personhood ring member, and print `{address, publicKey,
 	/// liteUsername}` as one JSON line. For e2e suites that hold their own
 	/// test mnemonics; the account store is not touched.
@@ -1133,6 +1133,18 @@ fn extrinsic_service(network: &Stack) -> ExtrinsicService {
 	let provider = Arc::new(chain::CliChainProvider::new(network));
 	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
 	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
+}
+
+/// Reads and writes contracts on `network`'s Asset Hub over the CLI's chains.
+fn asset_hub_contracts(network: &Stack) -> EvmContractCaller {
+	let provider = Arc::new(chain::CliChainProvider::new(network));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	EvmContractCaller::from_provider(
+		provider,
+		tokio_spawner(),
+		versions,
+		H256(network.genesis().asset_hub),
+	)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
