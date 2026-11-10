@@ -21,7 +21,7 @@ use futures::{
 	stream::{self, BoxStream, StreamExt},
 };
 use parity_scale_codec::Encode;
-use truapi::v01;
+use truapi::{latest, v01};
 use zeroize::Zeroizing;
 
 use crate::{
@@ -784,13 +784,12 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		&self,
 		provider: &ProductContext,
 		intent: String,
-		target: v01::FundingFrameTarget,
-		context: crate::platform::FundingFrameContext,
-	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
+		target: latest::FundingFrameTarget,
+	) -> Result<latest::FundingFrameOutcome, latest::GenericError> {
 		self.funding
-			.present_provider_frame(provider.product_id.clone(), intent, target, context)
+			.present_provider_frame(provider.product_id.clone(), intent, target)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(latest::GenericError::from)
 	}
 
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {

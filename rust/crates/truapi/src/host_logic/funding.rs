@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::{
 	host_logic::funding_view::{
-		FundingCancelAvailability, FundingEnding, cancel_availability, ending,
+		FundingCancelAvailability, FundingEnding, awaits_user_transfer, cancel_availability, ending,
 	},
 	platform::ProductId,
 };
@@ -312,6 +312,9 @@ pub struct FundingProgress {
 	pub refunded: Option<u128>,
 	/// Where the session stands, in one line the host words.
 	pub status: FundingStatus,
+	/// Whether the session waits on a transfer the user makes outside a
+	/// provider frame: a bank top-up.
+	pub awaits_user_transfer: bool,
 	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
 	/// provider reports first, in Unix milliseconds, so the host reads the
 	/// progress again then. `None` while a top-up waits on the user's
@@ -988,6 +991,10 @@ impl FundingSession {
 			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
 			money_moved,
 			cancel: cancel_availability(&status, money_moved),
+			awaits_user_transfer: awaits_user_transfer(
+				self.direction,
+				self.choice.as_ref().map(|choice| choice.rail),
+			),
 			steps,
 			band,
 			status,

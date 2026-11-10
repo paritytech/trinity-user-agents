@@ -13,22 +13,14 @@ use crate::{
 		funding::{FundingSessionSummary, FundingStage, FundingStatus, FundingStep},
 		funding_providers::{FundingAmountLimits, FundingCandidate},
 	},
-	platform::{
-		FundingAmountIssue, FundingFrameContext, FundingQuoteRow, FundingQuoteState,
-		FundingQuoteUnavailable,
-	},
+	platform::{FundingAmountIssue, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
 };
 
-/// The frame facts for a session moving value in `direction` by `rail`:
-/// the user makes the transfer themselves, outside the frame, only on a bank
-/// top-up.
-pub fn frame_context(
-	direction: FundingDirection,
-	rail: Option<FundingRail>,
-) -> FundingFrameContext {
-	FundingFrameContext {
-		awaits_user_transfer: rail == Some(FundingRail::Bank) && direction == FundingDirection::In,
-	}
+/// Whether a session moving value in `direction` by `rail` waits on a
+/// transfer the user makes themselves, outside a provider frame: only a
+/// bank top-up does.
+pub fn awaits_user_transfer(direction: FundingDirection, rail: Option<FundingRail>) -> bool {
+	rail == Some(FundingRail::Bank) && direction == FundingDirection::In
 }
 
 /// The fiat asset asked for when neither the user's country nor any provider

@@ -498,15 +498,13 @@ pub trait NativeFundingCallbacks: Send + Sync {
 
 	/// Show `target` for provider `provider_id`'s session `intent` in a frame
 	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: answer `Returned` when it reaches its return URL. `context`
-	/// carries facts about the session the frame is for. The core closes the
-	/// frame through `close_provider_frame` once the session's payment moved.
+	/// URL: answer `Returned` when it reaches its return URL. The core closes
+	/// the frame through `close_provider_frame` once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider_id: ProductId,
 		intent: String,
 		target: latest::FundingFrameTarget,
-		context: crate::platform::FundingFrameContext,
 	) -> Result<latest::FundingFrameOutcome, HostRejection>;
 
 	/// Close the frame `present_provider_frame` shows for provider

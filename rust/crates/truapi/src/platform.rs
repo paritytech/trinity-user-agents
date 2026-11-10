@@ -2294,15 +2294,6 @@ pub enum FundingQuoteUnavailable {
 	Timeout,
 }
 
-/// Facts about the session a provider frame is shown for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct FundingFrameContext {
-	/// Whether the session waits on a transfer the user makes outside the
-	/// frame: an inbound bank deposit.
-	pub awaits_user_transfer: bool,
-}
-
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -2330,15 +2321,14 @@ pub trait FundingPlatform: Send + Sync {
 	/// Show `target` for `provider`'s session `intent` in a frame the host
 	/// owns, and answer once it closes. A page is an https URL the core has
 	/// checked: the host shows its origin, and closes the frame with
-	/// `Returned` when the page reaches its return URL. `context` carries
-	/// facts about the session the frame is for. The core closes the frame itself, through
+	/// `Returned` when the page reaches its return URL. The core closes the
+	/// frame itself, through
 	/// [`Self::close_provider_frame`], once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,
 		intent: String,
 		target: truapi::latest::FundingFrameTarget,
-		context: FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
 	/// Close the frame `present_provider_frame` shows for `provider`'s

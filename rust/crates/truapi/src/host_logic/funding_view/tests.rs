@@ -376,11 +376,7 @@ fn only_a_bank_top_up_awaits_the_users_transfer() {
 		(FundingDirection::In, None, false),
 	];
 	for (direction, rail, awaits) in cases {
-		assert_eq!(
-			frame_context(direction, rail).awaits_user_transfer,
-			awaits,
-			"{direction:?} {rail:?}"
-		);
+		assert_eq!(awaits_user_transfer(direction, rail), awaits, "{direction:?} {rail:?}");
 	}
 }
 

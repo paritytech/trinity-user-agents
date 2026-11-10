@@ -2697,7 +2697,6 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		self.framed.lock().expect("framed mutex poisoned").push(target);
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
@@ -3008,7 +3007,6 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -3063,7 +3061,6 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -3331,7 +3328,6 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -10296,7 +10292,6 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}

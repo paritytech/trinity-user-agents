@@ -3106,7 +3106,6 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 		_provider_id: ProductId,
 		_intent: String,
 		_target: v01::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<v01::FundingFrameOutcome, HostRejection> {
 		Ok(v01::FundingFrameOutcome::Closed)
 	}
