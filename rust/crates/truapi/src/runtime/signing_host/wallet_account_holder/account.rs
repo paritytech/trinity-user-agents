@@ -19,7 +19,7 @@ use crate::{
 			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
 		authority_cancellation_error,
 		contacts::ContactHandles,
@@ -408,15 +408,14 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key<'a>(
-		&'a self,
-		invocation: AccountInvocation<'a>,
+	async fn product_subtree_public_key(
+		&self,
+		invocation: AccountInvocation<'_>,
 		product_id: &ProductId,
-	) -> Result<SubtreeResolution<'a>, AuthorityError> {
+	) -> Result<[u8; 32], AuthorityError> {
 		self.with_keys(invocation.session, |keys| {
 			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
 		})
-		.map(SubtreeResolution::Known)
 	}
 
 	async fn sign_vrf(

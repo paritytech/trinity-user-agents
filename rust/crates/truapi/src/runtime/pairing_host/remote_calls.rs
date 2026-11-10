@@ -44,8 +44,6 @@ impl PairingHost {
 				product_invocation(cx, authority_session, Some(&product)),
 				product_id,
 			)
-			.await?
-			.resolve()
 			.await?;
 		if !self
 			.grants

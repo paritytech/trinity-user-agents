@@ -535,24 +535,6 @@ pub enum AccountGrantOutcome {
 	},
 }
 
-/// Where a product's public subtree comes from.
-pub enum SubtreeResolution<'a> {
-	/// The holder derived it without asking anyone.
-	Known([u8; 32]),
-	/// A request to the account holder, sent only when awaited.
-	Ask(futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>),
-}
-
-impl SubtreeResolution<'_> {
-	/// The subtree, asking the account holder when it is not known.
-	pub async fn resolve(self) -> Result<[u8; 32], AuthorityError> {
-		match self {
-			Self::Known(public_key) => Ok(public_key),
-			Self::Ask(request) => request.await,
-		}
-	}
-}
-
 /// How a host keeps the grants its account holder issues.
 #[derive(PartialEq)]
 pub enum GrantKeeping {
@@ -594,11 +576,11 @@ pub trait AccountHolder: Send + Sync + 'static {
 	) -> Result<AccountGrant, AuthorityError>;
 
 	/// Resolve the public hard subtree under the selected account holder.
-	async fn product_subtree_public_key<'a>(
-		&'a self,
-		invocation: AccountInvocation<'a>,
+	async fn product_subtree_public_key(
+		&self,
+		invocation: AccountInvocation<'_>,
 		product_id: &ProductId,
-	) -> Result<SubtreeResolution<'a>, AuthorityError>;
+	) -> Result<[u8; 32], AuthorityError>;
 
 	/// Sign an RFC-0023 Merlin transcript with a product account.
 	async fn sign_vrf(
