@@ -1298,6 +1298,13 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 15)]
 	FundingSupport,
+	/// A product's App executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 16)]
+	AppManifest {
+		/// Bare label of the product whose App manifest was cached.
+		product_label: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1413,6 +1420,9 @@ pub fn describe_core_storage_key(
 			("WorkerManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
+		CoreStorageKey::AppManifest { product_label } => {
+			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -2335,12 +2345,6 @@ pub trait FundingPlatform: Send + Sync {
 	/// session's progress in its place. Does nothing when no frame is
 	/// open for it.
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
-
-	/// Whether `provider` ships an App, so an App route of its can be shown.
-	/// A provider without one shows only external pages.
-	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
-		true
-	}
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
 	/// the quotes the core asks before the user picks one. Best effort,

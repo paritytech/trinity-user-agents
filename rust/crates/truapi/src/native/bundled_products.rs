@@ -8,7 +8,8 @@
 use tracing::warn;
 
 use crate::{
-	host_internal::product_manifest::RootManifest,
+	host_internal::product_manifest::ProductBrand,
+	image_loader::ImageReference,
 	host_logic::{
 		dev_server::DevServerProduct,
 		dotns::ProductLink,
@@ -127,8 +128,8 @@ pub fn product_source(
 
 /// The products bundled under `root`, by id: each non-hidden, non-empty
 /// directory named by a product id, with what it ships and the name and icon
-/// its root manifest gives it. A root manifest that does not parse leaves
-/// both out, logged.
+/// its root manifest gives it, read as [`ProductBrand::parse`] reads them. A
+/// root manifest that gives no brand leaves both out, logged.
 #[uniffi::export]
 pub fn bundled_products(root: String, reader: Box<dyn BundleReader>) -> Vec<BundleEntry> {
 	products(&root, reader.as_ref())
@@ -145,15 +146,15 @@ fn products(root: &str, reader: &dyn BundleReader) -> Vec<BundleEntry> {
 				return None;
 			}
 			let product_id = name.parse::<ProductId>().ok()?;
-			let manifest = reader.read_text(join(&path, ROOT_MANIFEST)).and_then(|json| {
-				RootManifest::parse(&json)
+			let brand = reader.read_text(join(&path, ROOT_MANIFEST)).and_then(|json| {
+				ProductBrand::parse(&json)
 					.inspect_err(
-						|error| warn!(product = %product_id, %error, "bundled root manifest does not parse"),
+						|error| warn!(product = %product_id, %error, "bundled root manifest gives no brand"),
 					)
 					.ok()
 			});
-			let (display_name, icon_cid) = manifest
-				.map(|manifest| (manifest.display_name, manifest.icon.map(|icon| icon.cid)))
+			let (display_name, icon_cid) = brand
+				.map(|brand| (Some(brand.display_name), brand.icon.map(cid_of)))
 				.unwrap_or_default();
 			Some(BundleEntry {
 				product_id,
@@ -169,12 +170,19 @@ fn products(root: &str, reader: &dyn BundleReader) -> Vec<BundleEntry> {
 	products
 }
 
+/// The CID an icon is loaded by.
+fn cid_of(icon: ImageReference) -> String {
+	match icon {
+		ImageReference::Bulletin { cid, .. } => cid.to_string(),
+	}
+}
+
 /// The funding providers bundled under `root`, as entries for
 /// `set_funding_provider_config`.
 ///
 /// Each is a product shipping a Worker whose manifest serves Funding, with
-/// that manifest and whether it ships an App. A manifest that does not
-/// parse leaves its product out, logged.
+/// that manifest, its root manifest and whether it ships an App. A Worker
+/// manifest that does not parse leaves its product out, logged.
 #[uniffi::export]
 pub fn bundled_funding_providers(
 	root: String,
@@ -189,6 +197,7 @@ pub fn bundled_funding_providers(
 				Ok(manifest) if manifest.funding.is_some() => Some(FundingProviderEntry {
 					product_id: product.product_id,
 					worker_manifest: Some(json),
+					root_manifest: reader.read_text(join(&product.path, ROOT_MANIFEST)),
 					origin: FundingProviderOrigin::Bundled,
 					has_app: Some(product.has_app),
 				}),

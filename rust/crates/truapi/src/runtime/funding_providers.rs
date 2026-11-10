@@ -17,8 +17,13 @@ use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 
-use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
+use super::{
+	funding::lock,
+	product_manifest::{product_brand, worker_manifest},
+	services::RuntimeServices,
+};
 use crate::{
+	host_internal::product_manifest::ProductBrand,
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
@@ -48,6 +53,9 @@ struct OfferedProvider {
 	live: Option<Option<WorkerManifest>>,
 	/// Whether its manifest is being read.
 	reading: bool,
+	/// The name and icon its root manifest gives it: the host's for a
+	/// bundled provider, dotNS's once read for a published one.
+	brand: Option<ProductBrand>,
 }
 
 impl OfferedProvider {
@@ -105,6 +113,7 @@ impl FundingProviders {
 					now_ms,
 				)
 			})
+			.map(|candidate| FundingCandidate { brand: self.brand(&candidate.provider_id), ..candidate })
 			.collect()
 	}
 
@@ -158,6 +167,9 @@ impl FundingProviders {
 			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
 				entry.live = known.live.clone();
 				entry.reading = known.reading;
+				if entry.origin == FundingProviderOrigin::Published && known.brand.is_some() {
+					entry.brand = known.brand.clone();
+				}
 			}
 		}
 		*entries = offered;
@@ -175,6 +187,26 @@ impl FundingProviders {
 		let before = entry.manifest();
 		entry.live = Some(manifest);
 		entry.manifest() != before
+	}
+
+	/// Record `brand` as what dotNS gives `product_id`. Returns whether it
+	/// changed.
+	fn branded(&self, product_id: &ProductId, brand: ProductBrand) -> bool {
+		let mut entries = lock(&self.entries);
+		let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == *product_id) else {
+			return false;
+		};
+		let changed = entry.brand.as_ref() != Some(&brand);
+		entry.brand = Some(brand);
+		changed
+	}
+
+	/// The name and icon `provider_id` is shown by, when known.
+	fn brand(&self, provider_id: &ProductId) -> Option<ProductBrand> {
+		lock(&self.entries)
+			.iter()
+			.find(|entry| entry.product_id == *provider_id)
+			.and_then(|entry| entry.brand.clone())
 	}
 
 	/// Mark every published provider whose manifest is not being read as
@@ -478,12 +510,16 @@ impl RuntimeServices {
 		true
 	}
 
-	/// Read `product_id`'s Worker manifest into what the core goes by.
+	/// Read `product_id`'s Worker manifest and brand into what the core goes
+	/// by.
 	async fn read_provider_manifest(&self, product_id: &ProductId) {
 		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		if let Ok(manifest) = read &&
-			self.funding_providers().answered(product_id, manifest)
-		{
+		let mut changed =
+			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
+		if let Ok(Some(brand)) = product_brand(self, self.platform.as_ref(), product_id).await {
+			changed |= self.funding_providers().branded(product_id, brand);
+		}
+		if changed {
 			self.funding_providers_changed();
 		}
 	}
@@ -522,6 +558,11 @@ fn offered_providers(
 			});
 		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
+			let brand = entry.root_manifest.as_deref().and_then(|json| {
+				ProductBrand::parse(json)
+					.inspect_err(|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"))
+					.ok()
+			});
 			offered.push(OfferedProvider {
 				product_id,
 				snapshot,
@@ -529,6 +570,7 @@ fn offered_providers(
 				has_app: entry.has_app,
 				live: None,
 				reading: false,
+				brand,
 			});
 		}
 	}

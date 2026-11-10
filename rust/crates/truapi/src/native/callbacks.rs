@@ -510,11 +510,6 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// nothing when no frame is open for it.
 	fn close_provider_frame(&self, provider_id: ProductId, intent: String);
 
-	/// Whether provider `provider_id` ships an App, so an App route of its
-	/// can be shown. Asked only for a provider whose entry left `has_app`
-	/// unset. A provider without one shows only external pages.
-	async fn provider_has_app(&self, provider_id: ProductId) -> bool;
-
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
 	/// the device's coarse location when already permitted, then its SIM or
 	/// network country, then its locale's region. Never asks for a

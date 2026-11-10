@@ -2640,7 +2640,6 @@ struct RecordingFundingPlatform {
 	country: Option<String>,
 	in_progress: Mutex<Vec<bool>>,
 	quote_lists: Mutex<Vec<(String, crate::platform::FundingQuoteList)>>,
-	has_app: bool,
 }
 
 impl RecordingFundingPlatform {
@@ -2654,7 +2653,6 @@ impl RecordingFundingPlatform {
 			country: None,
 			in_progress: Mutex::new(Vec::new()),
 			quote_lists: Mutex::new(Vec::new()),
-			has_app: true,
 		})
 	}
 
@@ -2667,14 +2665,6 @@ impl RecordingFundingPlatform {
 			.filter(|(shown_for, _)| shown_for == intent)
 			.map(|(_, list)| list.clone())
 			.collect()
-	}
-
-	fn without_apps() -> Arc<Self> {
-		Arc::new(Self {
-			has_app: false,
-			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
-				.expect("only reference")
-		})
 	}
 
 	fn in_country(country: &str) -> Arc<Self> {
@@ -2715,9 +2705,6 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		self.closed.lock().expect("closed mutex poisoned").push(intent);
 	}
 
-	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
-		self.has_app
-	}
 
 	async fn detected_country(&self) -> Option<String> {
 		self.country.clone()
@@ -8190,6 +8177,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
+			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			has_app: None,
 		}])
@@ -8783,12 +8771,13 @@ fn a_provider_frame_closes_once_the_payment_moved() {
 	);
 }
 
-// A provider without an App shows external pages only, so the core refuses
-// an App route of its before the host sees it.
+// A provider dotNS lists no App for shows external pages only, so the core
+// refuses an App route of its before the host sees it.
 #[test]
 fn a_provider_without_an_app_opens_only_pages() {
 	let services = funding_services();
-	let platform = RecordingFundingPlatform::without_apps();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(services.open_funding(
@@ -9022,6 +9011,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				})
@@ -9099,6 +9089,7 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			has_app: None,
 		}])
@@ -9151,6 +9142,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				})
@@ -9272,6 +9264,7 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			has_app: None,
 		}])
@@ -9425,6 +9418,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+		root_manifest: None,
 		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 		has_app: None,
 	};
@@ -9495,12 +9489,14 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				},
@@ -11418,6 +11414,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				})
@@ -11838,6 +11835,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					has_app: None,
 				})

@@ -250,7 +250,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1143,6 +1148,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
     }),
 );
 
@@ -2082,12 +2091,6 @@ export interface FundingPlatform {
    * open for it.
    */
   closeProviderFrame(provider: ProductContext, intent: string): void;
-
-  /**
-   * Whether `provider` ships an App, so an App route of its can be shown.
-   * A provider without one shows only external pages.
-   */
-  providerHasApp?(provider: ProductContext): Promise<boolean>;
 
   /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for

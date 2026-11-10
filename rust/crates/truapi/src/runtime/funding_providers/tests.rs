@@ -21,6 +21,7 @@ fn declared_networks_are_listed_once_in_order() {
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
+		brand: None,
 	};
 	let candidates = [
 		candidate(vec![
@@ -74,6 +75,7 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 			.map(|(product_id, worker_manifest)| FundingProviderEntry {
 				product_id: ProductId::for_test(product_id),
 				worker_manifest: worker_manifest.clone(),
+				root_manifest: None,
 				origin: FundingProviderOrigin::Published,
 				has_app: None,
 			})
@@ -126,6 +128,7 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 		offered_providers(vec![FundingProviderEntry {
 			product_id: ProductId::for_test("bundled.dot"),
 			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: None,
 			origin: FundingProviderOrigin::Bundled,
 			has_app: None,
 		}])
@@ -148,6 +151,7 @@ fn an_unreadable_snapshot_is_refused_when_offered() {
 		offered_providers(vec![FundingProviderEntry {
 			product_id: ProductId::for_test("card.dot"),
 			worker_manifest: Some(worker_manifest.to_string()),
+			root_manifest: None,
 			origin: FundingProviderOrigin::Published,
 			has_app: None,
 		}])
@@ -193,6 +197,7 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 				.map(|product_id| FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(manifest(CARD_IN)),
+					root_manifest: None,
 					origin: FundingProviderOrigin::Published,
 					has_app: None,
 				})
@@ -273,4 +278,40 @@ fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
 		),
 		(vec![ProductId::for_test("card.dot")], [true, false, false])
 	);
+}
+
+// A provider's candidate carries the name and icon its root manifest gives
+// it, so hosts load no brand of their own; a brand read later replaces the
+// shipped one.
+#[test]
+fn a_candidate_carries_its_providers_brand() {
+	let root = |name: &str| {
+		format!(
+			r#"{{"$v":1,"displayName":"{name}","description":"d","icon":{{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}}}"#
+		)
+	};
+	let providers = providers(&[]);
+	lock(&providers.entries).extend(
+		offered_providers(vec![FundingProviderEntry {
+			product_id: ProductId::for_test("bundled.dot"),
+			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: Some(root("Shipped")),
+			origin: FundingProviderOrigin::Bundled,
+			has_app: None,
+		}])
+		.expect("offered"),
+	);
+	let branded = providers.branded(
+		&ProductId::for_test("bundled.dot"),
+		ProductBrand::parse(&root("Live")).expect("brand"),
+	);
+	let names = |providers: &FundingProviders| {
+		providers
+			.candidates(FundingDirection::In)
+			.into_iter()
+			.map(|candidate| candidate.brand.map(|brand| brand.display_name))
+			.collect::<Vec<_>>()
+	};
+
+	assert_eq!((branded, names(&providers)), (true, vec![Some("Live".to_string())]));
 }
