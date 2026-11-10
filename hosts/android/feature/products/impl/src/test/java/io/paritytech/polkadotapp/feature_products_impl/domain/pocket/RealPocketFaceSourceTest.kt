@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.reopenBackoff
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
@@ -145,7 +146,7 @@ class RealPocketFaceSourceTest {
         lookup = { answers.removeFirst() }
 
         val shown = backsShown()
-        advanceTimeBy(60_000)
+        advanceTimeBy(reopenBackoff(0))
         runCurrent()
 
         assertEquals(listOf(faceOf("shipped back.json").toJsWidget()), shown)
