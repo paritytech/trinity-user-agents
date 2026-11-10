@@ -6,6 +6,9 @@ import type { InvitationObserver } from "./observer.js";
 import type { ConversationAllowance, HostDelivery } from "./ports.js";
 import { StatementStoreDelivery } from "./statement-delivery.js";
 import type { WalletRequestsSession } from "./wallet-chat.js";
+import { bytesToHex } from "@parity/truapi/scale";
+import type { StatementAccountClaim } from "@parity/truapi-host/web";
+import type { ProductId } from "@parity/truapi";
 
 /**
  * How a wallet's host requests travel, and what that spends: the request
@@ -132,8 +135,7 @@ export function statementStoreDelivery(
  * With `submit` false the runtime only says whether it would accept the
  * claim and nothing is submitted, so a message fails and says so.
  *
- * Product-signed keys wait for finalized allowance: the host cannot replace
- * a key statement lost after a reorg. Only a known inclusion block proved
+ * Product-signed posts use the network's guarded rule. Only a known inclusion block proved
  * on finalized ancestry grants a full-day lease. An unknown block proves
  * allowance alone and grants at most {@link PROVISIONAL_MS}.
  */
@@ -143,31 +145,61 @@ export function conversationAllowance(
   seen: AllowanceSeen | null,
   now: () => number = Date.now,
 ): ConversationAllowance {
+  const claims = new Map<string, Promise<StatementAccountClaim>>();
+  const deadlines = new Map<string, number>();
+  const reading = new Map<string, ReturnType<ConversationAllowance["allow"]>>();
   return {
-    async allow(product, index) {
-      const claim = await session.claimProductStatementAccount(
-        product,
-        index,
-        submit,
+    allow(product, index) {
+      const period = Math.floor(now() / 86_400_000);
+      const key = `${product}:${bytesToHex(index)}:${period}`;
+      const current = reading.get(key);
+      if (current !== undefined) return current;
+      const pending = read(product, index, key).finally(() =>
+        reading.delete(key),
       );
-      if (claim.outcome === "validated")
-        throw new Error(
-          `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
-        );
-      // The host cannot replace product-signed keys evicted after a reorg.
-      const usable = await session.usableAllowance(claim, {
-        wait: "finalized",
-      });
-      seen?.(usable);
-      const dayEnd = (claim.period + 1) * 86_400_000;
-      return {
-        account: claim.account,
-        until: usable.claimFinal
-          ? dayEnd
-          : Math.min(dayEnd, now() + PROVISIONAL_MS),
-      };
+      reading.set(key, pending);
+      return pending;
     },
   };
+
+  async function read(product: ProductId, index: Uint8Array, key: string) {
+    let pending = claims.get(key);
+    if (pending === undefined) {
+      pending = session.claimProductStatementAccount(product, index, submit);
+      claims.set(key, pending);
+    }
+    const claim = await pending;
+    if (claim.outcome === "validated")
+      throw new Error(
+        `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
+      );
+    const deadline = deadlines.get(key);
+    const usable = await session.usableAllowance(
+      claim,
+      deadline !== undefined ? { wait: "finalized" } : undefined,
+    );
+    if (!usable.running() || Math.floor(now() / 86_400_000) !== claim.period)
+      throw new Error(
+        "The session or allowance day ended. Retry in the current session.",
+      );
+    seen?.(usable);
+    const dayEnd = (claim.period + 1) * 86_400_000;
+    const provisional = !usable.claimFinal;
+    if (
+      provisional &&
+      (deadline === undefined || usable.usableAt === "finalized")
+    )
+      deadlines.set(key, Math.min(dayEnd, now() + PROVISIONAL_MS));
+    if (provisional && (deadlines.get(key) ?? 0) <= now())
+      throw new Error(
+        "The claim's inclusion is still unconfirmed. Retry later; no new slot was claimed.",
+      );
+    return {
+      account: claim.account,
+      until: provisional ? deadlines.get(key)! : dayEnd,
+      ...(provisional ? { provisional: true as const } : {}),
+    };
+  }
 }
 
 /**

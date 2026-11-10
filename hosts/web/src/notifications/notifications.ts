@@ -47,6 +47,8 @@ export interface HostNotification {
   state: NotificationState;
   /** When the user dismissed it from the list. Absent or null while listed. */
   dismissedAt?: number | null;
+  /** A persisted posting or confirmation problem owned by the request's feature. */
+  postingProblem?: string;
 }
 
 export type Answer =
@@ -85,6 +87,8 @@ function isNotification(value: unknown): value is HostNotification {
     typeof item.product?.id === "string" &&
     typeof item.product.name === "string" &&
     typeof item.purpose === "string" &&
+    (item.postingProblem === undefined ||
+      typeof item.postingProblem === "string") &&
     typeof item.receivedAt === "number" &&
     (item.expiresAt === null || typeof item.expiresAt === "number") &&
     (item.seenAt === null || typeof item.seenAt === "number") &&
@@ -185,6 +189,15 @@ export class NotificationStore {
 
   get(id: string): HostNotification | undefined {
     return this.items.find((item) => item.id === id);
+  }
+
+  /** Keep a feature's pending-post status visible across reloads, without changing the user's answer. */
+  posting(id: string, problem: string | null): void {
+    const item = this.get(id);
+    if (item === undefined) return;
+    if (problem === null) delete item.postingProblem;
+    else item.postingProblem = problem;
+    this.changed();
   }
 
   /** Listed items the user has not seen, whatever their state, of one product or of all. */

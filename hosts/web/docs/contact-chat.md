@@ -101,16 +101,16 @@ Both prompts show one line about daily slots and public messages. It opens the d
 
 ### Allowance wait
 
-Host requests and Nova requests use the guarded posting rule (`src/platform/allowance-usable.ts`). Conversation
-accounts, Nova acceptances and Backup always wait for finalized allowance. Identity and contact security reads stay
-finalized.
+Host requests, Nova requests and acceptances, and conversation accounts use the guarded posting rule
+(`src/platform/allowance-usable.ts`). Backup and identity/contact security reads stay finalized.
 
 - A node accepts a statement against the account's allowance at its own best block. Since polkadot-sdk #13437 its
   periodic limit check takes the larger of the best and the finalized allowance; before, it evicted against the
   finalized one alone, so a post made before the claim was final could be accepted and then dropped.
 - **Best block.** Paseo Next v2 over RPC is a candidate, not a network-wide guarantee. Both the allowance reader and
   the exact submit connection must report the pinned People genesis, SDK `1.25.1-4a0cc2e7449` and required RPC methods.
-  A reconnect cannot silently move the post to an unchecked socket.
+  The core's People submit connection is checked before handoff. An unsupported connection disables best-ready
+  leases for this page. Host-owned notification posts also check their own submit socket.
   Unknown versions, missing methods, wrong genesis and failed checks use finalized allowance. An account posts once the core registered it just now, verified the
   slot at the claim's block, and that block has a child at the best block that holds the allowance (at most 30 s, then
   the finalized wait). An account registered before waits for the finalized head.
@@ -122,16 +122,19 @@ finalized.
   topics and encrypted payload. Receiver deduplication ignores the new outer proof. Recovery never submits another
   claim: the same account does not prove that another claim would spend no slot after a reorg. With no finalized
   allowance it stays unconfirmed and visible. Later retries can wait again, but create at most one replacement.
-- **Conversation accounts.** The host never holds a conversation's signed statements: the product signs and submits them
-  through the core. Their first keys cannot safely rely on a provisional lease alone, so these accounts wait for
-  finalized allowance. A known inclusion block must be on finalized ancestry for a full-day lease. An unknown hash
-  proves only finalized allowance and gives a lease of at most 180 s. Renewal does not retransmit a statement. What a
-  product posts again is its own:
-  - Kettle Chat (kettle-core `4d0764d`, default timings) posts its keys again every 10 min, and a group outbox that is
-    not acknowledged again after 10 s, doubling to 5 min. Each is a new statement, not the same bytes.
-  - Nova Chat posts the messages still unacknowledged again once its allowance answer ends, as a new statement.
-  - Contact Chat posts nothing again by itself. A statement lost after it was accepted comes back only with the next
-    message, whose post carries the recent window.
+- **Conversation accounts.** The host keeps the claim answer for the same product/index/day, not product payloads or
+  signing authority. A best-ready lease is provisional for at most 180 s, capped at UTC day end. Renewal rechecks the
+  original inclusion at finalized ancestry, without another claim. A known final inclusion permits a full-day lease.
+  An unknown hash proves only finalized allowance and receives another short lease after a fresh finalized read.
+  An ambiguous claim is not automatically submitted again in this session. Products own retransmission:
+  - Kettle Chat retains its latest provisional keys/outbox in its product transport and tries one higher-expiry post
+    once the lease is renewed and proved final. A newer statement or stopped node cancels that recovery. Failure is
+    reported, then Kettle's normal key cadence (10 min) and unacknowledged outbox retry (10 s, doubling to 5 min) apply.
+  - Nova Chat keeps unacknowledged messages and posts a new frame after the lease ends. Failed sends invalidate the
+    cached lease; retry rechecks it. Only the peer's acknowledgement marks a message delivered.
+  - Contact Chat keeps a pending window and republishes it once after the provisional lease ends, including after a
+    worker restart. A failed recheck marks that window's messages failed with an explicit retry. A new connection,
+    stopped worker or newer window prevents stale recovery. It has no peer acknowledgement or delivery guarantee.
 - **Same bytes.** Ordinary retries preserve signed bytes; a node that answers `noAllowance` gets the same bytes
   again, 2 s apart, 6 submits at most. A product's own posts go through the core, which does the same 11 times. Nothing
   else is tried again, and an uncertain claim is never followed by a claim for another account.

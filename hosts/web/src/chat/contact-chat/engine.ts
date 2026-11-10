@@ -151,6 +151,9 @@ interface StoredConversation {
   session?: unknown;
   /** Until when the host said the account may post. */
   allowedUntil?: number;
+  provisional?: true;
+  /** The latest window needs one post after its provisional lease is checked again. */
+  pendingWindow?: true;
   /** Where this connection's own messages start in `messages`: earlier ones were posted in an earlier connection. */
   windowStart?: number;
   /**
@@ -185,6 +188,8 @@ export interface ContactChatDeps {
   now(): number;
   /** Told of what the engine could not do, for the worker's status. */
   report?(reason: string): void;
+  /** Run a pending-window check after its lease ends; answers a cancel. */
+  schedule?(task: () => void, delayMs: number): () => void;
 }
 
 const CONTACT_STATE: Record<Status, ContactState> = {
@@ -240,6 +245,8 @@ export class ContactChat implements ConversationEngine {
     { messages: number; bytes: number }
   >();
   private readonly diagnosticsListeners = new Set<() => void>();
+  private readonly renewals = new Map<string, () => void>();
+  private stopped = false;
 
   constructor(private readonly deps: ContactChatDeps) {
     this.record = this.load();
@@ -252,12 +259,17 @@ export class ContactChat implements ConversationEngine {
       if (
         conversation.status === "accepting" ||
         conversation.status === "connected"
-      )
+      ) {
         this.follow(conversation);
+        if (conversation.pendingWindow) this.renewWindow(conversation);
+      }
   }
 
   /** Stop reading. The conversations stay as kept. */
   stop(): void {
+    this.stopped = true;
+    for (const cancel of this.renewals.values()) cancel();
+    this.renewals.clear();
     for (const stop of this.following.values()) stop();
     this.following.clear();
   }
@@ -539,6 +551,10 @@ export class ContactChat implements ConversationEngine {
    */
   private endConnection(conversation: StoredConversation): void {
     this.unfollow(conversation);
+    this.renewals.get(conversation.id)?.();
+    this.renewals.delete(conversation.id);
+    delete conversation.pendingWindow;
+    delete conversation.provisional;
     for (const message of conversation.messages)
       if (message.author === "self" && message.state === "sending")
         message.state = "failed";
@@ -696,8 +712,8 @@ export class ContactChat implements ConversationEngine {
     );
     if (conversation === undefined || message === undefined)
       throw new Error("There is no such message.");
-    if (message.state !== "failed")
-      throw new Error("Only a message that failed is sent again.");
+    if (message.state !== "failed" && !conversation.pendingWindow)
+      throw new Error("Only a failed or unconfirmed message is sent again.");
     if (conversation.status !== "connected")
       throw new Error("The chat is not connected.");
     if (
@@ -732,12 +748,32 @@ export class ContactChat implements ConversationEngine {
     const own = conversation.messages
       .slice(conversation.windowStart ?? 0)
       .filter((message) => message.author === "self");
-    if (!own.some((message) => message.state === "sending")) return;
+    const recovering =
+      conversation.pendingWindow === true &&
+      (conversation.allowedUntil ?? 0) <= this.deps.now();
+    if (
+      this.stopped ||
+      (!recovering && !own.some((message) => message.state === "sending"))
+    )
+      return;
+    const current = () =>
+      !this.stopped &&
+      conversation.index === index &&
+      conversation.session === session;
+    const { post, carried } = this.deps.protocol.post(
+      session,
+      own.map(({ id, text, at }) => ({ id, text, at })),
+    );
     const fail = (problem: string) => {
+      if (!current()) return;
+      delete conversation.pendingWindow;
       this.deps.report?.(`send: ${problem}`);
       let failed = 0;
       for (const message of own)
-        if (message.state === "sending") {
+        if (
+          message.state === "sending" ||
+          (recovering && carried.includes(message.id))
+        ) {
           message.state = "failed";
           failed += 1;
         }
@@ -747,6 +783,7 @@ export class ContactChat implements ConversationEngine {
     if (index === undefined)
       return fail("This chat has no account to post with.");
     const refused = await this.allow(conversation);
+    if (!current()) return;
     if (refused !== null) {
       this.system(
         conversation,
@@ -754,13 +791,8 @@ export class ContactChat implements ConversationEngine {
       );
       return fail(refused);
     }
-    const { post, carried } = this.deps.protocol.post(
-      session,
-      own.map(({ id, text, at }) => ({ id, text, at })),
-    );
-    const current = () => conversation.index === index;
     const expiry = messageExpiry(
-      !current() || conversation.lastExpiry === undefined
+      conversation.lastExpiry === undefined
         ? null
         : BigInt(conversation.lastExpiry),
       this.deps.now(),
@@ -768,13 +800,15 @@ export class ContactChat implements ConversationEngine {
     try {
       await this.deps.statements.post(index, post, expiry);
     } catch (error) {
+      if (!current()) return;
       // The allowance may have lapsed: the next send asks the host again.
-      if (current()) delete conversation.allowedUntil;
+      delete conversation.allowedUntil;
       const reason = errorText(error);
       this.system(conversation, `Your message was not sent: ${reason}`);
       return fail(reason);
     }
-    if (current()) conversation.lastExpiry = expiry.toString();
+    if (!current()) return;
+    conversation.lastExpiry = expiry.toString();
     let sent = 0;
     let failed = 0;
     for (const message of own)
@@ -785,16 +819,44 @@ export class ContactChat implements ConversationEngine {
         message.state = "failed";
         failed += 1;
       }
-    if (current()) {
-      this.lastBatch.set(conversation.id, {
-        messages: carried.length,
-        bytes: (post.data.length - 2) / 2,
-      });
-      this.count(conversation.id, "posts", 1);
-    }
+    this.lastBatch.set(conversation.id, {
+      messages: carried.length,
+      bytes: (post.data.length - 2) / 2,
+    });
+    this.count(conversation.id, "posts", 1);
     this.count(conversation.id, "sent", sent);
     this.count(conversation.id, "failed", failed);
+    if (conversation.provisional && !recovering) {
+      conversation.pendingWindow = true;
+      this.renewWindow(conversation);
+    } else delete conversation.pendingWindow;
     this.save();
+  }
+
+  private renewWindow(conversation: StoredConversation): void {
+    this.renewals.get(conversation.id)?.();
+    const index = conversation.index;
+    const schedule =
+      this.deps.schedule ??
+      ((task: () => void, delay: number) => {
+        const timer = setTimeout(task, delay);
+        return () => clearTimeout(timer);
+      });
+    this.renewals.set(
+      conversation.id,
+      schedule(
+        () => {
+          this.renewals.delete(conversation.id);
+          if (
+            !this.stopped &&
+            conversation.index === index &&
+            conversation.status === "connected"
+          )
+            void this.deliver(conversation);
+        },
+        Math.max(0, (conversation.allowedUntil ?? 0) - this.deps.now()) + 1,
+      ),
+    );
   }
 
   /** Null once the host allowed the conversation's account to post now, or why it did not. */
@@ -814,8 +876,9 @@ export class ContactChat implements ConversationEngine {
       });
       if (!result.ok) return result.detail;
       if (result.allowance === undefined) return "The host gave no allowance.";
-      if (conversation.index === index) {
+      if (!this.stopped && conversation.index === index) {
         conversation.allowedUntil = result.allowance.until;
+        conversation.provisional = result.allowance.provisional;
         this.save();
       }
       return null;

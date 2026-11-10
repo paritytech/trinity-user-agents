@@ -146,6 +146,9 @@ describe("a build made with Kettle Chat", () => {
       for (const absent of [
         "invitation-demo",
         "Invitation demo",
+        "__truapiDemoPosting",
+        "__truapiBackupSettled",
+        "__postingControl",
         "truapi-web-signing-host:dev:reply-suite",
         "Add sample notifications",
         "alice.example",

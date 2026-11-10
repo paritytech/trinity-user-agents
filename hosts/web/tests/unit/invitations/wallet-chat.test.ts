@@ -225,7 +225,7 @@ describe("a wallet's conversation accounts", () => {
     const heldBack = !(await settledYet(allowing));
     held.answer(usableAt);
     const answer = await allowing;
-    expect(held.waits).toEqual(["finalized"]);
+    expect(held.waits).toEqual([undefined]);
     return { heldBack, claimed, asked: held.asked, seen, answer };
   }
 
@@ -247,10 +247,103 @@ describe("a wallet's conversation accounts", () => {
     expect((await allowed("finalized", now, false)).answer).toEqual({
       account: "0xaccount",
       until: now + PROVISIONAL_MS,
+      provisional: true,
     });
     expect(
       (await allowed("finalized", DAY_END - 1_000, false)).answer.until,
     ).toBe(DAY_END);
+  });
+
+  test("a best-ready conversation lease is provisional, bounded by the day and never a full-day claim-finality assertion", async () => {
+    const now = 86_400_000 + 3_600_000;
+    expect((await allowed("best", now)).answer).toEqual({
+      account: claim.account,
+      until: now + PROVISIONAL_MS,
+      provisional: true,
+    });
+    expect((await allowed("best", DAY_END - 50)).answer.until).toBe(DAY_END);
+  });
+
+  test("renewal checks the same inclusion at finality, even when yesterday's finalized grant still holds", async () => {
+    let now = 86_400_000 + 3_600_000;
+    let claimed = 0;
+    let final = false;
+    const waits: unknown[] = [];
+    const seenClaims: ClaimedAccount[] = [];
+    const accounts = conversationAllowance(
+      {
+        ...session(),
+        claimProductStatementAccount: async () => {
+          claimed += 1;
+          return claim;
+        },
+        usableAllowance: async (asked, request) => {
+          waits.push(request?.wait);
+          seenClaims.push(asked);
+          if (request?.wait === "finalized" && !final)
+            throw new Error("an older grant does not finalize this claim");
+          return usable(asked, request?.wait ?? "best");
+        },
+      },
+      true,
+      null,
+      () => now,
+    );
+    const product = asProductId("chat.example");
+    const index = new Uint8Array(32);
+    const first = await accounts.allow(product, index);
+    now = first.until + 1;
+    await expect(accounts.allow(product, index)).rejects.toThrow("older grant");
+    final = true;
+    expect(await accounts.allow(product, index)).toEqual({
+      account: claim.account,
+      until: DAY_END,
+    });
+    expect([claimed, waits, seenClaims]).toEqual([
+      1,
+      [undefined, "finalized", "finalized"],
+      [claim, claim, claim],
+    ]);
+    now = DAY_END;
+    await expect(accounts.allow(product, index)).rejects.toThrow("day ended");
+    expect(claimed).toBe(2);
+  });
+
+  test("an ambiguous claim is not submitted again automatically, and a stopped wallet cannot lend a lease", async () => {
+    let claims = 0;
+    const accounts = conversationAllowance(
+      {
+        ...session(),
+        claimProductStatementAccount: async () => {
+          claims += 1;
+          throw new Error("claim answer lost");
+        },
+      },
+      true,
+      null,
+      () => 86_400_000,
+    );
+    for (let attempt = 0; attempt < 2; attempt++)
+      await expect(
+        accounts.allow(asProductId("chat.example"), new Uint8Array(32)),
+      ).rejects.toThrow("answer lost");
+    expect(claims).toBe(1);
+    const stopped = conversationAllowance(
+      {
+        ...session(),
+        claimProductStatementAccount: async () => claim,
+        usableAllowance: async () => ({
+          ...usable(claim, "best"),
+          running: () => false,
+        }),
+      },
+      true,
+      null,
+      () => 86_400_000,
+    );
+    await expect(
+      stopped.allow(asProductId("chat.example"), new Uint8Array(32)),
+    ).rejects.toThrow("session");
   });
 });
 

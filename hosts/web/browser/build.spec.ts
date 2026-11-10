@@ -160,6 +160,9 @@ describe("the production build", () => {
       "Add sample notifications",
       "alice.example",
       "__truapiNoSubmit",
+      "__truapiDemoPosting",
+      "__truapiBackupSettled",
+      "__postingControl",
       "__username-search",
       // The chat workers' test probe, and the tab's choice of one.
       "__contactChatWorker",

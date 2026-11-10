@@ -94,9 +94,10 @@ Details: [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
 
 ## Chat
 
-Host requests can use guarded best-block posting on a verified Paseo People RPC connection. Conversation accounts,
-Nova acceptances and Backup wait for finalized allowance. See [Allowance wait](docs/contact-chat.md#allowance-wait).
-Nova request confirmations resume after restart within their saved deadline and retry budget. See [Nova Chat](docs/nova-chat.md).
+Host requests, Nova acceptances and conversation accounts can use guarded best-block posting on verified Paseo People
+RPC connections. Backup and identity/contact security reads stay finalized. See [Allowance wait](docs/contact-chat.md#allowance-wait).
+Nova request and acceptance confirmations resume after restart within their saved deadlines. Failed acceptances remain
+visible in the Inbox for explicit retry, without undoing an established chat. See [Nova Chat](docs/nova-chat.md).
 Malformed saved retry budgets pause only the affected request, without new claims or automatic retries.
 
 - The Chat screen shows product rooms (TrUAPI Chat from product workers) and chat products over a draft bridge. It also
@@ -144,6 +145,8 @@ npm run test:browser   # headless Chrome; needs both WASM bundles and a Chromium
 
 CI runs only `typecheck` and `npm test`. Run the build and browser tests by hand when the host or the core changes.
 Specs and their scope: [docs/tests.md](docs/tests.md).
+`bun test browser/guarded-posting.spec.ts --timeout 300000` checks best-ready chat posting with controlled chain
+answers, real worker archives and an isolated browser clock. It sends nothing outside its loopback test server.
 
 ## Layout
 

@@ -339,6 +339,24 @@ const best = (block: string) => ({
 });
 
 describe("reading after a child of the claim's block", () => {
+  test("a storage result from a branch no longer at best cannot lend a provisional lease", async () => {
+    const chain = following(
+      [
+        { event: "initialized", finalizedBlockHashes: [FINAL] },
+        newBlock(CLAIM_BLOCK, FINAL),
+        newBlock(CHILD, CLAIM_BLOCK),
+        best(CHILD),
+        newBlock(SIBLING, FINAL),
+        best(SIBLING),
+      ],
+      "0x0100000000280000",
+    );
+    expect(
+      await readAfterChild(chain.connection, KEY, CLAIM_BLOCK, 20),
+    ).toEqual({ tag: "unseen" });
+    expect(chain.readAt()).toEqual([CHILD]);
+  });
+
   test("a pruned claim ends the best read immediately", async () => {
     const chain = following(
       [

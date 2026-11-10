@@ -45,7 +45,7 @@ function session(submits: boolean[]): WalletRequestsSession {
       submits.push(submit);
       return {
         account: "0xaccount",
-        period: 1,
+        period: Math.floor(Date.now() / 86_400_000),
         outcome: submit ? "registered" : "validated",
         seq: 3,
         collection: "People",

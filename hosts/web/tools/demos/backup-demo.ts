@@ -22,6 +22,8 @@ declare global {
   interface Window {
     /** The simulated backup network a browser test exposes. */
     __truapiBackupNetwork?: BackupNetworkBridge;
+    /** An optional browser test's finalized-allowance gate. */
+    __truapiBackupSettled?(claim: StatementAccountClaim): Promise<void>;
   }
 }
 
@@ -90,7 +92,7 @@ export function backupTestNetwork(
         JSON.parse(
           (await bridge("claim", "")) as string,
         ) as StatementAccountClaim,
-      settled: async () => {},
+      settled: async (claim) => window.__truapiBackupSettled?.(claim),
       storeSnapshot: async (sealed) =>
         hexToBytes((await bridge("store", bytesToHex(sealed))) as string),
       fetchSnapshot: async (key) => {

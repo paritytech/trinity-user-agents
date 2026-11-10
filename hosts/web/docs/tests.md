@@ -57,6 +57,18 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   archive, no dev demos, and a wallet running Kettle Chat alone from it. Skipped until `npm run build:kettle` has run.
 - [`nova-chat.spec.ts`](../browser/nova-chat.spec.ts): Nova Chat between three demo users, over the simulated Statement
   Store, both directions and a reload, and its conversation in the inspector's Chat view with no test probe.
+- [`guarded-posting.spec.ts`](../browser/guarded-posting.spec.ts): Contact Chat, Kettle and Nova on controlled
+  best-ready allowances, first messages and provisional renewal; Nova acceptance confirmation after reload, identical
+  `noAllowance` retries and visible reorg recovery; Contact Chat's failed window and explicit retry; and a simulated
+  backup held at its finalized gate. It runs the actual allowance guard, node checks and ancestry readers against
+  scripted JSON-RPC, with the real core, worker archives, product proofs and UI. Claims and chain storage are simulated,
+  not verified on a live chain. Its transport is injected only into the dev server's invitation demo. No wallet uses
+  that chat transport; the backup has its separate test gate. The tests block external HTTP and WebSockets, keep iroh
+  off and use fresh browser contexts. The origin's sandbox service worker stays enabled: the real product loader needs
+  its active registration. Blocking service workers would test a failed loader, not chat posting. Build tests check that
+  the injection ports and fixture do not ship.
+  Playwright's clock is shared by pages in one context: install it once and advance it once per interval. Advancing
+  Alice and then Bob advances both twice and can expire an in-flight TrUAPI call instead of testing renewal.
 - [`kettle-chat.spec.ts`](../browser/kettle-chat.spec.ts): Kettle Chat between two demo users, over the simulated
   Statement Store, alone and beside Contact Chat. Skipped until `npm run build:kettle` has run.
 - [`kettle-iroh.spec.ts`](../browser/kettle-iroh.spec.ts): Kettle Chat's log recovery over iroh, between two demo users,

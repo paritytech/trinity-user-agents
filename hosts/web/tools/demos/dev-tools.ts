@@ -63,7 +63,10 @@ import { novaChat } from "../chat/nova.js";
 import * as sr25519 from "@scure/sr25519";
 import { hexToBytes } from "@parity/truapi/scale";
 import { NovaBoundary } from "../../src/chat/nova-chat/boundary.js";
-import { startNovaChatHost } from "../../src/invitations/nova-chat-host.js";
+import {
+  startNovaChatHost,
+  type NovaChatHostOptions,
+} from "../../src/invitations/nova-chat-host.js";
 import { deriveHardSecret } from "../../src/invitations/chat-keys.js";
 import { lookupChatIdentity } from "../../src/platform/chain-directory.js";
 import { kettleChat } from "../chat/kettle.js";
@@ -180,6 +183,24 @@ export interface DevSession {
   backupTestNetwork: BackupTestNetwork | null;
   /** `spec`, its worker started with its test probe when this tab asks for one for `key`. */
   probe(key: ChatProductKey, spec: ChatProductSpec): ChatProductSpec;
+}
+
+/** Optional browser-test transport for the invitation demo only. No wallet session uses it. */
+export interface DemoPostingTest {
+  network(network: Network): Network;
+  accounts(
+    runtime: () => WorkerPairingHostRuntime | null,
+  ): ConversationAllowance;
+  nova: Pick<
+    NovaChatHostOptions,
+    "openStore" | "claimNotification" | "notificationGuard"
+  >;
+}
+
+declare global {
+  interface Window {
+    __truapiDemoPosting?: DemoPostingTest;
+  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -310,10 +331,14 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
     guardNetwork: (network) => {
       if (
         testUser !== null &&
-        (chatProducts.includes("kettle-chat") ||
+        (window.__truapiDemoPosting !== undefined ||
+          chatProducts.includes("kettle-chat") ||
           chatProducts.includes("nova-chat"))
       )
-        return simulatedStatements(network, deps.log);
+        return (
+          window.__truapiDemoPosting?.network(network) ??
+          simulatedStatements(network, deps.log)
+        );
       if (!submitsNothing(networkMode())) return network;
       deps.log(
         "This tab submits nothing: every extrinsic and statement submission is refused before it reaches the network.",
@@ -395,6 +420,7 @@ function startTestUser(
   };
   let verified: Promise<IdentityProblem | null> = new Promise(() => {});
   let core: WorkerPairingHostRuntime | null = null;
+  const postingTest = window.__truapiDemoPosting;
   const chatOf = (demo: DemoChat, index: number): RunningChat => {
     const spec = withWorkerProbe(demo.key, demo.spec);
     return {
@@ -436,6 +462,9 @@ function startTestUser(
           spec: CONTACT_CHAT,
           outbox: "contact-chat-outbox",
           received: "contact-chat-received",
+          ...(postingTest === undefined
+            ? {}
+            : { accounts: postingTest.accounts(() => core) }),
         }
       : {
           key,
@@ -443,7 +472,9 @@ function startTestUser(
           outbox: "kettle-chat-outbox",
           received: "kettle-chat-received",
           // Only Kettle Chat posts here, to the simulated Statement Store.
-          accounts: simulatedAllowance(() => core, deps.log),
+          accounts:
+            postingTest?.accounts(() => core) ??
+            simulatedAllowance(() => core, deps.log),
         };
   /**
    * Nova Chat for the test user: the official apps' requests and frames,
@@ -500,6 +531,10 @@ function startTestUser(
         confirmAccept: (prompt) => confirmAccept(prompt, NOVA_COSTS),
         showChat: deps.showChat,
         log: deps.log,
+        ...postingTest?.nova,
+        ...(postingTest === undefined
+          ? {}
+          : { accounts: postingTest.accounts(() => core) }),
       }),
     };
   };

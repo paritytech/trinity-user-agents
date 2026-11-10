@@ -164,6 +164,8 @@ export interface ChatAccountAllowance {
   account: string;
   /** When the allowance period ends, in milliseconds since the Unix epoch: ask again after it. */
   until: number;
+  /** The claim is not proved final. Recheck and republish pending data when this lease ends. */
+  provisional?: true;
 }
 
 export type CallResult =

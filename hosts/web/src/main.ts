@@ -196,7 +196,12 @@ const runningBackends: Record<ChainRole, ChainBackend> = chainBackends(
 function currentPostingRule(): PostingRule {
   return peopleAccess === null
     ? { wait: "finalized", why: "the People chain is not connected" }
-    : postingRule(activeNetwork, runningBackends.people, peopleAccess.genesis);
+    : chainAccess?.postingReady?.() !== true
+      ? {
+          wait: "finalized",
+          why: "the core's People connection is not verified for best-block posting",
+        }
+      : postingRule(activeNetwork, runningBackends.people, peopleAccess.genesis);
 }
 
 /**
@@ -1559,8 +1564,10 @@ const connectedWaiters: ((
   session: Extract<AuthState, { tag: "Connected" }>["value"],
 ) => void)[] = [];
 /** The chain and People genesis the status reads from, once the network is up. */
-let chainAccess: Pick<Network, "chain" | "genesis" | "networkSuffix"> | null =
-  null;
+let chainAccess: Pick<
+  Network,
+  "chain" | "genesis" | "networkSuffix" | "postingReady"
+> | null = null;
 let chainState: ChainState = { state: "idle" };
 /** The root key the chain state belongs to. */
 let chainFor: string | null = null;

@@ -162,6 +162,35 @@ const expiries = (script: Script, kind: string) =>
     .map((each) => BigInt(each.statement.expiry));
 
 describe("Nova Chat's worker session", () => {
+  test("provisional renewal preserves logical message ids, uses a higher outer frame and rechecks the same conversation account", async () => {
+    const { session: chat, script } = session();
+    await chat.run();
+    await tick();
+    script.allowAnswers.push({
+      ok: true,
+      value: { account: OWN_ACCOUNT, until: 1_100, provisional: true },
+    });
+    await chat.send(HANDLE, "provisional first");
+    await tick();
+    const first = script.posted[0]!;
+    script.now = 1_101;
+    script.scheduled.find((entry) => !entry.cancelled)!.task();
+    await tick();
+    const second = script.posted[1]!;
+    expect(second.index).toBe(first.index);
+    expect(JSON.parse(second.statement.data).messages).toEqual(
+      JSON.parse(first.statement.data).messages,
+    );
+    expect(
+      BigInt(second.statement.expiry) > BigInt(first.statement.expiry),
+    ).toBe(true);
+    expect(
+      script.calls.filter((call) => call.call === "conversationAccount"),
+    ).toHaveLength(2);
+    expect(chat.messages(HANDLE)).toHaveLength(1);
+    chat.stop();
+  });
+
   test("a frame of kinds it does not show (the peer's push token) is acknowledged and not listed", async () => {
     const { session: chat, script } = session();
     await chat.run();

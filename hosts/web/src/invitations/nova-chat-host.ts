@@ -174,11 +174,13 @@ interface Saved {
   /** The conversation account's index per peer: the first the worker named, the only one it may use. */
   indexes?: { [peer: PeerId]: string };
   posts?: Record<string, CachedPost>;
+  acceptances?: Record<string, { peer: PeerId; requestId: string }>;
 }
 
 interface CachedPost {
   period: number;
   bytes: string;
+  peer?: PeerId;
   claim?: { seq: number; collection?: string; blockHash?: string };
   needsFinal?: boolean;
   renewed?: boolean;
@@ -276,6 +278,8 @@ export function startNovaChatHost(
   let posting: Promise<unknown> = Promise.resolve();
   let indexes: { [peer: PeerId]: string } = {};
   let posts: Record<string, CachedPost> = {};
+  let acceptances: NonNullable<Saved["acceptances"]> = {};
+  const accepting = new Map<string, Promise<void>>();
 
   // Every effect after an await checks the host still runs: a host stopped by
   // a sign-out or a wallet switch must not write over the next one's state
@@ -290,6 +294,7 @@ export function startNovaChatHost(
         declined,
         indexes,
         posts,
+        acceptances,
       } satisfies Saved),
     );
   try {
@@ -304,6 +309,7 @@ export function startNovaChatHost(
       indexes = saved.indexes ?? {};
       declined = saved.declined ?? [];
       posts = saved.posts ?? {};
+      acceptances = saved.acceptances ?? {};
       let pausedInvalid = false;
       for (const item of outgoing) {
         const invalidBudget =
@@ -384,6 +390,7 @@ export function startNovaChatHost(
     requestId: string,
     statement: Statement,
     unwanted: () => string | null = () => null,
+    boundPeer?: PeerId,
   ): Promise<{ final: Promise<FinalOutcome> }> => {
     const run = async () => {
       if (store === null) throw new Error("the Statement Store is not open");
@@ -392,11 +399,20 @@ export function startNovaChatHost(
       const account = bytesToHex(signer.public);
       const key = `${kind}:${requestId}`;
       let cached = posts[key];
+      if (
+        kind === "chat-accept" &&
+        cached !== undefined &&
+        cached.peer !== boundPeer
+      )
+        throw new Error(
+          "This saved acceptance is not bound to this peer. No new claim was submitted.",
+        );
       if (cached !== undefined && cached.period !== period)
         throw new Error("the day changed; this post needs a new user action");
       if (cached === undefined) {
         cached = {
           period,
+          ...(boundPeer === undefined ? {} : { peer: boundPeer }),
           bytes: bytesToHex(
             encodeSigned(statement, signer.public, signer.sign),
           ),
@@ -404,6 +420,12 @@ export function startNovaChatHost(
         posts[key] = cached;
         save();
       }
+      if (
+        bytesToHex(decodeStatement(hexToBytes(cached.bytes)).signer) !== account
+      )
+        throw new Error(
+          "The saved statement names another notification account.",
+        );
       let postingStore: StatementStoreLike | null = null;
       const posted = await postWhenUsable(
         {
@@ -419,6 +441,11 @@ export function startNovaChatHost(
                 ...cached.claim,
                 ...(cached.needsFinal ? { blockHash: undefined } : {}),
               };
+            // An interrupted acceptance claim must not spend another slot on retry.
+            if (kind === "chat-accept") {
+              cached.needsFinal = true;
+              save();
+            }
             const claim = await options.claimNotification(
               signer.public,
               period,
@@ -427,6 +454,7 @@ export function startNovaChatHost(
               `${product.name}: ${kind} ${requestId.slice(0, 8)}… ${claim.line}`,
             );
             cached.claim = claim;
+            delete cached.needsFinal;
             save();
             return { account, period, ...claim };
           },
@@ -462,7 +490,6 @@ export function startNovaChatHost(
             if (postingStore === null)
               throw new Error("the Statement Store is not open");
             const checked =
-              kind !== "chat-accept" &&
               request?.wait !== "finalized" &&
               (await postingStore.supportsBestBlockPosting?.()) === true;
             const usable = await options.notificationGuard(claim, {
@@ -498,7 +525,12 @@ export function startNovaChatHost(
         );
       return {
         final: posted.final.then((outcome) => {
-          if (outcome.tag === "unconfirmed") {
+          if (
+            outcome.tag === "unconfirmed" &&
+            unwanted() === null &&
+            state === "running" &&
+            posts[key] === cached
+          ) {
             cached.needsFinal = true;
             save();
           }
@@ -598,6 +630,7 @@ export function startNovaChatHost(
     )
       return;
     if (boundary.state(peer) === "incoming") boundary.decline(peer);
+    delete acceptances[item.id];
     delete posts[`chat-accept:${requestId}`];
     declined = [...declined, `${peer}:${requestId}`].slice(-DECLINED_MAX);
     save();
@@ -1012,6 +1045,12 @@ export function startNovaChatHost(
             hexToBytes(message.index as HexString),
           );
           if (state !== "running") return refusal(`${product.name} stopped.`);
+          if (
+            blocked(peer) ||
+            boundary.state(peer) !== "established" ||
+            indexes[peer] !== message.index
+          )
+            return refusal("This chat is no longer available.");
           return { ok: true, value: allowed };
         } catch (error) {
           // The core's claim errors reach the host as text, so a missing
@@ -1089,6 +1128,14 @@ export function startNovaChatHost(
       )
         void postRequest(item);
     }
+    for (const id of Object.keys(acceptances)) {
+      const item = options.notifications.get(id);
+      if (item?.state.tag === "pending")
+        void resumeAcceptance(item).catch((error: unknown) => {
+          if (state === "running")
+            options.notifications.posting(id, errorText(error));
+        });
+    }
   };
 
   const check = async (): Promise<void> => {
@@ -1143,9 +1190,173 @@ export function startNovaChatHost(
     return peer !== null && options.notifications.get(id) !== undefined;
   };
 
-  const accept = async (item: HostNotification): Promise<void> => {
+  const acceptanceWanted = (
+    item: HostNotification,
+    kept: NonNullable<Saved["acceptances"]>[string],
+  ): string | null =>
+    state !== "running"
+      ? `${product.name} stopped`
+      : blocked(kept.peer)
+        ? "You blocked this person."
+        : acceptances[item.id] !== kept ||
+            options.notifications.get(item.id)?.state.tag !== "pending" ||
+            boundary.requestId(kept.peer) !== kept.requestId
+          ? "This request is no longer pending."
+          : null;
+
+  const finishAcceptance = (
+    item: HostNotification,
+    kept: NonNullable<Saved["acceptances"]>[string],
+    outcome: FinalOutcome,
+  ) => {
+    if (acceptanceWanted(item, kept) !== null) return;
+    const late = afterFinal(
+      `the acceptance of ${item.sender.name}'s request`,
+      outcome,
+    );
+    if (late !== null) {
+      const cached = posts[`chat-accept:${kept.requestId}`];
+      if (cached !== undefined) {
+        cached.needsFinal = true;
+        delete cached.confirmation;
+      }
+      save();
+      options.notifications.posting(
+        item.id,
+        `${late} Select Accept to retry the same acceptance. It is not confirmed delivered.`,
+      );
+      return;
+    }
+    boundary.accepted(kept.peer);
+    save();
+    options.notifications.posting(item.id, null);
+    options.notifications.accept(item.id);
+    delete posts[`chat-accept:${kept.requestId}`];
+    delete acceptances[item.id];
+    save();
+    tell(kept.peer);
+  };
+
+  async function resumeAcceptance(item: HostNotification): Promise<void> {
+    const kept = acceptances[item.id];
+    if (kept === undefined || accepting.has(item.id)) return;
+    const cached = posts[`chat-accept:${kept.requestId}`];
+    if (cached?.confirmation === undefined) {
+      options.notifications.posting(
+        item.id,
+        "Acceptance is unconfirmed. Select Accept to retry the same acceptance.",
+      );
+      return;
+    }
+    const pending = cached.confirmation;
+    const check = () => {
+      const why = acceptanceWanted(item, kept);
+      if (why !== null) throw new Error(why);
+      if (
+        !Number.isSafeInteger(pending.until) ||
+        typeof pending.submitted !== "boolean" ||
+        now() >= pending.until ||
+        claimPeriod(now()) !== cached.period
+      )
+        throw new Error(
+          "The saved acceptance confirmation ended. Retry explicitly; no new slot was claimed.",
+        );
+    };
+    const run = async () => {
+      let cancel = () => {};
+      let release = () => {};
+      try {
+        check();
+        const statement = decodeStatement(hexToBytes(cached.bytes));
+        if (
+          cached.peer !== kept.peer ||
+          bytesToHex(statement.signer) !==
+            bytesToHex(
+              options.notificationSigner(
+                "chat-accept",
+                kept.requestId,
+                cached.period,
+              ).public,
+            )
+        )
+          throw new Error(
+            "The saved acceptance's peer or notification account does not match.",
+          );
+        if (now() >= Number(statement.expiry >> 32n) * 1000)
+          throw new Error("The saved acceptance expired.");
+        if (cached.claim?.blockHash === undefined)
+          throw new Error("The saved inclusion block is missing.");
+        const deadline = new AbortController();
+        const signal = AbortSignal.any([prompts.signal, deadline.signal]);
+        cancel = schedule(() => deadline.abort(), pending.until - now());
+        const abortionWait = abortion(signal);
+        release = abortionWait.release;
+        const confirmed = await Promise.race([
+          options.notificationGuard(
+            {
+              account: bytesToHex(statement.signer),
+              period: cached.period,
+              ...cached.claim,
+            },
+            { wait: "finalized", signal },
+          ),
+          abortionWait.aborted,
+        ]);
+        check();
+        if (!confirmed.claimFinal)
+          throw new Error("The acceptance's claim is not proved final.");
+        if (!pending.submitted) {
+          const connection = store;
+          if (connection === null)
+            throw new Error("The Statement Store is not open.");
+          const sent = await submitUntilAllowed(
+            {
+              bytes: hexToBytes(cached.bytes),
+              submit: (bytes) => connection.submit(bytes),
+              unwanted: () => {
+                try {
+                  check();
+                  signal.throwIfAborted();
+                  return null;
+                } catch (error) {
+                  return errorText(error);
+                }
+              },
+            },
+            (ms) => new Promise((resolve) => schedule(resolve, ms)),
+          );
+          if (!isStored(sent.result))
+            throw new Error(
+              `The Statement Store answered ${sent.result.status}.`,
+            );
+        }
+        finishAcceptance(item, kept, { tag: "final" });
+      } catch (error) {
+        finishAcceptance(item, kept, {
+          tag: "unconfirmed",
+          why: errorText(error),
+        });
+      } finally {
+        cancel();
+        release();
+      }
+    };
+    const pendingRun = run().finally(() => accepting.delete(item.id));
+    accepting.set(item.id, pendingRun);
+    await pendingRun;
+  }
+
+  const acceptNow = async (item: HostNotification): Promise<void> => {
     const peer = peerOfItem(item.id);
-    if (peer === null || boundary.state(peer) !== "incoming")
+    const theirs = requestOfItem(item.id);
+    if (
+      peer === null ||
+      theirs === null ||
+      boundary.requestId(peer) !== theirs ||
+      options.notifications.get(item.id)?.state.tag !== "pending" ||
+      (boundary.state(peer) !== "incoming" &&
+        acceptances[item.id] === undefined)
+    )
       throw new Error("This request is no longer pending.");
     if (blocked(peer)) throw new Error("You blocked this person.");
     const accepted = await options.confirmAccept({
@@ -1157,36 +1368,56 @@ export function startNovaChatHost(
     if (!accepted) throw new Error("You did not accept.");
     if (state !== "running") throw new Error(`${product.name} stopped.`);
     if (blocked(peer)) throw new Error("You blocked this person.");
-    const theirs = requestOfItem(item.id);
-    if (theirs === null) throw new Error("This request is no longer pending.");
-    const statement = boundary.accept(peer, {
-      messageId: newId(),
-      nowMs: now(),
-      expiry: expiryAt(now()),
-    });
+    const kept = { peer, requestId: theirs };
+    acceptances[item.id] = kept;
+    const cached = posts[`chat-accept:${theirs}`];
+    const statement =
+      cached === undefined
+        ? boundary.accept(peer, {
+            messageId: newId(),
+            nowMs: now(),
+            expiry: expiryAt(now()),
+          })
+        : decodeStatement(hexToBytes(cached.bytes));
     if (isRefused(statement)) throw new Error(statement.refused);
     try {
-      const posted = await postAs("chat-accept", theirs, statement);
-      const outcome = await posted.final;
-      const late = afterFinal(
-        `the acceptance of ${item.sender.name}'s request`,
-        outcome,
+      save();
+      const posted = await postAs(
+        "chat-accept",
+        theirs,
+        statement,
+        () => acceptanceWanted(item, kept),
+        peer,
       );
-      if (late !== null) throw new Error(late);
+      if (acceptanceWanted(item, kept) !== null)
+        throw new Error(acceptanceWanted(item, kept)!);
+      boundary.accepted(peer);
+      save();
+      options.notifications.posting(
+        item.id,
+        "Acceptance posted here. Checking its claim; this is not delivery confirmation.",
+      );
+      tell(peer);
+      void posted.final.then((outcome) =>
+        finishAcceptance(item, kept, outcome),
+      );
     } catch (error) {
-      // Not posted: the request stays pending, and Accept may be tried again.
+      if (acceptanceWanted(item, kept) === null)
+        options.notifications.posting(
+          item.id,
+          `Acceptance not confirmed: ${errorText(error)} Select Accept to retry.`,
+        );
       throw new Error(`The acceptance was not posted: ${errorText(error)}`);
     }
-    if (state !== "running")
-      throw new Error(
-        `${product.name} stopped before the acceptance was kept.`,
-      );
-    boundary.accepted(peer);
-    delete posts[`chat-accept:${theirs}`];
-    save();
-    options.notifications.accept(item.id);
     options.log(`${product.name}: you accepted ${item.sender.name}'s request.`);
-    tell(peer);
+  };
+
+  const accept = (item: HostNotification): Promise<void> => {
+    const current = accepting.get(item.id);
+    if (current !== undefined) return current;
+    const pending = acceptNow(item).finally(() => accepting.delete(item.id));
+    accepting.set(item.id, pending);
+    return pending;
   };
 
   const handleOnceNamed = (account: string) =>

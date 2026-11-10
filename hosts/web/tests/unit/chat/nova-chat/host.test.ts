@@ -113,9 +113,13 @@ function startA(
     lookup?: Promise<string | null>;
     /** The user's answer to Send. Defaults to Send. */
     confirmSend?: (prompt: SendPrompt) => Promise<boolean>;
+    notifications?: NotificationStore;
+    supportsBest?: boolean;
+    noAllowance?: number;
   } = {},
 ): Harness {
-  const notifications = new NotificationStore(new MemoryStorage());
+  const notifications =
+    options.notifications ?? new NotificationStore(new MemoryStorage());
   notifications.setScope("A");
   const blocked: string[] = [];
   const claims: string[] = [];
@@ -135,15 +139,20 @@ function startA(
   let refuse = options.refuseSubmits ?? 0;
   let failClaims = options.failClaims ?? 0;
   let uncertain = options.uncertainSubmits ?? 0;
+  let noAllowance = options.noAllowance ?? 0;
   const connect = (): StatementStoreLike => {
     const inner = store.connect();
     return {
       ...inner,
-      supportsBestBlockPosting: async () => true,
+      supportsBestBlockPosting: async () => options.supportsBest !== false,
       subscribe: inner.subscribe.bind(inner),
       close: inner.close.bind(inner),
       submit: async (encoded) => {
         attempted.push(encoded);
+        if (noAllowance > 0) {
+          noAllowance -= 1;
+          return { status: "rejected", reason: "noAllowance" };
+        }
         if (uncertain > 0) {
           uncertain -= 1;
           throw new Error("submit answer lost");
@@ -252,15 +261,13 @@ async function until(check: () => boolean): Promise<void> {
 
 /** B's V2 request to A, posted to the store. */
 async function bAsks(store: MemoryStatementStore, requestId: string) {
-  const sent = await boundaryB().request(
-    sr25519.getPublicKey(A.identitySecret),
-    {
-      requestId,
-      nowMs: Date.now(),
-      expiry: BigInt(Date.now()),
-      welcome: "hello",
-    },
-  );
+  const sender = boundaryB();
+  const sent = await sender.request(sr25519.getPublicKey(A.identitySecret), {
+    requestId,
+    nowMs: Date.now(),
+    expiry: BigInt(Date.now()),
+    welcome: "hello",
+  });
   if (isRefused(sent)) throw new Error(sent.refused);
   store.inject(
     encodeSigned(
@@ -269,12 +276,13 @@ async function bAsks(store: MemoryStatementStore, requestId: string) {
       (payload) => sr25519.sign(NOTIFICATION_SECRET, payload),
     ),
   );
+  return sender;
 }
 
 describe("posting requests and acceptances", () => {
   test("a failed finalized acceptance stays incoming and pending, then retries without a new claim or proof", async () => {
     const store = new MemoryStatementStore();
-    const a = startA(store);
+    const a = startA(store, { supportsBest: false });
     a.settle.usableAt = "best";
     a.settle.finalRefusal = "claim not on finalized ancestry";
     await a.host.start();
@@ -294,6 +302,327 @@ describe("posting requests and acceptances", () => {
     await a.host.accept(item);
     expect(a.claims).toHaveLength(1);
     expect(a.notifications.get(item.id)?.state.tag).toBe("accepted");
+    a.host.stop();
+  });
+
+  test("best-ready Accept establishes locally before finality, deduplicates concurrent Accepts and keeps native kind 20/account/topic binding", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { claimBlock: "0xclaim" });
+    let finish!: (why: string | null) => void;
+    a.settle.usableAt = "best";
+    a.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await a.host.start();
+    const sender = await bAsks(store, "native-best-accept");
+    await until(() => a.notifications.list().length === 1);
+    const item = a.notifications.list()[0]!;
+    await Promise.all([a.host.accept(item), a.host.accept(item)]);
+    expect([a.claims.length, a.submits.length, a.settle.asked]).toEqual([
+      1,
+      1,
+      ["rule"],
+    ]);
+    expect(a.notifications.get(item.id)?.state.tag).toBe("pending");
+    expect(await a.port.call({ call: "list" })).toMatchObject({
+      ok: true,
+      value: [{ state: "established" }],
+    });
+    expect(
+      sender.openAcceptance(A_PEER, decodeStatement(a.submits[0]!)),
+    ).toEqual({ established: true });
+    expect(a.claims[0]).toBe(bytesToHex(decodeStatement(a.submits[0]!).signer));
+    finish(null);
+    await until(() => a.notifications.get(item.id)?.state.tag === "accepted");
+    a.host.stop();
+  });
+
+  test("a late acceptance reorg is visible, explicit retry keeps its kind 20 payload and account, and late callbacks cannot undo success", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { claimBlock: "0xclaim" });
+    let finish!: (why: string | null) => void;
+    a.settle.usableAt = "best";
+    a.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await a.host.start();
+    await bAsks(store, "native-reorg-accept");
+    await until(() => a.notifications.list().length === 1);
+    const item = a.notifications.list()[0]!;
+    await a.host.accept(item);
+    a.settle.finalRefusal = "claim orphaned and no finalized allowance";
+    finish("claim orphaned");
+    await until(
+      () =>
+        a.notifications
+          .get(item.id)
+          ?.postingProblem?.includes("Select Accept") === true,
+    );
+    expect(a.notifications.get(item.id)?.state.tag).toBe("pending");
+    expect(await a.port.call({ call: "list" })).toMatchObject({
+      value: [{ state: "established" }],
+    });
+    a.settle.finalRefusal = null;
+    await a.host.accept(item);
+    await until(() => a.notifications.get(item.id)?.state.tag === "accepted");
+    const [first, replacement] = a.submits.map(decodeStatement);
+    expect(replacement).toMatchObject({
+      signer: first!.signer,
+      data: first!.data,
+      topics: first!.topics,
+      channel: first!.channel,
+      expiry: first!.expiry + 1n,
+    });
+    expect(a.claims).toHaveLength(1);
+    a.host.stop();
+  });
+
+  test("a restarted acceptance follows its saved inclusion without another claim or submit", async () => {
+    const store = new MemoryStatementStore();
+    const now = Date.UTC(2026, 10, 10, 12);
+    const first = startA(store, { claimBlock: "0xclaim", now: () => now });
+    let finish!: (why: string | null) => void;
+    first.settle.usableAt = "best";
+    first.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await first.host.start();
+    await bAsks(store, "native-restart-accept");
+    await until(() => first.notifications.list().length === 1);
+    const item = first.notifications.list()[0]!;
+    await first.host.accept(item);
+    first.host.stop();
+    const next = startA(store, {
+      notifications: first.notifications,
+      now: () => now + 20_000,
+    });
+    await next.host.start();
+    await until(
+      () => next.notifications.get(item.id)?.state.tag === "accepted",
+    );
+    expect([
+      next.claims.length,
+      next.attempted.length,
+      next.settle.asked,
+    ]).toEqual([0, 0, ["finalized"]]);
+    const kept = localStorage.getItem("nova-chat:A");
+    finish("old host reorg");
+    await tick();
+    expect(localStorage.getItem("nova-chat:A")).toBe(kept);
+    next.host.stop();
+  });
+
+  test("acceptance restart deadlines, blocks and later days do not authorize network work", async () => {
+    for (const why of ["deadline", "block", "day"] as const) {
+      localStorage.clear();
+      const store = new MemoryStatementStore();
+      const now = Date.UTC(2026, 10, 10, 12);
+      const first = startA(store, { claimBlock: "0xclaim", now: () => now });
+      first.settle.usableAt = "best";
+      let finish!: (why: string | null) => void;
+      first.settle.final = new Promise((resolve) => {
+        finish = resolve;
+      });
+      await first.host.start();
+      await bAsks(store, `native-${why}-accept`);
+      await until(() => first.notifications.list().length === 1);
+      const item = first.notifications.list()[0]!;
+      await first.host.accept(item);
+      first.host.stop();
+      const next = startA(store, {
+        notifications: first.notifications,
+        now: () =>
+          now +
+          (why === "day" ? 86_400_000 : why === "deadline" ? 180_001 : 20_000),
+      });
+      if (why === "block") next.blocked.push(B_PEER);
+      await next.host.start();
+      await tick();
+      expect([
+        next.claims.length,
+        next.attempted.length,
+        next.settle.asked.length,
+      ]).toEqual([0, 0, 0]);
+      expect(next.notifications.get(item.id)?.state.tag).toBe("pending");
+      next.host.stop();
+      finish(null);
+    }
+  });
+
+  test("a crash before the best-ready acceptance submit answer resumes only its exact saved bytes", async () => {
+    const store = new MemoryStatementStore();
+    const now = Date.UTC(2026, 10, 10, 12);
+    const first = startA(store, {
+      claimBlock: "0xclaim",
+      uncertainSubmits: 1,
+      now: () => now,
+    });
+    let finish!: (why: string | null) => void;
+    first.settle.usableAt = "best";
+    first.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await first.host.start();
+    await bAsks(store, "native-uncertain-accept");
+    await until(() => first.notifications.list().length === 1);
+    const item = first.notifications.list()[0]!;
+    await expect(first.host.accept(item)).rejects.toThrow("answer lost");
+    first.host.stop();
+    const next = startA(store, {
+      notifications: first.notifications,
+      now: () => now + 10_000,
+    });
+    await next.host.start();
+    await until(
+      () => next.notifications.get(item.id)?.state.tag === "accepted",
+    );
+    expect(next.claims).toHaveLength(0);
+    expect(next.attempted).toEqual(first.attempted);
+    next.host.stop();
+    finish(null);
+  });
+
+  test("a resumed acceptance uses the original remaining deadline and ignores a guard that finishes after it", async () => {
+    const store = new MemoryStatementStore();
+    let now = Date.UTC(2026, 10, 10, 12);
+    const first = startA(store, { claimBlock: "0xclaim", now: () => now });
+    let finish!: (why: string | null) => void;
+    first.settle.usableAt = "best";
+    first.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await first.host.start();
+    await bAsks(store, "native-deadline-accept");
+    await until(() => first.notifications.list().length === 1);
+    const item = first.notifications.list()[0]!;
+    await first.host.accept(item);
+    first.host.stop();
+    now += 170_000;
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    const next = startA(store, {
+      notifications: first.notifications,
+      now: () => now,
+      guard: async (claim, request) => {
+        signal = request?.signal;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return usable(claim);
+      },
+    });
+    await next.host.start();
+    await until(() => signal !== undefined);
+    now += 10_001;
+    next.scheduled.shift()!();
+    await until(
+      () =>
+        next.notifications
+          .get(item.id)
+          ?.postingProblem?.includes("Select Accept") === true,
+    );
+    expect(signal!.aborted).toBe(true);
+    expect(next.notifications.get(item.id)?.state.tag).toBe("pending");
+    const kept = localStorage.getItem("nova-chat:A");
+    release();
+    await tick();
+    expect(localStorage.getItem("nova-chat:A")).toBe(kept);
+    expect([next.claims.length, next.attempted.length]).toEqual([0, 0]);
+    next.host.stop();
+    finish(null);
+  });
+
+  test("an older Inbox item cannot accept a newer native request from the same identity", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store);
+    await a.host.start();
+    await bAsks(store, "native-earlier");
+    await until(() => a.notifications.list().length === 1);
+    const earlier = a.notifications.list()[0]!;
+    await bAsks(store, "native-newer");
+    await until(() => a.notifications.list().length === 2);
+    await expect(a.host.accept(earlier)).rejects.toThrow("no longer pending");
+    expect([a.claims.length, a.submits.length]).toEqual([0, 0]);
+    a.host.stop();
+  });
+
+  test("a stale acceptance callback cannot downgrade a newer explicit success", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { claimBlock: "0xclaim" });
+    let finish!: (why: string | null) => void;
+    a.settle.usableAt = "best";
+    a.settle.final = new Promise((resolve) => {
+      finish = resolve;
+    });
+    await a.host.start();
+    await bAsks(store, "native-late-callback");
+    await until(() => a.notifications.list().length === 1);
+    const item = a.notifications.list()[0]!;
+    await a.host.accept(item);
+    await a.host.accept(item);
+    await until(() => a.notifications.get(item.id)?.state.tag === "accepted");
+    const kept = localStorage.getItem("nova-chat:A");
+    finish("late orphaned claim");
+    await tick();
+    expect(a.notifications.get(item.id)).toMatchObject({
+      state: { tag: "accepted" },
+    });
+    expect(a.notifications.get(item.id)?.postingProblem).toBeUndefined();
+    expect(localStorage.getItem("nova-chat:A")).toBe(kept);
+    expect(a.claims).toHaveLength(1);
+    a.host.stop();
+  });
+
+  test("blocking or declining during an acceptance wait prevents submission", async () => {
+    for (const why of ["block", "decline"] as const) {
+      localStorage.clear();
+      const store = new MemoryStatementStore();
+      const a = startA(store);
+      let release!: () => void;
+      a.settle.gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      await a.host.start();
+      await bAsks(store, `native-wait-${why}`);
+      await until(() => a.notifications.list().length === 1);
+      const item = a.notifications.list()[0]!;
+      const pending = a.host.accept(item);
+      await until(() => a.claims.length === 1);
+      if (why === "block") a.blocked.push(B_PEER);
+      else a.notifications.decline(item.id);
+      release();
+      await expect(pending).rejects.toThrow("not posted");
+      expect(a.attempted).toHaveLength(0);
+      a.host.stop();
+    }
+  });
+
+  test("an ambiguous acceptance claim is never blindly submitted again", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { failClaims: 1 });
+    await a.host.start();
+    await bAsks(store, "ambiguous-accept");
+    await until(() => a.notifications.list().length === 1);
+    const item = a.notifications.list()[0]!;
+    await expect(a.host.accept(item)).rejects.toThrow("not posted");
+    await expect(a.host.accept(item)).rejects.toThrow("no recovery claim");
+    expect([a.claims.length, a.submits.length]).toEqual([1, 0]);
+    a.host.stop();
+  });
+
+  test("transient noAllowance acceptance retries preserve identical signed bytes", async () => {
+    const store = new MemoryStatementStore();
+    const a = startA(store, { noAllowance: 1 });
+    await a.host.start();
+    await bAsks(store, "retry-accept");
+    await until(() => a.notifications.list().length === 1);
+    const posted = a.host.accept(a.notifications.list()[0]!);
+    await until(() => a.scheduled.length === 1);
+    a.scheduled.shift()!();
+    await posted;
+    expect(a.attempted).toHaveLength(2);
+    expect(a.attempted[0]).toEqual(a.attempted[1]);
+    expect(a.claims).toHaveLength(1);
     a.host.stop();
   });
 
@@ -619,7 +948,7 @@ describe("posting requests and acceptances", () => {
     expect(a.notifications.get(item.id)?.state.tag).toBe("pending");
     await a.host.accept(item);
     expect(a.claims).toHaveLength(1);
-    expect(a.settle.asked).toEqual(["finalized", "finalized"]);
+    expect(a.settle.asked).toEqual(["rule", "rule"]);
     expect(a.attempted[1]).toEqual(a.attempted[0]);
     const signer = sr25519.getPublicKey(
       sr25519.secretFromSeed(

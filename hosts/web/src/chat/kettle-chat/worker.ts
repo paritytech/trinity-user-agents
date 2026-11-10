@@ -224,12 +224,13 @@ async function run(): Promise<void> {
       if (result.isErr()) throw new Error(JSON.stringify(result.error));
       return result.value.account.publicKey.toLowerCase();
     },
-    ports: (index, allow) => {
+    ports: (index, allow, lease) => {
       const ports = conversationPorts({
         client,
         productId,
         index,
         allow,
+        lease,
         report,
         ...(probe === null
           ? {}

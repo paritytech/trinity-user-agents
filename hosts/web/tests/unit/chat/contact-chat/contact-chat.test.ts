@@ -123,6 +123,7 @@ class User {
   readonly acceptPrompts: AcceptPrompt[] = [];
   /** Why this user's host gives no allowance now, or null when it does. */
   refuseAllowance: string | null = null;
+  provisionalAllowance = false;
   /** What the request service told the developer tools. */
   readonly observed: InvitationEvent[] = [];
   service!: InvitationService;
@@ -201,10 +202,19 @@ class User {
               return this.acceptAnswer!;
             },
           }),
-      accounts: this.store.allowance(
-        () => this.clock.now() + 24 * 60 * 60_000,
-        () => this.refuseAllowance,
-      ),
+      accounts: {
+        allow: async (product, index) => ({
+          ...(await this.store
+            .allowance(
+              () =>
+                this.clock.now() +
+                (this.provisionalAllowance ? 60_000 : 24 * 60 * 60_000),
+              () => this.refuseAllowance,
+            )
+            .allow(product, index)),
+          ...(this.provisionalAllowance ? { provisional: true as const } : {}),
+        }),
+      },
       log: () => {},
       observe: (event) => void this.observed.push(event),
     });
@@ -250,6 +260,7 @@ class User {
       recordKey: "record",
       random: cryptoRandom,
       now: this.clock.now,
+      schedule: this.clock.schedule,
     });
 
     this.chat = new ChatV2Host({
@@ -405,6 +416,110 @@ function identifying(user: TestUser): string[] {
 }
 
 describe("Contact Chat between two hosts, by contact handle", () => {
+  test("both first-message windows post on provisional leases and republish once after finality without duplicate messages or accounts", async () => {
+    const { alice, bob, store, clock } = world();
+    alice.provisionalAllowance = true;
+    bob.provisionalAllowance = true;
+    await alice.start();
+    await bob.start();
+    const room = await alice.startWith(BOB, "first from inviter");
+    await bob.acceptNewest();
+    await settle();
+    await alice.engine.send(room, "first from inviter");
+    await bob.engine.send(bob.only().id, "first from recipient");
+    await settle();
+    expect(store.asked).toHaveLength(2);
+    const before = [...store.taken];
+    expect(before).toHaveLength(2);
+    expect(alice.engine.stored()[0]!.pendingWindow).toBe(true);
+    alice.provisionalAllowance = false;
+    bob.provisionalAllowance = false;
+    clock.advance(60_002);
+    await settle();
+    expect(store.taken).toHaveLength(4);
+    expect(new Set(store.asked.map(({ index }) => index)).size).toBe(2);
+    for (const original of before) {
+      const replacement = store.taken
+        .filter((post) => post.signer === original.signer)
+        .at(-1)!;
+      expect(replacement).toMatchObject({
+        signer: original.signer,
+        data: original.data,
+        topics: original.topics,
+        channel: original.channel,
+      });
+      expect(replacement.expiry > original.expiry).toBe(true);
+    }
+    expect(
+      alice.engine
+        .messages(room)
+        .filter((message) => message.text === "first from recipient"),
+    ).toHaveLength(1);
+    expect(
+      bob.engine
+        .messages(bob.only().id)
+        .filter((message) => message.text === "first from inviter"),
+    ).toHaveLength(1);
+    alice.stop();
+    bob.stop();
+  });
+
+  test("Start over cancels the pending provisional window without replaying it on the new connection", async () => {
+    const { alice, bob, clock, store } = world();
+    alice.provisionalAllowance = true;
+    await alice.start();
+    await bob.start();
+    const room = await alice.startWith(BOB, "request");
+    await bob.acceptNewest();
+    await alice.engine.send(room, "old provisional window");
+    await settle();
+    expect(alice.engine.stored()[0]!.pendingWindow).toBe(true);
+    const posted = store.taken.length;
+    await alice.startOver(room);
+    expect(alice.engine.stored()[0]!.pendingWindow).toBeUndefined();
+    clock.advance(60_002);
+    await settle();
+    expect(store.taken).toHaveLength(posted);
+    alice.stop();
+    bob.stop();
+  });
+
+  test("an unconfirmed window becomes visibly failed on recheck, permits manual retry and stops on worker shutdown", async () => {
+    const { alice, bob, clock, store } = world();
+    alice.provisionalAllowance = true;
+    await alice.start();
+    await bob.start();
+    const room = await alice.startWith(BOB, "pending window");
+    await bob.acceptNewest();
+    await settle();
+    await alice.engine.send(room, "pending window");
+    await settle();
+    alice.refuseAllowance = "claim orphaned; no finalized allowance";
+    clock.advance(60_002);
+    await settle();
+    const message = alice.engine
+      .messages(room)
+      .find((entry) => entry.text === "pending window")!;
+    expect(message.state).toBe("failed");
+    const posted = store.taken.length;
+    clock.advance(180_000);
+    await settle();
+    expect(store.taken).toHaveLength(posted);
+    alice.refuseAllowance = null;
+    alice.provisionalAllowance = false;
+    await alice.engine.retry(room, message.id);
+    await settle();
+    expect(
+      alice.engine.messages(room).find((entry) => entry.id === message.id)
+        ?.state,
+    ).toBe("sent");
+    alice.stop();
+    bob.stop();
+    clock.advance(86_400_000);
+    await settle();
+    expect(store.taken).toHaveLength(posted + 1);
+  });
+
   test("connects through the hosts, names each person in the host, and both sides write and read text", async () => {
     const { alice, bob, store } = world();
     await alice.start();

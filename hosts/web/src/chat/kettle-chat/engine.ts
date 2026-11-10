@@ -110,6 +110,7 @@ interface StoredConversation {
   /** The request's message, which the sender sends first, until it does. */
   first?: string;
   allowedUntil?: number;
+  provisional?: true;
   messages: StoredMessage[];
 }
 
@@ -124,7 +125,11 @@ export interface KettleChatDeps {
   /** The product's own account at raw index `index`. */
   account(index: string): Promise<string>;
   /** The ports of the conversation account at `index`. */
-  ports(index: string, allow: () => Promise<string | null>): KettlePorts;
+  ports(
+    index: string,
+    allow: () => Promise<string | null>,
+    lease: () => { until: number; provisional: boolean; running: boolean },
+  ): KettlePorts;
   storage: RecordStorage;
   recordKey: string;
   random: RandomBytes;
@@ -270,6 +275,7 @@ export class KettleChat implements ConversationEngine {
   /** What each node told last, by conversation, for the developer tools. */
   private readonly published = new Map<string, number>();
   private readonly delivered = new Map<string, number>();
+  private stopped = false;
 
   constructor(private readonly deps: KettleChatDeps) {
     this.record = this.load();
@@ -283,6 +289,7 @@ export class KettleChat implements ConversationEngine {
 
   /** Stop every node that started; one still starting is released once it starts. */
   async stop(): Promise<void> {
+    this.stopped = true;
     const started = [...this.started.values()];
     this.nodes.clear();
     this.started.clear();
@@ -481,7 +488,11 @@ export class KettleChat implements ConversationEngine {
     try {
       await this.deps.kettle.removeState(
         account,
-        this.deps.ports(index, async () => "This chat was replaced."),
+        this.deps.ports(
+          index,
+          async () => "This chat was replaced.",
+          () => ({ until: 0, provisional: false, running: false }),
+        ),
       );
     } catch (error) {
       this.deps.report?.(`forget: ${errorText(error)}`);
@@ -653,6 +664,7 @@ export class KettleChat implements ConversationEngine {
 
   /** Null once the host allowed the conversation's account to post now, or why not. */
   private allow(conversation: StoredConversation): Promise<string | null> {
+    if (this.stopped) return Promise.resolve("Kettle Chat stopped.");
     if ((conversation.allowedUntil ?? 0) > this.deps.now())
       return Promise.resolve(null);
     const { request, index } = conversation;
@@ -668,8 +680,9 @@ export class KettleChat implements ConversationEngine {
       });
       if (!result.ok) return result.detail;
       if (result.allowance === undefined) return "The host gave no allowance.";
-      if (conversation.index === index) {
+      if (!this.stopped && conversation.index === index) {
         conversation.allowedUntil = result.allowance.until;
+        conversation.provisional = result.allowance.provisional;
         this.save();
       }
       return null;
@@ -700,7 +713,18 @@ export class KettleChat implements ConversationEngine {
       try {
         const node = await this.deps.kettle.start(
           account,
-          this.deps.ports(index, () => this.allow(conversation)),
+          this.deps.ports(
+            index,
+            () => this.allow(conversation),
+            () => ({
+              until: conversation.allowedUntil ?? 0,
+              provisional: conversation.provisional === true,
+              running:
+                !replaced() &&
+                conversation.index === index &&
+                RUNNING.includes(conversation.status),
+            }),
+          ),
           (event) => this.heard(conversation.id, index, event),
           {
             fast: this.deps.fast === true,
@@ -736,7 +760,12 @@ export class KettleChat implements ConversationEngine {
     event: KettleEvent,
   ): void {
     const conversation = this.find(conversationId);
-    if (conversation === undefined || conversation.index !== index) return;
+    if (
+      this.stopped ||
+      conversation === undefined ||
+      conversation.index !== index
+    )
+      return;
     const group = typeof event.group === "string" ? event.group : undefined;
     switch (event.type) {
       case "created":

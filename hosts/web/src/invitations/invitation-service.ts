@@ -209,7 +209,7 @@ export class InvitationService {
   /** The allowance each request's conversation account got, by handle, until its period ends. */
   private readonly allowances = new Map<
     string,
-    { account: string; until: number }
+    { account: string; until: number; provisional?: true }
   >();
   /** Requests whose recipient was not found, by handle: the retry that is due. */
   private readonly reachRetries = new Map<string, () => void>();
@@ -854,6 +854,9 @@ export class InvitationService {
         return failure("Refused", "No authenticated reply has arrived.");
     } else if (received!.replied === null && !this.accepting.has(handle))
       return failure("Refused", "The user did not accept this request.");
+    const peer = sent?.context.to ?? received!.context.from;
+    if (this.deps.contacts.byIdentity(peer) === undefined)
+      return failure("Refused", "This contact is no longer available.");
     const bound = sent?.chatIndex ?? received?.chatIndex;
     if (bound !== undefined && bound !== index)
       return failure(
@@ -885,6 +888,13 @@ export class InvitationService {
         this.deps.product.id,
         fromHex(index),
       );
+      if (
+        this.stopped ||
+        this.outbox.get(handle)?.state.tag === "cancelled" ||
+        this.deps.contacts.byIdentity(peer) === undefined ||
+        (sent === undefined && this.received.get(handle)?.chatIndex !== index)
+      )
+        return failure("Refused", "This request is no longer available.");
       this.allowances.set(handle, allowance);
       this.observe({
         type: "chat-account",

@@ -70,6 +70,103 @@ function client(accept: boolean) {
 }
 
 describe("Kettle Chat's statement ports", () => {
+  test("a provisional key package or outbox is republished once at finalized renewal, with unchanged payload and account and higher expiry", async () => {
+    for (const kind of ["keys", "outbox"]) {
+      const made = client(true);
+      let now = 0;
+      let provisional = true;
+      const tasks: (() => void)[] = [];
+      const problems: string[] = [];
+      const ports = conversationPorts({
+        client: made.client,
+        productId: asProductId("chat.example"),
+        index: `0x${"44".repeat(32)}`,
+        allow: async () => {
+          if (now >= 100) provisional = false;
+          return null;
+        },
+        lease: () => ({ until: 100, provisional, running: true }),
+        now: () => now,
+        schedule: (task) => {
+          tasks.push(task);
+          return () => {};
+        },
+        report: (why) => problems.push(why),
+      });
+      await ports.submit({
+        ...statement,
+        data: kind === "keys" ? "0x01" : "0x02",
+      });
+      expect(tasks).toHaveLength(1);
+      now = 101;
+      tasks.shift()!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const [first, second] = made.submitted as (typeof statement & {
+        proof: { value: { signer: string } };
+      })[];
+      expect(second).toMatchObject({
+        channel: first!.channel,
+        data: first!.data,
+        topics: first!.topics,
+        expiry: first!.expiry + 1n,
+        proof: { value: { signer: first!.proof.value.signer } },
+      });
+      expect([made.submitted.length, tasks.length, problems]).toEqual([
+        2,
+        0,
+        [],
+      ]);
+    }
+  });
+
+  test("stopped nodes, newer keys and uncertain claims cannot trigger stale Kettle recovery", async () => {
+    for (const why of ["stopped", "newer", "unconfirmed"] as const) {
+      const made = client(true);
+      let running = true;
+      const tasks: (() => void)[] = [];
+      const problems: string[] = [];
+      const ports = conversationPorts({
+        client: made.client,
+        productId: asProductId("chat.example"),
+        index: `0x${"44".repeat(32)}`,
+        allow: async () => null,
+        lease: () => ({ until: 100, provisional: true, running }),
+        now: () => 0,
+        schedule: (task) => {
+          tasks.push(task);
+          return () => {};
+        },
+        report: (problem) => problems.push(problem),
+      });
+      await ports.submit(statement);
+      if (why === "stopped") running = false;
+      if (why === "newer")
+        await ports.submit({
+          ...statement,
+          expiry: statement.expiry + 5n,
+          data: "0x05",
+        });
+      tasks.shift()!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(made.submitted).toHaveLength(why === "newer" ? 2 : 1);
+      expect(problems.length).toBe(why === "unconfirmed" ? 1 : 0);
+    }
+  });
+
+  test("a transient noAllowance retry reuses the same product proof instead of asking for another signature", async () => {
+    const made = client(false);
+    const ports = conversationPorts({
+      client: made.client,
+      productId: asProductId("chat.example"),
+      index: `0x${"44".repeat(32)}`,
+      allow: async () => null,
+      report: () => {},
+    });
+    await ports.submit(statement);
+    await ports.submit(statement);
+    expect(made.submitted[1]).toBe(made.submitted[0]);
+  });
+
   test("record each submission under the hash the store names it by, with its answer", async () => {
     for (const accept of [true, false]) {
       const seen: KettleSubmission[] = [];

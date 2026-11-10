@@ -127,8 +127,14 @@ async function profile(
   network: Network,
   options: { off?: boolean } = {},
 ): Promise<BrowserContext> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
   context.setDefaultTimeout(STEP_MS);
+  await context.routeWebSocket(/.*/, (socket) => socket.close());
+  await context.route(/.*/, (route) =>
+    new URL(route.request().url()).origin === host.origin
+      ? route.fallback()
+      : route.abort(),
+  );
   await context.exposeFunction("__truapiBackupNetwork", network.answer);
   if (options.off)
     await context.addInitScript((key) => {

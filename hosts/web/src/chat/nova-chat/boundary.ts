@@ -169,6 +169,11 @@ export class NovaBoundary {
     return this.peers.get(peer)?.state ?? null;
   }
 
+  /** The exact setup request bound to `peer`, or null when none is kept. */
+  requestId(peer: PeerId): string | null {
+    return this.peers.get(peer)?.requestId ?? null;
+  }
+
   /** Everyone this boundary knows, by identity account. */
   known(): PeerId[] {
     return [...this.peers.keys()];

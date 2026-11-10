@@ -187,6 +187,10 @@ export interface ConversationPortsOptions {
   index: string;
   /** Null once the host allows the account to post now, or why not. */
   allow(): Promise<string | null>;
+  /** The product's current lease and whether its node still owns this account. */
+  lease?(): { until: number; provisional: boolean; running: boolean };
+  schedule?(task: () => void, delayMs: number): () => void;
+  now?(): number;
   /** Told what a port could not do. */
   report(reason: string): void;
   /** Told each submission, signed, with the store's answer. */
@@ -247,24 +251,46 @@ export function conversationPorts(
         context,
       ),
     );
-  return {
+  const pending = new Map<
+    string,
+    {
+      identity: string;
+      signed: Parameters<TrUApiClient["statementStore"]["submit"]>[0];
+    }
+  >();
+  const renewals = new Map<string, { token: symbol; cancel(): void }>();
+  const running = () => options.lease?.().running !== false;
+  const ports: KettlePorts = {
     async submit(statement) {
+      if (!running()) throw new Error("This Kettle node stopped.");
       const refused = await options.allow();
       if (refused !== null) {
         options.report(`post: ${refused}`);
         return { status: "rejected", reason: "noAllowance" };
       }
-      const proof = await client.statementStore.createProof({
-        productAccountId,
-        statement,
-      });
-      if (proof.isErr())
-        throw new Error(`createProof: ${errorText(proof.error)}`);
-      const submitted = await client.statementStore.submit({
+      if (!running()) throw new Error("This Kettle node stopped.");
+      const channel = statement.channel ?? "none";
+      const identity = JSON.stringify({
         ...statement,
-        proof: proof.value.proof,
+        expiry: statement.expiry.toString(),
       });
-      const signed = proof.value.proof;
+      let cached = pending.get(channel);
+      if (cached?.identity !== identity) {
+        const proof = await client.statementStore.createProof({
+          productAccountId,
+          statement,
+        });
+        if (proof.isErr())
+          throw new Error(`createProof: ${errorText(proof.error)}`);
+        cached = {
+          identity,
+          signed: { ...statement, proof: proof.value.proof },
+        };
+        pending.set(channel, cached);
+      }
+      if (!running()) throw new Error("This Kettle node stopped.");
+      const submitted = await client.statementStore.submit(cached.signed);
+      const signed = cached.signed.proof;
       const record = (outcome: string) =>
         options.observe?.({
           at: new Date().toISOString(),
@@ -282,6 +308,43 @@ export function conversationPorts(
         });
       if (submitted.isOk()) {
         record("new");
+        renewals.get(channel)?.cancel();
+        renewals.delete(channel);
+        const lease = options.lease?.();
+        if (lease?.provisional && lease.running) {
+          const token = Symbol();
+          const schedule =
+            options.schedule ??
+            ((task: () => void, delay: number) => {
+              const timer = setTimeout(task, delay);
+              return () => clearTimeout(timer);
+            });
+          const cancel = schedule(
+            () => {
+              if (renewals.get(channel)?.token !== token || !running()) return;
+              renewals.delete(channel);
+              void (async () => {
+                const why = await options.allow();
+                if (why !== null) throw new Error(why);
+                if (!running() || pending.get(channel) !== cached) return;
+                if (options.lease?.().provisional)
+                  throw new Error(
+                    "The provisional claim is still unconfirmed; pending keys/outbox wait for Kettle's next retry.",
+                  );
+                const result = await ports.submit({
+                  ...statement,
+                  expiry: statement.expiry + 1n,
+                });
+                if (result.status !== "new" && result.status !== "known")
+                  throw new Error(result.reason ?? result.status);
+              })().catch((error: unknown) =>
+                options.report(`Pending Kettle post: ${errorText(error)}`),
+              );
+            },
+            Math.max(0, lease.until - (options.now ?? Date.now)()) + 1,
+          );
+          renewals.set(channel, { token, cancel });
+        }
         return { status: "new" };
       }
       const reason = errorText(submitted.error);
@@ -361,4 +424,5 @@ export function conversationPorts(
         throw new Error(`storage: ${errorText(cleared.error)}`);
     },
   };
+  return ports;
 }

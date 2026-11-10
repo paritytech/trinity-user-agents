@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, jest, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import {
@@ -47,7 +47,7 @@ import { finalizedGuard, usable } from "../../../support/allowance.js";
 const saved = {
   localStorage: (globalThis as { localStorage?: unknown }).localStorage,
 };
-beforeAll(() =>
+beforeEach(() =>
   Object.assign(globalThis, { localStorage: new MemoryStorage() }),
 );
 afterAll(() => Object.assign(globalThis, saved));
@@ -236,6 +236,79 @@ const texts = (user: User, peer: string) =>
     );
 
 describe("Nova Chat, host side and worker session together", () => {
+  test("inviter and recipient exchange their first messages while both allowance claims and acceptance are only best-ready", async () => {
+    const store = new MemoryStatementStore();
+    let finish!: (why: string | null) => void;
+    const final = new Promise<string | null>((resolve) => {
+      finish = resolve;
+    });
+    const accounts: string[] = [];
+    const options: Partial<NovaChatHostOptions> = {
+      openStore: async () => ({
+        ...store.connect(),
+        supportsBestBlockPosting: async () => true,
+      }),
+      claimNotification: async () => ({
+        line: "included",
+        seq: 0,
+        blockHash: "0xclaim",
+      }),
+      notificationGuard: async (claim) => usable(claim, "best", final),
+      accounts: {
+        allow: async (_product, index) => {
+          const account = bytesToHex(
+            sr25519.getPublicKey(accountAt(bytesToHex(index))),
+          );
+          accounts.push(account);
+          return { account, until: Date.now() + 180_000, provisional: true };
+        },
+      },
+    };
+    const a = startUser("A", store, undefined, options);
+    const b = startUser("B", store, undefined, options);
+    await a.host.start();
+    await b.host.start();
+    await a.session.run();
+    await b.session.run();
+    const bForA = handleOf(ids.A, ids.B);
+    const aForB = handleOf(ids.B, ids.A);
+    await a.session.start(
+      { handle: { bytes: bForA as HexString } },
+      "best hello",
+    );
+    await until("B's best request", () => b.notifications.list().length === 1);
+    const item = b.notifications.list()[0]!;
+    await b.host.accept(item);
+    expect(b.notifications.get(item.id)?.state.tag).toBe("pending");
+    await until(
+      "both best-established",
+      () =>
+        a.session.conversations()[0]?.contact?.state === "Established" &&
+        b.session.conversations()[0]?.contact?.state === "Established",
+    );
+    await Promise.all([
+      a.session.send(bForA, "first inviter"),
+      b.session.send(aForB, "first recipient"),
+    ]);
+    await until(
+      "first messages and ACKs",
+      () =>
+        texts(a, ids.B).includes("self:first inviter:delivered") &&
+        texts(b, ids.A).includes("self:first recipient:delivered"),
+    );
+    expect(new Set(accounts).size).toBe(2);
+    expect(b.notifications.get(item.id)?.state.tag).toBe("pending");
+    finish(null);
+    await until(
+      "acceptance final",
+      () => b.notifications.get(item.id)?.state.tag === "accepted",
+    );
+    a.session.stop();
+    b.session.stop();
+    a.host.stop();
+    b.host.stop();
+  });
+
   test("request, Accept in the Inbox, text both ways, a restart, and a block", async () => {
     const store = new MemoryStatementStore();
     let a = startUser("A", store);

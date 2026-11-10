@@ -11,6 +11,7 @@ import type {
   JsonRpcConnection,
 } from "@parity/truapi-host";
 import { spreadFollows } from "./follow-spread.js";
+import { checkedPostingConnection } from "./statement-store.js";
 import {
   CHAIN_ROLES,
   type ChainBackend,
@@ -52,6 +53,8 @@ export interface Network {
   chain: ChainProvider;
   /** The backend each chain is reached through. */
   backends: Record<ChainRole, ChainBackend>;
+  /** Whether the connections lent to the core passed the best-posting node checks. */
+  postingReady?(): boolean;
   /**
    * Release the light client and close every connection handed out. The
    * provider handle is a WASM resource; without this a page that boots more
@@ -90,10 +93,13 @@ export async function connectNetwork(
   const provider = builder.build();
 
   const open = new Set<JsonRpcConnection>();
+  let postingChecked = false;
+  let postingUnknown = false;
   return {
     networkSuffix: config.networkSuffix,
     genesis,
     backends,
+    postingReady: () => postingChecked && !postingUnknown,
     supportedChains: {
       network: config.id,
       chains: [
@@ -108,7 +114,25 @@ export async function connectNetwork(
       // opens here, and one light-client connection holds two.
       async connect(genesisHash) {
         const lane = () => openConnection(bytesToHex(genesisHash));
-        return spreadFollows(await lane(), lane);
+        let first = await lane();
+        if (
+          bytesToHex(genesisHash).toLowerCase() ===
+            genesis.people.toLowerCase() &&
+          backends.people === "rpc" &&
+          config.bestBlockPosting !== null
+        ) {
+          try {
+            first = await checkedPostingConnection(
+              first,
+              config.bestBlockPosting.peopleGenesis,
+            );
+            postingChecked = true;
+          } catch {
+            postingUnknown = true;
+            first = await lane();
+          }
+        }
+        return spreadFollows(first, lane);
       },
     },
     dispose() {

@@ -41,8 +41,74 @@ export interface StatementStoreLike {
 export const isStored = (result: SubmitResult): boolean =>
   result.status === "new" || result.status === "known";
 
+/** Verify a fresh connection before lending it to the core; no product requests or payloads are inspected. */
+export async function checkedPostingConnection(
+  connection: JsonRpcConnection,
+  genesis: string,
+  timeoutMs = 5_000,
+): Promise<JsonRpcConnection> {
+  const responses = connection.responses()[Symbol.asyncIterator]();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = async () => {
+    const answers = new Map<string, unknown>();
+    for (const [id, method, params] of [
+      ["posting-genesis", "chain_getBlockHash", [0]],
+      ["posting-version", "system_version", []],
+      ["posting-methods", "rpc_methods", []],
+    ] as const)
+      connection.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+    while (answers.size < 3) {
+      const next = await responses.next();
+      if (next.done) throw new Error("the posting connection closed");
+      const message = JSON.parse(next.value) as RpcMessage;
+      if (typeof message.id !== "string" || message.error !== undefined)
+        throw new Error("the posting connection could not be verified");
+      answers.set(message.id, message.result);
+    }
+    if (
+      !checkedPostingNode(
+        genesis,
+        answers.get("posting-genesis"),
+        answers.get("posting-version"),
+        answers.get("posting-methods"),
+      )
+    )
+      throw new Error(
+        "the posting node is not eligible for best-block posting",
+      );
+  };
+  try {
+    await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("the posting node check timed out")),
+          timeoutMs,
+        );
+      }),
+    ]);
+    return {
+      send: (text) => connection.send(text),
+      async *responses() {
+        for (
+          let next = await responses.next();
+          !next.done;
+          next = await responses.next()
+        )
+          yield next.value;
+      },
+      close: () => connection.close(),
+    };
+  } catch (error) {
+    connection.close();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface RpcMessage {
-  id?: number;
+  id?: number | string;
   result?: unknown;
   error?: { message?: string };
   params?: { subscription?: string; result?: unknown };
@@ -105,7 +171,7 @@ export class StatementStore {
       for await (const raw of this.connection.responses()) {
         this.tap?.("in", raw);
         const message = JSON.parse(raw) as RpcMessage;
-        if (message.id !== undefined) {
+        if (typeof message.id === "number") {
           const waiting = this.pending.get(message.id);
           this.pending.delete(message.id);
           if (message.error !== undefined)

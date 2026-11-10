@@ -18,14 +18,20 @@ The reference is the apps' source: Android `paritytech/polkadot-android-communit
   client, checks each request (statement proof, inner signature, identity proof against the sender's on-chain chat key)
   and lists it in the Inbox. It sends a request only after **Send** and an acceptance only after **Accept**.
 - Each is signed by a notification account the core registers for the day: the apps' `//chat-request//<id>//<day>` and
-  `//chat-accept//<their id>//<day>`. Requests use the guarded posting rule. Acceptances always wait for finalized
-  allowance before posting, so a failed wait or submit leaves the request pending and Accept can be tried again
-  ([Allowance wait](contact-chat.md#allowance-wait)).
+  `//chat-accept//<their id>//<day>`. Both use the [guarded posting rule](contact-chat.md#allowance-wait). An acceptance
+  posted at best establishes the chat locally so either side can write. Its Inbox row stays pending, with its
+  confirmation status, until finality is confirmed. This is not a recipient-delivery assertion.
 - Claims run one at a time. Failed requests, including late finality failures, retry up to five times, 30 s apart,
   then pause visibly. Retries keep the signed statement and successful claim answer across restart. Unconfirmed claims
   can recover only against finalized allowance, without another claim, with at most one higher-expiry outer proof
   over the same encrypted payload. No automatic retry crosses the request's day. Accept may be pressed again after a
   failure, using the same bytes and account.
+- A provisional acceptance keeps the same kind 20 payload, peer/request binding, notification account and original
+  confirmation deadline across restart. Confirmation resumes without a new claim or another post; a lost submit
+  answer permits only the original signed bytes. A late failure stays visible with **Accept** as an explicit retry.
+  It never reverts an established chat or a newer acceptance. Recovery can make one higher-expiry outer statement
+  over the same payload, only with finalized allowance. An ambiguous claim spends no recovery slot. A saved acceptance
+  without its peer binding is refused rather than guessed. No automatic recovery crosses its day or deadline.
 - A provisional request saves its unfinished confirmation, signed ciphertext, public claim context and original
   deadline before submission. Restart checks that inclusion block without another claim or post. A failed check can
   recover within the saved retry budget; a confirmed request stays Waiting without reposting. An elapsed deadline

@@ -411,7 +411,7 @@ export class NotificationsScreen {
     }
 
     if (status === "pending") row.append(this.drawActions(item));
-    const problem = this.problems.get(item.id);
+    const problem = this.problems.get(item.id) ?? item.postingProblem;
     if (problem !== undefined)
       row.append(el("p", "chat-error notification-problem", problem));
     return row;

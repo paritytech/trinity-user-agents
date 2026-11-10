@@ -1,7 +1,56 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryStatementRpc } from "../../support/statement-rpc-memory.js";
-import { StatementStore } from "../../../src/platform/statement-store.js";
+import {
+  StatementStore,
+  checkedPostingConnection,
+} from "../../../src/platform/statement-store.js";
 import type { JsonRpcConnection } from "@parity/truapi-host";
+
+test("core submit connections are checked before handoff and keep their original response stream", async () => {
+  for (const supported of [true, false]) {
+    let closed = false;
+    const requests: { id: string; method: string }[] = [];
+    const methods = [
+      "chainHead_v1_follow",
+      "chainHead_v1_storage",
+      "chain_getHeader",
+      "chain_getBlockHash",
+      "chain_getFinalizedHead",
+      "state_getStorage",
+      "statement_submit",
+    ];
+    const raw: JsonRpcConnection = {
+      send: (text) => {
+        requests.push(JSON.parse(text));
+      },
+      async *responses() {
+        for (const [index, result] of [
+          "0xgenesis",
+          supported ? "1.25.1-4a0cc2e7449" : "1.24.3",
+          { methods },
+        ].entries())
+          yield JSON.stringify({ id: requests[index]!.id, result });
+        yield "original stream";
+      },
+      close: () => {
+        closed = true;
+      },
+    };
+    if (supported) {
+      const checked = await checkedPostingConnection(raw, "0xgenesis");
+      expect(
+        (await checked.responses()[Symbol.asyncIterator]().next()).value,
+      ).toBe("original stream");
+      checked.send(JSON.stringify({ id: "core", method: "statement_submit" }));
+      expect(requests.at(-1)?.id).toBe("core");
+      checked.close();
+    } else
+      await expect(checkedPostingConnection(raw, "0xgenesis")).rejects.toThrow(
+        "not eligible",
+      );
+    expect(closed).toBe(true);
+  }
+});
 
 test("eligibility reads the actual submit socket and fails closed for a different or unsupported node", async () => {
   const genesis = `0x${"01".repeat(32)}`;

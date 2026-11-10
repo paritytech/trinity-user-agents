@@ -454,6 +454,11 @@ export class NovaSession implements ConversationEngine {
     channel: "request" | "response",
     frame: WireFrame,
   ): Promise<void> {
+    const check = () => {
+      if (this.stopped || record.state !== "established")
+        throw new HostRefusal("This chat is no longer available.", true);
+    };
+    check();
     if (record.allowedUntil <= this.deps.now()) {
       const allowed = await this.deps.host.call({
         call: "conversationAccount",
@@ -461,6 +466,7 @@ export class NovaSession implements ConversationEngine {
         index: record.index,
       });
       if (!allowed.ok) throw refused(allowed);
+      check();
       record.allowedUntil = (allowed.value as { until: number }).until;
     }
     const expiry = nextExpiry(record.lastExpiry[channel], this.deps.now());
@@ -471,8 +477,10 @@ export class NovaSession implements ConversationEngine {
       expiry,
     });
     if (!sealed.ok) throw refused(sealed);
+    check();
     const statement = sealed.value as WireStatement;
     await this.deps.statements.post(record.index, statement);
+    check();
     record.lastExpiry[channel] = expiry;
     const facts = this.thisRun(record.handle);
     facts.counts.posts += 1;
@@ -526,6 +534,7 @@ export class NovaSession implements ConversationEngine {
         requestId,
         messages: record.pending.map((each) => each.encoded),
       });
+      if (this.stopped || record.state !== "established") return;
       for (const entry of record.history)
         if (entry.from === "me" && ids.includes(entry.id)) {
           if (entry.status !== "acked") entry.status = "sent";
@@ -536,6 +545,8 @@ export class NovaSession implements ConversationEngine {
         }
       this.failures.delete(record.handle);
     } catch (error) {
+      if (this.stopped || record.state !== "established") return;
+      record.allowedUntil = 0;
       for (const entry of record.history)
         if (
           ids.includes(entry.id) &&

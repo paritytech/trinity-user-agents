@@ -179,5 +179,5 @@ export interface ConversationAllowance {
   allow(
     product: ProductId,
     index: Uint8Array,
-  ): Promise<{ account: string; until: number }>;
+  ): Promise<{ account: string; until: number; provisional?: true }>;
 }

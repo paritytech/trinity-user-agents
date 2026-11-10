@@ -170,13 +170,17 @@ export async function readAfterChild(
     let value: HexString | null = null;
     let claimNumber: bigint | undefined;
     let finalNumber: bigint | undefined;
-    const descends = (block: string): boolean => {
+    const descendsFrom = (block: string, ancestor: string): boolean => {
       for (let at = parents.get(block); at !== undefined; at = parents.get(at))
-        if (at === claimed) return true;
+        if (at === ancestor) return true;
       return false;
     };
     const readIfDescends = () => {
-      if (reading !== undefined || best === undefined || !descends(best))
+      if (
+        reading !== undefined ||
+        best === undefined ||
+        !descendsFrom(best, claimed)
+      )
         return;
       reading = best;
       call(2, "chainHead_v1_storage", [
@@ -313,8 +317,17 @@ export async function readAfterChild(
             call(3, "chainHead_v1_continue", [subscription, operation]);
           break;
         case "operationStorageDone":
-          if (event.operationId === operation && reading !== undefined)
-            return { tag: "child", block: reading, value };
+          if (event.operationId === operation && reading !== undefined) {
+            if (
+              best === reading ||
+              (best !== undefined && descendsFrom(best, reading))
+            )
+              return { tag: "child", block: reading, value };
+            reading = undefined;
+            operation = undefined;
+            value = null;
+            readIfDescends();
+          }
           break;
         case "operationInaccessible":
         case "operationError":
