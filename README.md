@@ -169,6 +169,8 @@ hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh

@@ -258,6 +258,7 @@ impl<'a> SsoPairingFlow<'a> {
 			full_username: None,
 		};
 		let resolve_session = resolve_session_identity_with_chain(
+			&self.host.dotns_reads,
 			&self.host.chain,
 			self.host.host_config.stack.chains().asset_hub,
 			session,

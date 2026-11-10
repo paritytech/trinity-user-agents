@@ -1741,7 +1741,10 @@ export interface TestStack {
   people: TestStackChain;
   /** The Bulletin chain, which takes the core's own preimage submissions. */
   bulletin: TestStackChain;
-  /** Asset Hub, where product manifests resolve from dotNS. */
+  /**
+   * Asset Hub, where product manifests resolve from dotNS. Leave it out for a
+   * host with no Asset Hub; an all-zero hash is refused.
+   */
   assetHub?: TestStackChain;
   /** The relay chain. */
   relay?: TestStackChain;
