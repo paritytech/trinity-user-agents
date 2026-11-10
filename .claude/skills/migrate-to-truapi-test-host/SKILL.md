@@ -105,16 +105,6 @@ grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavi
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-From 0.30 (#1956) `setLoginBehavior("success" | "reject")` is served: it answers a product's
-login request while the host is signed out, so a suite booting with
-`loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
-the first account, or the one named as a second argument. The old custom
-function form has no equivalent, because the answer is given in the page.
-Until a suite calls it, this host answers `Rejected`, as a real signing host
-does. The old package up to 0.12 approved login requests by default, so a suite
-written against it adds `setLoginBehavior("success")`. From 0.13 the old
-package had no login control.
-
 The statement-store controls are served, so they are not in this grep.
 `injectChatAction` is not: the core serves chat only to a product running as a
 worker, and this host always embeds the product as an iframe, so every call is
@@ -223,14 +213,15 @@ Two account options change shape:
   becomes `"alice"`. An unknown name such as `"Alice"` fails the host's boot,
   and so do the old `eve` and `ferdie`, which need entropy of their own.
 - The `name` is the username the host reports. To keep an old username, pair it
-  with the dev account's entropy: `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`.
-  Each `DEV_ACCOUNTS` entry is that entropy as a `Uint8Array`, not the old
-  `{ name, uri, username }`.
+  with the dev account's entropy:
+  `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`. Each `DEV_ACCOUNTS` entry
+  is that entropy as a `Uint8Array`, not the old `{ name, uri }`.
 - `executionKind`, `initialState` and every `behaviors` key but
   `resourceAllocation` are type errors. `initialState.productStorage` is the
   `productStorage` option (0.30 and later), `theme` and `locale` are
   `mock: { theme, languageTag }`, `features` is `mock: { featureSupported }`,
-  and `grantedPermissions` is a `grantPermission` call each.
+  `supportedChains` is `mock: { supportedChains }`, and `grantedPermissions`
+  is a `grantPermission` call each.
   `behaviors.permission` is `setPermissionBehavior`, and
   `behaviors.userConfirmation: "reject-all"` is
   `mock: { confirmUserActions: false }`. `behaviors.resourceAllocation` takes
@@ -284,8 +275,8 @@ type ProductId = NonNullable<TestHostFixtureOptions["productId"]>;
 const productId = "localhost:5199" as ProductId;
 ```
 
-Without `productId` the product id is `mock.dot`, and a `productAccountAddress` call in
-global setup has to use the same id the fixture runs under.
+Without `productId` the product id is `mock.dot`, and a `productAccountAddress`
+call in global setup has to use the same id the fixture runs under.
 
 Get it wrong and every signing call fails with `PermissionDenied`, which reads
 like a permission-policy problem and is not one: the core scopes a product
@@ -314,10 +305,10 @@ green run says the product handles a grant, not that a host would have given
 one. A real statement store refuses what this one accepts.
 
 `loopbackStatements: false` sends statement RPC to the chain proxy (the People
-chain's, or the single declared chain's) instead of the in-page store. Against the real People chain under `"granted"`
-the allowance key is unregistered, so the real store refuses the statements.
-Point it at a store of your own, as a suite with several signers has to (see
-section 4).
+chain's, or the single declared chain's) instead of the in-page store. Against
+the real People chain under `"granted"` the allowance key is unregistered, so
+the real store refuses the statements. Point it at a store of your own, as a
+suite with several signers has to (see section 4).
 
 `"granted"` also claims no PGAS, so fees fall back to the chain's native token.
 Fund product accounts with that token (PAS on Paseo), not PGAS.
@@ -361,11 +352,11 @@ traces and reports. Use an identity that holds nothing worth keeping.
 `truapi-host alloc-check --mnemonic "<phrase>"` reports whether an identity is a
 ring member, read-only unless `--submit` is passed. It is the Rust `truapi-host`
 CLI, not part of any npm package. Install it with
-`scripts/truapi-host-installer.sh` from trinity-user-agents. Run it before a browser
-suite: it answers in one line what the suite takes twenty minutes to say less
-clearly. Its `--network` defaults to `paseo-next-v2`, and it accepts a 12-word
-phrase the fixture cannot take, so check the same phrase and network the suite
-uses.
+`scripts/truapi-host-installer.sh` from trinity-user-agents. Run it before a
+browser suite: it answers in one line what the suite takes twenty minutes to say
+less clearly. Its `--network` defaults to `paseo-next-v2`, and it accepts a
+12-word phrase the fixture cannot take, so check the same phrase and network the
+suite uses.
 
 ### A suite that allocates allowances on-chain must serve the People chain
 
@@ -418,10 +409,13 @@ createTestHostFixture({
 
 It travels in the host page URL, so a reload starts from it again, and
 `testHost.reset()` writes it back after clearing the store.
-`testHost.seedProductStorage(key, value)` (also 0.30 and later) writes an entry while the product
-runs. It reaches a product that subscribes to the key or reads it later, not a
-read already made at startup. Either way the host builds the key the core
-reads, so a spec never spells out the namespace.
+`testHost.seedProductStorage(key, value)` (also 0.30 and later) writes an entry
+while the product runs. It reaches a product that subscribes to the key or reads
+it later, not a read already made at startup. Either way the host builds the key
+the core reads, so a spec never spells out the namespace. Both take the
+product's own key, not the namespaced key the old `getProductStorage()` reported
+and the old `seedProductStorage` took: an old namespaced key still typechecks
+and lands where the product never reads.
 
 The product's own iframe storage does not carry over either: the frame is
 `credentialless`, so its `localStorage` and IndexedDB start empty with each
@@ -452,9 +446,10 @@ With `accounts: ["bob", "charlie"]`, so the session starts as bob:
 Switching the host account **changes** the product account. Any spec asserting
 it stays fixed is asserting the old package's behaviour, not the protocol's.
 `switchAccount` takes only a name on the current roster (the fixture's
-`accounts`, or the last `setAccounts`) and rejects with `no account "<name>" on
-this host; have …` for any other. It does not reload the product, so a product that caches its
-account needs the spec to reload or re-read it.
+`accounts`, or the last `setAccounts`) and rejects with
+`no account "<name>" on this host; have …` for any other. It does not reload the
+product, so a product that caches its account needs the spec to reload or
+re-read it.
 
 The fixture address is SS58 prefix 42 (`5…`). A product rendering another
 prefix shows a different string for the same account, so compare decoded
@@ -465,10 +460,11 @@ activates from 32 bytes of entropy, not a derivation path. Never hard-code a
 well-known address; read it back.
 
 Usernames change too. The host reports the account `name` (`alice`), where the
-old package reported a numbered one (`alice.01`) or the `username` a suite set.
-Either update specs that assert the old form, or keep it by naming the account
-after it with the dev entropy: `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`.
-`TestHost` has no username getter.
+old package reported a numbered one (`alice.01`, from its 0.14), the `name`
+(`Alice`, in 0.12) or the `username` a suite set. Either update specs that
+assert the old form, or keep it by naming the account after it with the dev
+entropy: `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`. `TestHost` has no
+username getter.
 
 People-chain identity and usernames bind to the session root, not the product
 account, and nothing in the package returns the root's public key. A suite that
@@ -478,11 +474,12 @@ itself.
 **A permission revoked mid-run.** The core persists a decided authorization per
 (product, permission) and answers from its own storage, so a product asking
 twice is answered from that record and the host is not called again.
-`grantPermission` and `revokePermission` are the suite talking to the host:
-they retract that record, so the next request is put to the host afresh.
+`grantPermission` and `revokePermission` are the suite talking to the host: they
+retract that record, so the next request is put to the host afresh.
 `resetPermission` does the same but exists only on the page's
-`window.__TRUAPI_TEST_HOST__`, not on the fixture. `setPermissionBehavior` and `setEnforcePermissions` do not
-retract it, so a decision already stored still wins after them.
+`window.__TRUAPI_TEST_HOST__`, not on the fixture. `setPermissionBehavior` and
+`setEnforcePermissions` do not retract it, so a decision already stored still
+wins after them.
 
 In a spec, with the request driven through the product's UI:
 
@@ -517,19 +514,15 @@ missed:
 - **Role suffixes.** Besides `-people`, an id ending in `-asset-hub` or
   `-bulletin` selects that role. Anything else is a relay chain, so ids such as
   `asset-hub` or `people` with no network prefix are all read as relay chains.
-- **`PASEO_ASSET_HUB` carries a new genesis.** It is re-pinned to the hash the
-  chain reports since its reset, so a product or suite still holding an older
-  copy of the hash disagrees with it, and a suite that spreads it and overrides
-  `rpcUrl` declares a genesis that endpoint may not serve.
+- **`PASEO_ASSET_HUB`'s genesis is the hash the chain reports today,** so a
+  product or suite holding an older copy of the hash disagrees with it, and a
+  suite that spreads it and overrides `rpcUrl` declares a genesis that endpoint
+  may not serve.
 - **Removed exports.** `PREVIEWNET`, `PREVIEWNET_ASSET_HUB`,
-  `SUPPORTED_CHAINS`, `ChainConfig`, `Account`, `DevAccountInfo`,
-  `InitialState`, `InitialBehaviors`, `ProductStorageEntry`,
-  `ResourceAllocationLogEntry`, `UserConfirmationLogEntry` and
-  `TRUAPI_WIRE_SCHEMA_HASH` are not exported. Declare the chain inline, type it as `NetworkConfig`, and use
-  `DevAccount`.
-- **Permission tags are the core's,** so `"TransactionSubmit"` is
-  `"ChainSubmit"`, and `grantPermission` with the old tag records a decision no
-  request ever matches.
+  `SUPPORTED_CHAINS`, `Account`, `DevAccountInfo`, `InitialState`,
+  `InitialBehaviors`, `ProductStorageEntry`, `ResourceAllocationLogEntry`,
+  `UserConfirmationLogEntry` and `TRUAPI_WIRE_SCHEMA_HASH` are not exported.
+  Declare the chain inline, type it as `NetworkConfig`, and use `DevAccount`.
 - **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`, and
   `getTheme()` answers the name as a string, not `{ name, variant }`.
 - **Connection status is the chain's.** `getConnectionStatus()` and
@@ -539,15 +532,26 @@ missed:
   `waitForConnection()` instead.
 - **`grantPermission` takes the tag only.** A second argument such as
   `{ domains }` is `TS2554`, and a `Remote` grant covers every domain.
-- **Declining a signature in one test.** From 0.30 (#1926), call `testHost.setConfirmUserActions(false)`
-  before the action and `true` after, rather than booting a second fixture
-  with `mock: { confirmUserActions: false }`. A permission the core has
-  already cached keeps its answer.
+- **Declining a signature in one test.** From 0.30 (#1926), call
+  `testHost.setConfirmUserActions(false)` before the action and `true` after,
+  rather than booting a second fixture with
+  `mock: { confirmUserActions: false }`. A permission the core has already
+  cached keeps its answer.
 - **Signed out is a boot option.** An empty `accounts` fails the page at boot,
   which a suite sees as the fixture timing out. Pass `loginBehavior: "manual"`.
   `simulateDisconnect` drops the chain connections and refuses new ones until
   `simulateReconnect`. Neither touches the session, so a spec that used them to
   sign out needs `loginBehavior: "manual"` instead.
+- **Approving a login.** From 0.30 (#1956),
+  `setLoginBehavior("success" | "reject")` answers a product's login request
+  while the host is signed out, so a suite booting with
+  `loginBehavior: "manual"` can drive the cold login path. `"success"` signs in the first account, or the one named as a second
+  argument. Until a suite calls it, this host answers `Rejected`, as a real
+  signing host does. The old package up to 0.12 approved login requests by
+  default and also took a function, which has no equivalent because the answer
+  is given in the page. A suite written against it adds
+  `setLoginBehavior("success")`. The old package from 0.13 had no login
+  control.
 - **After `switchAccount`,** wait on the product's own UI for the new account
   rather than on `waitForConnection`, which has already resolved.
 - **Seed preimages whenever.** `seedPreimage` reaches a lookup the product
@@ -556,7 +560,8 @@ missed:
 - **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
   `getPreimages()` answers the seeded values only, as `Uint8Array[]`, with no
   `key`, `fromProduct` or `timestamp`. Statement entries carry `topics` and
-  `data` directly, not under `.statement`. From 0.30 they also carry
+  `data` at the top level, as the old package's do from 0.14 (up to 0.12 they
+  sat under `.statement`). From 0.30 they also carry
   `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
   also takes (#1935). A `Remote` permission log entry's `value` is the tagged
   permission `{ tag: "Remote", value: { domains } }`. `value` is typed
@@ -573,18 +578,18 @@ missed:
   `setDevicePermissionStatus`, `setFeatureSupport`, `setLocale`,
   `setNavigationBehavior`, `setNotificationBehavior`,
   `setResourceAllocationBehavior`, `setSupportedChains` and
-  `setUserConfirmationBehavior`. `seedProductStorage` returns in 0.30. Skip or
-  rewrite those specs. `window.__TEST_HOST__` still exists, but it now names the
-  same object as `window.__TRUAPI_TEST_HOST__`, with these names and the shapes
-  above, and the fixture's `getSentRpc` is `sentRpc` there.
+  `setUserConfirmationBehavior`. `seedProductStorage` is available again from
+  0.30. Skip or rewrite those specs. `window.__TEST_HOST__` still exists, but it
+  now names the same object as `window.__TRUAPI_TEST_HOST__`, with these names
+  and the shapes above, and the fixture's `getSentRpc` is `sentRpc` there.
 - **Deep links.** Up to 0.29 the host page's own path, query and hash configure
   the host and do not reach the product, so a spec opening the product at a
   route passes that route in `productUrl`. From 0.30 (#1932) the host page
-  passes its path, its hash and every query parameter it does not read itself
-  on to the product, as a real host does. With the fixture, call
+  passes its path, its hash and every query parameter it does not read itself on
+  to the product, as a real host does. With the fixture, call
   `testHost.openDeepLink("/notes/1?view=raw#top")`, which loads the host page
-  again at that link. With the server alone, open `deepLinkUrl(server.url, link)`
-  from `@parity/truapi-host/testing/server`.
+  again at that link. With the server alone, open
+  `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server`.
 - **Full-page navigation.** A product that navigates its whole document
   (`location.href = ...`) reconnects only when both `@parity/truapi-host` and
   the product's own `@parity/truapi` are 0.30 or later (#1895), since part of
@@ -710,7 +715,7 @@ since some specs rely on state an earlier one created.
 
 Expect the same passes, minus anything in section 4. If the product shows
 connected but no call is ever answered, and the host logs `invalid frame: frame
-is missing the message-type byte`, re-check step 0 -- that is the codec
+is missing the message-type byte`, re-check section 0 -- that is the codec
 symptom, not a fixture problem.
 
 If the host fails to boot, for example on an unknown account name, the fixture
@@ -722,8 +727,8 @@ reason is in the host page's `#test-host-error` element.
 
 The core logs why a call failed before mapping it to a protocol answer. In
 Chromium, core log lines reach `page.on("console")` in the default worker
-topology too, but running on the main thread keeps them in order with the page's own output.
-Raise the level:
+topology too, but running on the main thread keeps them in order with the page's
+own output. Raise the level:
 
 ```ts
 createTestHostFixture({
