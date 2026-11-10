@@ -460,7 +460,8 @@ A stack descriptor describes one deployment of chains and services, as
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
-The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
+The core takes all of its chain configuration from one stack, and fetches newer copies of its descriptor through the
+host while it runs. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
