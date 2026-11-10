@@ -1,5 +1,6 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, UserConfirmationReview,
+	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
+	StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
@@ -465,6 +466,25 @@ pub trait NativeScannerCallbacks: Send + Sync {
 		execution_kind: crate::platform::ExecutableKind,
 		request: latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Native side of the stack's descriptor refresh. A host passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_stack_callbacks`]; without
+/// one the core stays on the copy it started from.
+///
+/// [`NativeTrUApiHostRuntime::set_stack_callbacks`]: super::NativeTrUApiHostRuntime::set_stack_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeStackCallbacks: Send + Sync {
+	/// Fetch the stack's descriptor over HTTP, as `request` describes, with
+	/// the host's HTTP client. The core awaits this on a background thread
+	/// and gives up after 30 seconds.
+	async fn fetch_stack_descriptor(&self, request: StackFetchRequest) -> StackFetchResponse;
+
+	/// The stack's status, once when the callbacks are installed and again
+	/// whenever it changes. Arrives on a core thread: hand it off rather than
+	/// blocking.
+	fn stack_changed(&self, status: StackStatus);
 }
 
 /// Native funding overlay. A host with a funding modality passes an

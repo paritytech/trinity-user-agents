@@ -48,7 +48,7 @@ pub struct HostRuntimeConfig {
 
 /// The stack a host build ships: its pointer, its signed descriptor, and
 /// whether the build lets it use Polkadot's reserved values.
-#[derive(Clone, uniffi::Record)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
 	/// key.
@@ -73,8 +73,11 @@ pub struct ProductExecutionConfig {
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
 #[derive(Debug)]
 pub struct NativeResolvedHostRuntimeConfig {
-	/// Configuration the signing-host runtime runs with.
+	/// Configuration the signing-host runtime runs with, on the stack the
+	/// bundled copy names.
 	pub signing: SigningHostConfig,
+	/// The stack the host build ships, which the runtime refreshes.
+	pub stack: BundledStack,
 	/// Entropy to activate a local signing session with at construction.
 	pub local_session_secret: Option<Vec<u8>>,
 	/// Lite username attached to that local session.
@@ -136,8 +139,8 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = config.stack;
-		let stack = Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+		let BundledStack { pointer, descriptor, allows_reserved_values } = &config.stack;
+		let stack = Stack::bundled(pointer, descriptor, *allows_reserved_values)
 			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
 		let signing = SigningHostConfig::new(
 			HostInfo {
@@ -151,6 +154,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 		)?;
 		Ok(Self {
 			signing,
+			stack: config.stack,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
