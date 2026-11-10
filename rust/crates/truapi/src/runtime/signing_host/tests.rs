@@ -24,6 +24,7 @@ use super::{
 	ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
 };
 use crate::{
+	Spawner,
 	host_internal::{
 		extrinsic::tests::split_v4,
 		sso_messages::{ProductRequest, RingVrfError},
@@ -37,7 +38,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	test_support::{StubPlatform, test_spawner},
+	test_support::StubPlatform,
 };
 use truapi::{
 	CallContext, CallError,
@@ -178,7 +179,7 @@ fn signing_runtime_on_asset_hub(
 		platform.clone(),
 		config.host.host_info.clone(),
 		config.stack.clone(),
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let signing_host = SigningHostRole::new(services.clone());
 	(services, signing_host)

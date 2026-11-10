@@ -1,4 +1,70 @@
 use super::*;
+use crate::host_logic::dotns_gateway::{
+	DotnsPopController, ProtocolRegistry, dispatcher_address_key,
+};
+use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolCall;
+
+struct ManifestContracts;
+
+#[async_trait::async_trait]
+impl DotnsTransport for ManifestContracts {
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		assert_eq!(key, dispatcher_address_key());
+		Ok(Some(vec![0x11; 20]))
+	}
+
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		if dest == &[0x11; 20] &&
+			DotnsPopController::protocolRegistryCall::abi_decode(&input).is_ok()
+		{
+			return Ok(DotnsPopController::protocolRegistryCall::abi_encode_returns(
+				&Address::repeat_byte(0x22),
+			));
+		}
+		if dest == &[0x22; 20] {
+			if ProtocolRegistry::tldCall::abi_decode(&input).is_ok() {
+				return Ok(ProtocolRegistry::tldCall::abi_encode_returns(&".paseo".to_string()));
+			}
+			let call = ProtocolRegistry::getCall::abi_decode(&input).unwrap();
+			assert_eq!(call.key, B256::right_padding_from(b"registry"));
+			return Ok(ProtocolRegistry::getCall::abi_encode_returns(&Address::repeat_byte(0x33)));
+		}
+		let node = node_on(".paseo", "shop.paseo");
+		if dest == &[0x33; 20] {
+			let call = DotnsRegistry::resolverCall::abi_decode(&input).unwrap();
+			assert_eq!(call.node.0, node);
+			return Ok(DotnsRegistry::resolverCall::abi_encode_returns(&Address::repeat_byte(
+				0x55,
+			)));
+		}
+		let call = ContentResolver::textCall::abi_decode(&input).unwrap();
+		assert_eq!((*dest, call.node.0, call.key.as_str()), ([0x55; 20], node, "manifest"));
+		Err(EvmContractError::Reverted { detail: "node resolver has no text records".into() })
+	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
+}
+
+#[test]
+fn a_manifest_uses_the_nodes_resolver_and_treats_a_revert_as_absent() {
+	assert_eq!(
+		futures::executor::block_on(read_text_record(
+			&mut ManifestContracts,
+			&ProductId::for_test("shop.paseo"),
+			None,
+			MANIFEST_RECORD_KEY,
+		))
+		.unwrap(),
+		None
+	);
+}
 
 /// The node a product id resolves to on a network serving `tld`.
 fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
@@ -69,7 +135,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
 			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], asset_hub),
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
 			ceiling,
@@ -125,7 +191,7 @@ fn concurrent_lookups_for_one_product_open_one_follow() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		crate::test_support::paseo_test_stack(),
-		crate::test_support::test_spawner(),
+		crate::Spawner::for_test(),
 	);
 	let product = ProductId::for_test("peopl.dot");
 

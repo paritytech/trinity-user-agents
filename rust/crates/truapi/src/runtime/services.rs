@@ -15,6 +15,7 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
+	Spawner,
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
@@ -27,7 +28,6 @@ use crate::{
 		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
-	subscription::Spawner,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
@@ -195,12 +195,12 @@ impl RuntimeServices {
 		};
 		let services = Arc::downgrade(self);
 		let product_id = product_id.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
 			if let Some(services) = services.upgrade() {
 				services.worker_ledger.restart(&product_id);
 			}
-		}));
+		});
 	}
 
 	/// Build role-neutral runtime services from the platform, the host

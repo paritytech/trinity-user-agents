@@ -242,9 +242,9 @@ impl RuntimeServices {
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let _ = Abortable::new(rounds, registration).await;
-		}));
+		});
 		request_id
 	}
 

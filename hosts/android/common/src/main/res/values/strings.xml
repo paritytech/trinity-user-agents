@@ -1037,6 +1037,8 @@
     <string name="debug_report_what_happened">What happened?</string>
     <string name="debug_report_placeholder">Tell us about the issue you encountered</string>
     <string name="debug_report_character_count">%1$d / %2$d</string>
+    <string name="debug_report_github_username">GitHub username (optional)</string>
+    <string name="debug_report_github_username_invalid">Enter a valid GitHub username</string>
     <string name="debug_report_attachments">Your report includes app logs and this screenshot.</string>
     <string name="debug_report_screenshot">Screenshot included in the report</string>
     <string name="debug_report_thanks">Thank you for your feedback!</string>

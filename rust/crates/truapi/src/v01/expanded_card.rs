@@ -14,8 +14,34 @@ pub struct HostExpandedCardSetFaceShownRequest {
 pub enum HostExpandedCardSetFaceShownError {
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face; the request had no effect.
+	/// The user is moving the face or turning the card; the request had no effect.
 	UserMoving,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Request to turn the card above the calling Widget to one side.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct HostExpandedCardSetBackShownRequest {
+	/// `true` turns the back up, `false` turns the front up.
+	pub shown: bool,
+}
+
+/// Card turn failure.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum HostExpandedCardSetBackShownError {
+	/// The Widget is not shown under its card right now, such as one the host
+	/// keeps loaded after the card closed.
+	NotPresented,
+	/// The user is turning the card or moving its face; the request had no effect.
+	UserMoving,
+	/// The card has no back to show right now.
+	NoBack,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable reason.
