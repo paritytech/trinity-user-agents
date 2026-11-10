@@ -72,7 +72,7 @@ impl System for ProductRuntimeHost {
 		if self.connection.product.execution_kind == ExecutableKind::Worker {
 			let connection = Arc::downgrade(&self.connection);
 			let mut changes = self.connection.session_state.subscribe();
-			(self.connection.services.spawner)(Box::pin(async move {
+			self.connection.services.spawner.spawn(async move {
 				while changes.next().await.is_some() {
 					let Some(connection) = connection.upgrade() else { return };
 					if connection.session_state.current().is_some() {
@@ -80,7 +80,7 @@ impl System for ProductRuntimeHost {
 						return;
 					}
 				}
-			}));
+			});
 		}
 		Ok(HostHandshakeResponse::V1)
 	}

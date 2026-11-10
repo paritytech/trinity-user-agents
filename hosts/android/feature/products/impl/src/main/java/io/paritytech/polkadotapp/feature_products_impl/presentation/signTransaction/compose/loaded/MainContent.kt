@@ -139,8 +139,6 @@ private fun SigningAccountSection(signingAccount: SigningAccountUi) {
                 )
 
                 SigningAccountUi.IdentityAccount -> stringResource(RCommon.string.sign_transaction_identity_account)
-
-                is SigningAccountUi.Legacy -> signingAccount.address
             },
             style = PolkadotTheme.typography.body.large,
             color = PolkadotTheme.colors.fg.primary,

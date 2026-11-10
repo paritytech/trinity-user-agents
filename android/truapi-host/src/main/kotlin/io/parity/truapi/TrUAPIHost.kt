@@ -62,6 +62,9 @@ import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.RecoveryException
+import uniffi.truapi.ImageException
+import uniffi.truapi.ImageReference
+import uniffi.truapi.LoadedImage
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
@@ -346,6 +349,14 @@ interface HostBridge {
     fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
 
     /**
+     * The product's worker crashed [crashes] times in a row while it was
+     * needed: tell the user that product is not working. The core keeps
+     * starting it again, waiting longer each time, so this needs no answer.
+     * Can arrive on any thread.
+     */
+    fun workerCrashing(productId: ProductId, crashes: UInt) {}
+
+    /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
      * product gave none. Leave unimplemented to opt out of worker keep-alive;
      * override to run background work past the product's surface.
@@ -534,6 +545,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         runCatching { bridge.requestWorkerTransition(productId, transition) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun workerCrashing(productId: ProductId, crashes: UInt) {
+        runCatching { bridge.workerCrashing(productId, crashes) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
@@ -1158,6 +1174,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * The image [reference] names, read from Bulletin by the core and checked against its CID and
+     * the image policy. Key a disk cache on [LoadedImage.contentKey]. Cancelling the coroutine
+     * stops the load.
+     */
+    @Throws(ImageException::class)
+    suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
 
     /**
      * The Pocket collection, pinned cards first, now and after every change. A

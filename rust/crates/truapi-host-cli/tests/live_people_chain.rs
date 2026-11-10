@@ -8,9 +8,14 @@
 //! ```
 //!
 //! `TRUAPI_LIVE_PEOPLE_WS` overrides the endpoint. The default is the
-//! `paseo-next-v2` People chain, matching `network.rs`.
+//! `paseo-next-v2` People chain from `stacks/paseo-next-v2.json`.
 //!
 //! These read chain state only; nothing here submits an extrinsic.
+
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/live.rs"]
+mod live;
 
 use std::{
 	sync::Arc,
@@ -21,19 +26,12 @@ use truapi::statement_allowance::{
 	self as alloc, ChainContextCache, collection::PersonhoodCollection,
 };
 
-/// Default People-chain endpoint, kept in step with `network.rs`.
-const DEFAULT_PEOPLE_WS: &str = "wss://paseo-people-next-system-rpc.polkadot.io";
-
-/// The `paseo-next-v2` preset's `network_suffix`, kept in step with `network.rs`
-/// (the binary crate exposes no library for tests to read it from).
-const DEFAULT_NETWORK_SUFFIX: &str = "paseo";
-
 /// A genesis hash no chain will report, standing in for a host whose configured
 /// constant has gone stale after a testnet wipe.
 const STALE_CONFIGURED_GENESIS: [u8; 32] = [0xff; 32];
 
 fn people_ws() -> String {
-	std::env::var("TRUAPI_LIVE_PEOPLE_WS").unwrap_or_else(|_| DEFAULT_PEOPLE_WS.to_string())
+	std::env::var("TRUAPI_LIVE_PEOPLE_WS").unwrap_or_else(|_| live::paseo_next_v2_rpc("People"))
 }
 
 async fn connect() -> alloc::rpc::RpcClient {
@@ -56,8 +54,8 @@ fn current_period() -> u32 {
 	alloc::slot::current_period(now)
 }
 
-/// The preset's network suffix is what the reserved `uid.<suffix>` and
-/// `peopl.<suffix>` derivations end in, so it has to be the suffix the chain
+/// The stack's TLD is what the reserved `peopl.<suffix>` account and
+/// ring-VRF derivations end in, so it has to be the suffix the chain
 /// itself scopes People contexts with, or the CLI derives a person no other
 /// host on this network recognises.
 #[tokio::test]
@@ -68,9 +66,8 @@ async fn network_suffix_matches_the_preset() {
 		.await
 		.expect("read the live network suffix");
 	assert_eq!(
-		String::from_utf8(live).expect("network suffix is UTF-8"),
-		DEFAULT_NETWORK_SUFFIX,
-		"the paseo-next-v2 preset's network suffix must match the chain"
+		String::from_utf8(live).expect("network suffix is not UTF-8"),
+		bundled::paseo_next_v2().tld
 	);
 }
 

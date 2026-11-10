@@ -60,7 +60,7 @@ impl PinnedPocketCard {
 }
 
 /// One card in the Pocket, as the host lists it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct PocketEntry {
 	/// Product that backs the card.
 	pub product_id: ProductId,
@@ -73,7 +73,7 @@ pub struct PocketEntry {
 }
 
 /// What a removal did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum PocketCardRemoval {
 	/// The card was in the Pocket and is gone.
 	Removed,
@@ -229,7 +229,7 @@ impl PocketCards {
 
 	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the card's
 	/// newest, if the card is in the Pocket and no later face is kept.
-	pub async fn keep_face(
+	async fn keep_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,

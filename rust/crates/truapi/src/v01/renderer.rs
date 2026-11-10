@@ -23,22 +23,24 @@ mod option_bool_json {
 	}
 }
 
-/// JSON spells a fixed byte array as a `0x` hex string, which is what the
-/// generated client describes; serde alone reads only a number array.
+/// SCALE carries bytes as they are; JSON carries them as the generated client
+/// spells them, a hex string with a `0x` prefix.
 #[cfg(feature = "runtime")]
-mod hex_json {
+mod hex_bytes_json {
 	use serde::{Deserialize, Deserializer, de::Error};
 
-	/// Reads a `0x` hex string of exactly `N` bytes.
-	pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+	/// Reads a hex string into bytes, or into a fixed array of exactly as many.
+	pub fn deserialize<'de, D, Bytes>(deserializer: D) -> Result<Bytes, D::Error>
 	where
 		D: Deserializer<'de>,
+		Bytes: TryFrom<Vec<u8>>,
 	{
 		let text = String::deserialize(deserializer)?;
-		let digits = text.strip_prefix("0x").ok_or_else(|| D::Error::custom("expected 0x hex"))?;
-		let mut bytes = [0; N];
-		hex::decode_to_slice(digits, &mut bytes).map_err(D::Error::custom)?;
-		Ok(bytes)
+		let digits = text
+			.strip_prefix("0x")
+			.ok_or_else(|| D::Error::custom("hex bytes need a 0x prefix"))?;
+		let bytes = hex::decode(digits).map_err(D::Error::custom)?;
+		Bytes::try_from(bytes).map_err(|_| D::Error::custom("wrong number of hex bytes"))
 	}
 }
 
@@ -62,7 +64,7 @@ uniffi::custom_type!(OptionBool, Option<bool>, {
 /// Edge dimensions. `bottom` defaults to `top` and `start` to `end` when absent.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Dimensions {
 	/// Top edge.
@@ -217,7 +219,7 @@ pub enum Shape {
 /// Border styling. Drawn inside the node, so it never covers a neighbour.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BorderStyle {
 	/// Border width.
@@ -231,7 +233,7 @@ pub struct BorderStyle {
 /// Background styling. A shaped background also clips the node's content to its shape.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Background {
 	/// Background color.
@@ -243,7 +245,7 @@ pub struct Background {
 /// How a node composites with what is behind it. The values are those common
 /// to CSS `mix-blend-mode`, SwiftUI `BlendMode` and Compose `BlendMode`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum BlendingMode {
 	/// Source over destination.
@@ -283,7 +285,7 @@ pub enum BlendingMode {
 /// Layout and styling applied to one node.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Modifier {
 	/// Outer spacing.
@@ -316,7 +318,7 @@ pub enum Modifier {
 /// Properties of a `Box`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BoxProps {
 	/// Placement of content within the box. Top start when absent.
@@ -326,7 +328,7 @@ pub struct BoxProps {
 /// Properties of a `Column`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ColumnProps {
 	/// Cross-axis alignment of children.
@@ -339,7 +341,7 @@ pub struct ColumnProps {
 /// Properties of a `Row`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct RowProps {
 	/// Cross-axis alignment of children.
@@ -352,7 +354,7 @@ pub struct RowProps {
 /// Properties of a `Text`.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct TextProps {
 	/// Typography preset.
@@ -394,8 +396,9 @@ pub struct ButtonProps {
 	pub click_action: Option<String>,
 }
 
-/// Where image bytes come from. The host fetches them; the tree carries no URL.
-/// The bytes are PNG, JPEG, WebP or SVG.
+/// Where image bytes come from: a place the host fetches them from, or the
+/// tree itself. The tree carries no URL. Fetched bytes are PNG, JPEG, WebP or
+/// SVG; inline bytes leave out SVG.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -406,6 +409,11 @@ pub enum ImageSource {
 	/// A file inside the product's executable archive, as a path relative to
 	/// the archive root.
 	Archive(String),
+	/// An image carried in the tree itself: PNG, JPEG or WebP, at most 64 KiB.
+	Inline(
+		#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_bytes_json::deserialize"))]
+		Vec<u8>,
+	),
 }
 
 /// How an image meets the box its modifiers size.
@@ -453,7 +461,7 @@ pub struct MaterialsProps {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct MaterialInstance {
 	/// Material ID: the BLAKE2b-256 hash of its canonical text.
-	#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_json::deserialize"))]
+	#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_bytes_json::deserialize"))]
 	pub material: [u8; 32],
 	/// One argument per declared parameter, in declaration order.
 	pub args: Vec<Parameter>,
@@ -637,6 +645,12 @@ pub enum RenderContext {
 		/// Card id, as declared in the product's worker manifest.
 		card_id: String,
 	},
+	/// The back of a card in the host's Pocket collection, for a card whose
+	/// definition declares `back`.
+	PocketCardBack {
+		/// Card id, as declared in the product's worker manifest.
+		card_id: String,
+	},
 }
 
 /// A body the host needs drawn.
@@ -702,120 +716,4 @@ pub enum MaterialFailure {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[derive(Encode)]
-	struct RendererWireComponent<P> {
-		modifiers: Vec<Modifier>,
-		props: P,
-		children: Vec<RendererNode>,
-	}
-
-	#[derive(Encode)]
-	enum RendererWireNode<P> {
-		#[codec(index = 3)]
-		Column(RendererWireComponent<P>),
-	}
-
-	fn renderer_node() -> RendererNode {
-		RendererNode::Column {
-			modifiers: vec![Modifier::Padding(Dimensions {
-				top: Compact(12),
-				end: Compact(8),
-				bottom: None,
-				start: Some(Compact(4)),
-			})],
-			props: ColumnProps {
-				horizontal_alignment: Some(HorizontalAlignment::Center),
-				vertical_arrangement: Some(Arrangement::SpaceBetween),
-			},
-			children: vec![
-				RendererNode::String { text: "Votes: 1".to_string() },
-				RendererNode::Button {
-					modifiers: Vec::new(),
-					props: ButtonProps {
-						text: "Vote".to_string(),
-						variant: Some(ButtonVariant::Primary),
-						enabled: OptionBool(Some(true)),
-						loading: OptionBool(None),
-						click_action: Some("vote".to_string()),
-					},
-					children: Vec::new(),
-				},
-				RendererNode::Spacer { modifiers: vec![Modifier::Opacity(128)] },
-				RendererNode::Image {
-					modifiers: vec![Modifier::Width(Compact(40))],
-					props: ImageProps {
-						source: ImageSource::Bulletin("bafy".to_string()),
-						fit: Some(ImageFit::Cover),
-					},
-				},
-				RendererNode::Materials {
-					props: MaterialsProps {
-						layers: vec![MaterialInstance {
-							material: [7; 32],
-							args: vec![
-								Parameter::Float(1.5f32.to_bits()),
-								Parameter::Vec2([1, 2]),
-								Parameter::Vec3([1, 2, 3]),
-								Parameter::Vec4([1, 2, 3, 4]),
-								Parameter::SamplerFloat(ImageRef::Noise),
-								Parameter::SamplerVec4(ImageRef::Source(ImageSource::Archive(
-									"mask.png".to_string(),
-								))),
-							],
-						}],
-					},
-					children: vec![RendererNode::Nil],
-				},
-			],
-		}
-	}
-
-	#[test]
-	fn column_preserves_the_component_wire_shape() {
-		let node = renderer_node();
-		let RendererNode::Column { modifiers, props, children } = node.clone() else {
-			unreachable!();
-		};
-		let wire = RendererWireNode::Column(RendererWireComponent { modifiers, props, children });
-
-		assert_eq!(node.encode(), wire.encode());
-	}
-
-	#[test]
-	fn variants_encode_only_the_fields_they_carry() {
-		let spacer = RendererNode::Spacer { modifiers: Vec::new() };
-		assert_eq!(spacer.encode(), vec![5, 0]);
-
-		let materials = RendererNode::Materials {
-			props: MaterialsProps { layers: Vec::new() },
-			children: Vec::new(),
-		};
-		assert_eq!(materials.encode(), vec![11, 0, 0]);
-	}
-
-	/// Index 10 stays unused, so an older tree is refused rather than misread.
-	#[test]
-	fn index_10_is_never_read() {
-		assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
-	}
-
-	#[test]
-	fn tree_round_trips_through_scale() {
-		let node = renderer_node();
-		let decoded = RendererNode::decode(&mut node.encode().as_slice()).unwrap();
-		assert_eq!(decoded, node);
-	}
-
-	#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-	#[test]
-	fn tree_round_trips_through_uniffi() {
-		let node = renderer_node();
-		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
-		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
-
-		assert_eq!(lifted, node);
-	}
-}
+mod tests;

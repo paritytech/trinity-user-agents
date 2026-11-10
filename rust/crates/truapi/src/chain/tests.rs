@@ -18,11 +18,12 @@ use super::{
 	TxSubmitter, TxValidator, WatchEvent,
 };
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeFailureKind},
 	host_internal::extrinsic::tests::{
 		BULLETIN_METADATA_BYTES, bulletin_chain_state, runtime_call_serving_metadata, system_events,
 	},
-	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
+	test_support::{ScriptedProvider, notification_sender, wait_for_sent},
 };
 
 mod evm_contract_caller;
@@ -97,7 +98,12 @@ impl Node {
 	}
 
 	fn block(&self, number: u64) -> HashAndNumber {
-		HashAndNumber { hash: header_hash(&self.headers[number as usize]), number }
+		HashAndNumber {
+			hash: header_hash(
+				&self.headers[usize::try_from(number).expect("block number fits in usize")],
+			),
+			number,
+		}
 	}
 
 	fn header_at(&self, hash: &Value) -> Option<&SubstrateHeader<H256>> {
@@ -278,7 +284,7 @@ impl Node {
 }
 
 /// What `TaggedTransactionQueue_validate_transaction` answers.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Validation {
 	Valid,
 	Invalid,
@@ -357,7 +363,7 @@ pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRunti
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		scripted.lock().unwrap().respond(request)
 	}));
-	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	(node, provider, chain)
 }
 

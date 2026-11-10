@@ -15,7 +15,9 @@ pub fn noise_seed(context: &RenderContext) -> u32 {
 	let id = match context {
 		RenderContext::ChatMessage { message_id, .. } => message_id,
 		RenderContext::InputWidget { candidate_id } => candidate_id,
-		RenderContext::PocketCard { card_id } => card_id,
+		RenderContext::PocketCard { card_id } | RenderContext::PocketCardBack { card_id } => {
+			card_id
+		},
 	};
 	id.bytes()
 		.fold(0x811c_9dc5, |hash, byte| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193))

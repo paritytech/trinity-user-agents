@@ -10,7 +10,7 @@ use crate::{
 use truapi::latest::HostPlatform;
 
 /// Process-owned native host configuration shared by every product execution.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
 	/// Host name shown by the wallet during SSO pairing.
 	pub host_name: String,
@@ -40,7 +40,7 @@ pub struct HostRuntimeConfig {
 	pub asset_hub_chain_genesis_hash: Vec<u8>,
 	/// The network's dotNS TLD without the leading dot (`dot`, `paseo`,
 	/// `testnet`). The wallet's reserved identities are derived under it:
-	/// `uid.<suffix>` for the identity account, `peopl.<suffix>` for the person
+	/// `peopl.<suffix>` for the identity account (its account 0) and the person
 	/// ring-VRF keys. Read it from the network the host is configured for, the
 	/// way the host's own onboarding does; a wrong value derives a different
 	/// person from the same seed.
@@ -62,7 +62,7 @@ pub struct HostRuntimeConfig {
 }
 
 /// Trusted identity attached by a native host to one executable connection.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
 	pub product_id: ProductId,
@@ -121,7 +121,7 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 }
 
 /// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
-pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
+fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
 	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
 		reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
 	})

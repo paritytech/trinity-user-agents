@@ -8,6 +8,7 @@ import {
   DeriveEntropyErr,
   GenericError,
   GetAliasErr,
+  ListRingVrfKeysErr,
   NavigateToErr,
   PaymentBalanceErr,
   PaymentRequestErr,
@@ -266,9 +267,47 @@ function toNativeRing(ring: { chainId: string; junctions: Array<{ tag: string; v
   };
 }
 
+type NativeRing = {
+  chainId: `0x${string}`;
+  junctions: Array<{ tag: 'PalletInstance'; value: number } | { tag: 'CollectionId'; value: string }>;
+};
+
+type NativeRegisteredRingVrfKey = {
+  handle: [string, number | string];
+  rings: NativeRing[];
+  publicKey: string | null;
+};
+
+function fromNativeDerivationIndex(index: number | string): WireDerivationIndex {
+  return typeof index === 'number'
+    ? { tag: 'Index', value: index }
+    : { tag: 'Raw', value: fromHex(index) };
+}
+
+function fromNativeRing(ring: NativeRing) {
+  return {
+    chainId: ring.chainId,
+    junctions: ring.junctions.map((junction) => (
+      junction.tag === 'CollectionId'
+        ? { tag: 'CollectionId' as const, value: fromHex(junction.value) }
+        : { tag: 'PalletInstance' as const, value: junction.value }
+    )),
+  };
+}
+
+function fromNativeRegistryEntry(entry: NativeRegisteredRingVrfKey) {
+  const [owner, index] = entry.handle;
+  return {
+    handle: [owner, fromNativeDerivationIndex(index)] as WireProductAccountId,
+    rings: entry.rings.map(fromNativeRing),
+    publicKey: entry.publicKey ? fromHex(entry.publicKey) : undefined,
+  };
+}
+
 container.handleAccountGetAlias((params, { ok, err }) => {
-  const [context, ring] = params;
+  const [keyHandle, context, ring] = params;
   return callNative('accountGetAlias', {
+    keyHandle: toNativeAccountId(keyHandle),
     context: toNativeContext(context),
     ring: toNativeRing(ring),
   }).then(
@@ -282,6 +321,10 @@ container.handleAccountGetAlias((params, { ok, err }) => {
           return err(new GetAliasErr.RingNotFound());
         case 'NotMember':
           return err(new GetAliasErr.NotMember());
+        case 'KeyNotRegistered':
+          return err(new GetAliasErr.KeyNotRegistered());
+        case 'KeyNotInRing':
+          return err(new GetAliasErr.KeyNotInRing());
         case 'Rejected':
           return err(new GetAliasErr.Rejected());
         default:
@@ -292,8 +335,9 @@ container.handleAccountGetAlias((params, { ok, err }) => {
 });
 
 container.handleAccountCreateProof((params, { ok, err }) => {
-  const [context, ring, message] = params;
+  const [keyHandle, context, ring, message] = params;
   return callNative('accountCreateProof', {
+    keyHandle: toNativeAccountId(keyHandle),
     context: toNativeContext(context),
     ring: toNativeRing(ring),
     message: toHex(message),
@@ -313,10 +357,33 @@ container.handleAccountCreateProof((params, { ok, err }) => {
           return err(new CreateProofErr.RingNotFound());
         case 'NotMember':
           return err(new CreateProofErr.NotMember());
+        case 'KeyNotRegistered':
+          return err(new CreateProofErr.KeyNotRegistered());
+        case 'KeyNotInRing':
+          return err(new CreateProofErr.KeyNotInRing());
+        case 'NotAllowlisted':
+          return err(new CreateProofErr.NotAllowlisted());
         case 'Rejected':
           return err(new CreateProofErr.Rejected());
         default:
           return err(new CreateProofErr.Unknown({ reason: String(e?.message ?? e) }));
+      }
+    },
+  );
+});
+
+container.handleAccountListRingVrfKeys((params, { ok, err }) => {
+  const [owner, disclosure] = params;
+  return callNative('listRingVrfKeys', { owner, disclosure }).then(
+    (entries: NativeRegisteredRingVrfKey[]) => ok(entries.map(fromNativeRegistryEntry)),
+    (e) => {
+      switch (e?.code) {
+        case 'NotConnected':
+          return err(new ListRingVrfKeysErr.NotConnected());
+        case 'Rejected':
+          return err(new ListRingVrfKeysErr.Rejected());
+        default:
+          return err(new ListRingVrfKeysErr.Unknown({ reason: String(e?.message ?? e) }));
       }
     },
   );

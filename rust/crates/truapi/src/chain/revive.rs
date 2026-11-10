@@ -1,5 +1,7 @@
 //! Contract reads and prepared writes over pallet-revive.
 
+use std::sync::Arc;
+
 use alloy_sol_types::{GenericContractError, SolInterface};
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode, Input};
@@ -10,7 +12,11 @@ use super::{
 	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
 	HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
 };
-use crate::chain_runtime::{ChainRuntime, RuntimeFailure, encode_hex};
+use crate::{
+	Spawner,
+	chain_runtime::{ChainRuntime, HostChainProvider, RuntimeFailure, encode_hex},
+	platform::{ChainProvider, ExtrinsicVersionHost},
+};
 
 const REVIVE_PALLET: &str = "Revive";
 
@@ -93,6 +99,19 @@ pub enum EvmContractError {
 	},
 }
 
+impl EvmContractError {
+	/// Whether a simulation failed with the pallet error at
+	/// `[pallet_index, error_index]`.
+	///
+	/// The indices come from the runtime metadata, so the error is matched by
+	/// its pallet and variant names whatever positions they take.
+	pub fn is_module_error(&self, [pallet_index, error_index]: [u8; 2]) -> bool {
+		// `DispatchError::Module(ModuleError { index, error: [u8; 4] })`.
+		let module_error = encode_hex(&[3, pallet_index, error_index, 0, 0, 0]);
+		matches!(self, Self::Dispatch { detail } if *detail == module_error)
+	}
+}
+
 /// A simulated contract write bound to its signer and to the caller that
 /// simulated it.
 ///
@@ -115,6 +134,19 @@ impl EvmContractCaller {
 	/// Uses the configured chain and extrinsic builder for prepared writes.
 	pub fn new(chain: ChainRuntime, extrinsics: ExtrinsicService, genesis: H256) -> Self {
 		Self { chain, extrinsics, genesis }
+	}
+
+	/// Opens `genesis`'s chain through a host's `provider`, with one chain
+	/// runtime shared by its reads and the extrinsics it builds.
+	pub fn from_provider(
+		provider: Arc<dyn ChainProvider>,
+		spawner: Spawner,
+		versions: Arc<dyn ExtrinsicVersionHost>,
+		genesis: H256,
+	) -> Self {
+		let chain = ChainRuntime::new(Arc::new(HostChainProvider::new(provider)), spawner);
+		let extrinsics = ExtrinsicService::over_chain(chain.clone(), versions);
+		Self::new(chain, extrinsics, genesis)
 	}
 
 	/// Returns ABI data over the supplied runtime's read context.

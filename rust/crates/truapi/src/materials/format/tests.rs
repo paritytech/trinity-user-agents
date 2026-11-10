@@ -2,7 +2,7 @@ use serde::Deserialize;
 use truapi::latest::{ImageRef, ImageSource, MaterialFailure, Parameter};
 
 use super::*;
-use crate::host_internal::bulletin::{preimage_cid, preimage_key};
+use crate::host_internal::bulletin::{BulletinCid, preimage_key};
 
 /// Shaderlab's format vectors, from shaderlab-spa PR #97 at `4fb610d1`.
 const VECTORS: &str = include_str!("../../../tests/fixtures/materials/material-format.v1.json");
@@ -41,7 +41,7 @@ fn every_format_vector_gets_its_verdict_and_code() {
 			(None, None) => panic!("{} has no text", case.name),
 		};
 		let verdict = read_material(&bytes)
-			.map(|_| preimage_cid(&preimage_key(&bytes)))
+			.map(|_| BulletinCid::from(preimage_key(&bytes)).to_string())
 			.map_err(|error| error.to_string());
 		expected
 			.push((case.name.clone(), case.expect.id.ok_or(case.expect.code.unwrap_or_default())));
