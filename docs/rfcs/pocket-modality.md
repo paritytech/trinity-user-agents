@@ -389,6 +389,6 @@ Each call acts on the card above the Widget that made it, so no request names a 
   root listing the cards, with the manifest carrying only `includes.pocket`.
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
-  picks belongs in the renderer's `Effect` vocabulary.
+  picks is a [material](materials.md).
 - **A tap target that turns the card.** Left for later. It can reuse the same turn. Until then a product can put a
   button on its Widget page instead, since a press on the card itself goes to the worker.

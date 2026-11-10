@@ -391,6 +391,7 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             logger: logger
         )
+        RootDependencyLocator.setDependency(chainStatusProvider as ChainStatusProviding)
 
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,

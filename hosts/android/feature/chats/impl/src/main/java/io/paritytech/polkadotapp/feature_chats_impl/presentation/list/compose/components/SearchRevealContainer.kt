@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -88,6 +89,8 @@ internal fun SearchRevealContainer(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
+                .clipToBounds()
                 .layout { measurable, constraints ->
                     val placeable = measurable.measure(constraints)
                     // Placement uses the measured height directly so the header never flashes

@@ -144,3 +144,17 @@ fn index_resolution_fails_for_unknown_names() {
 	assert!(metadata.call_indices("Resources", "no_such_call").is_err());
 	assert!(metadata.call_indices("NoSuchPallet", "transfer").is_err());
 }
+
+/// A dispatch error is matched by name, so the indices come from the
+/// runtime: the pallet's index and the error's variant index.
+#[test]
+fn error_indices_resolve_by_name() {
+	let metadata = super::super::test_fixtures::asset_hub();
+	let [revive_index, _] = metadata.call_indices("Revive", "call").unwrap();
+	assert_eq!(
+		metadata.error_indices("Revive", "StorageDepositNotEnoughFunds").unwrap(),
+		[revive_index, 0x17]
+	);
+	assert!(metadata.error_indices("Revive", "NoSuchError").is_err());
+	assert!(metadata.error_indices("NoSuchPallet", "StorageDepositNotEnoughFunds").is_err());
+}

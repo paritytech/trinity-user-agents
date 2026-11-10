@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,7 +31,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.ChatListViewModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListContent
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListHeader
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListLoading
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.IdleSearchEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.SearchRevealContainer
@@ -69,26 +68,22 @@ private fun ChatListScreenInternal(
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                ChatListHeader(isLoading = loadingState is LoadingState.Loading)
+            when (loadingState) {
+                is LoadingState.Loaded -> SearchRevealContainer(
+                    state = revealState,
+                    header = { IdleSearchEntry(onClick = onSearchBarClick) },
+                    content = {
+                        ChatListContent(
+                            state = loadingState.data,
+                            onChatClick = onChatClick,
+                            onNewRequestsClick = onNewRequestsClick,
+                            bottomClearance = newChatButtonHeight + newChatButtonBottomOffset,
+                        )
+                    },
+                )
 
-                when (loadingState) {
-                    is LoadingState.Loaded -> SearchRevealContainer(
-                        state = revealState,
-                        header = { IdleSearchEntry(onClick = onSearchBarClick) },
-                        content = {
-                            ChatListContent(
-                                state = loadingState.data,
-                                onChatClick = onChatClick,
-                                onNewRequestsClick = onNewRequestsClick,
-                                bottomClearance = newChatButtonHeight + newChatButtonBottomOffset,
-                            )
-                        },
-                    )
-
-                    else -> ChatListLoading()
+                else -> Box(modifier = Modifier.statusBarsPadding()) {
+                    ChatListLoading()
                 }
             }
 

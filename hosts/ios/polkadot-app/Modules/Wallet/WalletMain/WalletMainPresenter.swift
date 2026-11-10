@@ -26,7 +26,7 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
 
     func showCollectibles() {
         guard let collectiblesPage else { return }
-        wireframe.showProduct(page: collectiblesPage)
+        wireframe.showCollectibles(page: collectiblesPage)
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {

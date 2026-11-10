@@ -22,6 +22,7 @@
 #                                     --platform-ts-output js/packages/truapi-host/src/generated
 #                                     --platform-wasm-adapter-output js/packages/truapi-host/src/generated
 #                                     --platform-rust-output rust/crates/truapi/src/wasm
+#                                     --markers-ts-output js/packages/truapi-host/src/generated
 #
 # The codec version is not passed: it defaults to `truapi::WIRE_CODEC_VERSION`,
 # so the generated client and the host's handshake derive it from one place.
@@ -65,7 +66,8 @@ cargo run -p truapi-codegen -- \
   --platform-ts-output js/packages/truapi-host/src/generated \
   --platform-wasm-adapter-output js/packages/truapi-host/src/generated \
   --platform-rust-output rust/crates/truapi/src/wasm \
-  --explorer-output js/packages/truapi/src/explorer
+  --explorer-output js/packages/truapi/src/explorer \
+  --markers-ts-output js/packages/truapi-host/src/generated
 
 rustfmt +"$NIGHTLY_TOOLCHAIN" --edition 2024 \
   rust/crates/truapi/src/generated/dispatcher.rs \
@@ -107,3 +109,4 @@ echo "Generated client examples at playground/test/generated/examples/"
 echo "Generated Rust dispatcher at rust/crates/truapi/src/generated/"
 echo "Generated host-callbacks WASM adapter at js/packages/truapi-host/src/generated/"
 echo "Generated Rust WASM bridge at rust/crates/truapi/src/wasm/generated_bridge.rs"
+echo "Generated marker table at js/packages/truapi-host/src/generated/markers.ts"
