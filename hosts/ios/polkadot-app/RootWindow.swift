@@ -69,11 +69,7 @@ final class RootWindow: UIWindow {
                 !presenter.isBeingDismissed
             else { return }
 
-            var captured = false
-            let screenshot = UIGraphicsImageRenderer(bounds: bounds).image { _ in
-                captured = drawHierarchy(in: bounds, afterScreenUpdates: false)
-            }
-            guard captured, let data = screenshot.pngData() else {
+            guard let screenshot = snapshot(of: bounds), let data = screenshot.pngData() else {
                 let alert = UIAlertController(
                     title: String(localized: .reportIssueTitle),
                     message: String(localized: .reportIssueCaptureFailed),

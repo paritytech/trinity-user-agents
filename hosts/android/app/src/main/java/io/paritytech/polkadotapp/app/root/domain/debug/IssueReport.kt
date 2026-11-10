@@ -6,6 +6,7 @@ data class IssueReport(
     val description: String,
     val logs: File,
     val screenshot: File,
+    val gitHubUsername: GitHubUsername?,
 )
 
 fun interface IssueReportApi {
