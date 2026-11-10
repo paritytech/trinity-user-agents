@@ -62,6 +62,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -122,11 +123,13 @@ private fun JsImageRenderer(
     modifier: Modifier = Modifier,
 ) {
     val resolver = LocalJsImageResolver.current
+    val carried = (widget.source as? JsImageSource.Inline)?.bytes
     // Kept across a re-resolve, so a face that redraws does not blink its images away.
     var picture by remember(widget.source) {
-        mutableStateOf(resolver.resolved(widget.source)?.let(JsImagePicture::Located) ?: JsImagePicture.Loading)
+        mutableStateOf((carried ?: resolver.resolved(widget.source))?.let(JsImagePicture::Located) ?: JsImagePicture.Loading)
     }
     LaunchedEffect(widget.source, resolver) {
+        if (carried != null) return@LaunchedEffect
         val model = resolver.resolve(widget.source)
         picture = when {
             model != null -> JsImagePicture.Located(model)

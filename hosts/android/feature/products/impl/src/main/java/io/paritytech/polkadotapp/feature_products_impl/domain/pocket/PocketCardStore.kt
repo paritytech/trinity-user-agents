@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.RendererNode
 
 /** The collection as the host's own flows see it: the public read side plus the writes only the host makes. */
@@ -10,5 +11,5 @@ interface PocketCardStore : PocketCollection {
     suspend fun addCard(card: CachedPocketCard)
 
     /** The newest face held for [key]: bundled for a pinned card, approved for an added one, or the last streamed. */
-    suspend fun cachedFace(key: PocketCardKey): RendererNode?
+    suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide = PocketCardSide.FRONT): RendererNode?
 }

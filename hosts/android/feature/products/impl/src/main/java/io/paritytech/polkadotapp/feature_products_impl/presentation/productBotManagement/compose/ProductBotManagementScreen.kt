@@ -64,6 +64,7 @@ fun ProductBotManagementScreen(contract: ProductBotManagementContract) {
         onCardIdChanged = contract::onCardIdChanged,
         onCardTitleChanged = contract::onCardTitleChanged,
         onPreviewUrlChanged = contract::onPreviewUrlChanged,
+        onBackUrlChanged = contract::onBackUrlChanged,
         onAppUrlChanged = contract::onAppUrlChanged,
         onOpenWithFaceAwayChanged = contract::onOpenWithFaceAwayChanged,
         onDialogConfirm = contract::onDialogConfirm,
@@ -85,6 +86,7 @@ private fun ProductBotManagementScreenInternal(
     onCardIdChanged: (String) -> Unit,
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
+    onBackUrlChanged: (String) -> Unit,
     onAppUrlChanged: (String) -> Unit,
     onOpenWithFaceAwayChanged: (Boolean) -> Unit,
     onDialogConfirm: () -> Unit,
@@ -155,6 +157,7 @@ private fun ProductBotManagementScreenInternal(
             onCardIdChanged = onCardIdChanged,
             onCardTitleChanged = onCardTitleChanged,
             onPreviewUrlChanged = onPreviewUrlChanged,
+            onBackUrlChanged = onBackUrlChanged,
             onAppUrlChanged = onAppUrlChanged,
             onOpenWithFaceAwayChanged = onOpenWithFaceAwayChanged,
             onConfirm = onDialogConfirm,
@@ -219,6 +222,7 @@ private fun ProductFormDialog(
     onCardIdChanged: (String) -> Unit,
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
+    onBackUrlChanged: (String) -> Unit,
     onAppUrlChanged: (String) -> Unit,
     onOpenWithFaceAwayChanged: (Boolean) -> Unit,
     onConfirm: () -> Unit,
@@ -304,6 +308,14 @@ private fun ProductFormDialog(
                 VerticalSpacer { extraMedium }
 
                 DebugFormField(
+                    value = state.backUrl,
+                    onValueChange = onBackUrlChanged,
+                    hint = RCommon.string.product_bot_management_back_url_hint,
+                )
+
+                VerticalSpacer { extraMedium }
+
+                DebugFormField(
                     value = state.appUrl,
                     onValueChange = onAppUrlChanged,
                     hint = RCommon.string.product_bot_management_app_url_hint,
@@ -380,6 +392,7 @@ private fun ProductBotManagementScreenPreview() {
             onCardIdChanged = {},
             onCardTitleChanged = {},
             onPreviewUrlChanged = {},
+            onBackUrlChanged = {},
             onAppUrlChanged = {},
             onOpenWithFaceAwayChanged = {},
             onDialogConfirm = {},
