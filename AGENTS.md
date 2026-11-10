@@ -310,6 +310,16 @@ Two ways to lose work that involve no pushing at all:
   create one with `gh label` or the web UI. `docs/labels.md` describes the
   system.
 
+## Host telemetry
+
+- Follow the Conventions section of `docs/design/host-telemetry.md` for anything
+  that sends telemetry from a host. Read it before adding an event, a log line
+  or a metric, and before touching a sender. It covers which Sentry product a
+  signal belongs in, which field a query can select on, why every captured event
+  sets a fingerprint, and what the core's marker table decides. Its `Adding a
+  signal` subsection shows what a host event looks like on each host, how a
+  core log line is registered and raised, and how to check one in Sentry.
+
 ## Scope of a change
 
 - Do not improve adjacent code, comments, or formatting unless asked. Do not
