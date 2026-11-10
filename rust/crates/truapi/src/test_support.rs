@@ -31,7 +31,7 @@ use crate::platform::{
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
 	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview, StackStorage,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
@@ -338,6 +338,11 @@ pub const TEST_STACK_ID: &str = "test-stack";
 
 /// Generation of every [`test_stack`].
 pub const TEST_STACK_GENERATION: &str = "test-generation";
+
+/// The [`test_stack`]'s slots in `host`, as the core reaches them.
+pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
+	StackStorage::new(host)
+}
 
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.

@@ -46,7 +46,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 				ProductId::for_test(if operation == "alias" { "peopl.dot" } else { "foreign.dot" });
 			if let Some(status) = stored {
 				futures::executor::block_on(set_authorization_status(
-					platform.as_ref(),
+					&crate::test_support::test_storage(platform.as_ref()),
 					CoreStorageKey::product_account_access_authorization(
 						&ProductId::for_test("myapp.dot"),
 						&owner,
@@ -111,7 +111,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 					platform.account_access_reviews.lock().unwrap().len(),
 					futures::executor::block_on(
 						crate::host_internal::permissions::authorization_status(
-							platform.as_ref(),
+							&crate::test_support::test_storage(platform.as_ref()),
 							CoreStorageKey::product_account_access_authorization(
 								&ProductId::for_test("myapp.dot"),
 								&owner

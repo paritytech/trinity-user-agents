@@ -35,7 +35,7 @@ use crate::{
 	},
 };
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, StackStorage};
 use futures::{
 	FutureExt, StreamExt,
 	channel::{mpsc, oneshot},
@@ -124,9 +124,9 @@ impl<'a> SsoPairingFlow<'a> {
 
 		let prepare = async {
 			let (mut pairing_identity, reused_identity) =
-				read_or_create_pairing_device_identity(self.host.platform.as_ref()).await?;
+				read_or_create_pairing_device_identity(&self.host.storage()).await?;
 			let last_processed_statement =
-				read_last_processed_pairing_statement(self.host.platform.as_ref()).await?;
+				read_last_processed_pairing_statement(&self.host.storage()).await?;
 			// Pairing success statements are retained by statement-store. Reusing a
 			// previous pairing identity means reusing its topic, where the only
 			// retained response may be the last processed success. Rotate before
@@ -134,7 +134,7 @@ impl<'a> SsoPairingFlow<'a> {
 			if reused_identity {
 				debug!("regenerating stored pairing device identity");
 				pairing_identity =
-					create_fresh_pairing_device_identity(self.host.platform.as_ref()).await?;
+					create_fresh_pairing_device_identity(&self.host.storage()).await?;
 			}
 			let bootstrap =
 				create_pairing_bootstrap_from_identity(&self.host.host_config, pairing_identity)
@@ -240,8 +240,7 @@ impl<'a> SsoPairingFlow<'a> {
 			_ = deadline => return Err(pairing_deadline_reason()),
 			response_result = pairing_response => response_result?,
 		};
-		write_last_processed_pairing_statement(self.host.platform.as_ref(), &response.statement)
-			.await;
+		write_last_processed_pairing_statement(&self.host.storage(), &response.statement).await;
 		let sso = establish_sso_session_info(
 			bootstrap,
 			response.peer_statement_account_id,
@@ -269,15 +268,14 @@ impl<'a> SsoPairingFlow<'a> {
 			_ = cancel => return Ok(SsoPairingOutcome::Cancelled),
 			session = resolve_session => session,
 		};
-		let persist_session = self
-			.host
-			.platform
-			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&session))
+		let storage = self.host.storage();
+		let persist_session = storage
+			.write(CoreStorageKey::AuthSession, encode_persisted_session(&session))
 			.fuse();
 		pin_mut!(persist_session);
 		futures::select! {
 			_ = cancel => {
-				clear_auth_session(self.host.platform.as_ref()).await;
+				clear_auth_session(&self.host.storage()).await;
 				return Ok(SsoPairingOutcome::Cancelled);
 			},
 			persist_result = persist_session => persist_result
@@ -285,7 +283,7 @@ impl<'a> SsoPairingFlow<'a> {
 		};
 		futures::select! {
 			_ = cancel => {
-				clear_auth_session(self.host.platform.as_ref()).await;
+				clear_auth_session(&self.host.storage()).await;
 				return Ok(SsoPairingOutcome::Cancelled);
 			},
 			default => {}
@@ -296,12 +294,12 @@ impl<'a> SsoPairingFlow<'a> {
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.create_fresh"))]
 async fn create_fresh_pairing_device_identity(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 ) -> Result<PairingDeviceIdentity, String> {
 	let identity = generate_pairing_device_identity()
 		.map_err(|err| format!("pairing identity failed: {err}"))?;
 	storage
-		.write_core_storage(CoreStorageKey::PairingDeviceIdentity, identity.encode())
+		.write(CoreStorageKey::PairingDeviceIdentity, identity.encode())
 		.await
 		.map_err(|err| format!("pairing device identity write failed: {err:?}"))?;
 	Ok(identity)
@@ -309,10 +307,10 @@ async fn create_fresh_pairing_device_identity(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.read_or_create"))]
 async fn read_or_create_pairing_device_identity(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 ) -> Result<(PairingDeviceIdentity, bool), String> {
 	let stored = storage
-		.read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+		.read(CoreStorageKey::PairingDeviceIdentity)
 		.await
 		.map_err(|err| format!("pairing device identity read failed: {err:?}"))?;
 	if let Some(stored) = stored {
@@ -331,21 +329,21 @@ async fn read_or_create_pairing_device_identity(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing.last_processed.read"))]
 async fn read_last_processed_pairing_statement(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 ) -> Result<Option<Vec<u8>>, String> {
 	storage
-		.read_core_storage(CoreStorageKey::LastProcessedPairingStatement)
+		.read(CoreStorageKey::LastProcessedPairingStatement)
 		.await
 		.map_err(|err| format!("last processed pairing statement read failed: {err:?}"))
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing.last_processed.write"))]
 async fn write_last_processed_pairing_statement(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	statement: &[u8],
 ) {
 	if let Err(err) = storage
-		.write_core_storage(CoreStorageKey::LastProcessedPairingStatement, statement.to_vec())
+		.write(CoreStorageKey::LastProcessedPairingStatement, statement.to_vec())
 		.await
 	{
 		debug!("last processed pairing statement write failed: {err:?}");
@@ -353,8 +351,8 @@ async fn write_last_processed_pairing_statement(
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
-async fn clear_auth_session(storage: &(impl CoreStorage + ?Sized)) {
-	if let Err(err) = storage.clear_core_storage(CoreStorageKey::AuthSession).await {
+async fn clear_auth_session(storage: &StackStorage<'_, impl CoreStorage + ?Sized>) {
+	if let Err(err) = storage.clear(CoreStorageKey::AuthSession).await {
 		debug!("auth session clear failed: {err:?}");
 	}
 }

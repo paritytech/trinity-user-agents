@@ -88,8 +88,9 @@ impl SigningHost {
 		ring_resolver: Arc<dyn RingResolver>,
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
-		let ring_vrf_registry = RingVrfRegistryStore::new(platform.clone());
-		let consent = Arc::new(ProductConsent::new(platform.clone()));
+		let stack = services.stack().clone();
+		let ring_vrf_registry = RingVrfRegistryStore::new(platform.clone(), stack.clone());
+		let consent = Arc::new(ProductConsent::new(platform.clone(), stack.clone()));
 		let wallet = Arc::new(WalletAccountHolder::new(
 			services.clone(),
 			consent.clone(),
@@ -102,6 +103,7 @@ impl SigningHost {
 			consent,
 			grants: HostGrantStore::new(
 				platform,
+				stack,
 				WalletAccountHolder::GRANT_KEEPING,
 				wallet.session_state(),
 			),

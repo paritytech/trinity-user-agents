@@ -49,7 +49,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -58,7 +58,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		.await
 		.unwrap();
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::StatementStore,
@@ -69,7 +69,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
@@ -80,7 +80,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::StatementStore
@@ -91,7 +91,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("other.dot"),
 				AllowanceResource::Bulletin
@@ -110,7 +110,7 @@ fn clears_session_allowance_keys() {
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&storage,
+			&crate::test_support::test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -118,10 +118,12 @@ fn clears_session_allowance_keys() {
 		)
 		.await
 		.unwrap();
-		clear_session_allowance_keys(&storage, &session).await.unwrap();
+		clear_session_allowance_keys(&crate::test_support::test_storage(&storage), &session)
+			.await
+			.unwrap();
 		assert_eq!(
 			read_allowance_key(
-				&storage,
+				&crate::test_support::test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin

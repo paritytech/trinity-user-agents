@@ -6,7 +6,7 @@
 //! because a regenerated key silently strands peers still addressing the old
 //! one.
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, StackStorage};
 use tracing::{instrument, warn};
 
 use crate::host_logic::x25519_seal::X25519PrivateKey;
@@ -18,10 +18,10 @@ use crate::host_logic::x25519_seal::X25519PrivateKey;
 /// concurrent generations would each persist and advertise a different key.
 #[instrument(skip_all, fields(runtime.method = "device_key.read_or_create"))]
 pub async fn read_or_create_device_encryption_secret(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 ) -> Result<[u8; 32], String> {
 	let stored = storage
-		.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+		.read(CoreStorageKey::DeviceEncryptionKey)
 		.await
 		.map_err(|err| format!("device encryption key read failed: {err:?}"))?;
 	if let Some(stored) = stored {
@@ -34,7 +34,7 @@ pub async fn read_or_create_device_encryption_secret(
 	let secret = X25519PrivateKey::generate()
 		.map_err(|err| format!("device encryption key failed: {err}"))?;
 	storage
-		.write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.as_bytes().to_vec())
+		.write(CoreStorageKey::DeviceEncryptionKey, secret.as_bytes().to_vec())
 		.await
 		.map_err(|err| format!("device encryption key write failed: {err:?}"))?;
 	Ok(*secret.as_bytes())

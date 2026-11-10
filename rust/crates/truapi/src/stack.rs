@@ -5,13 +5,20 @@
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
 //! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
 //! chain's genesis hash, and answers `get_chain_info`.
+//!
+//! [`Stack::storage`] is the only way the core reaches
+//! [`CoreStorage`](crate::platform::CoreStorage).
+
+mod storage;
+
+pub use storage::StackStorage;
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{dotns_name::DOTNS_TLDS, platform::CoreStorage};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -217,6 +224,11 @@ impl Stack {
 	/// under another generation is stale. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
+	}
+
+	/// The core's storage for this stack over the host's `storage`.
+	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
+		StackStorage::new(storage)
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

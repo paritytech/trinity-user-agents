@@ -40,32 +40,59 @@ fn each_product_keeps_its_own_slot() {
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
-		write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [1; 32])
-			.await
-			.unwrap();
-		write_product_subtree(&storage, &session, &ProductId::for_test("two.dot"), [2; 32])
-			.await
-			.unwrap();
-		write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [3; 32])
-			.await
-			.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("one.dot"),
+			[1; 32],
+		)
+		.await
+		.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("two.dot"),
+			[2; 32],
+		)
+		.await
+		.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("one.dot"),
+			[3; 32],
+		)
+		.await
+		.unwrap();
 
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("one.dot")
+			)
+			.await
+			.unwrap(),
 			Some([3; 32])
 		);
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("two.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("two.dot")
+			)
+			.await
+			.unwrap(),
 			Some([2; 32])
 		);
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("absent.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("absent.dot")
+			)
+			.await
+			.unwrap(),
 			None
 		);
 	});
@@ -77,9 +104,14 @@ fn the_value_is_the_bare_key_a_host_can_read() {
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
-		write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [7; 32])
-			.await
-			.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("one.dot"),
+			[7; 32],
+		)
+		.await
+		.unwrap();
 
 		// Hosts derive addresses straight from this slot, so the value must
 		// stay 32 unframed bytes rather than anything this module encodes.
@@ -99,28 +131,50 @@ fn removing_one_product_leaves_the_others() {
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
-		write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [1; 32])
-			.await
-			.unwrap();
-		write_product_subtree(&storage, &session, &ProductId::for_test("two.dot"), [2; 32])
-			.await
-			.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("one.dot"),
+			[1; 32],
+		)
+		.await
+		.unwrap();
+		write_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("two.dot"),
+			[2; 32],
+		)
+		.await
+		.unwrap();
 
 		// Backs the rollback in `persist_product_subtree_if_current`.
-		remove_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
-			.await
-			.unwrap();
+		remove_product_subtree(
+			&crate::test_support::test_storage(&storage),
+			&session,
+			&ProductId::for_test("one.dot"),
+		)
+		.await
+		.unwrap();
 
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("one.dot")
+			)
+			.await
+			.unwrap(),
 			None
 		);
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("two.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("two.dot")
+			)
+			.await
+			.unwrap(),
 			Some([2; 32])
 		);
 	});
@@ -141,9 +195,13 @@ fn a_wrong_length_slot_reads_as_empty() {
 			.unwrap();
 
 		assert_eq!(
-			read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
-				.await
-				.unwrap(),
+			read_product_subtree(
+				&crate::test_support::test_storage(&storage),
+				&session,
+				&ProductId::for_test("one.dot")
+			)
+			.await
+			.unwrap(),
 			None
 		);
 	});

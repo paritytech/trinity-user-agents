@@ -242,7 +242,9 @@ fn a_foreign_target_is_dropped_from_the_ledger() {
 		assert_eq!(pruned, vec!["device".to_string()]);
 		// Dropped, not merely skipped, so the cost is paid once.
 		assert_eq!(
-			read_entries(storage.as_ref()).await.unwrap(),
+			read_entries(&crate::test_support::test_storage(storage.as_ref()))
+				.await
+				.unwrap(),
 			vec![TrackedStatementRenewalTarget::new(product("a.dot"), owner)]
 		);
 	});
@@ -263,7 +265,12 @@ fn an_all_foreign_ledger_prunes_to_nothing() {
 			wallet.owned_targets(&wallet.current_session().unwrap()).await.unwrap(),
 			(Vec::new(), vec!["device".to_string()])
 		);
-		assert_eq!(read_entries(storage.as_ref()).await.unwrap(), Vec::new());
+		assert_eq!(
+			read_entries(&crate::test_support::test_storage(storage.as_ref()))
+				.await
+				.unwrap(),
+			Vec::new()
+		);
 	});
 }
 
@@ -290,7 +297,7 @@ async fn read_targets(
 	storage: &(impl CoreStorage + ?Sized),
 	owner: [u8; 32],
 ) -> Result<Vec<StatementRenewalTarget>, StatementRenewalError> {
-	Ok(read_entries(storage)
+	Ok(read_entries(&crate::test_support::test_storage(storage))
 		.await?
 		.into_iter()
 		.filter(|entry| entry.is_owned_by(owner))

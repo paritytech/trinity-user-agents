@@ -338,10 +338,8 @@ impl RuntimeServices {
 				return;
 			}
 			let records = lock(&services.funding_providers().learned).clone();
-			if let Err(error) = services
-				.platform
-				.write_core_storage(CoreStorageKey::FundingSupport, records.encode())
-				.await
+			if let Err(error) =
+				services.storage().write(CoreStorageKey::FundingSupport, records.encode()).await
 			{
 				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
 			}
@@ -356,7 +354,7 @@ impl RuntimeServices {
 		if *loaded {
 			return true;
 		}
-		let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
+		let stored = match self.storage().read(CoreStorageKey::FundingSupport).await {
 			Ok(Some(bytes)) => {
 				Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_else(|error| {
 					tracing::warn!(%error, "dropping undecodable funding provider records");
