@@ -4,7 +4,7 @@ import PolkadotUI
 import ChainRegistry
 import Products
 
-protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketCardOrigin {
+protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketOrigin {
     func didReceive(isCollectiblesAvailable: Bool)
     func didReceive(pocketCards: [PocketCardViewModel])
 }
@@ -12,6 +12,7 @@ protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketCardOrigin {
 @MainActor
 protocol WalletMainPresenterProtocol: AnyObject {
     func setup()
+    func showBalanceCard()
     func showCollectibles()
     func showPocketCard(_ card: PocketCardViewModel)
     func removePocketCard(_ card: PocketCardViewModel)
@@ -19,7 +20,8 @@ protocol WalletMainPresenterProtocol: AnyObject {
 
 @MainActor
 protocol WalletMainWireframeProtocol: AnyObject {
-    func showProduct(page: ProductPage)
+    func showBalanceCard()
+    func showCollectibles(page: ProductPage)
     func showPocketCard(_ card: PocketCardViewModel)
     func confirmPocketCardRemoval(_ card: PocketCardViewModel, onConfirm: @escaping () -> Void)
 }
