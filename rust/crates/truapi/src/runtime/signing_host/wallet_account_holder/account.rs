@@ -82,19 +82,15 @@ impl WalletAccountHolder {
 		Ok(())
 	}
 
-	/// Derive the product's hard-subtree public key from the active session root.
-	/// Returns `None` when no session is active.
-	pub fn derive_subtree_public_key(
+	/// Derive the product subtree only under the session selected by the caller.
+	pub(in crate::runtime::signing_host) fn derive_subtree_public_key(
 		&self,
+		session: &AuthoritySession,
 		product_id: &ProductId,
-	) -> Result<Option<[u8; 32]>, AuthorityError> {
-		let Some(session) = self.current_session() else {
-			return Ok(None);
-		};
-		self.with_keys(&session, |keys| {
+	) -> Result<[u8; 32], AuthorityError> {
+		self.with_keys(session, |keys| {
 			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
 		})
-		.map(Some)
 	}
 
 	fn transaction_keypair(
@@ -423,9 +419,7 @@ impl AccountHolder for WalletAccountHolder {
 		invocation: AccountInvocation<'_>,
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.with_keys(invocation.session, |keys| {
-			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
-		})
+		self.derive_subtree_public_key(invocation.session, product_id)
 	}
 
 	async fn sign_vrf(

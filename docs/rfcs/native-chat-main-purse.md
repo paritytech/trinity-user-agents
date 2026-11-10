@@ -246,6 +246,29 @@ immutable source recovery, private tickets, cached chunks and export remain trus
 receives public metadata and opaque handles and delivers prepared native rich-content ciphertext. First-contact
 attachments and call signaling remain unsupported.
 
+### Epoca persisted-storage cutover
+
+Epoca's deployed SDK `8a8dd0e5c39a407fa2321b1840d26cf6818ea357` used Native Chat device/chunk
+key indices 14/15; main uses 17/18. The product index remains 16 and the main purse remains 13.
+Epoca's file backend hashes the complete SCALE key, so a changed discriminant changes the filename.
+The snapshot cipher also binds that complete key in both HKDF and authenticated associated data:
+renaming a file alone cannot restore it.
+
+The Epoca host performs a one-way, durable per-slot move before any canonical read/write/clear,
+prefixing the unchanged encrypted v3 envelope with `EPCH` and byte `1`. It retains a per-slot schema
+tombstone after removing the old file; a cleared canonical slot never falls back to the old path.
+Interrupted copies resume only when the staged destination matches the source, or the source was
+already durably removed. Conflicts fail closed. Core recognizes only this explicit migration envelope,
+authenticates using the deployed key index, and durably reseals under the canonical key before
+publishing state. Invalid ciphertext never initializes a replacement device.
+
+Epoca's artifact-scoped Keychain grants are migrated separately, under a durable namespace journal:
+Chat authority 4→5, statement allowance 5→6, and remote JAM peers 5→7. Exact product/artifact scope,
+account selector, network and allow/deny bytes are retained; no grant becomes a cross-product
+signature, balance or NFT grant. Invalid legacy keys/values block only that artifact namespace.
+The journal is committed before moving keys, and a completed schema marker prevents replay after
+revocation. Core protocol indices remain canonical; neither backend uses a permanent dual-read alias.
+
 ## Main-purse ownership and native service integration
 
 The main purse uses page-0 `//coinage//4294967295//0/<index>` (soft coin item) and

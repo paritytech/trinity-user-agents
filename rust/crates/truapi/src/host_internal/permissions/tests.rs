@@ -1018,7 +1018,7 @@ fn a_trusted_product_grant_is_not_persisted() {
 }
 
 #[test]
-fn a_trusted_product_ignores_stored_remote_denials() {
+fn a_trusted_product_honors_stored_remote_denials() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let service = trusted_service(&storage, &prompt);
@@ -1032,18 +1032,18 @@ fn a_trusted_product_ignores_stored_remote_denials() {
 
 		assert_eq!(
 			futures::executor::block_on(service.peek_remote(&request)).unwrap(),
-			PermissionAuthorizationStatus::Authorized
+			PermissionAuthorizationStatus::Denied
 		);
 		assert_eq!(
 			futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
-			PermissionAuthorizationStatus::Authorized
+			PermissionAuthorizationStatus::Denied
 		);
 	}
 	assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
-fn a_trusted_product_ignores_stored_wildcard_denials() {
+fn a_trusted_product_honors_stored_wildcard_denials() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let service = trusted_service(&storage, &prompt);
@@ -1057,8 +1057,8 @@ fn a_trusted_product_ignores_stored_wildcard_denials() {
 	for domain in ["a.com", "deep.api.example.com"] {
 		assert_eq!(
 			futures::executor::block_on(service.peek_remote(&remote_domains(&[domain]))).unwrap(),
-			PermissionAuthorizationStatus::Authorized,
-			"stored wildcard decisions do not govern trusted products"
+			PermissionAuthorizationStatus::Denied,
+			"explicit wildcard refusals override trusted defaults"
 		);
 	}
 }
@@ -1181,34 +1181,6 @@ fn a_trusted_product_is_denied_a_device_capability_the_os_refuses() {
 		],
 	);
 	assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-fn a_trusted_product_reads_no_permission_storage() {
-	let storage = FailingStorage;
-	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service = PermissionsService::new(&storage, &prompt, &PEOPL);
-	let status = |request| futures::executor::block_on(service.authorization_status(&request));
-	assert_eq!(
-		[
-			status(PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit))),
-			status(PermissionAuthorizationRequest::IdentityDisclosure),
-			status(PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: ProductId::for_test("other.dot"),
-			}),
-			status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
-			futures::executor::block_on(
-				service.check_or_prompt_device(HostDevicePermissionRequest::Notifications)
-			),
-		],
-		[
-			Ok(PermissionAuthorizationStatus::Authorized),
-			Ok(PermissionAuthorizationStatus::Authorized),
-			Ok(PermissionAuthorizationStatus::Authorized),
-			Ok(PermissionAuthorizationStatus::Authorized),
-			Ok(PermissionAuthorizationStatus::Authorized),
-		],
-	);
 }
 
 #[test]

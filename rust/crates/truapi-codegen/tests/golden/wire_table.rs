@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "e81663cdcdb20a2f";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7ef24a5e0f76f39c";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -138,6 +138,12 @@ pub const ACCOUNT_LIST_RING_VRF_KEYS: MethodIds = MethodIds {
 pub const ACCOUNT_RING_VRF_SIGN: MethodIds = MethodIds {
     trait_id: 2,
     method_id: 10,
+};
+
+/// Wire discriminants for `account_product_device_chat`.
+pub const ACCOUNT_PRODUCT_DEVICE_CHAT: MethodIds = MethodIds {
+    trait_id: 2,
+    method_id: 12,
 };
 
 /// Wire discriminants for `chain_follow_head_subscribe`.
@@ -722,6 +728,48 @@ pub const NFT_PURSE_LISTEN_PAYMENT_INBOX: MethodIds = MethodIds {
     method_id: 14,
 };
 
+/// Wire discriminants for `jam_peer_transport_dial`.
+pub const JAM_PEER_TRANSPORT_DIAL: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 0,
+};
+
+/// Wire discriminants for `jam_peer_transport_open`.
+pub const JAM_PEER_TRANSPORT_OPEN: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 1,
+};
+
+/// Wire discriminants for `jam_peer_transport_send`.
+pub const JAM_PEER_TRANSPORT_SEND: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 2,
+};
+
+/// Wire discriminants for `jam_peer_transport_recv`.
+pub const JAM_PEER_TRANSPORT_RECV: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 3,
+};
+
+/// Wire discriminants for `jam_peer_transport_reset`.
+pub const JAM_PEER_TRANSPORT_RESET: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 4,
+};
+
+/// Wire discriminants for `jam_peer_transport_close`.
+pub const JAM_PEER_TRANSPORT_CLOSE: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 5,
+};
+
+/// Wire discriminants for `jam_peer_transport_events`.
+pub const JAM_PEER_TRANSPORT_EVENTS: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 6,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -789,6 +837,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "account_ring_vrf_sign",
         kind: WireKind::Request(ACCOUNT_RING_VRF_SIGN),
+    },
+    WireEntry {
+        method: "account_product_device_chat",
+        kind: WireKind::Request(ACCOUNT_PRODUCT_DEVICE_CHAT),
     },
     WireEntry {
         method: "chain_follow_head_subscribe",
@@ -1177,5 +1229,33 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_listen_payment_inbox",
         kind: WireKind::Subscription(NFT_PURSE_LISTEN_PAYMENT_INBOX),
+    },
+    WireEntry {
+        method: "jam_peer_transport_dial",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_DIAL),
+    },
+    WireEntry {
+        method: "jam_peer_transport_open",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_OPEN),
+    },
+    WireEntry {
+        method: "jam_peer_transport_send",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_SEND),
+    },
+    WireEntry {
+        method: "jam_peer_transport_recv",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_RECV),
+    },
+    WireEntry {
+        method: "jam_peer_transport_reset",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_RESET),
+    },
+    WireEntry {
+        method: "jam_peer_transport_close",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_CLOSE),
+    },
+    WireEntry {
+        method: "jam_peer_transport_events",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_EVENTS),
     },
 ];

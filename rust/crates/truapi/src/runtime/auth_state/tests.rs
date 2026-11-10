@@ -150,3 +150,49 @@ fn login_cancelled_while_authenticating_disconnects_and_wakes_the_login() {
 		]
 	);
 }
+
+#[test]
+fn a_disconnect_during_a_connected_callback_is_delivered_after_that_callback() {
+	let platform = stub_platform();
+	let machine = AuthStateMachine::new(platform.clone());
+	let observed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+	let delivered = observed.clone();
+	let (started, ready) = std::sync::mpsc::channel();
+	let (release, released) = std::sync::mpsc::channel();
+	let released = parking_lot::Mutex::new(released);
+	*platform.on_auth_state.lock().unwrap() = Some(Arc::new(move |state| {
+		if matches!(state, AuthState::Connected(_)) {
+			started.send(()).unwrap();
+			released.lock().recv().unwrap();
+		}
+		delivered.lock().push(state.clone());
+	}));
+	let connecting = machine.clone();
+	let worker = std::thread::spawn(move || connecting.connected(&SessionUiInfo::default()));
+	ready.recv().unwrap();
+	machine.store_disconnected();
+	release.send(()).unwrap();
+	worker.join().unwrap();
+	assert_eq!(
+		*observed.lock(),
+		vec![AuthState::Connected(Box::new(SessionUiInfo::default())), AuthState::Disconnected],
+	);
+}
+
+#[test]
+fn a_connected_callback_can_reenter_and_disconnect() {
+	let platform = stub_platform();
+	let machine = AuthStateMachine::new(platform.clone());
+	let reentrant = machine.clone();
+	*platform.on_auth_state.lock().unwrap() = Some(Arc::new(move |state| {
+		if matches!(state, AuthState::Connected(_)) {
+			reentrant.store_disconnected();
+		}
+	}));
+	machine.connected(&SessionUiInfo::default());
+	assert_eq!(
+		*platform.auth_states.lock().unwrap(),
+		vec![AuthState::Connected(Box::new(SessionUiInfo::default())), AuthState::Disconnected],
+	);
+	platform.on_auth_state.lock().unwrap().take();
+}

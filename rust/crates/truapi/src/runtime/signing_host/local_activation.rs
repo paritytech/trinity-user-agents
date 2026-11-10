@@ -1,9 +1,6 @@
 use super::SigningHost;
-use crate::{
-	host_logic::session::SessionInfo,
-	runtime::{
-		authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
-	},
+use crate::runtime::{
+	authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
 };
 
 /// Activate the wallet from entropy supplied by the embedding host.
@@ -34,11 +31,11 @@ impl LocalActivation for SigningHost {
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
 		let activation = self.wallet.prepare_activation(secret, lite_username)?;
-		let session = self.change_activation(|| self.wallet.install(activation));
+		let (generation, session) = self.change_activation(|| self.wallet.install(activation));
 		self.auth_state.connected(&connected_session_ui_info(&session));
 
 		let services = self.services.clone();
-		let session_state = self.wallet.session_state();
+		let wallet = self.wallet.clone();
 		let auth_state = self.auth_state.clone();
 		(self.services.spawner)(Box::pin(async move {
 			let Some(identity) = lookup_session_identity(
@@ -51,11 +48,10 @@ impl LocalActivation for SigningHost {
 			else {
 				return;
 			};
-			let (lite_username, full_username) = identity.into_usernames();
-			let named = SessionInfo { lite_username, full_username, ..session.clone() };
-			if session_state.replace_session_if_current(&session, named.clone()) {
-				auth_state.connected(&connected_session_ui_info(&named));
-			}
+			auth_state.connected_with(|| {
+				let named = wallet.update_identity(generation, identity.into_usernames()).ok()?;
+				Some(connected_session_ui_info(&named))
+			});
 		}));
 		Ok(())
 	}

@@ -169,7 +169,7 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
 	/// Live OS permission state, when the host serves that capability. Absent
 	/// leaves the stored decision governing on its own.
 	status: Option<&'a dyn PermissionStatusHost>,
-	/// Whether permissions are granted without a prompt or a stored record.
+	/// Whether undecided permissions default to authorized without a prompt.
 	trusted_product: bool,
 	/// One-use grants remain local to the execution that requested them.
 	temporary_permissions: Arc<TemporaryPermissions>,
@@ -275,9 +275,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		{
 			return Ok((BundleResolution::Denied, Vec::new()));
 		}
-		if self.trusted_product {
-			return Ok((BundleResolution::Authorized, Vec::new()));
-		}
 		let mut undecided = Vec::new();
 		let mut temporary_keys = Vec::new();
 		for domain in domains {
@@ -319,7 +316,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		&self,
 		domain: &str,
 	) -> Result<(PermissionAuthorizationStatus, Option<CoreStorageKey>), GenericError> {
-		let blessed = BLESSED_REMOTE_DOMAINS.contains(&normalize_remote_domain(domain).as_str());
+		let blessed = self.trusted_product ||
+			BLESSED_REMOTE_DOMAINS.contains(&normalize_remote_domain(domain).as_str());
 		let mut temporary_keys = Vec::new();
 		let mut fallback = if blessed {
 			PermissionAuthorizationStatus::Authorized
@@ -350,11 +348,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		key: &CoreStorageKey,
 		consume: bool,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product {
-			return Ok(PermissionAuthorizationStatus::Authorized);
-		}
 		if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
 			return Ok(stored.into());
+		}
+		if self.trusted_product {
+			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		Ok(if self.temporary_permissions.authorize(key, consume) {
 			PermissionAuthorizationStatus::Authorized
@@ -369,35 +367,34 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		&self,
 		request: &PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product &&
-			matches!(
-				request,
-				PermissionAuthorizationRequest::IdentityDisclosure |
-					PermissionAuthorizationRequest::AccountAccess { .. }
-			) {
-			return Ok(PermissionAuthorizationStatus::Authorized);
-		}
 		match request {
 			PermissionAuthorizationRequest::Device(permission) => {
 				self.peek_device(permission).await
 			},
 			PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
 			PermissionAuthorizationRequest::IdentityDisclosure => {
-				authorization_status(
-					self.storage,
-					CoreStorageKey::identity_disclosure_authorization(self.product_id()),
+				self.cached_authorization(
+					&CoreStorageKey::identity_disclosure_authorization(self.product_id()),
+					false,
 				)
 				.await
 			},
 			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
-				authorization_status(
+				let stored = account_access_authorization_status(
 					self.storage,
-					CoreStorageKey::account_access_authorization(
-						self.product_id(),
-						target_product_id,
-					),
+					self.product_id(),
+					target_product_id,
 				)
-				.await
+				.await?;
+				Ok(
+					if stored == PermissionAuthorizationStatus::NotDetermined &&
+						self.trusted_product
+					{
+						PermissionAuthorizationStatus::Authorized
+					} else {
+						stored
+					},
+				)
 			},
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
 				let approved = self.temporary_permissions.authorize(
@@ -480,7 +477,26 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				CoreStorageKey::identity_disclosure_authorization(self.product_id())
 			},
 			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
-				CoreStorageKey::account_access_authorization(self.product_id(), target_product_id)
+				// New decisions use the same product scope as manifests and consent.
+				// Remove the old exact-ID decision only after the canonical write succeeds.
+				set_authorization_status(
+					self.storage,
+					CoreStorageKey::product_account_access_authorization(
+						self.product_id(),
+						target_product_id,
+					),
+					status,
+				)
+				.await?;
+				return set_authorization_status(
+					self.storage,
+					CoreStorageKey::account_access_authorization(
+						self.product_id(),
+						target_product_id,
+					),
+					PermissionAuthorizationStatus::NotDetermined,
+				)
+				.await;
 			},
 			// Held in memory for the execution only, so nothing is stored. A
 			// denial is not kept either, like a refusal at the prompt.
@@ -732,6 +748,36 @@ pub async fn authorization_status<S: CoreStorage + ?Sized>(
 		.await?
 		.map(Into::into)
 		.unwrap_or(PermissionAuthorizationStatus::NotDetermined))
+}
+
+/// Read both account-decision scopes, with an explicit denial overriding any grant.
+pub(crate) async fn account_access_authorization_status<S: CoreStorage + ?Sized>(
+	storage: &S,
+	requester: &ProductId,
+	target: &ProductId,
+) -> Result<PermissionAuthorizationStatus, GenericError> {
+	let stored = authorization_status(
+		storage,
+		CoreStorageKey::product_account_access_authorization(requester, target),
+	)
+	.await?;
+	if stored == PermissionAuthorizationStatus::Denied {
+		return Ok(stored);
+	}
+	let legacy = authorization_status(
+		storage,
+		CoreStorageKey::account_access_authorization(requester, target),
+	)
+	.await?;
+	Ok(
+		if legacy == PermissionAuthorizationStatus::Denied ||
+			stored == PermissionAuthorizationStatus::NotDetermined
+		{
+			legacy
+		} else {
+			stored
+		},
+	)
 }
 
 async fn peek_stored<S: CoreStorage + ?Sized>(

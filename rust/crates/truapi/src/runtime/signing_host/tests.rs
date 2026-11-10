@@ -59,6 +59,18 @@ use truapi::{
 
 const ENTROPY: [u8; 16] = [0xAB; 16];
 
+thread_local! {
+	static BEFORE_SUBTREE_DERIVATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+		const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn before_subtree_derivation() {
+	let hook = BEFORE_SUBTREE_DERIVATION.with_borrow_mut(Option::take);
+	if let Some(hook) = hook {
+		hook();
+	}
+}
+
 #[derive(Clone)]
 struct StubRingResolver {
 	/// Holds the next ring validation until the test releases it.
@@ -611,12 +623,12 @@ fn a_request_cannot_substitute_for_the_owners_manifest() {
 }
 
 #[test]
-fn a_blessed_product_proves_with_a_context_grant_despite_a_stored_denial() {
+fn a_stored_denial_blocks_a_trusted_products_context_proof() {
 	let proof =
 		foreign_proof_through_the_authority_with(Some(r#"{"dim2":["context"]}"#), |platform| {
 			deny_account_access(platform, "dim2.dot", "peopl.dot")
 		});
-	assert!(proof.is_ok(), "blessed account access ignores the saved denial: {proof:?}");
+	assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
 }
 
 /// A `context` grant covers the identity read, so the two calls agree.

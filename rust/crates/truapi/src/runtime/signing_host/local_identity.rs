@@ -10,7 +10,7 @@ use crate::{
 use serde::Serialize;
 use truapi::latest::{ChainIdentifier, GenericError};
 
-/// Verified metadata for the active network's UID account.
+/// Verified metadata for the active network's Personhood account.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalIdentity {
@@ -41,15 +41,9 @@ const PEOPLE_LITE_PALLET: &str = "PeopleLite";
 const DOTNS_GATEWAY_PALLET: &str = "DotnsGateway";
 
 impl SigningHost {
-	/// Capture the current UID account and local activation generation atomically.
+	/// Capture the current Personhood account and local activation generation atomically.
 	pub fn local_identity_context(&self) -> Result<LocalIdentityContext, GenericError> {
-		let activation = self.wallet.activation();
-		let account = self
-			.wallet
-			.session_state()
-			.current()
-			.and_then(|session| session.identity_account_id)
-			.ok_or_else(|| error("no active local identity"))?;
+		let (activation, account) = self.wallet.identity_activation().map_err(error)?;
 		Ok(LocalIdentityContext {
 			activation_id: activation.to_string(),
 			identity_account_id: format!("0x{}", hex::encode(account)),
@@ -58,9 +52,8 @@ impl SigningHost {
 
 	/// Reject identity work from a disconnected or replaced activation.
 	pub fn check_identity_activation(&self, activation_id: &str) -> Result<(), GenericError> {
-		if activation_id.parse::<u64>().ok() != Some(self.wallet.activation()) ||
-			self.wallet.session_state().current().is_none()
-		{
+		let (activation, _) = self.wallet.identity_activation().map_err(error)?;
+		if activation_id.parse::<u64>().ok() != Some(activation) {
 			return Err(error("local identity activation changed"));
 		}
 		Ok(())
@@ -107,17 +100,18 @@ impl SigningHost {
 		))
 	}
 
-	/// Sign the backend token challenge without releasing UID secret material.
+	/// Sign the backend token challenge without releasing Personhood secret material.
 	pub fn local_identity_auth_proof(
 		&self,
 		activation_id: &str,
 		challenge: &[u8],
 	) -> Result<Vec<u8>, GenericError> {
-		self.check_identity_activation(activation_id)?;
-		let entropy = self.wallet.root_entropy().map_err(error)?;
+		let activation = activation_id.parse::<u64>().map_err(error)?;
+		let entropy = self.wallet.identity_entropy(activation).map_err(error)?;
 		let (client_id, proof) =
 			attestation::sign_backend_challenge(&entropy, self.network_suffix(), challenge, b"{}")
 				.map_err(error)?;
+		self.check_identity_activation(activation_id)?;
 		let mut bytes = Vec::with_capacity(96);
 		bytes.extend_from_slice(&client_id);
 		bytes.extend_from_slice(&proof);
@@ -152,8 +146,8 @@ impl SigningHost {
 		// Loaded before the activation lock: the browser fetches `verifiable`
 		// on first use, and its operations below are then synchronous.
 		let vrf = crate::runtime::vrf::load().await.map_err(error)?;
-		self.check_identity_activation(activation_id)?;
-		let entropy = self.wallet.root_entropy().map_err(error)?;
+		let activation = activation_id.parse::<u64>().map_err(error)?;
+		let entropy = self.wallet.identity_entropy(activation).map_err(error)?;
 		let vrf_entropy = derive_lite_person_ring_vrf_entropy(&entropy, self.network_suffix());
 		let registration = attestation::build_lite_registration_with(
 			&entropy,
@@ -171,6 +165,7 @@ impl SigningHost {
 			},
 		)
 		.map_err(error)?;
+		self.check_identity_activation(activation_id)?;
 		Ok(registration.request_body(username_base, None, signed_at).to_string())
 	}
 
@@ -179,40 +174,32 @@ impl SigningHost {
 		&self,
 		activation_id: &str,
 	) -> Result<LocalIdentity, GenericError> {
-		self.check_identity_activation(activation_id)?;
+		let activation = activation_id.parse::<u64>().map_err(error)?;
+		let (current, account) = self.wallet.identity_activation().map_err(error)?;
+		if current != activation {
+			return Err(error("local identity activation changed"));
+		}
 		let genesis = self.identity_asset_hub().await?;
 		self.check_identity_activation(activation_id)?;
-		let account = self
-			.wallet
-			.session_state()
-			.current()
-			.and_then(|session| session.identity_account_id)
-			.ok_or_else(|| error("no active local identity"))?;
 		let resolved = identity::lookup_local_identity(&self.services.chain, genesis, account)
 			.await
 			.map_err(error)?;
-		self.check_identity_activation(activation_id)?;
-		let mut session = self
-			.wallet
-			.session_state()
-			.current()
-			.ok_or_else(|| error("no active local identity"))?;
-		if session.identity_account_id != Some(account) {
-			return Err(error("local identity account changed"));
-		}
-		let session_before = session.clone();
-		(session.lite_username, session.full_username) =
-			resolved.map(dotns_gateway::DotnsIdentity::into_usernames).unwrap_or_default();
-		let result = LocalIdentity {
-			identity_account_id: format!("0x{}", hex::encode(account)),
-			lite_username: session.lite_username.clone(),
-		};
-		let ui_info = connected_session_ui_info(&session);
-		// Only the wallet the lookup began under takes the names.
-		if !self.wallet.session_state().replace_session_if_current(&session_before, session) {
-			return Err(error("local identity activation changed"));
-		}
-		self.auth_state.connected(&ui_info);
-		Ok(result)
+		let mut result = None;
+		self.auth_state.connected_with(|| {
+			let session = self
+				.wallet
+				.update_identity(
+					activation,
+					resolved.map(dotns_gateway::DotnsIdentity::into_usernames).unwrap_or_default(),
+				)
+				.ok()?;
+			let ui_info = connected_session_ui_info(&session);
+			result = Some(LocalIdentity {
+				identity_account_id: format!("0x{}", hex::encode(account)),
+				lite_username: session.lite_username,
+			});
+			Some(ui_info)
+		});
+		result.ok_or_else(|| error("local identity activation changed"))
 	}
 }

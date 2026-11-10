@@ -21,7 +21,7 @@ use crate::{
 	chain_runtime::ChainRuntime,
 	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
-		permissions::authorization_status,
+		permissions::account_access_authorization_status,
 		product_manifest::{Granted, RootManifest},
 		sso_messages::RingVrfError,
 	},
@@ -375,7 +375,7 @@ async fn scope_grant(
 	if !manifest.grants(caller_id, scope) {
 		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
-	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
+	if scope == Granted::Context {
 		let because = match stored_account_decision(platform, caller_id, target).await {
 			StoredDecision::Denied => RefusedBecause::UserDenied,
 			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
@@ -420,23 +420,15 @@ async fn stored_account_decision(
 	// overrides is resolved by `ProductId::bare_label` for the target as well as
 	// the caller, so filing the refusal against the full target would let
 	// `app.peopl.dot` carry a grant the user refused for `peopl.dot`.
-	let candidates = [
-		CoreStorageKey::product_account_access_authorization(caller_id, target),
-		CoreStorageKey::account_access_authorization(caller_id, target),
-	];
-	for key in candidates {
-		match authorization_status(platform, key).await {
-			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
-			Ok(
-				PermissionAuthorizationStatus::NotDetermined |
-				PermissionAuthorizationStatus::Authorized,
-			) => {},
-			// Fails closed: a storage fault must not let a publisher's manifest
-			// turn the user's "no" into a "yes".
-			Err(_) => return StoredDecision::Unreadable,
-		}
+	match account_access_authorization_status(platform, caller_id, target).await {
+		Ok(PermissionAuthorizationStatus::Denied) => StoredDecision::Denied,
+		Ok(
+			PermissionAuthorizationStatus::NotDetermined |
+			PermissionAuthorizationStatus::Authorized,
+		) => StoredDecision::Absent,
+		// A storage fault must not turn the user's "no" into a manifest grant.
+		Err(_) => StoredDecision::Unreadable,
 	}
-	StoredDecision::Absent
 }
 
 /// Longest one grant lookup may spend resolving a manifest.

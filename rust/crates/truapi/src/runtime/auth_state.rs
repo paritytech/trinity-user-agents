@@ -10,11 +10,11 @@ use futures::channel::oneshot;
 use crate::runtime::login_failure::classify_login_failure;
 
 /// Serialized auth-state machine bound to the platform's `auth_state_changed`
-/// sink. Each transition mutates under the lock, releases it, then emits the
-/// new state (when it actually changed), so `auth_state_changed` handlers may
-/// safely re-enter the runtime (e.g. a host cancelling the login it just
-/// observed). The cancel channel for an in-flight login lives inside the
-/// in-flight login states, making its registration atomic with the transition.
+/// sink. Transitions mutate under the lock; a single emitter drains the latest
+/// state outside it, so concurrent or reentrant transitions cannot publish an
+/// older state after a newer one. Host callbacks may safely re-enter the runtime.
+/// The cancel channel for an in-flight login lives inside the in-flight login
+/// states, making its registration atomic with the transition.
 ///
 /// The boot-time restore and explicit session activations call
 /// [`AuthStateMachine::announce_current`] when done, so the host gets an
@@ -38,6 +38,9 @@ struct AuthStateInner {
 	/// Whether the host has observed any state yet. Gates the opening
 	/// announcement so it can only ever produce the first emission.
 	announced: bool,
+	/// A callback is in progress; later transitions leave it the next state to emit.
+	emitting: bool,
+	pending: bool,
 }
 
 impl AuthStateMachine {
@@ -131,16 +134,25 @@ impl AuthStateMachine {
 	/// runtime won the race, and the waking flow resolves as
 	/// `AlreadyConnected`. Emits only when the connected info changed.
 	pub fn connected(&self, info: &SessionUiInfo) {
-		self.transition(|inner| {
-			if let Some(cancel_tx) = inner.cancel_tx.take() {
-				let _ = cancel_tx.send(());
-			}
-			if matches!(&inner.state, AuthState::Connected(current) if current.as_ref() == info) {
-				return None;
-			}
-			inner.state = AuthState::Connected(Box::new(info.clone()));
-			Some(())
-		});
+		self.transition(|inner| Self::connect(inner, info));
+	}
+
+	/// Resolve and commit local session metadata while the auth transition is
+	/// serialized. The closure may lock the wallet, but host callbacks run only
+	/// after both locks have been released.
+	pub(crate) fn connected_with(&self, resolve: impl FnOnce() -> Option<SessionUiInfo>) {
+		self.transition(|inner| Self::connect(inner, &resolve()?));
+	}
+
+	fn connect(inner: &mut AuthStateInner, info: &SessionUiInfo) -> Option<()> {
+		if let Some(cancel_tx) = inner.cancel_tx.take() {
+			let _ = cancel_tx.send(());
+		}
+		if matches!(&inner.state, AuthState::Connected(current) if current.as_ref() == info) {
+			return None;
+		}
+		inner.state = AuthState::Connected(Box::new(info.clone()));
+		Some(())
 	}
 
 	/// Session store reports no session. A no-op while a login is active: the
@@ -180,25 +192,35 @@ impl AuthStateMachine {
 	/// host instead of leaving it in silence. A no-op once any state has been
 	/// emitted: it announces, it never repeats.
 	pub fn announce_current(&self) {
-		let mut inner = self.inner.lock().expect("auth state mutex poisoned");
-		if inner.announced {
-			return;
-		}
-		inner.announced = true;
-		let state = inner.state.clone();
-		drop(inner);
-		AuthPresenter::auth_state_changed(self.platform.as_ref(), state);
+		self.transition(|inner| {
+			if inner.announced {
+				return None;
+			}
+			Some(())
+		});
 	}
 
-	/// Run `apply` under the lock; when it changed the state (returned
-	/// `Some`), emit the new state to the host after releasing the lock.
+	/// Apply a transition and deliver its latest state without holding the lock.
 	fn transition<T>(&self, apply: impl FnOnce(&mut AuthStateInner) -> Option<T>) -> Option<T> {
 		let mut inner = self.inner.lock().expect("auth state mutex poisoned");
 		let applied = apply(&mut inner)?;
 		inner.announced = true;
-		let state = inner.state.clone();
-		drop(inner);
-		AuthPresenter::auth_state_changed(self.platform.as_ref(), state);
+		inner.pending = true;
+		if inner.emitting {
+			return Some(applied);
+		}
+		inner.emitting = true;
+		loop {
+			inner.pending = false;
+			let state = inner.state.clone();
+			drop(inner);
+			AuthPresenter::auth_state_changed(self.platform.as_ref(), state);
+			inner = self.inner.lock().expect("auth state mutex poisoned");
+			if !inner.pending {
+				inner.emitting = false;
+				break;
+			}
+		}
 		Some(applied)
 	}
 }

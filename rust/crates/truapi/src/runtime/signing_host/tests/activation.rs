@@ -167,3 +167,38 @@ fn the_static_receive_secret_is_the_users_chat_key() {
 	assert_eq!(signed_in, chat_key.public_key());
 	assert!(matches!(signed_out, Err(AuthorityError::Disconnected)));
 }
+
+#[test]
+fn subtree_derivation_never_switches_to_a_replacement_session() {
+	for change in ["replace", "reinstall", "disconnect"] {
+		let (_, authority) = signing_runtime();
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = authority.current_session().unwrap();
+		let changing = authority.clone();
+		BEFORE_SUBTREE_DERIVATION.with_borrow_mut(|hook| {
+			*hook = Some(Box::new(move || {
+				changing.change_activation(|| {
+					changing.wallet.clear();
+					if change != "disconnect" {
+						let entropy =
+							if change == "replace" { vec![8; 16] } else { ENTROPY.to_vec() };
+						let activation = changing.wallet.prepare_activation(entropy, None).unwrap();
+						changing.wallet.install(activation);
+					}
+				});
+			}));
+		});
+		assert!(
+			matches!(
+				futures::executor::block_on(ProductAuthority::product_subtree_public_key(
+					authority.as_ref(),
+					&CallContext::default(),
+					&session,
+					&ProductId::for_test("myapp.dot"),
+				)),
+				Err(AuthorityError::Disconnected)
+			),
+			"{change}: an old request must never derive with a freshly selected wallet"
+		);
+	}
+}

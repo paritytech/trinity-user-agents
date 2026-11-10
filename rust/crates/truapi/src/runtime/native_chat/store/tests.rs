@@ -169,6 +169,143 @@ fn restart_authenticates_same_device_and_atomic_chat_state() {
 	});
 }
 
+// The deployed Epoca SDK used the same v3 plaintext/envelope but byte 14/15
+// in the complete SCALE key used by both HKDF and AEAD.
+fn epoca_snapshot(key: &CoreStorageKey, state: &State) -> Vec<u8> {
+	let mut encoded_key = key.encode();
+	encoded_key[0] = match key {
+		CoreStorageKey::NativeChatDevice { .. } => 14,
+		CoreStorageKey::NativeChatFileChunk { .. } => 15,
+		_ => panic!("not a deployed Chat slot"),
+	};
+	let mut aad = b"truapi/host/native-chat/snapshot\0HCHS\x03\x00".to_vec();
+	aad.extend_from_slice(&encoded_key);
+	let mut key = Zeroizing::new([0; 32]);
+	Hkdf::<Sha256>::new(Some(b"truapi/host/native-chat/snapshot-key/v1"), &[3; 32])
+		.expand(&aad, &mut *key)
+		.unwrap();
+	let nonce = [7; 24];
+	let mut ciphertext = Zeroizing::new(state.encode());
+	XChaCha20Poly1305::new((&*key).into())
+		.encrypt_in_place(XNonce::from_slice(&nonce), &aad, &mut *ciphertext)
+		.unwrap();
+	let mut envelope = b"EPCH\x01HCHS\x03\x00".to_vec();
+	envelope.extend_from_slice(&nonce);
+	envelope.extend_from_slice(&ciphertext);
+	envelope
+}
+
+#[test]
+fn epoca_migration_preserves_device_and_chunk_state_then_reopens_canonical_only() {
+	block_on(async {
+		for key in [
+			slot(),
+			CoreStorageKey::NativeChatFileChunk {
+				root_public_key: [1; 32],
+				genesis_hash: [2; 32],
+				product_id: "chat.testnet".into(),
+				attachment_id: [8; 32],
+				chunk_index: 9,
+			},
+		] {
+			let storage = Arc::new(DurableSlot::default());
+			let mut state = initial().unwrap();
+			change(&mut state).unwrap();
+			storage.replace(&key, epoca_snapshot(&key, &state));
+			let migrated = ChatStateStore::<State>::open_storage(
+				storage.clone(),
+				key.clone(),
+				&[3; 32],
+				crate::test_support::test_spawner(),
+				|| panic!("migration must not mint a replacement device"),
+			)
+			.await
+			.unwrap();
+			assert_eq!(migrated.read(snapshot).await.unwrap(), snapshot(&state));
+			drop(migrated);
+			let canonical = storage.values.lock().get(&key.encode()).unwrap().clone();
+			let restored: State =
+				SnapshotCipher::new(&key, &[3; 32]).unwrap().decrypt(&canonical).unwrap();
+			assert_eq!(snapshot(&restored), snapshot(&state));
+			let reopened = ChatStateStore::<State>::open_storage(
+				storage.clone(),
+				key,
+				&[3; 32],
+				crate::test_support::test_spawner(),
+				|| panic!("canonical state must survive restart"),
+			)
+			.await
+			.unwrap();
+			assert_eq!(reopened.read(snapshot).await.unwrap(), snapshot(&state));
+		}
+	});
+}
+
+#[test]
+fn epoca_migration_requires_authenticated_explicit_envelope_and_durable_replacement() {
+	block_on(async {
+		let state = initial().unwrap();
+		let legacy = epoca_snapshot(&slot(), &state);
+		let mut tampered = legacy.clone();
+		*tampered.last_mut().unwrap() ^= 1;
+		let wrong_owner = epoca_snapshot(
+			&CoreStorageKey::NativeChatDevice {
+				root_public_key: [9; 32],
+				genesis_hash: [2; 32],
+				product_id: "chat.testnet".into(),
+			},
+			&state,
+		);
+		for bytes in [legacy[5..].to_vec(), tampered, wrong_owner, b"EPCH\x01".to_vec()] {
+			let storage = Arc::new(DurableSlot::default());
+			storage.replace(&slot(), bytes.clone());
+			assert!(matches!(
+				ChatStateStore::<State>::open_storage(
+					storage.clone(),
+					slot(),
+					&[3; 32],
+					crate::test_support::test_spawner(),
+					|| panic!("invalid migration is not an absent slot"),
+				)
+				.await,
+				Err(ChatError::StorageUnavailable)
+			));
+			assert_eq!(storage.bytes(), bytes);
+			assert_eq!(storage.writes.load(Ordering::SeqCst), 0);
+		}
+		for fail_after in [false, true] {
+			let storage = Arc::new(DurableSlot::default());
+			storage.replace(&slot(), legacy.clone());
+			if fail_after {
+				storage.fail_after.store(true, Ordering::SeqCst);
+			} else {
+				storage.fail_before.store(true, Ordering::SeqCst);
+			}
+			assert!(matches!(
+				ChatStateStore::<State>::open_storage(
+					storage.clone(),
+					slot(),
+					&[3; 32],
+					crate::test_support::test_spawner(),
+					|| panic!("failed migration must retain the old device"),
+				)
+				.await,
+				Err(ChatError::StorageUnavailable)
+			));
+			let recovered = ChatStateStore::<State>::open_storage(
+				storage.clone(),
+				slot(),
+				&[3; 32],
+				crate::test_support::test_spawner(),
+				|| panic!("retry must authenticate retained state"),
+			)
+			.await
+			.unwrap();
+			assert_eq!(recovered.read(snapshot).await.unwrap(), snapshot(&state));
+		}
+	});
+}
+
 #[test]
 fn canceled_update_still_commits_and_publishes_before_reads() {
 	block_on(async {

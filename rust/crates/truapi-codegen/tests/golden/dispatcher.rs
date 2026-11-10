@@ -18,6 +18,7 @@ use truapi::api::{
     Funding,
     Game,
     FundingProvider,
+    JamPeerTransport,
     LocalStorage,
     Locale,
     NftPurse,
@@ -61,6 +62,7 @@ where
     register_funding(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
     register_funding_provider(dispatcher, host.clone());
+    register_jam_peer_transport(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
     register_nft_purse(dispatcher, host.clone());
@@ -296,6 +298,25 @@ where
                 let result: Result<versioned::account::HostAccountRingVrfSignResponse, truapi::CallError<versioned::account::HostAccountRingVrfSignError>> =
                     match host.ring_vrf_sign(&cx, request).await {
                         Ok(response) => Ok(<versioned::account::HostAccountRingVrfSignResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::ACCOUNT_PRODUCT_DEVICE_CHAT, move |request_id: String, request: versioned::account::HostProductDeviceChatRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::account::HostProductDeviceChatResponse, truapi::CallError<versioned::account::HostProductDeviceChatError>> =
+                    match host.product_device_chat(&cx, request).await {
+                        Ok(response) => Ok(<versioned::account::HostProductDeviceChatResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1252,6 +1273,145 @@ where
                     match host.close_frame(&cx, request).await {
                         Ok(_) => Ok(<versioned::funding_provider::HostFundingCloseFrameResponse as truapi::versioned::FromLatest>::from_latest(
                             (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_jam_peer_transport<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: JamPeerTransport + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_DIAL, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportDialRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportDialResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportDialError>> =
+                    match host.dial(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportDialResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_OPEN, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportOpenRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportOpenResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportOpenError>> =
+                    match host.open(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportOpenResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_SEND, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportSendRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportSendResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportSendError>> =
+                    match host.send(&cx, request).await {
+                        Ok(_) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportSendResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_RECV, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportRecvRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportRecvResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportRecvError>> =
+                    match host.recv(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportRecvResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_RESET, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportResetRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportResetResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportResetError>> =
+                    match host.reset(&cx, request).await {
+                        Ok(_) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportResetResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_CLOSE, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportCloseRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportCloseResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportCloseError>> =
+                    match host.close(&cx, request).await {
+                        Ok(_) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportCloseResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_EVENTS, move |request_id: String, request: versioned::jam_peer_transport::HostJamPeerTransportEventsRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportEventsResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportEventsError>> =
+                    match host.events(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportEventsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
                         Err(err) => Err(downgrade_call_error(err, target_version)),

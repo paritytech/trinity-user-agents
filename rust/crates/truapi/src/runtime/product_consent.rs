@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
 	host_internal::permissions::{
-		authorization_status, cross_product_signature_key, set_authorization_status,
+		account_access_authorization_status, cross_product_signature_key, set_authorization_status,
 	},
 	platform::{
 		AccountAccessReview, CoreStorageKey, CreateTransactionReview, CrossProductSignatureKind,
@@ -50,7 +50,7 @@ impl ProductConsent {
 		target: &ProductId,
 		prompt: &dyn Platform,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		if requester == target || requester.has_trusted_remote_permissions() {
+		if requester == target {
 			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		// Filed per product, the granularity a manifest grant uses, so a refused
@@ -58,6 +58,9 @@ impl ProductConsent {
 		let pair = (requester.bare_label().to_string(), target.bare_label().to_string());
 		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
+		}
+		if requester.has_trusted_remote_permissions() {
+			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		let _prompt = self.permission_prompt.lock().await;
 		if let Some(status) = self.decided(requester, target).await? {
@@ -160,12 +163,9 @@ impl ProductConsent {
 		requester: &ProductId,
 		target: &ProductId,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
-		let stored = authorization_status(
-			self.platform.as_ref(),
-			CoreStorageKey::product_account_access_authorization(requester, target),
-		)
-		.await
-		.map_err(AccountAccessError::PermissionStorage)?;
+		let stored = account_access_authorization_status(self.platform.as_ref(), requester, target)
+			.await
+			.map_err(AccountAccessError::PermissionStorage)?;
 		if stored != PermissionAuthorizationStatus::NotDetermined {
 			return Ok(Some(stored));
 		}

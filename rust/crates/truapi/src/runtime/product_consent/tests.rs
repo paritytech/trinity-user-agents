@@ -59,6 +59,23 @@ fn a_stored_decision_overrides_allow_once() {
 	assert_eq!((access(&consent, "myapp.dot"), prompts(&platform)), (Denied, 1));
 }
 
+#[test]
+fn a_stored_refusal_blocks_trusted_cross_product_account_access() {
+	let (platform, consent) = consent_answering([]);
+	assert_eq!(access(&consent, "dim2.dot"), Authorized);
+	futures::executor::block_on(set_authorization_status(
+		platform.as_ref(),
+		CoreStorageKey::product_account_access_authorization(
+			&ProductId::for_test("dim2.dot"),
+			&ProductId::for_test("peopl.dot"),
+		),
+		Denied,
+	))
+	.unwrap();
+	assert_eq!(access(&consent, "dim2.dot"), Denied);
+	assert_eq!(prompts(&platform), 0);
+}
+
 /// Two calls racing for the same decision raise one prompt, and the
 /// second reuses its answer instead of asking again.
 #[test]

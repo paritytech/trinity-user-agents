@@ -51,7 +51,16 @@ cargo run -p truapi-codegen -- \
 
 The repo wraps both steps in [`scripts/codegen.sh`](../../../scripts/codegen.sh), which is what you should run from the repo root.
 
-CI passes the generated TypeScript and Rust output to the Rust job. `TRUAPI_REQUIRE_GENERATED_TS=1 cargo test -p truapi --test wire_table_ts_parity` enforces actual Rust/TypeScript wire-table parity; `cargo test -p truapi-client` exercises client frame codecs after regeneration. Generated Rust source is not compared against checked-in dispatcher or wire-table text snapshots.
+CI passes the generated TypeScript and Rust output to the Rust job. `TRUAPI_REQUIRE_GENERATED_TS=1 cargo test -p truapi --test wire_table_ts_parity` enforces actual Rust/TypeScript wire-table parity; `cargo test -p truapi-client` exercises client frame codecs after regeneration.
+
+`cargo test -p truapi-codegen --test golden_rust_emit` also compares dispatcher,
+wire-table, module, and host-callback output with `tests/golden`. A mismatch writes
+the generated output beside its expectation with an `.actual` suffix; there is
+no automatic update flag. Refresh expectations only from a generator and
+rustdoc JSON built from the current protocol, including host-specific
+extensions. Dispatcher, wire-table, and module snapshots use raw emitter
+output; callback snapshots use the pinned Prettier/Rustfmt configuration in
+the test.
 
 ## When to run it
 

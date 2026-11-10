@@ -1252,6 +1252,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.acquireWorker(productId: productId)
     }
 
+    /// Report an unexpected worker exit so the core can restart it while demand remains.
+    public func workerExited(productId: ProductId) {
+        inner.workerExited(productId: productId)
+    }
+
     /// Release one reference. The last one reports `.stop`, after which the
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: ProductId) {
@@ -1380,6 +1385,21 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
+    }
+
+    /// Submit a lite username for the active local session using the configured network.
+    /// `backendURL` includes the API prefix, such as `/api/v1`. The returned
+    /// backend assignment must still be verified on chain before it is installed.
+    public func registerLiteUsername(
+        usernameBase: String,
+        preferredDigits: String?,
+        backendURL: String
+    ) async throws -> String {
+        try await inner.registerLiteUsername(
+            usernameBase: usernameBase,
+            preferredDigits: preferredDigits,
+            backendUrl: backendURL
+        )
     }
 
     /// Answer one decrypted SSO remote message from the wallet-managed

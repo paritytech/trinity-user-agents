@@ -4760,10 +4760,11 @@ fn get_account_answers_when_host_storage_never_returns() {
 	let Some(result) = outcome else {
 		panic!("get_account never answered a host whose storage does not return");
 	};
-	assert!(
-		result.is_err(),
-		"a host that cannot answer its own storage must not resolve an account"
-	);
+	assert!(matches!(
+		result,
+		Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Unknown { .. })))
+	));
+	assert!(matches!(cx.cancel().reason(), Some(CancellationReason::TimedOut { .. })));
 }
 
 #[test]

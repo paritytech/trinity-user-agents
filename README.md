@@ -222,6 +222,24 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
+Unexpected exits are reported through `workerExited`; the core decides whether
+remaining demand requires a restart.
+Native hosts can call `registerLiteUsername` after activating a local session.
+The core authenticates to the configured identity backend as the RFC-0028
+identity account and signs registration with People/Asset Hub metadata contexts
+and Asset Hub chain time. Preferred digits remain strings. The returned backend
+assignment still requires an on-chain ownership check before the host saves it;
+session replacement rejects in-flight registration results. Explicit identity
+refreshes and activation-time username lookups commit metadata only under the
+captured wallet activation, including when the same wallet is reinstalled.
+Auth callbacks run outside wallet locks; a callback may disconnect without
+letting an older username refresh reconnect the UI.
+
+Account-access settings and product consent use the same product-scoped decision.
+An explicit Block, including an older exact-ID decision, overrides stored grants
+and trusted-product defaults. A new settings decision replaces the old exact-ID
+record. Account derivation stays bound to the request's selected wallet session,
+so a request interrupted by wallet replacement cannot return the new wallet's account.
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or
@@ -478,6 +496,11 @@ so `make dev` leaves the board empty with no error.
 2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
+
+Own-product account resolution bounds persisted-subtree reads and their
+confirmation prompt by the call's timeout (or the authority default). Expiry
+cancels the shared call token and returns a typed account error after the
+bounded cancellation unwind, even when a host storage callback never answers.
 
 Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
 `async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript

@@ -409,7 +409,8 @@ pub mod testing {
 				serde_json::json!([key, value])
 			})
 			.collect();
-		serde_json::json!([{ "block": "0xscripted", "changes": changes }]).to_string()
+		let block = params[1].as_str().unwrap_or("0xscripted");
+		serde_json::json!([{ "block": block, "changes": changes }]).to_string()
 	}
 
 	fn params_json(params: Option<Box<RawValue>>) -> String {

@@ -314,6 +314,7 @@ fn statement_store_create_proof_authorized_signs_with_allowance_key() {
 	let payload = statement_payload(statement.clone());
 	let (allowance_secret, expected_signer) = allowance_key(11);
 	let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
         sso_response_script: Some(sso_success_response_script(
             &session,
             crate::host_internal::sso_messages::RemoteMessage {
@@ -340,7 +341,7 @@ fn statement_store_create_proof_authorized_signs_with_allowance_key() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	host.test_session_state().set_session(session.clone());
 	let cx = CallContext::with_request_id("proof-auth-1".to_string());
-	let request = RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement);
+	let request = RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement.clone());
 
 	let response =
 		futures::executor::block_on(StatementStore::create_proof_authorized(&host, &cx, request))
@@ -352,6 +353,24 @@ fn statement_store_create_proof_authorized_signs_with_allowance_key() {
 	};
 	assert_eq!(signer, expected_signer);
 	assert_sr25519_signature(signer, signature, &payload);
+	futures::executor::block_on(host.set_permission_authorization_status(
+		crate::platform::PermissionAuthorizationRequest::StatementStoreAllowance {
+			derivation_index: None,
+		},
+		crate::platform::PermissionAuthorizationStatus::Denied,
+	))
+	.unwrap();
+	// Cached private material must not bypass a revoked product decision.
+	assert!(matches!(
+		futures::executor::block_on(StatementStore::create_proof_authorized(
+			&host,
+			&cx,
+			RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement),
+		)),
+		Err(CallError::Domain(RemoteStatementStoreCreateProofAuthorizedError::V1(
+			latest::RemoteStatementStoreCreateProofError::UnableToSign
+		)))
+	));
 
 	let message = submitted_remote_message(&platform, &session);
 	let crate::host_internal::sso_messages::RemoteMessageData::V1(

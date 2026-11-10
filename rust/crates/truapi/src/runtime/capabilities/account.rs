@@ -30,11 +30,12 @@ use truapi::{
 use truapi::versioned::IntoLatest;
 
 use crate::runtime::{
-	ProductRuntimeHost, account_get_authority_error, authority::chat_requires_preimage_submit,
+	DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, Instant, ProductRuntimeHost,
+	account_get_authority_error, authority::chat_requires_preimage_submit,
 	product_device_chat_authority_error, product_manifest, remote_authority_call,
-	remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
-	ring_vrf_register_error, ring_vrf_sign_error, until_cancelled, validate_vrf_transcript,
-	versioning::version, vrf_call_error,
+	remote_authority_context, remote_authority_context_until, ring_vrf_alias_error,
+	ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
+	until_cancelled, validate_vrf_transcript, versioning::version, vrf_call_error,
 };
 
 #[async_trait::async_trait]
@@ -52,6 +53,8 @@ impl Account for ProductRuntimeHost {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
+				let deadline = Instant::now() +
+					cx.timeout().unwrap_or(DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT);
 
 				if &owner != self.connection.product_id() {
 					let access = self.accounts.consent().account_access(
@@ -70,20 +73,38 @@ impl Account for ProductRuntimeHost {
 							return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
 						},
 					}
-				} else if self
-					.accounts
-					.subtree_resolution_reaches_account_holder(&session, &owner)
+				} else {
+					let authority_cx = remote_authority_context_until(
+						cx,
+						DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+						deadline,
+					);
+					remote_authority_call(&authority_cx, async {
+						if self
+							.accounts
+							.subtree_resolution_reaches_account_holder(&session, &owner)
+							.await
+						{
+							let review =
+								UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+									product_id: owner.clone(),
+								});
+							self.confirm(&authority_cx, review).await?;
+						}
+						Ok(())
+					})
 					.await
-				{
-					let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-						product_id: owner.clone(),
-					});
-					self.confirm(cx, review).await.map_err(account_get_authority_error)?;
+					.map_err(account_get_authority_error)?;
 				}
+				let authority_cx = remote_authority_context_until(
+					cx,
+					DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+					deadline,
+				);
 
 				let public_key = self
 					.product_account_public_key(
-						cx,
+						&authority_cx,
 						&session,
 						&owner,
 						&product_account_id.derivation_index,

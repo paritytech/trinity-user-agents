@@ -36,6 +36,10 @@ mod tests;
 
 const MAGIC: &[u8; 4] = b"HCHS";
 const VERSION: u16 = 3;
+// Epoca's host moves its pre-main hashed files to canonical slots and marks
+// their envelopes explicitly. Only this marker permits the one-way cipher
+// migration; a failed canonical decryption never tries an older key.
+const EPOCA_LEGACY_ENVELOPE: &[u8; 5] = b"EPCH\x01";
 const HEADER_BYTES: usize = 4 + 2 + 24;
 const TAG_BYTES: usize = 16;
 // A retained legacy snapshot and a bounded (16 MiB) authenticated HOP handoff
@@ -134,13 +138,34 @@ struct SnapshotCipher {
 
 impl SnapshotCipher {
 	fn new(storage_key: &CoreStorageKey, entropy: &[u8]) -> Result<Self, ChatError> {
+		Self::with_key_index(storage_key, entropy, None)
+	}
+
+	fn epoca_legacy(storage_key: &CoreStorageKey, entropy: &[u8]) -> Result<Self, ChatError> {
+		let index = match storage_key {
+			CoreStorageKey::NativeChatDevice { .. } => 14,
+			CoreStorageKey::NativeChatFileChunk { .. } => 15,
+			_ => return Err(ChatError::StorageUnavailable),
+		};
+		Self::with_key_index(storage_key, entropy, Some(index))
+	}
+
+	fn with_key_index(
+		storage_key: &CoreStorageKey,
+		entropy: &[u8],
+		legacy_index: Option<u8>,
+	) -> Result<Self, ChatError> {
 		if entropy.is_empty() {
 			return Err(ChatError::NotConnected);
 		}
 		let mut aad = b"truapi/host/native-chat/snapshot\0".to_vec();
 		aad.extend_from_slice(MAGIC);
 		aad.extend_from_slice(&VERSION.to_le_bytes());
+		let key_offset = aad.len();
 		storage_key.encode_to(&mut aad);
+		if let Some(index) = legacy_index {
+			aad[key_offset] = index;
+		}
 		let mut key = Zeroizing::new([0; 32]);
 		Hkdf::<Sha256>::new(Some(b"truapi/host/native-chat/snapshot-key/v1"), entropy)
 			.expand(&aad, &mut *key)
@@ -276,6 +301,14 @@ impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
 			.await
 			.map_err(|_| ChatError::StorageUnavailable)?;
 		let (state, replacement) = match stored {
+			Some(bytes) if bytes.starts_with(EPOCA_LEGACY_ENVELOPE) => {
+				let legacy = SnapshotCipher::epoca_legacy(&storage_key, entropy)?;
+				let state = legacy.decrypt(&bytes[EPOCA_LEGACY_ENVELOPE.len()..])?;
+				let replacement = cipher.encrypt(&state)?;
+				// The ordinary durable initialization path below owns this
+				// write through cancellation and publishes only after success.
+				(state, Some(replacement))
+			},
 			Some(bytes) => {
 				let state = cipher.decrypt(&bytes)?;
 				// A post-rename failure did not prove directory durability.

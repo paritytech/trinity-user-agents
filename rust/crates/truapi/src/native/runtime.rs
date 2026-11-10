@@ -1,3 +1,5 @@
+mod registration;
+
 use std::{
 	collections::HashMap,
 	sync::{

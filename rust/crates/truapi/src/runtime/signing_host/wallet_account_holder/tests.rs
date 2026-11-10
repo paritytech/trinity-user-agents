@@ -70,3 +70,56 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 		assert_eq!(session.identity_account_id, Some(identity.public.to_bytes()));
 	}
 }
+
+#[test]
+fn identity_entropy_rejects_replaced_and_reinstalled_activations() {
+	let wallet = wallet("paseo");
+	let (original, original_account) = wallet.identity_activation().unwrap();
+	assert_eq!(wallet.identity_entropy(original).unwrap().as_slice(), &[7; 32]);
+
+	wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+	let (replacement, replacement_account) = wallet.identity_activation().unwrap();
+	assert_ne!(original_account, replacement_account);
+	assert!(matches!(wallet.identity_entropy(original), Err(AuthorityError::Disconnected)));
+	assert_eq!(wallet.identity_entropy(replacement).unwrap().as_slice(), &[8; 32]);
+
+	wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+	assert_eq!(wallet.identity_activation().unwrap().1, original_account);
+	assert!(matches!(wallet.identity_entropy(original), Err(AuthorityError::Disconnected)));
+	wallet.clear();
+	assert!(matches!(wallet.identity_activation(), Err(AuthorityError::Disconnected)));
+	assert!(matches!(wallet.identity_entropy(replacement), Err(AuthorityError::Disconnected)));
+}
+
+#[test]
+fn identity_metadata_commit_rejects_reinstalled_and_disconnected_activations() {
+	let wallet = wallet("paseo");
+	let (original, _) = wallet.identity_activation().unwrap();
+	wallet
+		.update_identity(original, (Some("original.01".to_string()), None))
+		.unwrap();
+	wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+	let (current, _) = wallet
+		.install(wallet.prepare_activation(vec![7; 32], Some("current.02".to_string())).unwrap());
+	assert!(matches!(
+		wallet.update_identity(original, (Some("stale.03".to_string()), None)),
+		Err(AuthorityError::Disconnected),
+	));
+	assert_eq!(
+		wallet.session_state().current().unwrap().lite_username.as_deref(),
+		Some("current.02"),
+	);
+	wallet
+		.update_identity(current, (Some("verified.04".to_string()), None))
+		.unwrap();
+	assert_eq!(
+		wallet.session_state().current().unwrap().lite_username.as_deref(),
+		Some("verified.04"),
+	);
+	wallet.clear();
+	assert!(matches!(
+		wallet.update_identity(current, (Some("stale.05".to_string()), None)),
+		Err(AuthorityError::Disconnected),
+	));
+	assert!(wallet.session_state().current().is_none());
+}

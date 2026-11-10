@@ -258,6 +258,7 @@ pub struct StubPlatform {
 	/// the backing platform (and thereby bypassing process-local ownership).
 	pub core_read_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
 	pub core_write_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
+	pub core_clear_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
 	/// Every product storage write that reached the platform, in order, so a
 	/// test can see which writes the core skipped.
 	pub local_storage_writes: Arc<Mutex<Vec<StorageWrite>>>,
@@ -1215,6 +1216,9 @@ impl PlatformCoreStorage for StubPlatform {
 			return storage.clear_core_storage(key).await;
 		}
 		self.check_coinage_storage(&key)?;
+		if self.core_clear_failures.lock().contains(&core_storage_test_key(key.clone())) {
+			return Err(v01::GenericError { reason: "injected core clear failure".into() });
+		}
 		if let CoreStorageKey::AuthSession = key {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());

@@ -264,7 +264,10 @@ impl SigningHost {
 		&self,
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
-		self.wallet.derive_subtree_public_key(product_id)
+		let Some(session) = self.wallet.current_session() else {
+			return Ok(None);
+		};
+		self.wallet.derive_subtree_public_key(&session, product_id).map(Some)
 	}
 
 	/// Forget this activation's grants and Allow once answers, then make
@@ -338,10 +341,8 @@ impl SigningHost {
 				self.grants.retain_allowance(&session, revision, product_id, &allowance).await
 			},
 			AccountGrant::AutoSigning(key) => {
-				let expected = self
-					.wallet
-					.derive_subtree_public_key(product_id)?
-					.ok_or(AuthorityError::Disconnected)?;
+				let expected =
+					self.wallet.derive_subtree_public_key(authority_session, product_id)?;
 				self.grants
 					.remember_auto_signing_key(&session, revision, product_id, expected, key)
 					.await
@@ -496,10 +497,9 @@ impl ProductAuthority for SigningHost {
 		session: &AuthoritySession,
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.wallet.require_current_session(session)?;
-		self.wallet
-			.derive_subtree_public_key(product_id)?
-			.ok_or(AuthorityError::Disconnected)
+		#[cfg(test)]
+		tests::before_subtree_derivation();
+		self.wallet.derive_subtree_public_key(session, product_id)
 	}
 
 	async fn subtree_resolution_reaches_account_holder(

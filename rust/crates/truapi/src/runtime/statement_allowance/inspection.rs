@@ -1085,22 +1085,13 @@ mod tests {
 		}
 		let collection = PersonhoodCollection::LitePeople;
 		let member = proof::member_key_now([7; 32]);
-		let block = account_hex(&[1; 32]);
-		let response = |key: Vec<u8>, bytes: Vec<u8>| {
-			json!([{
-				"block": block,
-				"changes": [[
-					format!("0x{}", hex::encode(key)),
-					format!("0x{}", hex::encode(bytes)),
-				]],
-			}])
-			.to_string()
-		};
+		// Each storage key in a batch consumes the next scripted value.
+		let value = |bytes: Vec<u8>| format!(r#""0x{}""#, hex::encode(bytes));
 		let replies = [
-			response(ring::ring_keys_status_key(collection, 1), (1u32, 0u32, None::<u64>).encode()),
-			response(ring::ring_keys_key(collection, 1, 0), vec![member].encode()),
-			response(ring::ring_keys_status_key(collection, 0), (1u32, 1u32, None::<u64>).encode()),
-			response(ring::ring_keys_key(collection, 0, 0), vec![member].encode()),
+			value((1u32, 0u32, None::<u64>).encode()),
+			value(vec![member].encode()),
+			value((1u32, 1u32, None::<u64>).encode()),
+			value(vec![member].encode()),
 		];
 		let chain = ReadOnlyChain {
 			rpc: RpcClient::new(HostRpcClient::new(ScriptedRpc::new(
@@ -1112,7 +1103,7 @@ mod tests {
 			.unwrap(),
 			observation: AllowanceObservation {
 				genesis_hash: account_hex(&[0; 32]),
-				block_hash: block,
+				block_hash: account_hex(&[1; 32]),
 				block_number: 19,
 				spec_version: 1,
 				chain_timestamp: 0,

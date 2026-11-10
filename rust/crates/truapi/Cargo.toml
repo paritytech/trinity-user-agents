@@ -88,6 +88,7 @@ runtime = [
     "dep:web-sys",
     "dep:tokio",
     "dep:tokio-tungstenite",
+    "dep:reqwest",
     "dep:base64",
     "dep:rand",
     "dep:libc",
@@ -168,6 +169,7 @@ uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
 base64 = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
 # JAMNP-S QUIC is native-only; browsers dial WebTransport in JavaScript.
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"], optional = true }

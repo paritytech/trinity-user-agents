@@ -6679,6 +6679,7 @@ dependencies = [
  "quinn",
  "rand 0.8.7",
  "rcgen",
+ "reqwest",
  "ring",
  "rusqlite",
  "rusqlite_migration",

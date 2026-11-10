@@ -399,3 +399,228 @@ fn a_cancelled_account_request_stops_waiting_for_the_prompt() {
 		"{result:?}"
 	);
 }
+
+#[test]
+fn public_settings_denial_blocks_trusted_and_previously_granted_accounts() {
+	use crate::platform::{
+		PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
+	};
+
+	for caller in ["dim2.dot", "myapp.dot"] {
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[PermissionDecision::AllowAlways].into(),
+			),
+			..Default::default()
+		});
+		let (services, authority) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let runtime = product_runtime_for(services.clone(), authority.clone(), caller);
+		let permission = || PermissionAuthorizationRequest::AccountAccess {
+			target_product_id: ProductId::for_test("peopl.dot"),
+		};
+		futures::executor::block_on(
+			runtime.get_account(&CallContext::default(), peopl_account_request()),
+		)
+		.expect("trusted fallback or AllowAlways initially permits access");
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			permission(),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(
+				runtime.connection.permission_authorization_status(permission()),
+			),
+			Ok(PermissionAuthorizationStatus::Denied),
+		);
+		for spelling in [caller.to_string(), format!("child.{caller}")] {
+			let runtime = product_runtime_for(services.clone(), authority.clone(), &spelling);
+			assert_eq!(
+				futures::executor::block_on(
+					runtime.get_account(&CallContext::default(), peopl_account_request()),
+				),
+				Err(CallError::Domain(
+					HostAccountGetError::V1(v01::HostAccountGetError::Rejected,)
+				)),
+				"settings Block must stop account access for {spelling}",
+			);
+		}
+	}
+}
+
+#[test]
+fn either_stored_account_denial_wins_until_public_settings_replace_it() {
+	use crate::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus};
+
+	for canonical in
+		[PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied]
+	{
+		let platform = Arc::new(StubPlatform::default());
+		let (services, authority) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let runtime = product_runtime(services, authority);
+		let permission = || PermissionAuthorizationRequest::AccountAccess {
+			target_product_id: ProductId::for_test("peopl.dot"),
+		};
+		futures::executor::block_on(
+			runtime.set_permission_authorization_status(permission(), canonical),
+		)
+		.unwrap();
+		// Simulate a surviving decision made by the previous exact-ID settings API.
+		let legacy = if canonical == PermissionAuthorizationStatus::Authorized {
+			PermissionAuthorizationStatus::Denied
+		} else {
+			PermissionAuthorizationStatus::Authorized
+		};
+		futures::executor::block_on(crate::host_internal::permissions::set_authorization_status(
+			platform.as_ref(),
+			CoreStorageKey::account_access_authorization(
+				&ProductId::for_test("myapp.dot"),
+				&ProductId::for_test("peopl.dot"),
+			),
+			legacy,
+		))
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(
+				runtime.connection.permission_authorization_status(permission()),
+			),
+			Ok(PermissionAuthorizationStatus::Denied),
+		);
+		assert_eq!(
+			futures::executor::block_on(
+				runtime.get_account(&CallContext::default(), peopl_account_request()),
+			),
+			Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))),
+		);
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			permission(),
+			PermissionAuthorizationStatus::Authorized,
+		))
+		.unwrap();
+		futures::executor::block_on(
+			runtime.get_account(&CallContext::default(), peopl_account_request()),
+		)
+		.expect("an explicit new grant replaces both historical decisions");
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			permission(),
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(
+				runtime.connection.permission_authorization_status(permission()),
+			),
+			Ok(PermissionAuthorizationStatus::NotDetermined),
+		);
+	}
+}
+
+#[test]
+fn failed_account_settings_updates_keep_readback_and_access_denied_until_retry() {
+	use crate::{
+		platform::{
+			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
+		},
+		test_support::core_storage_test_key,
+	};
+
+	for next in
+		[PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::NotDetermined]
+	{
+		for fail_legacy in [false, true] {
+			let platform = Arc::new(StubPlatform {
+				permission_confirmation_decisions: std::sync::Mutex::new(
+					[PermissionDecision::Deny].into(),
+				),
+				..Default::default()
+			});
+			let (services, authority) = signing_runtime_with_platform(platform.clone());
+			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+				.unwrap();
+			let runtime = product_runtime(services, authority);
+			let requester = ProductId::for_test("myapp.dot");
+			let target = ProductId::for_test("peopl.dot");
+			let permission = || PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: target.clone(),
+			};
+			let legacy = CoreStorageKey::account_access_authorization(&requester, &target);
+			futures::executor::block_on(runtime.set_permission_authorization_status(
+				permission(),
+				PermissionAuthorizationStatus::Denied,
+			))
+			.unwrap();
+			futures::executor::block_on(
+				crate::host_internal::permissions::set_authorization_status(
+					platform.as_ref(),
+					legacy.clone(),
+					PermissionAuthorizationStatus::Denied,
+				),
+			)
+			.unwrap();
+
+			let failing_key = core_storage_test_key(if fail_legacy {
+				legacy
+			} else {
+				CoreStorageKey::product_account_access_authorization(&requester, &target)
+			});
+			if fail_legacy || next == PermissionAuthorizationStatus::NotDetermined {
+				platform.core_clear_failures.lock().insert(failing_key);
+			} else {
+				platform.core_write_failures.lock().insert(failing_key);
+			}
+			assert!(
+				futures::executor::block_on(
+					runtime.set_permission_authorization_status(permission(), next,)
+				)
+				.is_err()
+			);
+			assert_eq!(
+				futures::executor::block_on(
+					runtime.connection.permission_authorization_status(permission()),
+				),
+				Ok(PermissionAuthorizationStatus::Denied),
+			);
+			assert_eq!(
+				futures::executor::block_on(
+					runtime.get_account(&CallContext::default(), peopl_account_request()),
+				),
+				Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))),
+			);
+			assert!(platform.account_access_reviews.lock().unwrap().is_empty());
+
+			platform.core_clear_failures.lock().clear();
+			platform.core_write_failures.lock().clear();
+			futures::executor::block_on(
+				runtime.set_permission_authorization_status(permission(), next),
+			)
+			.unwrap();
+			assert_eq!(
+				futures::executor::block_on(
+					runtime.connection.permission_authorization_status(permission()),
+				),
+				Ok(next),
+			);
+			let account = futures::executor::block_on(
+				runtime.get_account(&CallContext::default(), peopl_account_request()),
+			);
+			if next == PermissionAuthorizationStatus::Authorized {
+				account.expect("Allow replaces the old denial after storage recovers");
+				assert!(platform.account_access_reviews.lock().unwrap().is_empty());
+			} else {
+				assert_eq!(
+					account,
+					Err(CallError::Domain(HostAccountGetError::V1(
+						v01::HostAccountGetError::Rejected
+					))),
+				);
+				assert_eq!(
+					platform.account_access_reviews.lock().unwrap().len(),
+					1,
+					"reset must ask again rather than retain either old denial"
+				);
+			}
+		}
+	}
+}

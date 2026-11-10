@@ -253,12 +253,12 @@ impl WalletAccountHolder {
 	}
 
 	/// Install under the host's grant lock so session and grant changes are atomic.
-	pub fn install(&self, activation: PreparedWalletActivation) -> SessionInfo {
+	pub fn install(&self, activation: PreparedWalletActivation) -> (u64, SessionInfo) {
 		let mut state = self.lifecycle.lock().expect("wallet lifecycle mutex poisoned");
 		state.advance();
 		state.keys = Some(activation.keys);
 		self.session_state.set_session(activation.session.clone());
-		activation.session
+		(state.activation, activation.session)
 	}
 
 	/// Clear under the host's grant lock, dropping the active wallet secrets.
@@ -286,11 +286,47 @@ impl WalletAccountHolder {
 		&self.network_suffix
 	}
 
-	/// The activation the wallet installed now was installed under. Advances
-	/// on every install and clear, so a caller holding one can tell later
-	/// whether the wallet it began under is still the wallet.
-	pub fn activation(&self) -> u64 {
-		self.lifecycle.lock().expect("wallet lifecycle mutex poisoned").activation
+	/// Snapshot the activation and its identity under the wallet lifecycle lock.
+	pub(super) fn identity_activation(&self) -> Result<(u64, [u8; 32]), AuthorityError> {
+		let state = self.lifecycle.lock().expect("wallet lifecycle mutex poisoned");
+		let account = self
+			.session_state
+			.current()
+			.and_then(|session| session.identity_account_id)
+			.ok_or(AuthorityError::Disconnected)?;
+		Ok((state.activation, account))
+	}
+
+	/// Commit resolved names only to the activation that started the lookup.
+	pub(super) fn update_identity(
+		&self,
+		activation: u64,
+		usernames: (Option<String>, Option<String>),
+	) -> Result<SessionInfo, AuthorityError> {
+		let state = self.lifecycle.lock().expect("wallet lifecycle mutex poisoned");
+		if state.activation != activation || state.keys.is_none() {
+			return Err(AuthorityError::Disconnected);
+		}
+		let mut session = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
+		(session.lite_username, session.full_username) = usernames;
+		self.session_state.set_session(session.clone());
+		Ok(session)
+	}
+
+	/// Copy entropy only from the activation that requested the proof.
+	pub(super) fn identity_entropy(
+		&self,
+		activation: u64,
+	) -> Result<Zeroizing<Vec<u8>>, AuthorityError> {
+		let state = self.lifecycle.lock().expect("wallet lifecycle mutex poisoned");
+		if state.activation != activation {
+			return Err(AuthorityError::Disconnected);
+		}
+		state
+			.keys
+			.as_ref()
+			.map(|keys| keys.entropy.clone())
+			.ok_or(AuthorityError::Disconnected)
 	}
 
 	/// A copy of the active wallet's root entropy for a caller that derives

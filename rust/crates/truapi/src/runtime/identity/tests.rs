@@ -363,3 +363,89 @@ fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
 
 	assert_eq!(follows_for(2), follows_for(1));
 }
+
+#[test]
+fn activation_username_lookup_cannot_publish_into_a_reinstalled_wallet() {
+	use crate::runtime::{HostSession, LocalActivation, RuntimeServices, SigningHostRole};
+	use futures::future::BoxFuture;
+
+	let chain =
+		ChainRuntime::new(Arc::new(ScriptedAssetHub::new()), thread_per_subscription_spawner());
+	let identity = futures::executor::block_on(lookup_dotns_identity(&chain, [0xcc; 32], ACCOUNT))
+		.unwrap()
+		.unwrap();
+	for change in ["unchanged", "replace", "reinstall", "disconnect", "disconnect_on_publish"] {
+		let platform = Arc::new(crate::test_support::StubPlatform::default());
+		let tasks = Arc::new(parking_lot::Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+		let queue = tasks.clone();
+		let services = RuntimeServices::new(
+			platform.clone(),
+			crate::platform::HostInfo {
+				name: "Identity regression".to_string(),
+				icon: None,
+				version: None,
+				platform: truapi::latest::HostPlatform::Unknown,
+			},
+			[0; 32],
+			[0xbb; 32],
+			[0xcc; 32],
+			Arc::new(move |task| queue.lock().push(task)),
+		);
+		let host = SigningHostRole::new(services.clone(), "paseo".to_string(), None);
+		let activate = |entropy| {
+			futures::executor::block_on(host.activate_local_session_with_identity(
+				vec![entropy; 16],
+				Some("installed.02".to_string()),
+			))
+			.unwrap();
+		};
+		activate(7);
+		let mut background = tasks.lock().pop().unwrap();
+		let session = host.session_state().current().unwrap();
+		let answer = identity.clone();
+		let read = services
+			.dotns_reads
+			.identities
+			.run(SessionAccounts::of(&session), move || async move { Some(answer) });
+		futures::pin_mut!(read);
+		assert!(read.as_mut().now_or_never().is_none());
+		let lookup = tasks.lock().pop().unwrap();
+		assert!(background.as_mut().now_or_never().is_none());
+		match change {
+			"replace" => activate(8),
+			"reinstall" => {
+				activate(8);
+				activate(7);
+			},
+			"disconnect" => futures::executor::block_on(host.disconnect()),
+			"disconnect_on_publish" => {
+				let host = Arc::downgrade(&host);
+				*platform.on_auth_state.lock().unwrap() = Some(Arc::new(move |state| {
+					if matches!(state, crate::platform::AuthState::Connected(_)) {
+						host.upgrade().unwrap().disconnect().now_or_never().unwrap();
+					}
+				}));
+			},
+			"unchanged" => {},
+			_ => unreachable!(),
+		}
+		futures::executor::block_on(lookup);
+		futures::executor::block_on(background);
+		let current = host.session_state().current();
+		assert_eq!(
+			current.as_ref().and_then(|session| session.lite_username.as_deref()),
+			match change {
+				"unchanged" => Some("alice.01"),
+				"disconnect" | "disconnect_on_publish" => None,
+				_ => Some("installed.02"),
+			},
+			"{change}: only the activation that requested the lookup may publish its names",
+		);
+		if matches!(change, "disconnect" | "disconnect_on_publish") {
+			assert_eq!(
+				platform.auth_states.lock().unwrap().last(),
+				Some(&crate::platform::AuthState::Disconnected),
+			);
+		}
+	}
+}

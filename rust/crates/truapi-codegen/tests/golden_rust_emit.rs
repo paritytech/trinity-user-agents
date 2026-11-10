@@ -57,7 +57,11 @@ fn quoted_strings_in_const_array(src: &str, const_name: &str) -> Vec<String> {
 /// Path to the rustdoc JSON of `truapi`'s protocol definitions alone, the
 /// input codegen reads the API from, building it on first use.
 fn produce_rustdoc_json(workspace_root: &Path) -> PathBuf {
-	produce_rustdoc_json_for_package(workspace_root, "truapi", &["--no-default-features"])
+	produce_rustdoc_json_for_package(
+		workspace_root,
+		"truapi",
+		&["--no-default-features", "--features", "host-api"],
+	)
 }
 
 /// Path to `package`'s rustdoc JSON built with `cargo_args`, building it on

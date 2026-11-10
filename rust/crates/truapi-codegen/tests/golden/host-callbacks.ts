@@ -11,11 +11,14 @@ import {
   Bytes32,
   ChainIdentifier,
   CodeFormat,
+  DerivationIndex,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
+  HostNativeChatAttachmentMetadata,
+  HostNativeChatPayment,
   HostSignPayloadRequest,
   HostSignPayloadWithLegacyAccountRequest,
   HostSignRawRequest,
@@ -148,6 +151,16 @@ export interface ChainExtensionVersion {
 }
 
 /**
+ * Review shown before a product binds or uses wallet-held Chat identity authority.
+ */
+export interface ChatAuthorityReview {
+  /**
+   * Product requesting the Chat identity operation.
+   */
+  productId: string;
+}
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -242,6 +255,16 @@ export type CoreStorageKey =
    */
   | { tag: "ProductManifest"; value: { productLabel: string } }
   /**
+   * Encrypted main-purse inventory, operation journal, and claim recovery state.
+   *
+   * This slot is wallet-owned, not product-owned, and must survive clearing a
+   * product's data. Writes replace the entire value atomically.
+   */
+  | {
+      tag: "MainPurseCoinage";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
+  /**
    * A product's Worker executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
@@ -250,7 +273,42 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * Previously initialized Chat products to restore after this wallet unlocks.
+   *
+   * This is a host-private wallet-owned index, not a permission grant. The
+   * core rechecks each product's current grants before restoring reception.
+   */
+  | {
+      tag: "NativeChatProducts";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
+  /**
+   * Encrypted Host-owned native Chat device, peer roster, and migration state.
+   */
+  | {
+      tag: "NativeChatDevice";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      };
+    }
+  /**
+   * One encrypted, bounded native Chat attachment cache chunk.
+   * Values use the Chat state's wallet-bound authenticated encryption.
+   */
+  | {
+      tag: "NativeChatFileChunk";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      };
+    };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -602,6 +660,337 @@ export type LegacySigningAccount =
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
 
 /**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export interface MainPurseChatPaymentReview {
+  /**
+   * Authenticated product requesting this payment.
+   */
+  callingProductId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's native Chat session.
+   */
+  recipientIdentity: Uint8Array;
+
+  /**
+   * Host-resolved username for that identity, never a product display label.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Exact recipient amount in cents of the selected Coinage asset.
+   */
+  amountCents: bigint;
+
+  /**
+   * Maximum main-purse debit, including any approved fee, in the same cents.
+   */
+  maxDebitCents: bigint;
+
+  /**
+   * Genesis hash of the Host-selected Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Trusted Coinage asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+
+  /**
+   * Immutable, wallet-scoped payment operation being authorized.
+   */
+  operationId: Uint8Array;
+}
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export interface NativeChatFileExportRequest {
+  /**
+   * Authenticated product requesting presentation.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated peer identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved peer name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Verified attachment metadata, including the exact export size.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export interface NativeChatFilePickRequest {
+  /**
+   * Authenticated product requesting selection.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated recipient identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved recipient name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Maximum number of files the Host can accept.
+   */
+  maxFiles: number;
+}
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export interface NativeChatPickedFile {
+  /**
+   * Opaque private handle surviving restart until explicitly released.
+   */
+  sourceId: string;
+
+  /**
+   * Actual source size and native media metadata.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
+
+/**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export type NativeCoinageFailure =
+  | "Unavailable"
+  | "InvalidRequest"
+  | "InvalidSource"
+  | "OperationConflict"
+  | "OperationNotFound"
+  | "InsufficientBalance"
+  | "UserRejected";
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export interface NativeCoinageMemo {
+  /**
+   * Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
+   */
+  secretKeys: Array<Uint8Array>;
+
+  /**
+   * Exact total in canonical decimal raw chain units.
+   */
+  totalValueRaw: string;
+}
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export type NativeCoinageOperation =
+  /**
+   * Read trusted denomination metadata without selecting or allocating inventory.
+   */
+  | { tag: "Denomination"; value?: undefined }
+  /**
+   * Native trusted UI must review the exact intent and maximum debit before spending.
+   * Replays must reuse persisted preparation, never allocate a second payment.
+   * Before returning a memo, native custody must survive restart atomically with
+   * transaction registration. Startup must never release these coins as provisional.
+   */
+  | { tag: "PreparePayment"; value: { intent: NativeCoinagePaymentIntent } }
+  /**
+   * Called only after the authenticated Host durably accepts encrypted delivery.
+   * Records transport acceptance; it is not the first durable native custody mark.
+   */
+  | {
+      tag: "CommitHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Immutable public cards; do not initialize or claim an unrelated wallet.
+   */
+  | { tag: "Views"; value: { productId: string } }
+  /**
+   * Accepted ids come from the Host's durable ciphertext custody ledger.
+   */
+  | {
+      tag: "PendingHandoffs";
+      value: { productId: string; acceptedOperations: Array<Uint8Array> };
+    }
+  /**
+   * Read an existing recoverable handoff without approval, selection or spending.
+   */
+  | {
+      tag: "ReadHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Peer acknowledgment is not monetary settlement.
+   */
+  | {
+      tag: "NoteDelivery";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Resume already-owned work only; never authorize a fresh debit.
+   */
+  | { tag: "Reconcile"; value?: undefined }
+  /**
+   * Persist source custody before returning. Only finalized credit is successful.
+   * Reordered sources reuse the same id; changed minimum or overlapping custody conflicts.
+   */
+  | {
+      tag: "TopUp";
+      value: {
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      };
+    };
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export interface NativeCoinagePaymentIntent {
+  /**
+   * Stable wallet-, network- and product-scoped operation identity.
+   */
+  operationId: Uint8Array;
+
+  /**
+   * Authenticated calling product, not a guest-provided display name.
+   */
+  productId: string;
+
+  /**
+   * Original caller request identifier, bound immutably to this intent.
+   */
+  requestId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's Chat authority.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Independently resolved recipient name, when available.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Positive recipient amount in cents of the configured Coinage asset.
+   */
+  amountCents: bigint;
+}
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export interface NativeCoinageRequest {
+  /**
+   * Expected owner and asset, verified against the active native wallet.
+   */
+  scope: NativeCoinageScope;
+
+  /**
+   * Host-private command; incoming sources must never be logged.
+   */
+  operation: NativeCoinageOperation;
+}
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export type NativeCoinageResponse =
+  /**
+   * Trusted denomination metadata for the selected wallet/asset.
+   */
+  | { tag: "Denomination"; value: { centsUnitRaw: string } }
+  /**
+   * Existing durable native preparation, or a terminal public payment.
+   */
+  | {
+      tag: "Prepared";
+      value: { payment: HostNativeChatPayment; memo?: NativeCoinageMemo };
+    }
+  /**
+   * Product-scoped public payment cards, never a spendable balance.
+   */
+  | { tag: "Payments"; value: { payments: Array<HostNativeChatPayment> } }
+  /**
+   * Result of an incoming custody operation.
+   */
+  | { tag: "TopUp"; value: { outcome: NativeCoinageTopUpOutcome } }
+  /**
+   * The requested metadata transition or recovery pass completed.
+   */
+  | { tag: "Done"; value?: undefined }
+  /**
+   * Sanitized domain rejection; cannot authorize another backend.
+   */
+  | { tag: "Failed"; value: { reason: NativeCoinageFailure } };
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export interface NativeCoinageScope {
+  /**
+   * Authenticated root key of the wallet owning the main purse.
+   */
+  rootPublicKey: Uint8Array;
+
+  /**
+   * Genesis hash of the configured Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Configured asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+}
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export type NativeCoinageTopUpOutcome =
+  /**
+   * The original requested minimum has been credited at finality.
+   * For a zero minimum, the source claim is terminal with positive finalized credit.
+   */
+  | { tag: "Cleared"; value?: undefined }
+  /**
+   * Terminal shortfall, expressed in raw chain units, not cents.
+   */
+  | { tag: "Partial"; value: { creditedAmountRaw: string } }
+  /**
+   * Durable custody exists, but final credit has not been established.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * Terminal: none of the requested funds could be claimed.
+   */
+  | { tag: "NotClaimed"; value?: undefined };
+
+/**
  * Where items drained from a purse go.
  */
 export type NftPurseDrainDestination =
@@ -682,6 +1071,17 @@ export type PermissionAuthorizationRequest =
   | {
       tag: "CrossProductSignature";
       value: { targetProductId: ProductId; kind: CrossProductSignatureKind };
+    }
+  /**
+   * Product-scoped permission to bind and use wallet-held Chat identity authority.
+   */
+  | { tag: "ChatAuthority"; value?: undefined }
+  /**
+   * Product-scoped permission to ensure Statement Store quota, not increase it.
+   */
+  | {
+      tag: "StatementStoreAllowance";
+      value: { derivationIndex?: DerivationIndex };
     };
 
 /**
@@ -921,6 +1321,17 @@ export type StoredPermissionRequest =
   | {
       tag: "CrossProductSignature";
       value: { target: string; kind: CrossProductSignatureKind };
+    }
+  /**
+   * Chat identity authority decision.
+   */
+  | { tag: "ChatAuthority"; value?: undefined }
+  /**
+   * Statement allowance decision for one account selector.
+   */
+  | {
+      tag: "StatementStoreAllowance";
+      value: { derivationIndex?: DerivationIndex };
     };
 
 /**
@@ -974,7 +1385,15 @@ export type UserConfirmationReview =
   /**
    * Move items out of an NFT purse the product does not own.
    */
-  | { tag: "NftPurseDrain"; value: NftPurseDrainReview };
+  | { tag: "NftPurseDrain"; value: NftPurseDrainReview }
+  /**
+   * Allow a product to bind and use wallet-held Chat identity authority.
+   */
+  | { tag: "ChatAuthority"; value: ChatAuthorityReview }
+  /**
+   * Confirm this exact main-purse payment; never eligible for auto-approval.
+   */
+  | { tag: "MainPurseChatPayment"; value: MainPurseChatPaymentReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -1031,6 +1450,14 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
+ * Review shown before a product binds or uses wallet-held Chat identity authority.
+ */
+export const ChatAuthorityReview: S.Codec<ChatAuthorityReview> = S.lazy(
+  (): S.Codec<ChatAuthorityReview> =>
+    S.Struct({ productId: S.str }) as S.Codec<ChatAuthorityReview>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1039,62 +1466,76 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.indexedTaggedUnion({
-      AuthSession: [0, S._void] as const,
-      PairingDeviceIdentity: [1, S._void] as const,
-      PermissionAuthorization: [
-        2,
-        S.Struct({
-          scope: S.str,
-          request: StoredPermissionRequest,
-        }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
-      ] as const,
-      AllowanceKeys: [
-        3,
-        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
-      ] as const,
-      LastProcessedPairingStatement: [4, S._void] as const,
-      AutoSigningKey: [
-        5,
-        S.Struct({ productId: ProductId }) as S.Codec<{ productId: ProductId }>,
-      ] as const,
-      AutoSigningKeys: [6, S._void] as const,
-      RingVrfRegistry: [
-        7,
-        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      StatementRenewalTargets: [8, S._void] as const,
-      DeviceEncryptionKey: [9, S._void] as const,
-      ProductSubtree: [
-        10,
-        S.Struct({ sessionId: S.str, productId: ProductId }) as S.Codec<{
-          sessionId: string;
-          productId: ProductId;
-        }>,
-      ] as const,
-      SsoResponderRequestLedger: [
-        11,
-        S.Struct({
-          rootPublicKey: S.Bytes(32),
-          peerStatementAccountId: S.Bytes(32),
-          peerEncryptionPublicKey: S.Bytes(32),
-        }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-          peerStatementAccountId: Uint8Array;
-          peerEncryptionPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      ProductManifest: [
-        12,
-        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
-      ] as const,
-      WorkerManifest: [
-        14,
-        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
-      ] as const,
-      FundingSupport: [15, S._void] as const,
+    S.TaggedUnion({
+      AuthSession: S._void,
+      PairingDeviceIdentity: S._void,
+      PermissionAuthorization: S.Struct({
+        scope: S.str,
+        request: StoredPermissionRequest,
+      }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
+      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
+        sessionId: string;
+      }>,
+      LastProcessedPairingStatement: S._void,
+      AutoSigningKey: S.Struct({ productId: ProductId }) as S.Codec<{
+        productId: ProductId;
+      }>,
+      AutoSigningKeys: S._void,
+      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+      }>,
+      StatementRenewalTargets: S._void,
+      DeviceEncryptionKey: S._void,
+      ProductSubtree: S.Struct({
+        sessionId: S.str,
+        productId: ProductId,
+      }) as S.Codec<{ sessionId: string; productId: ProductId }>,
+      SsoResponderRequestLedger: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        peerStatementAccountId: S.Bytes(32),
+        peerEncryptionPublicKey: S.Bytes(32),
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        peerStatementAccountId: Uint8Array;
+        peerEncryptionPublicKey: Uint8Array;
+      }>,
+      ProductManifest: S.Struct({ productLabel: S.str }) as S.Codec<{
+        productLabel: string;
+      }>,
+      MainPurseCoinage: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      WorkerManifest: S.Struct({ productLabel: S.str }) as S.Codec<{
+        productLabel: string;
+      }>,
+      FundingSupport: S._void,
+      NativeChatProducts: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      NativeChatDevice: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      }>,
+      NativeChatFileChunk: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+        attachmentId: S.Bytes(32),
+        chunkIndex: S.u32,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      }>,
     }),
 );
 
@@ -1371,6 +1812,223 @@ export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
 );
 
 /**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export const MainPurseChatPaymentReview: S.Codec<MainPurseChatPaymentReview> =
+  S.lazy(
+    (): S.Codec<MainPurseChatPaymentReview> =>
+      S.Struct({
+        callingProductId: S.str,
+        recipientIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+        maxDebitCents: S.u64,
+        genesisHash: S.Bytes(32),
+        coinageInstanceId: S.Option(S.u32),
+        operationId: S.Bytes(32),
+      }) as S.Codec<MainPurseChatPaymentReview>,
+  );
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export const NativeChatFileExportRequest: S.Codec<NativeChatFileExportRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFileExportRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        metadata: HostNativeChatAttachmentMetadata,
+      }) as S.Codec<NativeChatFileExportRequest>,
+  );
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export const NativeChatFilePickRequest: S.Codec<NativeChatFilePickRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFilePickRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        maxFiles: S.u32,
+      }) as S.Codec<NativeChatFilePickRequest>,
+  );
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export const NativeChatPickedFile: S.Codec<NativeChatPickedFile> = S.lazy(
+  (): S.Codec<NativeChatPickedFile> =>
+    S.Struct({
+      sourceId: S.str,
+      metadata: HostNativeChatAttachmentMetadata,
+    }) as S.Codec<NativeChatPickedFile>,
+);
+
+/**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export const NativeCoinageFailure: S.Codec<NativeCoinageFailure> = S.lazy(
+  (): S.Codec<NativeCoinageFailure> =>
+    S.Status(
+      "Unavailable",
+      "InvalidRequest",
+      "InvalidSource",
+      "OperationConflict",
+      "OperationNotFound",
+      "InsufficientBalance",
+      "UserRejected",
+    ),
+);
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export const NativeCoinageMemo: S.Codec<NativeCoinageMemo> = S.lazy(
+  (): S.Codec<NativeCoinageMemo> =>
+    S.Struct({
+      secretKeys: S.Vector(S.Bytes()),
+      totalValueRaw: S.str,
+    }) as S.Codec<NativeCoinageMemo>,
+);
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export const NativeCoinageOperation: S.Codec<NativeCoinageOperation> = S.lazy(
+  (): S.Codec<NativeCoinageOperation> =>
+    S.TaggedUnion({
+      Denomination: S._void,
+      PreparePayment: S.Struct({
+        intent: NativeCoinagePaymentIntent,
+      }) as S.Codec<{ intent: NativeCoinagePaymentIntent }>,
+      CommitHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Views: S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      PendingHandoffs: S.Struct({
+        productId: S.str,
+        acceptedOperations: S.Vector(S.Bytes(32)),
+      }) as S.Codec<{
+        productId: string;
+        acceptedOperations: Array<Uint8Array>;
+      }>,
+      ReadHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      NoteDelivery: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Reconcile: S._void,
+      TopUp: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+        minimumAmountRaw: S.str,
+        secretKeys: S.Vector(S.Bytes()),
+      }) as S.Codec<{
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      }>,
+    }),
+);
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export const NativeCoinagePaymentIntent: S.Codec<NativeCoinagePaymentIntent> =
+  S.lazy(
+    (): S.Codec<NativeCoinagePaymentIntent> =>
+      S.Struct({
+        operationId: S.Bytes(32),
+        productId: S.str,
+        requestId: S.str,
+        peerIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+      }) as S.Codec<NativeCoinagePaymentIntent>,
+  );
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export const NativeCoinageRequest: S.Codec<NativeCoinageRequest> = S.lazy(
+  (): S.Codec<NativeCoinageRequest> =>
+    S.Struct({
+      scope: NativeCoinageScope,
+      operation: NativeCoinageOperation,
+    }) as S.Codec<NativeCoinageRequest>,
+);
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export const NativeCoinageResponse: S.Codec<NativeCoinageResponse> = S.lazy(
+  (): S.Codec<NativeCoinageResponse> =>
+    S.TaggedUnion({
+      Denomination: S.Struct({ centsUnitRaw: S.str }) as S.Codec<{
+        centsUnitRaw: string;
+      }>,
+      Prepared: S.Struct({
+        payment: HostNativeChatPayment,
+        memo: S.Option(NativeCoinageMemo),
+      }) as S.Codec<{
+        payment: HostNativeChatPayment;
+        memo?: NativeCoinageMemo;
+      }>,
+      Payments: S.Struct({
+        payments: S.Vector(HostNativeChatPayment),
+      }) as S.Codec<{ payments: Array<HostNativeChatPayment> }>,
+      TopUp: S.Struct({ outcome: NativeCoinageTopUpOutcome }) as S.Codec<{
+        outcome: NativeCoinageTopUpOutcome;
+      }>,
+      Done: S._void,
+      Failed: S.Struct({ reason: NativeCoinageFailure }) as S.Codec<{
+        reason: NativeCoinageFailure;
+      }>,
+    }),
+);
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export const NativeCoinageScope: S.Codec<NativeCoinageScope> = S.lazy(
+  (): S.Codec<NativeCoinageScope> =>
+    S.Struct({
+      rootPublicKey: S.Bytes(32),
+      genesisHash: S.Bytes(32),
+      coinageInstanceId: S.Option(S.u32),
+    }) as S.Codec<NativeCoinageScope>,
+);
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export const NativeCoinageTopUpOutcome: S.Codec<NativeCoinageTopUpOutcome> =
+  S.lazy(
+    (): S.Codec<NativeCoinageTopUpOutcome> =>
+      S.TaggedUnion({
+        Cleared: S._void,
+        Partial: S.Struct({ creditedAmountRaw: S.str }) as S.Codec<{
+          creditedAmountRaw: string;
+        }>,
+        Pending: S._void,
+        NotClaimed: S._void,
+      }),
+  );
+
+/**
  * Where items drained from a purse go.
  */
 export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
@@ -1420,6 +2078,10 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
           targetProductId: ProductId;
           kind: CrossProductSignatureKind;
         }>,
+        ChatAuthority: S._void,
+        StatementStoreAllowance: S.Struct({
+          derivationIndex: S.Option(DerivationIndex),
+        }) as S.Codec<{ derivationIndex?: DerivationIndex }>,
       }),
   );
 
@@ -1591,6 +2253,10 @@ export const StoredPermissionRequest: S.Codec<StoredPermissionRequest> = S.lazy(
         target: S.str,
         kind: CrossProductSignatureKind,
       }) as S.Codec<{ target: string; kind: CrossProductSignatureKind }>,
+      ChatAuthority: S._void,
+      StatementStoreAllowance: S.Struct({
+        derivationIndex: S.Option(DerivationIndex),
+      }) as S.Codec<{ derivationIndex?: DerivationIndex }>,
     }),
 );
 
@@ -1612,6 +2278,8 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       SignVrf: [10, SignVrfReview] as const,
       ProductSubtree: [11, ProductSubtreeReview] as const,
       NftPurseDrain: [12, NftPurseDrainReview] as const,
+      ChatAuthority: [13, ChatAuthorityReview] as const,
+      MainPurseChatPayment: [14, MainPurseChatPaymentReview] as const,
     }),
 );
 
@@ -1740,6 +2408,20 @@ export interface ChatPlatform {
   subscribeChatRooms(
     product: ProductContext,
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
+}
+
+/**
+ * Optional native wallet service boundary, never exposed to products.
+ *
+ * Injecting this service at runtime construction assigns native custody for
+ * the runtime's lifetime. Absence selects the built-in Rust wallet; native
+ * unavailability or failure never permits Rust fallback.
+ */
+export interface CoinageWalletHost {
+  /**
+   * Invoke the selected native owner. An error never permits Rust fallback.
+   */
+  nativeCoinage(request: NativeCoinageRequest): Promise<NativeCoinageResponse>;
 }
 
 /**
@@ -2073,6 +2755,47 @@ export interface GamePlatform {
 }
 
 /**
+ * Host-private HOP transport for the configured Bulletin chain.
+ *
+ * Endpoints are trusted host configuration, never product-supplied dialing
+ * instructions. Implementations must re-read their allowlist and enforce exact
+ * URL membership before opening a connection. An unconfigured host is
+ * explicitly unavailable; it must not fall back to a chain RPC endpoint.
+ */
+export interface HopProvider {
+  /**
+   * Current exact WSS endpoints from the host's trusted Bulletin registry.
+   */
+  allowedHopEndpoints?(bulletinGenesisHash: Uint8Array): Promise<Array<string>>;
+
+  /**
+   * Open one private HOP connection, sharing the JSON-RPC lifecycle only.
+   * The caller closes the returned lease when the private operation ends.
+   */
+  connectHop?(
+    bulletinGenesisHash: Uint8Array,
+    endpoint: string,
+  ): Promise<JsonRpcConnection>;
+}
+
+/**
+ * Optional host-authenticated username candidate source. The host owns backend
+ * configuration and credentials. Candidates are never ownership assertions:
+ * the core checks finalized dotNS ownership and the canonical People Chat key.
+ */
+export interface IdentityBackendHost {
+  /**
+   * Return exact-name candidates on the specified People network. Reject
+   * unavailable configuration/authentication and incomplete search results.
+   * Neither a guest URL nor a backend display label crosses this boundary.
+   */
+  identityUsernameCandidates(
+    username: string,
+    peopleChainGenesisHash: Uint8Array,
+  ): Promise<Array<Uint8Array>>;
+}
+
+/**
  * A live JSON-RPC connection to a chain.
  */
 export interface JsonRpcConnection {
@@ -2105,6 +2828,66 @@ export interface LocaleHost {
   subscribeLocale(): AsyncIterable<
     Result<HostLocaleSubscribeItem, GenericError>
   >;
+}
+
+/**
+ * Host-private native Chat selection, immutable custody and safe export.
+ *
+ * Handles, file bytes and destinations must never be exposed to products.
+ * Optional embedders without a backend must fail explicitly as unavailable.
+ */
+export interface NativeChatFilesHost {
+  /**
+   * Present trusted selection and durably snapshot the selected files.
+   * An empty result denotes user cancellation, not an unavailable backend.
+   */
+  pickChatFiles(
+    request: NativeChatFilePickRequest,
+  ): Promise<Array<NativeChatPickedFile>>;
+
+  /**
+   * Read exactly `length` bytes from an immutable source. Reject lengths
+   * above 2,000,000 and checked ranges extending beyond its actual u32 size.
+   */
+  readChatFile(
+    sourceId: string,
+    offset: bigint,
+    length: number,
+  ): Promise<Uint8Array>;
+
+  /**
+   * Release durable source custody. Repeated release is harmless.
+   */
+  releaseChatFile(sourceId: string): Promise<void>;
+
+  /**
+   * Present trusted export consent and create a private partial output.
+   * ``undefined`` denotes user cancellation. Never overwrite without consent.
+   */
+  beginChatFileExport(
+    request: NativeChatFileExportRequest,
+  ): Promise<string | undefined>;
+
+  /**
+   * Append a bounded chunk at the exact current offset; never allow holes,
+   * rewrites, or bytes beyond the declared export size.
+   */
+  writeChatFileExport(
+    exportId: string,
+    offset: bigint,
+    data: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Publish only an exact-size completed output through safe native UI.
+   * Never automatically execute HTML, SVG, scripts, or other active files.
+   */
+  finishChatFileExport(exportId: string): Promise<void>;
+
+  /**
+   * Idempotently discard a partial output, never a completed user export.
+   */
+  cancelChatFileExport(exportId: string): Promise<void>;
 }
 
 /**
@@ -2440,8 +3223,8 @@ export interface UserConfirmation {
 
 /**
  * Combined platform interface. A host must provide every capability trait
- * listed here. Members marked optional may be omitted; the core answers their
- * product calls with `Unsupported`. See `OptionalPlatform`.
+ * listed here. Optional capabilities are declared separately in
+ * `OptionalPlatform`.
  */
 export interface HostCallbacks {
   navigation: Navigation;
@@ -2452,6 +3235,8 @@ export interface HostCallbacks {
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
+  hop?: HopProvider;
+  nativeChatFiles?: NativeChatFilesHost;
   auth: AuthPresenter;
   userConfirmation: UserConfirmation;
   theme: ThemeHost;
@@ -2459,8 +3244,10 @@ export interface HostCallbacks {
   preimage: PreimageHost;
   productOperations: ProductOperations;
   chat?: ChatPlatform;
+  coinageWallet?: CoinageWalletHost;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
+  identityBackend?: IdentityBackendHost;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
   scanner?: ScannerPlatform;
@@ -2475,6 +3262,8 @@ export interface RequiredHostCallbacks {
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;
+  hop?: Required<HopProvider>;
+  nativeChatFiles?: Required<NativeChatFilesHost>;
   auth: Required<AuthPresenter>;
   userConfirmation: Required<UserConfirmation>;
   theme: Required<ThemeHost>;
@@ -2482,8 +3271,10 @@ export interface RequiredHostCallbacks {
   preimage: Required<PreimageHost>;
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
+  coinageWallet?: Required<CoinageWalletHost>;
   contacts?: Required<ContactsPlatform>;
   game?: Required<GamePlatform>;
+  identityBackend?: Required<IdentityBackendHost>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
   scanner?: Required<ScannerPlatform>;
