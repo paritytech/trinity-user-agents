@@ -163,4 +163,16 @@ class RealPocketFaceSourceTest {
 
         assertEquals(listOf(faceOf("kept back").toJsWidget(), null), shown)
     }
+
+    // Only the manifest saying there is no back takes the back away; a manifest that cannot be read says nothing.
+    @Test
+    fun `a kept back stays when the manifest cannot be read`() = runTest {
+        repository.faces[loyalty.card.key to PocketCardSide.BACK] = faceOf("kept back")
+        lookup = { Result.failure(ProductResolutionError.MalformedManifest) }
+
+        val shown = backsShown()
+        runCurrent()
+
+        assertEquals(listOf(faceOf("kept back").toJsWidget()), shown)
+    }
 }

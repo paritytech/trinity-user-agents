@@ -104,32 +104,29 @@ class CardTurnStateTest {
 
     @Test
     fun `the page turns the card, unless there is no back`() = runTest(SteppingFrameClock) {
-        val state = CardTurnState()
-        val answers = listOf(
-            state.requestSide(PocketCardSide.BACK, hasBack = false),
-            state.requestSide(PocketCardSide.FRONT, hasBack = false),
-            state.requestSide(PocketCardSide.BACK, hasBack = true),
-        )
+        val turn = CardTurnState()
+        val answers = listOf(true to false, false to false, true to true).map { (shown, hasBack) ->
+            answer(FaceShownRequest(shown, CompletableDeferred(), back = true), ExpandedCardFoldState(), turn, hasBack)
+        }
         advanceUntilIdle()
 
-        assertEquals(listOf(NO_BACK, APPLIED, APPLIED), answers)
-        assertEquals(-180f, state.angle, 0f)
+        assertEquals(listOf(NO_BACK, APPLIED, APPLIED) to -180f, answers to turn.angle)
     }
 
-    // The user's finger on the card wins over the page, whether it is folding the face or turning the card.
+    // The user's finger on the card wins over the page, whether it is folding the face or turning the card. A missing
+    // back is told at once, so the page does not wait for the finger only to retry into NoBack.
     @Test
     fun `a request while the user turns the card is answered UserMoving and moves nothing`() = runTest(SteppingFrameClock) {
         val fold = ExpandedCardFoldState().apply { maxFoldPx = 100f }
         val turn = dragged(CARD_WIDTH / 10)
         val held = turn.angle
 
-        val answers = listOf(false, true).map { back ->
-            answer(FaceShownRequest(shown = true, reply = CompletableDeferred(), back = back), fold, turn, hasBack = true)
+        val answers = listOf(false to true, true to true, true to false).map { (back, hasBack) ->
+            answer(FaceShownRequest(shown = true, reply = CompletableDeferred(), back = back), fold, turn, hasBack)
         }
         advanceUntilIdle()
 
-        assertEquals(listOf(USER_MOVING, USER_MOVING), answers)
-        assertEquals(listOf(0f, held), listOf(fold.foldedPx, turn.angle))
+        assertEquals(listOf(USER_MOVING, USER_MOVING, NO_BACK) to listOf(0f, held), answers to listOf(fold.foldedPx, turn.angle))
     }
 
     // The page is told its request applied, so the card has to end on the side it asked for last.
@@ -137,19 +134,31 @@ class CardTurnStateTest {
     fun `the page's last request wins, even while the card is still turning`() = runTest(SteppingFrameClock) {
         val state = CardTurnState()
 
-        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.requestSide(PocketCardSide.BACK)
         advanceTimeBy(4 * FRAME_MILLIS)
-        state.requestSide(PocketCardSide.FRONT, hasBack = true)
+        state.requestSide(PocketCardSide.FRONT)
         advanceUntilIdle()
         val afterFront = state.angle
-        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.requestSide(PocketCardSide.BACK)
         advanceTimeBy(4 * FRAME_MILLIS)
-        state.requestSide(PocketCardSide.FRONT, hasBack = true)
-        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.requestSide(PocketCardSide.FRONT)
+        state.requestSide(PocketCardSide.BACK)
         advanceUntilIdle()
 
-        assertEquals(0f, afterFront, 0f)
-        assertEquals(PocketCardSide.BACK, state.shownSide)
+        assertEquals(0f to PocketCardSide.BACK, afterFront to state.shownSide)
+    }
+
+    // The page is told its request applied, so a turn cut short with the request must still end when asked again.
+    @Test
+    fun `asking again for a side whose turn was cut short finishes the turn`() = runTest(SteppingFrameClock) {
+        val state = CardTurnState()
+        val request = launch { state.turnTo(PocketCardSide.BACK) }
+        advanceTimeBy(4 * FRAME_MILLIS)
+        request.cancel()
+
+        state.turnTo(PocketCardSide.BACK)
+
+        assertEquals(-180f, state.angle, 0f)
     }
 
     // A screen-reader user asks for the other side of where the card is going, not of where it is mid-turn.
@@ -157,7 +166,7 @@ class CardTurnStateTest {
     fun `turning over mid-turn reverses the turn`() = runTest(SteppingFrameClock) {
         val state = CardTurnState()
 
-        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.requestSide(PocketCardSide.BACK)
         advanceTimeBy(4 * FRAME_MILLIS)
         launch { state.turnOver() }
         advanceUntilIdle()
@@ -170,7 +179,7 @@ class CardTurnStateTest {
     fun `a page turn gives way to a drag that starts before it runs`() = runTest(SteppingFrameClock) {
         val state = CardTurnState()
 
-        state.requestSide(PocketCardSide.BACK, hasBack = true)
+        state.requestSide(PocketCardSide.BACK)
         state.beginDrag()
         state.drag(CARD_WIDTH / 10, CARD_WIDTH)
         advanceUntilIdle()
@@ -189,7 +198,7 @@ class CardTurnStateTest {
 
         state.snapHome()
 
-        assertEquals(APPLIED, state.requestSide(PocketCardSide.BACK, hasBack = true))
+        assertEquals(APPLIED, state.requestSide(PocketCardSide.BACK))
     }
 
     @Test
