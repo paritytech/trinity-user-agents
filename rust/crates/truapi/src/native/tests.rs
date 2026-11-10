@@ -1855,10 +1855,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 		local_session_lite_username: None,
 		..native_host_runtime_config()
 	};
-	let mut wiped =
-		crate::test_support::test_descriptor("paseo", [0xa9; 32], [0xbb; 32], Some([0xcc; 32]));
-	wiped["sequence"] = 2.into();
-	wiped["generation"] = "second".into();
+	let wiped = crate::test_support::published_test_descriptor(2, "second", [0xa9; 32]);
 	let (told, statuses) = std::sync::mpsc::channel();
 	let published = PublishedStack {
 		document: crate::test_support::sign_test_descriptor(&wiped).1,
