@@ -17,7 +17,9 @@ export class ThreadWorker extends EventTarget {
     this.#thread.on("messageerror", () =>
       this.dispatchEvent(new MessageEvent("messageerror")),
     );
-    this.#thread.on("error", (error: Error) => this.#fail(error.message));
+    this.#thread.on("error", (error: unknown) =>
+      this.#fail(error instanceof Error ? error.message : String(error)),
+    );
     // A browser worker cannot exit on its own, so the host driver only listens
     // for errors. Report an exit nobody asked for as one, or calls wait forever.
     this.#thread.on("exit", (code) => {

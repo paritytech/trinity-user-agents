@@ -11,6 +11,7 @@ import { after, test } from "node:test";
 
 import { createNodePairingHostRuntime } from "@parity/truapi-host/node";
 import { ThreadWorker } from "../../dist/node/thread-worker.js";
+import { openPorts, portsBackTo } from "./support/threads.mjs";
 
 const dirs = [];
 after(() => {
@@ -38,6 +39,13 @@ test("a thread that exits on its own is reported as an error", async () => {
 test("an exception in the thread is reported with its message", async () => {
   const worker = threadRunning('throw new Error("boom");');
   assert.equal(await nextError(worker), "boom");
+});
+
+// Anything can be thrown, and the error handler runs on the host's thread, so
+// reading a property of the thrown value must not take the host down.
+test("a thrown value that is not an Error is reported as one", async () => {
+  const worker = threadRunning("throw null;");
+  assert.equal(await nextError(worker), "null");
 });
 
 test("terminating the thread is not reported as an error", async () => {
@@ -73,19 +81,6 @@ test("an exception in one listener neither ends the process nor stops the others
     console.error = originalError;
   }
 });
-
-const openPorts = () =>
-  process.getActiveResourcesInfo().filter((r) => r === "MessagePort").length;
-
-/** Resolves once no more ports are open than `baseline`, or fails after 2s. */
-async function portsBackTo(baseline) {
-  const deadline = Date.now() + 2000;
-  while (openPorts() > baseline) {
-    if (Date.now() > deadline)
-      assert.fail(`${openPorts() - baseline} worker thread(s) still running`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
 
 // The thread starts before the runtime is set up; if setup fails it must stop,
 // or it keeps the process alive.

@@ -12,6 +12,7 @@ import {
   createHeadlessHostCallbacks,
 } from "@parity/truapi-host/node";
 import { wasmIsBuilt } from "../../dist/testing/require-wasm.js";
+import { openPorts, portsBackTo } from "./support/threads.mjs";
 
 const PEOPLE =
   "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48";
@@ -87,6 +88,7 @@ test(
   "a product's requestLogin shows a pairing deeplink and persists the device identity",
   { skip: !wasmIsBuilt("web/truapi_server_bg.wasm") && "WASM not built" },
   async () => {
+    const baseline = openPorts();
     const storage = memoryStorage();
     let showDeeplink;
     const deeplink = new Promise((resolve) => (showDeeplink = resolve));
@@ -131,5 +133,7 @@ test(
     } finally {
       runtime.dispose();
     }
+    // The README promises dispose() stops the thread that keeps the process up.
+    await portsBackTo(baseline);
   },
 );
