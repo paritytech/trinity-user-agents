@@ -412,9 +412,8 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. Ids only grow, and a list can reach the host before the call that
-   * returns its id does, so a host shows a list only when its id is at
-   * least the latest it has seen, and drops the rest.
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
    */
   requestId: bigint;
 
@@ -455,6 +454,11 @@ export interface FundingQuoteList {
    * highest maximum.
    */
   issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -1291,6 +1295,7 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       amount: S.u128,
       refusal: S.Option(FundingQuoteUnavailable),
       issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
     }) as S.Codec<FundingQuoteList>,
 );
 

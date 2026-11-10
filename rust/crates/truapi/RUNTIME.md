@@ -217,7 +217,7 @@ after activation. A name the host passes is shown until a record answers.
 `paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
 from the same network configuration used by wallet onboarding. It must match
 the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `uid.<suffix>` and `peopl.<suffix>`, while the chain uses that suffix for
+under `peopl.<suffix>`, while the chain uses that suffix for
 proof contexts. Configuration keeps local activation and key derivation
 available offline. The core validates supported suffixes but does not
 automatically check that the configured suffix matches the chain.
@@ -302,8 +302,8 @@ that can't mean it:
   `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
-  from host-held secret material. Its public identity is the RFC-0022
-  `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
+  from host-held secret material. Its public identity is the RFC-0028
+  `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
   product-owned registry entries; aliases, proofs, direct signatures, and
   internal personhood flows use the requested or user-selected registered key
   without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values
@@ -554,8 +554,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Funding drops out. A provider whose `origin` is `Bundled` ships inside
   the host: its shipped manifest is what the core goes by, and dotNS is never
   read for it.
-  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
-  country) with every funding provider, whatever its manifest says it serves,
+  `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
+  network and country the last `select_funding_options` named (card and bank
+  take the resolved fiat asset), returning `None` while there is nothing to
+  price; asking what the running request prices keeps it. It asks every
+  funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: the core
   calls each provider's worker with `quote`, holding the worker while it
   waits, and the worker answers priced from its own API. Every provider's
@@ -602,16 +605,20 @@ for raw bytes signed inside the `<Bytes>` watermark.
   minimum a provider showed there, from manifest routes and recent answers,
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
-  Natively the list arrives through `funding_quotes_changed` as a
-  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
-  rows in the host's provider order, `best` (the least to pay inbound, the
-  most to receive outbound, the earliest row on a tie, among providers the
+  Natively `funding_changed` announces each list with `Quotes`, and
+  `funding_quotes` reads it as a `FundingQuoteList`, only ever the current
+  request's: the `request_id` `get_funding_quote` returned, whether it is
+  `complete` (no row pending), the rows in the host's provider order,
+  `best` (the least to pay inbound, the most to receive outbound, the earliest row on a tie, among providers the
   session can be handed to), which the host selects until the user picks
   another, and `refresh_at_ms`. The core asks every provider again each
   minute, each row keeping its answer until the provider answers again,
-  until the session is assigned, ends or leaves the overlay, or the host asks
-  for another ask; from then on no list of that request arrives, mid round
-  too, and the quotes still asked end with the workers they held. The
+  until the session is assigned, ends or leaves the overlay, the host asks
+  for another ask, or `select_funding_options` names another rail, asset,
+  network or country than the ask, which also clears the list
+  (`funding_quotes` answers `None`, announced with `Quotes`); from then on
+  no list of that request arrives, mid round too, and the quotes still
+  asked end with the workers they held. The
   options are sent again after each list, since a refusal can teach the core
   new limits. At most eight providers are asked at once, each with its own
   deadline. A session can be handed only a quote from the list its host was
@@ -619,6 +626,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   the ask's amount, moves nothing, charges more in fees than the user sends,
   has an unusable id or has expired shows as the provider being unable to
   serve the ask.
+  `start_funding_when_quoted(intent, request_id)` does that for the user
+  who continues before every row answered: once every row of that request
+  answered, the core selects `best` as `select_funding_provider` would, at
+  once when they already have. A new ask, `select_funding_options`,
+  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  no usable quote disarms it. `funding_available` says whether the host
+  offers any provider, announced with `Providers` when
+  `set_funding_provider_config` changes the list.
   `select_funding_provider` hands a session to the provider the user chose,
   on the quote they chose it by, which must be one the core offered for the
   session, not yet expired and, when the session has an amount, pricing that

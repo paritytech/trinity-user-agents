@@ -103,6 +103,42 @@ pub fn crypto_tokens(candidates: &[FundingCandidate], network: Option<&str>) -> 
 	tokens
 }
 
+/// The canonical English name of a crypto network id, which hosts may
+/// localise. Known ids have their proper name; any other is title-cased word
+/// by word.
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_network_name(id: String) -> String {
+	match id.as_str() {
+		"polkadot" => "Polkadot".to_string(),
+		"bitcoin" => "Bitcoin".to_string(),
+		"ethereum" => "Ethereum".to_string(),
+		"tron" => "Tron".to_string(),
+		"solana" => "Solana".to_string(),
+		other => title_case(other),
+	}
+}
+
+/// Each word of `text` with its first letter upper-cased and the rest
+/// lower-cased.
+fn title_case(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let mut word_start = true;
+	for ch in text.chars() {
+		if ch.is_alphanumeric() {
+			if word_start {
+				out.extend(ch.to_uppercase());
+			} else {
+				out.extend(ch.to_lowercase());
+			}
+			word_start = false;
+		} else {
+			out.push(ch);
+			word_start = true;
+		}
+	}
+	out
+}
+
 /// Whether every row has answered and none quoted.
 fn all_unavailable(rows: &[FundingQuoteRow]) -> bool {
 	!rows.is_empty() &&
@@ -306,6 +342,10 @@ pub struct FundingEnding {
 	/// The step the session stopped before: the first one it did not
 	/// reach. `None` when it succeeded.
 	pub stopped_at: Option<FundingStep>,
+	/// The steps a session in its direction goes through, in order.
+	pub steps: Vec<FundingStep>,
+	/// The step a released withdrawal waits at while its payout is pending.
+	pub waiting_at: Option<FundingStep>,
 }
 
 /// Whether a summary's status or stage says the withdrawal was released,
@@ -346,7 +386,11 @@ fn end_kind(summary: &FundingSessionSummary) -> Option<EndKind> {
 pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 	let at_ms = summary.settled_at_ms().unwrap_or(summary.opened_at_ms);
 	let Some(ending) = end_kind(summary) else {
-		return FundingEnding { at_ms, ..FundingEnding::default() };
+		return FundingEnding {
+			at_ms,
+			steps: FundingStep::of(summary.direction).to_vec(),
+			..FundingEnding::default()
+		};
 	};
 	let payout_state = match ending {
 		EndKind::Released if summary.direction == FundingDirection::Out => {
@@ -403,6 +447,8 @@ pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 			.amount
 			.filter(|requested| settled.is_some_and(|settled| settled != *requested)),
 		stopped_at,
+		steps: FundingStep::of(summary.direction).to_vec(),
+		waiting_at: (payout_state == Some(FundingPayoutState::Pending)).then_some(last),
 	}
 }
 

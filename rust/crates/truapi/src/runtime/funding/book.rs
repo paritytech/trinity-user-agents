@@ -33,6 +33,11 @@ impl FundingSessionBook {
 		lock(&self.state).quotes.insert(intent.to_string(), quotes);
 	}
 
+	/// Drop session `intent`'s quote list once its request is withdrawn.
+	pub fn quotes_withdrawn(&self, intent: &str) {
+		lock(&self.state).quotes.remove(intent);
+	}
+
 	/// Drop session `intent`'s overlay state once its overlay closed.
 	pub fn overlay_closed(&self, intent: &str) {
 		let mut state = lock(&self.state);

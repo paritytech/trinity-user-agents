@@ -118,7 +118,7 @@ pub struct SigningHostConfig {
 	pub asset_hub_chain_genesis_hash: [u8; 32],
 	/// The network's dotNS TLD without the leading dot: `dot`, `paseo`,
 	/// `testnet`. Every reserved RFC-0022 identity the wallet derives ends in
-	/// it: the `uid.<suffix>` identity account and the `peopl.<suffix>` person
+	/// it: the `peopl.<suffix>` identity account and the `peopl.<suffix>` person
 	/// ring-VRF keys. Must match the People chain's
 	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
 	pub network_suffix: String,
@@ -2197,9 +2197,8 @@ pub struct FundingPresentation {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
-	/// it. Ids only grow, and a list can reach the host before the call that
-	/// returns its id does, so a host shows a list only when its id is at
-	/// least the latest it has seen, and drops the rest.
+	/// it. The core keeps only the current request's list, so a list read
+	/// back is always the one to show.
 	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,
@@ -2221,6 +2220,8 @@ pub struct FundingQuoteList {
 	/// say about the amount: the lowest minimum any showed, otherwise the
 	/// highest maximum.
 	pub issue: Option<FundingAmountIssue>,
+	/// Whether every provider answered: no row is pending.
+	pub complete: bool,
 }
 
 /// Why an amount cannot go ahead.

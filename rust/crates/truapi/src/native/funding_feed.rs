@@ -19,6 +19,9 @@ pub enum FundingChangeKind {
 	Quotes,
 	/// Whether a provider still works on any session.
 	InProgress,
+	/// The funding providers the host offers, and so whether funding is
+	/// available.
+	Providers,
 }
 
 /// The resume marker's path under `database_directory`.

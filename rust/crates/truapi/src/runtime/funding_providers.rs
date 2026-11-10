@@ -231,6 +231,11 @@ impl FundingProviders {
 			.and_then(|entry| entry.has_app)
 	}
 
+	/// Whether the host offers no funding provider.
+	pub fn is_empty(&self) -> bool {
+		lock(&self.entries).is_empty()
+	}
+
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)
@@ -278,9 +283,10 @@ impl RuntimeServices {
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// then the `bundled` ones it does not name. A name that is not a
-	/// product id is skipped and logged. A call listing what the last one
-	/// did changes nothing, so the host can call it on every refresh.
+	/// then the `bundled` ones it does not name, telling the feed when the
+	/// list changed. A name that is not a product id is skipped and logged.
+	/// A call listing what the last one did changes nothing, so the host can
+	/// call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
@@ -295,14 +301,22 @@ impl RuntimeServices {
 			return Ok(());
 		}
 		self.set_funding_providers(entries.clone())?;
+		let changed = configured.as_deref().unwrap_or_default() != entries.as_slice();
 		*configured = Some(entries);
+		drop(configured);
+		if changed && let Some(feed) = self.funding().feed() {
+			feed.funding_providers_changed();
+		}
 		Ok(())
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send
 	/// the host the options it leads to. A session whose overlay is not up
-	/// offers nothing to pick, so its selection is ignored.
+	/// offers nothing to pick, so its selection is ignored. Either way it
+	/// disarms the session's start when quoted and withdraws a quote request
+	/// the selection no longer matches.
 	pub fn select_funding_options(self: &Arc<Self>, intent: &str, selection: FundingSelection) {
+		self.withdraw_unselected_quotes(intent, &selection);
 		if self.funding().select(intent, selection) {
 			self.send_funding_options(intent);
 		}
@@ -331,12 +345,7 @@ impl RuntimeServices {
 		// The asset the overlay works in: the one the user picked, else the
 		// one the core resolves for the rail, so a selection without an asset
 		// already gets that asset's countries and limits.
-		let asset = selection.as_ref().and_then(|selection| match selection.rail {
-			FundingRail::Crypto => selection.asset.clone(),
-			rail => Some(selection.asset.clone().unwrap_or_else(|| {
-				funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref())
-			})),
-		});
+		let asset = selection.as_ref().and_then(|selection| selected_asset(&candidates, selection));
 		let (countries, limits, networks) = match &selection {
 			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
@@ -570,6 +579,20 @@ fn declared_networks(
 	}
 	networks.retain(|(_, assets)| !assets.is_empty());
 	networks
+}
+
+/// The asset `selection` works in: the one the user picked, else for card and
+/// bank the fiat asset the core resolves from `candidates`.
+pub(super) fn selected_asset(
+	candidates: &[FundingCandidate],
+	selection: &FundingSelection,
+) -> Option<String> {
+	match selection.rail {
+		FundingRail::Crypto => selection.asset.clone(),
+		rail => Some(selection.asset.clone().unwrap_or_else(|| {
+			funding_view::fiat_asset(candidates, rail, selection.currency.as_deref())
+		})),
+	}
 }
 
 #[cfg(test)]
