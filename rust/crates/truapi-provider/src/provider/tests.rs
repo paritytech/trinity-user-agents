@@ -457,3 +457,82 @@ fn later_registration_wins() {
 	};
 	assert_eq!(*url, second);
 }
+
+/// A spec that could not be fetched leaves its chain unknown and the rest of
+/// the stack running, and the chain comes up on the same provider once the
+/// host has the spec.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_chain_without_its_spec_is_unknown_until_the_spec_is_added() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let stack = stack(STACK_ID, "one");
+	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
+	let provider = EmbeddedChainProvider::builder().stack(stack).build();
+
+	let refusals =
+		[relay, people].map(|genesis| futures::executor::block_on(provider.connect(genesis)).err());
+	assert_eq!(
+		refusals,
+		[
+			Some(crate::ProviderError::UnknownGenesis { genesis: relay }),
+			Some(crate::ProviderError::UnknownRelay { relay }),
+		]
+	);
+
+	provider.add_light_spec(relay, RELAY_SPEC.as_bytes()).expect("the spec matches");
+	let _connection = futures::executor::block_on(provider.connect(people))
+		.expect("People syncs through the relay the descriptor names");
+	assert_eq!(provider.relay_count(), 1, "the relay came up behind People");
+	assert_eq!(provider.relay_of(people), Some(relay));
+}
+
+/// A spec arriving after the build is checked like one arriving before it.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_wrong_spec_added_after_the_build_is_refused() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let relay = genesis(RELAY_SPEC);
+	let provider = EmbeddedChainProvider::builder().stack(stack(STACK_ID, "one")).build();
+
+	let error = provider
+		.add_light_spec(relay, PEOPLE_SPEC.as_bytes())
+		.expect_err("People's spec is not the relay's");
+
+	assert!(
+		matches!(&error, crate::ProviderError::LightSpec { role, genesis, .. }
+			if role == "Relay" && *genesis == relay),
+		"{error}"
+	);
+	assert!(
+		matches!(
+			EmbeddedChainProvider::builder()
+				.build()
+				.add_light_spec(relay, RELAY_SPEC.as_bytes()),
+			Err(crate::ProviderError::NoStack)
+		),
+		"a provider without a stack has no descriptor to check a spec against"
+	);
+}
+
+/// A stack's provider answers only for its descriptor's chains, so a host
+/// that asked for one stack never syncs a bundled network instead.
+#[cfg(feature = "networks")]
+#[test]
+fn a_stack_provider_does_not_resolve_from_the_catalog() {
+	use crate::test_stack::{STACK_ID, synced_stack};
+
+	let catalog = paseo_next_v2();
+	let provider = EmbeddedChainProvider::builder()
+		.catalog()
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	let Err(error) = futures::executor::block_on(provider.connect(catalog.people)) else {
+		panic!("a chain outside the stack must not connect");
+	};
+	assert_eq!(error, crate::ProviderError::UnknownGenesis { genesis: catalog.people });
+	assert!(provider.relay_of(catalog.people).is_none());
+}

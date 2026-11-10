@@ -32,7 +32,9 @@ rust/crates/
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client);
-                         its `platform` module holds the chain-access traits
+                         its `platform` module holds the chain-access traits, and its
+                         `stack` module runs a Trinity stack's chains on the light client
+                         from light specs the host hands over, checked against the descriptor
   truapi-verifiable/     ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
   trinity-stack/         Trinity stack descriptors (parse, verify, sign, links, reader state, when

@@ -16,7 +16,9 @@
 //!   WebSocket dialing), which declines `wss`, so those bootnodes are reached through the loopback
 //!   TLS tunnels in `wss_tunnel`; on `wasm32` it runs on a vendored browser platform (JS event
 //!   loop, browser `WebSocket`, which speaks TLS itself). `EmbeddedChainProvider::lifecycle`
-//!   reports its sync progress per chain.
+//!   reports its sync progress per chain. A provider built with a `LightStack` runs the chains of a
+//!   Trinity stack descriptor from the light specs the host fetched, each checked against the
+//!   descriptor before it is loaded.
 //! - `networks` feature — a bundled catalog: `add_network` registers a whole network by name, and a
 //!   provider built with `catalog()` resolves any bundled network from its genesis hash.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
@@ -60,7 +62,11 @@ pub mod platform;
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 mod provider;
 #[cfg(feature = "smoldot")]
+mod stack;
+#[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(test, feature = "smoldot"))]
+mod test_stack;
 #[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
 mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
@@ -84,6 +90,8 @@ pub use lifecycle::{ChainHealth, ChainLifecycle, ChainPhase, StallReason};
 pub use networks::{NetworkChains, known_networks};
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 pub use provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder};
+#[cfg(feature = "smoldot")]
+pub use stack::{LightSpecSource, LightStack};
 #[cfg(feature = "smoldot")]
 pub use storage::{StorageClient, StorageClientError};
 
