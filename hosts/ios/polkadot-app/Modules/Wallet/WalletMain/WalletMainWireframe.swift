@@ -14,8 +14,22 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
         self.moduleNavigator = moduleNavigator
     }
 
-    func showProduct(page: ProductPage) {
-        moduleNavigator.openProduct(page: page)
+    func showCollectibles(page: ProductPage) {
+        let configuration = SPAConfiguration(
+            title: String(localized: .Products.collectibles),
+            isRootScreen: false,
+            showMoreButton: false,
+            page: page
+        )
+        guard let product = SPAViewFactory.createView(configuration: configuration, flowState: flowState) else {
+            return
+        }
+
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? CollectiblesOrigin
+            let screen = CollectiblesViewController(product: product, origin: origin)
+            wallet.pushViewController(screen, animated: wasOnScreen)
+        }
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {

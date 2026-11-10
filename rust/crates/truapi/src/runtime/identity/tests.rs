@@ -88,6 +88,7 @@ fn view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
 			ControllerCall::protocolRegistry(_) => {
 				DotnsPopController::protocolRegistryCall::abi_encode_returns(&REGISTRY.into())
 			},
+			_ => panic!("unscripted controller view {}", hex::encode(input)),
 		},
 		REGISTRY => match RegistryCall::abi_decode(input).expect("registry view") {
 			RegistryCall::get(_) => ProtocolRegistry::getCall::abi_encode_returns(&FACTORY.into()),
@@ -280,7 +281,10 @@ fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 	let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&DotnsReads::new(thread_per_subscription_spawner()),
+		&chain,
+		[0xcc; 32],
+		session,
 	));
 
 	// The pending claim yields the lite name; the settled store yields the
@@ -319,11 +323,43 @@ fn root_key_resolves_when_identity_account_labels_are_unissued() {
 	let session = session_without_usernames(ACCOUNT, SQUATTER);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&chain, [0xcc; 32], session,
+		&DotnsReads::new(thread_per_subscription_spawner()),
+		&chain,
+		[0xcc; 32],
+		session,
 	));
 
 	assert_eq!(
 		(resolved.lite_username.as_deref(), resolved.full_username.as_deref()),
 		(Some("alice.01"), Some("myproject"))
 	);
+}
+
+/// Two lookups of one session that overlap read dotNS once between them, so
+/// they hold the follows a single lookup would and no more.
+#[test]
+fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
+	let follows_for = |lookups: usize| {
+		let platform = Arc::new(crate::test_support::StubPlatform::default());
+		let services = crate::runtime::services::RuntimeServices::new(
+			platform.clone(),
+			crate::platform::HostInfo {
+				name: "Polkadot Mobile".to_string(),
+				icon: None,
+				version: None,
+				platform: truapi::latest::HostPlatform::Unknown,
+			},
+			[0; 32],
+			[0xbb; 32],
+			[0xcc; 32],
+			crate::test_support::test_spawner(),
+		);
+		let session = session_without_usernames([0x11; 32], ACCOUNT);
+		futures::executor::block_on(futures::future::join_all((0..lookups).map(|_| {
+			lookup_session_identity(&services.dotns_reads, &services.chain, [0xcc; 32], &session)
+		})));
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow")
+	};
+
+	assert_eq!(follows_for(2), follows_for(1));
 }

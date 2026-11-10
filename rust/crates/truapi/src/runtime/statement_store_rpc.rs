@@ -24,7 +24,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeFailure, RuntimeFailureKind, rpc_failure},
 	host_logic::statement_store::{
 		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
 		StatementStoreApi, StatementWatchError, TopicFilter, TopicFilterKind,
@@ -63,6 +63,45 @@ pub enum StatementStoreRpcClientError {
 	/// The pooled People-chain connection could not be opened.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
+}
+
+/// Why a statement submission failed.
+#[derive(Debug, Error, PartialEq)]
+pub enum StatementSubmitError {
+	/// No verdict from the store. Kind `Unavailable` means the People chain was
+	/// unreachable.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
+	/// The store answered without accepting the statement.
+	#[error("statement_submit not accepted: {0}")]
+	Rejected(Value),
+}
+
+impl StatementSubmitError {
+	/// Whether the store rejected the statement because its signer has no
+	/// allowance yet.
+	pub fn is_no_allowance(&self) -> bool {
+		matches!(self, Self::Rejected(answer) if answer["reason"] == "noAllowance")
+	}
+
+	/// Whether the statement reached nobody, so it may be sent again: the
+	/// People chain was unreachable, or a light client found no peer to take
+	/// it.
+	pub fn is_unreachable(&self) -> bool {
+		self.reached_no_peer() ||
+			matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
+	}
+
+	/// Whether the statement reached no peer, so it may be sent again. smoldot
+	/// uses one error code for all statement-store failures, so this matches
+	/// the message.
+	pub fn reached_no_peer(&self) -> bool {
+		let Self::Chain(failure) = self else {
+			return false;
+		};
+		let reason = failure.to_string();
+		NO_PEER_MESSAGES.iter().any(|message| reason.contains(message))
+	}
 }
 
 /// People-chain statement-store RPC client factory.
@@ -111,16 +150,24 @@ impl StatementStoreRpc {
 	}
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
-	pub async fn submit(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
+	pub async fn submit(
+		&self,
+		statement: &[u8],
+		label: &'static str,
+	) -> Result<(), StatementSubmitError> {
+		let rpc_client = self.request_client(label).await?;
 		submit(&RpcClient::new(rpc_client), statement).await
 	}
 
 	/// Submit an SSO statement, tolerating the short propagation window after
 	/// an allowance registration is included but not yet visible to the
 	/// Statement Store RPC backend.
-	pub async fn submit_sso(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		retry_until_allowance_visible(label, || self.submit(statement.clone(), label)).await
+	pub async fn submit_sso(
+		&self,
+		statement: &[u8],
+		label: &'static str,
+	) -> Result<(), StatementSubmitError> {
+		retry_until_allowance_visible(label, || self.submit(statement, label)).await
 	}
 
 	/// Submit a SCALE-encoded statement without waiting for the JSON-RPC ack.
@@ -138,11 +185,8 @@ impl StatementStoreRpc {
 			.map_err(rpc_error_message)
 	}
 
-	async fn request_client(
-		&self,
-		label: &'static str,
-	) -> Result<HostRpcClient, StatementStoreRpcClientError> {
-		Ok(self.chain.rpc_client(label, &self.people_chain_genesis_hash).await?)
+	async fn request_client(&self, label: &'static str) -> Result<HostRpcClient, RuntimeFailure> {
+		self.chain.rpc_client(label, &self.people_chain_genesis_hash).await
 	}
 
 	async fn connect(
@@ -298,26 +342,26 @@ pub async fn subscribe_match_all(
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
 /// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
 /// rejections surface instead of being silently dropped.
-async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
+async fn submit(rpc_client: &RpcClient, statement: &[u8]) -> Result<(), StatementSubmitError> {
 	let result = rpc_client
 		.request::<Value>(
 			SUBMIT_STATEMENT_METHOD,
-			rpc_params![format!("0x{}", hex::encode(&statement))],
+			rpc_params![format!("0x{}", hex::encode(statement))],
 		)
 		.await
-		.map_err(rpc_error_message)?;
+		.map_err(|error| rpc_failure(SUBMIT_STATEMENT_METHOD, error))?;
 	match result.get("status").and_then(Value::as_str) {
 		Some("new") | Some("known") => Ok(()),
-		_ => Err(format!("statement_submit not accepted: {result}")),
+		_ => Err(StatementSubmitError::Rejected(result)),
 	}
 }
 
 pub async fn submit_sso(
 	rpc_client: &RpcClient,
-	statement: Vec<u8>,
+	statement: &[u8],
 	label: &'static str,
-) -> Result<(), String> {
-	retry_until_allowance_visible(label, || submit(rpc_client, statement.clone())).await
+) -> Result<(), StatementSubmitError> {
+	retry_until_allowance_visible(label, || submit(rpc_client, statement)).await
 }
 
 /// Run `submit` until it succeeds, fails with anything but `noAllowance`, or
@@ -325,18 +369,15 @@ pub async fn submit_sso(
 async fn retry_until_allowance_visible<SubmitFn, SubmitFuture>(
 	label: &'static str,
 	submit: SubmitFn,
-) -> Result<(), String>
+) -> Result<(), StatementSubmitError>
 where
 	SubmitFn: Fn() -> SubmitFuture,
-	SubmitFuture: Future<Output = Result<(), String>>,
+	SubmitFuture: Future<Output = Result<(), StatementSubmitError>>,
 {
 	for attempt in 1..=SSO_NO_ALLOWANCE_RETRY_ATTEMPTS {
 		match submit().await {
 			Ok(()) => return Ok(()),
-			Err(reason)
-				if is_no_allowance_rejection(&reason) &&
-					attempt < SSO_NO_ALLOWANCE_RETRY_ATTEMPTS =>
-			{
+			Err(error) if error.is_no_allowance() && attempt < SSO_NO_ALLOWANCE_RETRY_ATTEMPTS => {
 				warn!(
 					label,
 					attempt,
@@ -345,7 +386,7 @@ where
 				);
 				futures_timer::Delay::new(SSO_NO_ALLOWANCE_RETRY_DELAY).await;
 			},
-			Err(reason) => return Err(reason),
+			Err(error) => return Err(error),
 		}
 	}
 	unreachable!("the bounded SSO submit loop always returns")
@@ -355,18 +396,6 @@ where
 /// (`StatementSubmitError::NotSent` in smoldot-light's statement service).
 const NO_PEER_MESSAGES: [&str; 2] =
 	["No connected peers to broadcast the statement", "connected peers accepted the statement"];
-
-/// Whether a [`submit`] failure says the statement reached no peer. smoldot
-/// uses one error code for all statement-store failures, so this matches the
-/// message.
-pub fn reached_no_peer(reason: &str) -> bool {
-	NO_PEER_MESSAGES.iter().any(|message| reason.contains(message))
-}
-
-/// Whether a [`submit`] failure is a `noAllowance` rejection.
-pub fn is_no_allowance_rejection(reason: &str) -> bool {
-	reason.contains("noAllowance")
-}
 
 /// Statement-store topic filter encoded as JSON-RPC params.
 fn filter(kind: TopicFilterKind, topics: &[[u8; 32]]) -> Value {

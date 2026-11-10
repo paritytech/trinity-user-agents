@@ -2,11 +2,17 @@ import Observation
 import Foundation
 import PolkadotUI
 
+/// How the Collectibles peek shows on the Pocket before its screen opens.
+enum CollectiblesPeek: Equatable {
+    case resting
+    case colouring
+    case lifted
+}
+
 enum WalletExpandedSection: Equatable {
     case none
     case identityDetails
     case assetDetails
-    case collectiblesDetails
 
     var isIdentityShown: Bool {
         showsSection(.identityDetails)
@@ -31,6 +37,8 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var openPocketCard: PocketCardKey? { get set }
     var openPocketCardOffset: CGSize { get set }
     var isPocketCleared: Bool { get set }
+    var collectiblesPeek: CollectiblesPeek { get set }
+    var collectiblesFrame: CGRect { get set }
 
     var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
@@ -56,6 +64,10 @@ class WalletViewModel: WalletViewModelProtocol {
     var openPocketCardOffset: CGSize = .zero
     /// Whether the rest of the Pocket has cleared away for the open card.
     var isPocketCleared = false
+    var collectiblesPeek: CollectiblesPeek = .resting
+    /// Where the Collectibles peek is in the window, for its book to lift from. Read on demand, so moving
+    /// it never redraws the Pocket.
+    @ObservationIgnored var collectiblesFrame: CGRect = .zero
 
     var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?

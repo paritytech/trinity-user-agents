@@ -40,11 +40,10 @@ import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNot
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -285,56 +284,53 @@ private fun PocketList(
         label = "collectibles_press"
     )
 
+    // Reporting stops as the list starts to leave, so the ID bar comes back with the card rather than after the fade.
+    val leaving = isPocketScreenLeaving()
+
     Box {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                .then(if (leaving) Modifier else Modifier.reportsScrollToStatusBar(listState)),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
+            contentPadding = WindowInsets(
+                top = PolkadotTheme.spacings.mediumIncreased,
+                bottom = PolkadotTheme.spacings.mediumIncreased,
+                left = PolkadotTheme.spacings.mediumIncreased,
+                right = PolkadotTheme.spacings.mediumIncreased
+            ).add(navigationBarInsets)
+                .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                .asPaddingValues()
         ) {
-            PolkadotTopBar(
-                title = stringResource(RCommon.string.pocket_toolbar_title),
-                titleSize = TopBarTitleSize.Large
-            )
+            // Keyed: a product card holds a face subscription and its resolved images, so
+            // positional identity would make every card below an insertion drop and re-subscribe.
+            itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
+                val cardModifier = Modifier.pocketListCardSharedElement(
+                    card = card,
+                    index = index,
+                    anchorCard = anchorCard,
+                    anchorIndex = anchorIndex
+                )
 
-            LazyColumn(
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
-                contentPadding = WindowInsets(
-                    top = PolkadotTheme.spacings.mediumIncreased,
-                    bottom = PolkadotTheme.spacings.mediumIncreased,
-                    left = PolkadotTheme.spacings.mediumIncreased,
-                    right = PolkadotTheme.spacings.mediumIncreased
-                ).add(navigationBarInsets).asPaddingValues()
-            ) {
-                // Keyed: a product card holds a face subscription and its resolved images, so
-                // positional identity would make every card below an insertion drop and re-subscribe.
-                itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
-                    val cardModifier = Modifier.pocketListCardSharedElement(
-                        card = card,
-                        index = index,
-                        anchorCard = anchorCard,
-                        anchorIndex = anchorIndex
-                    )
+                when (card) {
+                    is PocketCardUiModel.DigitalDollar -> {
+                        DigitalDollarCard(
+                            modifier = cardModifier,
+                            card = card,
+                            onSelected = onCardSelected,
+                            isExpanded = false
+                        )
+                    }
 
-                    when (card) {
-                        is PocketCardUiModel.DigitalDollar -> {
-                            DigitalDollarCard(
-                                modifier = cardModifier,
-                                card = card,
-                                onSelected = onCardSelected,
-                                isExpanded = false
-                            )
-                        }
-
-                        is PocketCardUiModel.ProductCard -> {
-                            ProductPocketCard(
-                                modifier = cardModifier,
-                                card = card,
-                                bindings = bindingsOf(card),
-                                onOpen = onCardSelected,
-                                onRemoveRequested = onProductCardRemovalRequested
-                            )
-                        }
+                    is PocketCardUiModel.ProductCard -> {
+                        ProductPocketCard(
+                            modifier = cardModifier,
+                            card = card,
+                            bindings = bindingsOf(card),
+                            onOpen = onCardSelected,
+                            onRemoveRequested = onProductCardRemovalRequested
+                        )
                     }
                 }
             }

@@ -8,7 +8,6 @@ import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,8 +44,6 @@ import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
@@ -120,73 +117,62 @@ fun PocketCollectibles(
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
-        PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_collectibles_title),
-            titleAlignment = TopBarTitleAlignment.Center
+        val pageInset = PolkadotTheme.spacings.mediumIncreased
+        CollectiblesPage(
+            modifier = Modifier
+                .fillMaxSize()
+                .collectiblesPageLayer(book, inset = pageInset),
+            stage = stage
         )
+
+        // Kept out of the page layer, where scaling and the rounded clip stall its paints; the mask frames and fades it instead.
+        if (stage == BookStage.Opened || stage == BookStage.Shown) {
+            ProductWebViewHost(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .graphicsLayer { translationY = book.pageMargin(pageInset.toPx()) },
+                webView = webView
+            )
+        }
 
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .windowInsetsPadding(LocalAppNavigationBarInsets.current)
-        ) {
-            val pageInset = PolkadotTheme.spacings.mediumIncreased
-            CollectiblesPage(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .collectiblesPageLayer(book, inset = pageInset),
-                stage = stage
-            )
-
-            // Kept out of the page layer, where scaling and the rounded clip stall its paints; the mask frames and fades it instead.
-            if (stage == BookStage.Opened || stage == BookStage.Shown) {
-                ProductWebViewHost(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clipToBounds()
-                        .graphicsLayer { translationY = book.pageMargin(pageInset.toPx()) },
-                    webView = webView
+                .fillMaxSize()
+                .pageFrameMask(
+                    book = book,
+                    inset = pageInset,
+                    color = PolkadotTheme.colors.bg.surface.main,
+                    veilsPage = { stage == BookStage.Opened && isPageRevealed }
                 )
-            }
+                // Until the page fills the box, the masked margins sit over live page content.
+                .then(if (stage == BookStage.Shown) Modifier else Modifier.pointerInput(Unit) {})
+        )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pageFrameMask(
-                        book = book,
-                        inset = pageInset,
-                        color = PolkadotTheme.colors.bg.surface.main,
-                        veilsPage = { stage == BookStage.Opened && isPageRevealed }
-                    )
-                    // Until the page fills the box, the masked margins sit over live page content.
-                    .then(if (stage == BookStage.Shown) Modifier else Modifier.pointerInput(Unit) {})
-            )
-
-            CollectiblesSketchbook(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PolkadotTheme.spacings.mediumIncreased)
-                    .pocketCollectiblesImageSharedElement()
-                    .graphicsLayer { rotationZ = book.tilt.value }
-                    .graphicsLayer {
-                        val angle = book.coverAngle.value
-                        transformOrigin = CoverSpine
-                        // At the default distance a full-width cover turning past 45° swings into the lens and fills the screen.
-                        cameraDistance = COVER_CAMERA_DISTANCE * density
-                        rotationY = angle
-                        // A layer has no back face of its own: past edge-on it would draw the cover mirrored.
-                        alpha = if (angle < COVER_EDGE_ON_DEGREES) 0f else 1f
-                    },
-                saturation = saturation(),
-                expanded = true
-            )
-        }
+        CollectiblesSketchbook(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(PolkadotTheme.spacings.mediumIncreased)
+                .pocketCollectiblesImageSharedElement()
+                .graphicsLayer { rotationZ = book.tilt.value }
+                .graphicsLayer {
+                    val angle = book.coverAngle.value
+                    transformOrigin = CoverSpine
+                    // At the default distance a full-width cover turning past 45° swings into the lens and fills the screen.
+                    cameraDistance = COVER_CAMERA_DISTANCE * density
+                    rotationY = angle
+                    // A layer has no back face of its own: past edge-on it would draw the cover mirrored.
+                    alpha = if (angle < COVER_EDGE_ON_DEGREES) 0f else 1f
+                },
+            saturation = saturation(),
+            expanded = true
+        )
     }
 }
 

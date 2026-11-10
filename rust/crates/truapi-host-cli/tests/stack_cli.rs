@@ -30,14 +30,29 @@ fn stderr(output: &Output) -> String {
 /// 2020-01-01T00:00:00Z, long past.
 const LONG_AGO: u32 = 1_577_836_800;
 
+/// A stack model the CLI can run on: every role, a `dub` service and a `popController`.
 fn write_model(dir: &Path, name: &str, expires_at: Option<u32>) -> String {
+	let chain = |role: &str, byte: &str, para_id: Option<u32>| {
+		let mut chain = serde_json::json!({
+			"role": role,
+			"genesisHash": format!("0x{}", byte.repeat(32)),
+			"rpc": [format!("ws://127.0.0.1:99{byte}")],
+		});
+		if let Some(para_id) = para_id {
+			chain["paraId"] = para_id.into();
+		}
+		chain
+	};
 	let mut model = serde_json::json!({
-		"id": "local", "name": name, "network": "local", "tld": "local", "services": [],
-		"chains": [{
-			"role": "Relay",
-			"genesisHash": format!("0x{}", "01".repeat(32)),
-			"rpc": ["ws://127.0.0.1:9944"],
-		}],
+		"id": "local", "name": name, "network": "local", "tld": "paseo",
+		"services": [{ "kind": "dub", "urls": ["http://127.0.0.1:8080/"] }],
+		"dotns": { "popController": format!("0x{}", "ab".repeat(20)) },
+		"chains": [
+			chain("Relay", "01", None),
+			chain("People", "02", Some(1004)),
+			chain("AssetHub", "03", Some(1000)),
+			chain("Bulletin", "04", Some(1010)),
+		],
 	});
 	if let Some(expires_at) = expires_at {
 		model["expiresAt"] = expires_at.into();
@@ -297,10 +312,37 @@ fn test_bundle_skip_same_projection() {
 	let new_generation = fs::read(site.join(".well-known/trinity-stack.json")).unwrap();
 	assert!(bundle(new_generation.clone(), &skip).status.success());
 	assert_eq!(fs::read(out).unwrap(), new_generation);
+
+	let fallback_model = write_model(dir.path(), "Fallback", None);
+	let mut fallback_json: serde_json::Value =
+		serde_json::from_slice(&fs::read(&fallback_model).unwrap()).unwrap();
+	fallback_json["chains"][1]["rpc"]
+		.as_array_mut()
+		.unwrap()
+		.push("ws://127.0.0.1:9945".into());
+	fs::write(&fallback_model, fallback_json.to_string()).unwrap();
+	let fallback_site = dir.path().join("fallback");
+	let fallback_output = stack(&[
+		"publish",
+		&fallback_model,
+		"--generation",
+		"g2",
+		"--out",
+		fallback_site.to_str().unwrap(),
+		"--signing-key-file",
+		key_file,
+		"--state",
+		state,
+	]);
+	assert!(fallback_output.status.success());
+	let fallback = fs::read(fallback_site.join(".well-known/trinity-stack.json")).unwrap();
+	assert!(bundle(fallback.clone(), &skip).status.success());
+	assert_eq!(fs::read(out).unwrap(), fallback);
 }
 
-/// Every account derives under the TLD, so `bundle` rejects a copy that changes it, also when
-/// the existing copy was signed with another key or cannot be read at all.
+/// Every account derives under the TLD and is stored under the id, so `bundle` rejects a copy that
+/// changes either, also when the existing copy was signed with another key or cannot be read at
+/// all.
 #[test]
 fn test_bundle_tld_pin() {
 	let dir = tempfile::tempdir().unwrap();
@@ -333,6 +375,16 @@ fn test_bundle_tld_pin() {
 	assert!(!tld_change_output.status.success());
 	assert!(stderr(&tld_change_output).contains("changes every account"));
 	assert!(stderr(&tld_change_output).contains(out));
+	assert_eq!(fs::read(out).unwrap(), first);
+
+	let renamed_model = write_model(dir.path(), "Renamed", None);
+	let mut renamed: serde_json::Value =
+		serde_json::from_slice(&fs::read(&renamed_model).unwrap()).unwrap();
+	renamed["id"] = "renamed".into();
+	fs::write(&renamed_model, renamed.to_string()).unwrap();
+	let id_change_output = bundle(publish(dir.path(), &renamed_model, &key_file, state));
+	assert!(!id_change_output.status.success());
+	assert!(stderr(&id_change_output).contains("changes the id from local to renamed"));
 	assert_eq!(fs::read(out).unwrap(), first);
 
 	let other_state = dir.path().join("other-state.json");
@@ -371,6 +423,7 @@ fn local_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 		"$v": 1, "sequence": 1, "generation": "g1",
 		"id": "staging-fork", "name": "Staging", "network": "staging", "tld": "paseo",
 		"services": [{ "kind": "dub", "urls": ["https://dub.example/"] }],
+		"dotns": { "popController": format!("0x{}", "ab".repeat(20)) },
 		"chains": [
 			{ "role": "Relay", "genesisHash": genesis("01"), "rpc": ["ws://127.0.0.1:1"] },
 			{ "role": "People", "genesisHash": genesis("02"), "paraId": 1004, "rpc": ["ws://127.0.0.1:2"] },
@@ -434,20 +487,26 @@ fn test_network_check_url_and_link() {
 	assert!(stderr(&wrong_key).contains("bad-signature"));
 }
 
-/// A stack's identities are disposable, so it never runs on Polkadot's chains, TLD or namespace.
+/// A stack never runs under the `polkadot` namespace, which may contain sessions of real Polkadot
+/// identities. A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
+/// namespace: whether its chains are Polkadot itself is checked against the chains before a command
+/// runs, which `network-check` does not contact.
 #[test]
 fn test_network_check_polkadot_values() {
 	let dir = tempfile::tempdir().unwrap();
-	let polkadot_people = local_descriptor(|descriptor| {
+	let polkadot = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
+	let output = network_check(&write_descriptor(dir.path(), &polkadot), &[]);
+	assert!(stderr(&output).contains("the polkadot namespace"));
+
+	let polkadot_fork = local_descriptor(|descriptor| {
+		descriptor["id"] = "polkadot-fork".into();
+		descriptor["tld"] = "dot".into();
 		descriptor["chains"][1]["genesisHash"] =
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
-	let dot = local_descriptor(|descriptor| descriptor["tld"] = "dot".into());
-	let namespaced = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
-	for descriptor in [polkadot_people, dot, namespaced] {
-		let output = network_check(&write_descriptor(dir.path(), &descriptor), &[]);
-		assert!(!output.status.success());
-	}
+	let output = network_check(&write_descriptor(dir.path(), &polkadot_fork), &[]);
+	let routing: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(routing["network"], "polkadot-fork");
 }
 
 /// `--network` picks a built-in network and a stack any other one, and the error names where
@@ -473,6 +532,11 @@ fn test_network_and_stack_conflict() {
 		"--stack",
 	);
 	assert_conflict(
+		&["--network", "previewnet", "network-check", "--stack", &file],
+		&[],
+		"--stack",
+	);
+	assert_conflict(
 		&["network-check", "--network", "previewnet"],
 		&[("HOST_CLI_STACK", &file)],
 		"HOST_CLI_STACK",
@@ -488,147 +552,24 @@ fn test_network_check_light_client_stack() {
 	assert!(stderr(&output).contains("--stack"));
 }
 
-/// Exported but empty `HOST_CLI_STACK` and `HOST_CLI_LOCAL_NETWORK_CONFIG` are unset, so
-/// `--network` selects the built-in network as it is.
+/// An exported but empty `HOST_CLI_STACK` is unset, so `--network` selects the built-in network
+/// as it is.
 #[test]
-fn test_blank_routing_variables() {
-	let output = host_with_env(
-		&["network-check", "--network", "previewnet"],
-		&[("HOST_CLI_STACK", ""), ("HOST_CLI_LOCAL_NETWORK_CONFIG", " ")],
-	);
+fn test_blank_stack_variable() {
+	let output =
+		host_with_env(&["network-check", "--network", "previewnet"], &[("HOST_CLI_STACK", "")]);
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
 	assert!(!report["people"]["ws"].as_str().unwrap().starts_with("ws://127.0.0.1"));
 }
 
-/// Runs `truapi-host <args>` with `env` set and no other routing variable inherited.
+/// Runs `truapi-host <args>` with `env` set and no `HOST_CLI_STACK` inherited.
 fn host_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
 	let mut command = Command::new(env!("CARGO_BIN_EXE_truapi-host"));
-	command.args(args).env("TRUAPI_HOST_NO_UPDATE", "1");
-	for name in [
-		"HOST_CLI_STACK",
-		"HOST_CLI_PEOPLE_WS",
-		"HOST_CLI_ASSET_HUB_WS",
-		"HOST_CLI_BULLETIN_WS",
-		"HOST_CLI_LOCAL_NETWORK_CONFIG",
-		"HOST_CLI_IDENTITY_BACKEND_BASE",
-	] {
-		command.env_remove(name);
-	}
+	command
+		.args(args)
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.env_remove("HOST_CLI_STACK");
 	command.envs(env.iter().copied()).output().expect("truapi-host did not start")
-}
-
-/// A chain URL override reroutes one role of a stack, which has the stack's genesis.
-#[test]
-fn test_network_check_chain_override_on_stack() {
-	let dir = tempfile::tempdir().unwrap();
-	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let output = host_with_env(
-		&["--stack", &file, "network-check"],
-		&[("HOST_CLI_BULLETIN_WS", "ws://127.0.0.1:9")],
-	);
-	assert!(output.status.success());
-	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
-	assert_eq!(report["bulletin"]["ws"], "ws://127.0.0.1:9");
-	assert_eq!(report["bulletin"]["genesis"], format!("0x{}", "04".repeat(32)));
-	assert_eq!(report["people"]["ws"], "ws://127.0.0.1:2");
-}
-
-/// The local-network file routes every chain of the built-in network in its `network` field,
-/// under that network's namespace. `network-check` prints the routing without contacting a
-/// chain; `local-network-check` asks every node for its genesis first, so a local node that does
-/// not answer is an error.
-#[test]
-fn test_local_network_check() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("local-network.json");
-	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
-	let local = serde_json::json!({
-		"network": "previewnet",
-		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
-		"people": chain(1, "11"),
-		"asset_hub": chain(2, "22"),
-		"bulletin": chain(3, "33"),
-	});
-	fs::write(&path, local.to_string()).unwrap();
-	let path = path.to_str().unwrap();
-	let local_env = [("HOST_CLI_LOCAL_NETWORK_CONFIG", path)];
-	let output = host_with_env(&["--network", "previewnet", "network-check"], &local_env);
-	assert!(output.status.success());
-	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
-	assert_eq!(report["network"], "previewnet");
-	assert_eq!(report["people"], chain(1, "11"));
-	assert_eq!(report["identity_backend_base"], "http://127.0.0.1:8092/api/v1");
-
-	let checked = host_with_env(&["--network", "previewnet", "local-network-check"], &local_env);
-	assert!(!checked.status.success());
-	assert!(stderr(&checked).contains("cannot check the genesis of ws://127.0.0.1:"));
-
-	let unset = host_with_env(&["local-network-check"], &[]);
-	assert!(!unset.status.success());
-	assert!(stderr(&unset).contains("HOST_CLI_LOCAL_NETWORK_CONFIG must be set"));
-
-	let stack = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let with_stack = host_with_env(&["--stack", &stack, "network-check"], &local_env);
-	assert!(!with_stack.status.success());
-	let message = stderr(&with_stack);
-	assert!(message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("--stack"));
-
-	let with_override = host_with_env(
-		&["--network", "previewnet", "network-check"],
-		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path), ("HOST_CLI_PEOPLE_WS", "ws://127.0.0.1:9")],
-	);
-	assert!(!with_override.status.success());
-	let message = stderr(&with_override);
-	assert!(
-		message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("HOST_CLI_PEOPLE_WS")
-	);
-}
-
-/// An HTTPS proxy on a loopback port that counts the connections it receives and closes each
-/// one, so a descriptor fetch through it fails after the count.
-fn spawn_counting_proxy() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-	let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-	let url = format!("http://{}", listener.local_addr().unwrap());
-	let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-	let thread_count = count.clone();
-	thread::spawn(move || {
-		for socket in listener.incoming() {
-			thread_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-			drop(socket);
-		}
-	});
-	(url, count)
-}
-
-/// A local network replaces every route, so the built-in network comes from the bundled copy
-/// and its published descriptor is not fetched.
-#[test]
-fn test_local_network_without_descriptor_fetch() {
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("local-network.json");
-	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
-	let local = serde_json::json!({
-		"network": "previewnet",
-		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
-		"people": chain(1, "11"),
-		"asset_hub": chain(2, "22"),
-		"bulletin": chain(3, "33"),
-	});
-	fs::write(&path, local.to_string()).unwrap();
-	let (proxy, requests) = spawn_counting_proxy();
-	let run_through_proxy = |extra: &[(&str, &str)]| {
-		let mut env = vec![("HTTPS_PROXY", proxy.as_str()), ("NO_PROXY", "")];
-		env.extend_from_slice(extra);
-		host_with_env(&["--network", "previewnet", "network-check"], &env)
-	};
-
-	assert!(run_through_proxy(&[]).status.success());
-	assert!(requests.load(std::sync::atomic::Ordering::SeqCst) > 0);
-
-	requests.store(0, std::sync::atomic::Ordering::SeqCst);
-	let local = run_through_proxy(&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path.to_str().unwrap())]);
-	assert!(local.status.success());
-	assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
