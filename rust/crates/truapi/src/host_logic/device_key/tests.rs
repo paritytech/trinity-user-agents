@@ -1,5 +1,8 @@
 use super::*;
-use crate::{platform::Platform, test_support::StubPlatform};
+use crate::{
+	platform::Platform,
+	test_support::{StubPlatform, test_storage},
+};
 use std::sync::Arc;
 
 #[test]
@@ -7,11 +10,11 @@ fn secret_is_generated_once_and_then_reused() {
 	let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
 
 	let first = futures::executor::block_on(read_or_create_device_encryption_secret(
-		&crate::test_support::test_storage(storage.as_ref()),
+		&test_storage(storage.as_ref()),
 	))
 	.unwrap();
 	let second = futures::executor::block_on(read_or_create_device_encryption_secret(
-		&crate::test_support::test_storage(storage.as_ref()),
+		&test_storage(storage.as_ref()),
 	))
 	.unwrap();
 

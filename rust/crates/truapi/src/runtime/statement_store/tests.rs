@@ -15,7 +15,7 @@ use crate::{
 	test_support::{
 		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 		sso_session_info, sso_success_response_script, statement, stub_platform,
-		submitted_remote_message, subscribe_ack_frame,
+		submitted_remote_message, subscribe_ack_frame, test_storage_key,
 	},
 };
 use futures::StreamExt;
@@ -50,9 +50,7 @@ fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	};
 	futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 		platform,
-		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-			&ProductId::for_test(owner),
-		)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");

@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::sso_session_info;
+use crate::test_support::{MemoryCoreStorage, sso_session_info, test_storage};
 
 #[test]
 fn entries_stored_with_string_ids_read_and_write_unchanged() {
@@ -13,12 +13,12 @@ fn entries_stored_with_string_ids_read_and_write_unchanged() {
 
 #[test]
 fn stores_allowance_keys_by_product_and_resource() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -27,7 +27,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		.await
 		.unwrap();
 		write_allowance_key(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::StatementStore,
@@ -38,7 +38,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 		assert_eq!(
 			read_allowance_key(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
@@ -49,7 +49,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::StatementStore
@@ -60,7 +60,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		);
 		assert_eq!(
 			read_allowance_key(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("other.dot"),
 				AllowanceResource::Bulletin
@@ -74,12 +74,12 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 #[test]
 fn clears_session_allowance_keys() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		write_allowance_key(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -87,12 +87,10 @@ fn clears_session_allowance_keys() {
 		)
 		.await
 		.unwrap();
-		clear_session_allowance_keys(&crate::test_support::test_storage(&storage), &session)
-			.await
-			.unwrap();
+		clear_session_allowance_keys(&test_storage(&storage), &session).await.unwrap();
 		assert_eq!(
 			read_allowance_key(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
