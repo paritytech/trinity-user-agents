@@ -352,6 +352,7 @@ impl AccountHolder for RemoteAccountHolder {
 			entries = update.reconcile_owner(&owner, entries)?;
 			update.persist().await?;
 		}
+		self.require_current_session(invocation.session)?;
 		apply_ring_vrf_disclosure(&mut entries, disclosure);
 		Ok(entries)
 	}
