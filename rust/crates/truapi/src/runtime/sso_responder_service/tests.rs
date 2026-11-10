@@ -69,13 +69,14 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 	);
 }
 use crate::{
+	Spawner,
 	host_logic::statement_store::{SUBMIT_STATEMENT_METHOD, decode_verified_statement_data},
 	platform::{
 		CreateTransactionReview, HostInfo, LegacySigningAccount, Platform, PlatformInfo,
 		SigningHostConfig,
 	},
 	runtime::{HostSession, services::RuntimeServices},
-	test_support::{StubPlatform, recorded_rpc_method_count, test_spawner},
+	test_support::{StubPlatform, recorded_rpc_method_count},
 };
 use std::sync::Arc;
 use truapi::latest as api;
@@ -102,7 +103,7 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 		platform.clone(),
 		config.host.host_info.clone(),
 		config.stack.clone(),
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))

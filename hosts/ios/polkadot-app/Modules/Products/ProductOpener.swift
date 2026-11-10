@@ -25,6 +25,9 @@ struct ProductOpener: ProductOpening {
         guard tabBar?.mountedProductId != productId else {
             return false
         }
+        if let tabBar, let presented = tabBar.presentedProduct(productId) {
+            return tabBar.uncover(presented)
+        }
         if tabBar?.mountExistingTab(where: { $0.dotDomain == productId }) == true {
             return true
         }

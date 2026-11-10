@@ -1,8 +1,11 @@
 use super::*;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use futures::{executor::block_on, future::join_all};
+use futures::{
+	executor::block_on,
+	future::{BoxFuture, join_all},
+};
 
-use crate::test_support::test_spawner;
+use crate::Spawner;
 
 /// A read that counts itself and answers once `gate` opens.
 fn gated_read(
@@ -21,7 +24,7 @@ fn gated_read(
 
 #[test]
 fn a_settled_read_is_not_kept_so_the_next_caller_reads_again() {
-	let flight = SingleFlight::<&str, Result<u32, String>>::new(test_spawner());
+	let flight = SingleFlight::<&str, Result<u32, String>>::new(Spawner::for_test());
 	let reads = Arc::new(AtomicUsize::new(0));
 	let read = |answer: Result<u32, String>| {
 		let reads = reads.clone();
@@ -42,7 +45,7 @@ fn a_settled_read_is_not_kept_so_the_next_caller_reads_again() {
 
 #[test]
 fn reads_for_different_keys_run_side_by_side() {
-	let flight = SingleFlight::<&str, u32>::new(test_spawner());
+	let flight = SingleFlight::<&str, u32>::new(Spawner::for_test());
 	let reads = Arc::new(AtomicUsize::new(0));
 	let (open, gate) = oneshot::channel();
 	let gate = gate.shared();
@@ -62,7 +65,7 @@ fn reads_for_different_keys_run_side_by_side() {
 
 #[test]
 fn a_read_still_answers_its_waiters_when_the_caller_that_started_it_gives_up() {
-	let flight = SingleFlight::<&str, u32>::new(test_spawner());
+	let flight = SingleFlight::<&str, u32>::new(Spawner::for_test());
 	let reads = Arc::new(AtomicUsize::new(0));
 	let (open, gate) = oneshot::channel();
 	let gate = gate.shared();
@@ -91,7 +94,7 @@ impl Drop for Held {
 
 #[test]
 fn a_read_every_caller_gave_up_on_is_stopped_and_lets_go_of_what_it_holds() {
-	let flight = SingleFlight::<&str, u32>::new(test_spawner());
+	let flight = SingleFlight::<&str, u32>::new(Spawner::for_test());
 	let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let held = Held(released.clone());
 

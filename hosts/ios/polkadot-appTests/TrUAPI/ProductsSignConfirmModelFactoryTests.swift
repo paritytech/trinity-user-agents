@@ -35,7 +35,10 @@ struct ProductsSignConfirmModelFactoryTests {
         let method = try Data.randomOrError(of: 12)
         let input = ProductsSignConfirmInput.signPayload(
             .legacyAccount(
-                account: TrUAPIHostProductAccountId(dotNsIdentifier: try! ProductId("p.dot"), derivationIndex: .index(0)),
+                account: TrUAPIHostProductAccountId(
+                    dotNsIdentifier: try! ProductId("p.dot"),
+                    derivationIndex: .index(0)
+                ),
                 request: HostSignPayloadWithLegacyAccountRequest(
                     signer: "5Fff",
                     payload: Self.makeHostSignPayloadData(method: method)

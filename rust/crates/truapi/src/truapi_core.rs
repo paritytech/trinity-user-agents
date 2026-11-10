@@ -11,6 +11,7 @@ use tracing::instrument;
 use truapi::api::TrUApi;
 
 use crate::{
+	Spawner,
 	dispatcher::Dispatcher,
 	frame::ProtocolMessage,
 	generated::dispatcher,
@@ -18,7 +19,6 @@ use crate::{
 	runtime::{
 		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
 	},
-	subscription::Spawner,
 	transport::Transport,
 };
 
