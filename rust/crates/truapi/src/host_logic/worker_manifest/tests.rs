@@ -170,12 +170,30 @@ fn a_route_of_the_wrong_shape_fails_the_document() {
 fn a_worker_needs_an_entrypoint_a_version_and_a_surface() {
 	let parse = |json: &str| WorkerManifest::parse(json).map(|manifest| manifest.funding.is_some());
 	let cases = [
-		(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":" ","includes":{"chat":true}}"#, Err(ExecutableManifestError::Entrypoint)),
-		(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{}}"#, Err(ExecutableManifestError::NoModality)),
-		(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":false,"pocket":null}}"#, Err(ExecutableManifestError::NoModality)),
-		(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":null}"#, Err(ExecutableManifestError::NoModality)),
-		(r#"{"$v":1,"appVersion":[1,0,0,"rc1"],"kind":"worker","entrypoint":"w.js","includes":{"funding":{}}}"#, Ok(true)),
-		(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true,"funding":null}}"#, Ok(false)),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":" ","includes":{"chat":true}}"#,
+			Err(ExecutableManifestError::Entrypoint),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{}}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":false,"pocket":null}}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":null}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0,"rc1"],"kind":"worker","entrypoint":"w.js","includes":{"funding":{}}}"#,
+			Ok(true),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true,"funding":null}}"#,
+			Ok(false),
+		),
 	];
 	for (json, expected) in cases {
 		assert_eq!(parse(json), expected, "{json}");

@@ -9,13 +9,13 @@ use tracing::warn;
 
 use crate::{
 	host_internal::product_manifest::ProductBrand,
-	image_loader::ImageReference,
 	host_logic::{
 		dev_server::DevServerProduct,
 		dotns::ProductLink,
 		funding_providers::{FundingProviderEntry, FundingProviderOrigin},
 		worker_manifest::WorkerManifest,
 	},
+	image_loader::ImageReference,
 	platform::ProductId,
 };
 
@@ -36,7 +36,8 @@ const INDEX: &str = "index.html";
 pub trait BundleReader: Send + Sync {
 	/// The names directly inside directory `dir`; empty when it is not one.
 	fn list(&self, dir: String) -> Vec<String>;
-	/// Whether a file is at `path`.
+	/// Whether a regular file is at `path`: `false` for a directory, so a
+	/// directory is served by its `index.html` instead.
 	fn exists(&self, path: String) -> bool;
 	/// The UTF-8 text of the file at `path`, if it is one.
 	fn read_text(&self, path: String) -> Option<String>;

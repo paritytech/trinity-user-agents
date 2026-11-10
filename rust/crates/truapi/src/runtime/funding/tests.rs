@@ -1119,3 +1119,16 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 		(true, true, 0, 2, 0)
 	);
 }
+
+// A frame that replaced another for the same session stays tracked when the
+// one it replaced goes, so it is still closed once the payment moves.
+#[test]
+fn a_replaced_frame_leaves_its_successor_tracked() {
+	let registry = FundingRegistry::default();
+	let first = registry.track_frame("fs_1", worker("ramp.dot"));
+	let second = registry.track_frame("fs_1", worker("ramp.dot"));
+	drop(first);
+	let tracked = lock(&registry.frames).contains_key("fs_1");
+	drop(second);
+	assert_eq!((tracked, lock(&registry.frames).contains_key("fs_1")), (true, false));
+}

@@ -113,7 +113,10 @@ impl FundingProviders {
 					now_ms,
 				)
 			})
-			.map(|candidate| FundingCandidate { brand: self.brand(&candidate.provider_id), ..candidate })
+			.map(|candidate| FundingCandidate {
+				brand: self.brand(&candidate.provider_id),
+				..candidate
+			})
 			.collect()
 	}
 
@@ -240,7 +243,8 @@ impl FundingProviders {
 	/// quote is asked of.
 	fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
 		let learned = lock(&self.learned).clone();
-		amount_limits(&self.quote_targets(), &learned, scope, current_unix_millis())
+		let targets = self.quote_targets_for(scope.direction, scope.rail);
+		amount_limits(&targets, &learned, scope, current_unix_millis())
 	}
 
 	/// What the providers' manifests and recent quote answers say about each
@@ -328,14 +332,20 @@ impl RuntimeServices {
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
-		let mut configured = lock(&self.funding_providers().configured);
-		if configured.as_ref() == Some(&entries) {
-			return Ok(());
+		// Swapped under the lock and applied after it, so the host callbacks
+		// applying it runs never wait on this lock.
+		let before = {
+			let mut configured = lock(&self.funding_providers().configured);
+			if configured.as_ref() == Some(&entries) {
+				return Ok(());
+			}
+			configured.replace(entries.clone())
+		};
+		if let Err(error) = self.set_funding_providers(entries.clone()) {
+			*lock(&self.funding_providers().configured) = None;
+			return Err(error);
 		}
-		self.set_funding_providers(entries.clone())?;
-		let changed = configured.as_deref().unwrap_or_default() != entries.as_slice();
-		*configured = Some(entries);
-		drop(configured);
+		let changed = before.as_deref().unwrap_or_default() != entries.as_slice();
 		if changed && let Some(feed) = self.funding().feed() {
 			feed.funding_providers_changed();
 		}
@@ -569,7 +579,9 @@ fn offered_providers(
 		if offered.iter().all(|kept| kept.product_id != product_id) {
 			let brand = entry.root_manifest.as_deref().and_then(|json| {
 				ProductBrand::parse(json)
-					.inspect_err(|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"))
+					.inspect_err(
+						|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"),
+					)
 					.ok()
 			});
 			offered.push(OfferedProvider {

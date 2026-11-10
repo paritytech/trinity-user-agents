@@ -2707,7 +2707,6 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		self.closed.lock().expect("closed mutex poisoned").push(intent);
 	}
 
-
 	async fn detected_country(&self) -> Option<String> {
 		self.country.clone()
 	}

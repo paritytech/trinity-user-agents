@@ -21,6 +21,7 @@ fn declared_networks_are_listed_once_in_order() {
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
+		declares_routes: true,
 		brand: None,
 	};
 	let candidates = [
@@ -314,4 +315,37 @@ fn a_candidate_carries_its_providers_brand() {
 	};
 
 	assert_eq!((branded, names(&providers)), (true, vec![Some("Live".to_string())]));
+}
+
+// A provider that does not route the rail has nothing to say about its
+// amounts, so its missing record leaves the bounds of the rail known.
+#[test]
+fn limits_count_only_the_providers_routing_the_rail() {
+	use crate::host_logic::funding_providers::{LearnedLimit, LimitScope};
+	let providers = providers(&[
+		("ramp.dot", Some(manifest(CARD_IN))),
+		("swap.dot", Some(manifest(CRYPTO_OUT))),
+	]);
+	let now_ms = current_unix_millis();
+	providers.learn(LearnedSupport {
+		provider_id: ProductId::for_test("ramp.dot"),
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked: 5,
+		supported: true,
+		min: Some(LearnedLimit { amount: 20_000_000, learned_at_ms: now_ms }),
+		max: Some(LearnedLimit { amount: 90_000_000, learned_at_ms: now_ms }),
+		learned_at_ms: now_ms,
+	});
+	let limits = providers.amount_limits(LimitScope {
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR",
+		network: None,
+		country: None,
+	});
+	assert_eq!((limits.min, limits.max), (Some(20_000_000), Some(90_000_000)));
 }

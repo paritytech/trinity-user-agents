@@ -235,6 +235,9 @@ pub struct FundingCandidate {
 	pub unsupported: Vec<FundingUnsupported>,
 	/// The limits its recent quote refusals showed.
 	pub limits: Vec<FundingLimit>,
+	/// Whether its manifest declares routes. One that declares none may
+	/// serve any rail, whatever its answers confirmed so far.
+	pub declares_routes: bool,
 	/// The name and icon its root manifest gives it, once the core has one.
 	pub brand: Option<crate::host_internal::product_manifest::ProductBrand>,
 }
@@ -303,6 +306,7 @@ impl FundingCandidate {
 			routes,
 			unsupported,
 			limits,
+			declares_routes: declared.is_some(),
 			brand: None,
 		})
 	}

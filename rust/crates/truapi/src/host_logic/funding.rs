@@ -101,6 +101,10 @@ pub struct FundingSessionSummary {
 	pub transaction_id: Option<String>,
 	/// The provider's latest reference.
 	pub reference: Option<String>,
+	/// Whether money moved for the session: the provider started funds for
+	/// it or saw the user's payment. Stored beside the summary.
+	#[codec(skip)]
+	pub money_moved: bool,
 	/// The facts about how the session ended. Not stored: it is worked out
 	/// from the rest whenever a summary is made or loaded.
 	#[codec(skip)]
@@ -113,6 +117,7 @@ impl FundingSession {
 		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
 			ended: FundingEnding::default(),
+			money_moved: self.money_moved(),
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
 			direction: self.direction,
@@ -148,10 +153,11 @@ impl FundingSessionSummary {
 		self.stage.settled_at_ms()
 	}
 
-	/// Whether the session was cancelled with nothing moved: no amount
-	/// settled and nothing refunded, so there is nothing to tell the user.
+	/// Whether the session was cancelled with nothing moved: no money moved
+	/// and nothing refunded, so there is nothing to tell the user.
 	pub fn cancelled_unmoved(&self) -> bool {
 		matches!(self.stage, FundingStage::Failed { reason: FundingFailure::Cancelled, .. }) &&
+			!self.money_moved &&
 			self.refunded.is_none()
 	}
 }

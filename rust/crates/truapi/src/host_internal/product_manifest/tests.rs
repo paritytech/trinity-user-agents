@@ -133,7 +133,11 @@ fn a_brand_needs_a_name_a_description_and_an_icon() {
 			named(brand(&format!("{},{}", name("Ramp"), icon(ICON_CID, "svg")))),
 			named(brand(&format!("{},{}", name("Ramp"), icon("not-a-cid", "png")))),
 		],
-		[Some(("Ramp".to_string(), true)), Some(("Ramp".to_string(), false)), Some(("Ramp".to_string(), false))]
+		[
+			Some(("Ramp".to_string(), true)),
+			Some(("Ramp".to_string(), false)),
+			Some(("Ramp".to_string(), false))
+		]
 	);
 	for fields in [
 		format!("{},{}", name(" "), icon(ICON_CID, "png")),

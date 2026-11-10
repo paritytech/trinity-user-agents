@@ -128,11 +128,18 @@ struct PackedSession {
 	summary: FundingSessionSummary,
 	/// Whether the host told the user how the session ended.
 	acknowledged: bool,
+	/// Whether money moved for the session, which its summary does not
+	/// store.
+	money_moved: bool,
 }
 
 impl From<&FundingSession> for PackedSession {
 	fn from(session: &FundingSession) -> Self {
-		Self { summary: session.summary(), acknowledged: session.acknowledged }
+		Self {
+			summary: session.summary(),
+			acknowledged: session.acknowledged,
+			money_moved: session.money_moved(),
+		}
 	}
 }
 
@@ -438,8 +445,11 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
-	/// The provider frames open, by session, with the provider showing each.
-	frames: Mutex<HashMap<String, ProductContext>>,
+	/// The provider frames open, by session, with the provider showing each
+	/// and the frame's number, so a frame that replaced another outlives it.
+	frames: Mutex<HashMap<String, (u64, ProductContext)>>,
+	/// The number the next tracked frame takes.
+	next_frame: AtomicU64,
 	/// The funding state the host reads back, filled as the host is told
 	/// what changed.
 	book: FundingSessionBook,
@@ -808,8 +818,9 @@ impl FundingRegistry {
 	/// returned guard drops, so the core can close it once the payment moved.
 	/// One that already moved is closed as soon as the session next changes.
 	pub fn track_frame(&self, intent: &str, provider: ProductContext) -> FrameTrack<'_> {
-		lock(&self.frames).insert(intent.to_string(), provider);
-		FrameTrack { registry: self, intent: intent.to_string() }
+		let frame = self.next_frame.fetch_add(1, Ordering::Relaxed);
+		lock(&self.frames).insert(intent.to_string(), (frame, provider));
+		FrameTrack { registry: self, intent: intent.to_string(), frame }
 	}
 
 	/// Close session `intent`'s provider frame through `platform` if one is
@@ -818,7 +829,7 @@ impl FundingRegistry {
 		if !self.payment_moved(intent) {
 			return;
 		}
-		let Some(provider) = lock(&self.frames).remove(intent) else {
+		let Some((_, provider)) = lock(&self.frames).remove(intent) else {
 			return;
 		};
 		platform.close_provider_frame(&provider, intent.to_string());
@@ -1757,11 +1768,15 @@ impl FundingRegistry {
 pub struct FrameTrack<'a> {
 	registry: &'a FundingRegistry,
 	intent: String,
+	frame: u64,
 }
 
 impl Drop for FrameTrack<'_> {
 	fn drop(&mut self) {
-		lock(&self.registry.frames).remove(&self.intent);
+		let mut frames = lock(&self.registry.frames);
+		if frames.get(&self.intent).is_some_and(|(frame, _)| *frame == self.frame) {
+			frames.remove(&self.intent);
+		}
 	}
 }
 

@@ -34,8 +34,7 @@ impl BundleReader for Bundle {
 }
 
 const FUNDING: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{}}}"#;
-const CHAT: &str =
-	r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#;
+const CHAT: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#;
 
 fn bundle() -> Bundle {
 	Bundle::new(&[
@@ -97,7 +96,11 @@ fn bundled_products_are_named_directories_described_by_their_root_manifest() {
 			("broken.dot", None, None),
 			("chat.dot", None, None),
 			("noworker.dot", None, None),
-			("ramp.dot", Some("Ramp"), Some("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy")),
+			(
+				"ramp.dot",
+				Some("Ramp"),
+				Some("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy")
+			),
 		]
 	);
 }

@@ -110,9 +110,9 @@ impl ProductBrand {
 			"jpeg" => Some(ImageFormat::Jpeg),
 			_ => None,
 		};
-		let icon = declared_format.zip(cid.parse::<BulletinCid>().ok()).map(|(format, cid)| {
-			ImageReference::Bulletin { cid, declared_format: Some(format) }
-		});
+		let icon = declared_format
+			.zip(cid.parse::<BulletinCid>().ok())
+			.map(|(format, cid)| ImageReference::Bulletin { cid, declared_format: Some(format) });
 		Ok(Self { display_name, icon })
 	}
 }

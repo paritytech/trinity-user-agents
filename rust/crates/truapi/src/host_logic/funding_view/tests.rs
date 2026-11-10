@@ -19,9 +19,11 @@ fn route(rail: FundingRail, assets: &[&str], networks: Option<&[&str]>) -> Fundi
 	}
 }
 
+/// A candidate declaring `routes`, or none when they are empty.
 fn candidate(name: &str, routes: Vec<FundingRoute>) -> FundingCandidate {
 	FundingCandidate {
 		provider_id: ProductId::for_test(name),
+		declares_routes: !routes.is_empty(),
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
@@ -249,6 +251,7 @@ fn summary(
 		refunded: None,
 		transaction_id: None,
 		reference: None,
+		money_moved: false,
 		ended: FundingEnding::default(),
 	}
 }
@@ -379,4 +382,39 @@ fn only_a_bank_top_up_awaits_the_users_transfer() {
 			"{direction:?} {rail:?}"
 		);
 	}
+}
+
+// A top-up cancelled after the provider saw the payment reached Received and
+// keeps its history row, even when no refund was recorded.
+#[test]
+fn a_cancel_after_money_moved_stops_later_and_stays_in_history() {
+	let cancelled = |money_moved| FundingSessionSummary {
+		money_moved,
+		..summary(
+			FundingDirection::In,
+			FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: 2 },
+			FundingStatus::Cancelled { refunded: None },
+		)
+	};
+	assert_eq!(
+		[false, true].map(|moved| {
+			let summary = cancelled(moved);
+			(ending(&summary).stopped_at, summary.cancelled_unmoved())
+		}),
+		[(Some(FundingStep::Received), true), (Some(FundingStep::Added), false)]
+	);
+}
+
+// A provider that declares no routes may serve any rail, so a route one of
+// its answers confirmed does not stop it being asked about the others.
+#[test]
+fn a_provider_declaring_no_routes_is_asked_on_every_rail() {
+	let confirmed = |declares_routes| FundingCandidate {
+		declares_routes,
+		..candidate("ramp.dot", vec![route(FundingRail::Card, &["EUR"], None)])
+	};
+	assert_eq!(
+		[false, true].map(|declares| routes_rail(&confirmed(declares), FundingRail::Crypto)),
+		[true, false]
+	);
 }

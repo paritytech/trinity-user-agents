@@ -39,7 +39,7 @@ const DEFAULT_FIAT: &str = "USD";
 /// for. A provider that declares no routes may serve any rail, so only its
 /// quotes say what it serves.
 pub fn routes_rail(candidate: &FundingCandidate, rail: FundingRail) -> bool {
-	candidate.routes.is_empty() || candidate.routes.iter().any(|route| route.rail == rail)
+	!candidate.declares_routes || candidate.routes.iter().any(|route| route.rail == rail)
 }
 
 /// The rails some candidate routes, in core order (crypto, card, bank): the
@@ -415,12 +415,13 @@ pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 		FundingDirection::In => FundingStep::Added,
 		FundingDirection::Out => FundingStep::Sent,
 	};
-	let received = matches!(
-		summary.stage,
-		FundingStage::Delivered { .. } |
-			FundingStage::Released { .. } |
-			FundingStage::Failed { reason: FundingFailure::Refunded, .. }
-	);
+	let received = summary.money_moved ||
+		matches!(
+			summary.stage,
+			FundingStage::Delivered { .. } |
+				FundingStage::Released { .. } |
+				FundingStage::Failed { reason: FundingFailure::Refunded, .. }
+		);
 	let completed = match summary.stage {
 		FundingStage::Delivered { .. } => true,
 		FundingStage::Released { .. } => matches!(summary.payout, Some(FundingPayout::PaidOut)),
