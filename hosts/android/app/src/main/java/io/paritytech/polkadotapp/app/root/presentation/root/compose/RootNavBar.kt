@@ -65,7 +65,6 @@ import io.paritytech.polkadotapp.app.root.presentation.main.compose.icon
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.title
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.components.ScanPanel
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotTarget
-import io.paritytech.polkadotapp.common.presentation.tabbar.dockletHighlightedSlot
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
@@ -179,22 +178,21 @@ fun RootNavBar(
         LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
         LaunchedEffect(dock.right, density) { currentOnBarWidthChange(with(density) { dock.right.toPx() }) }
 
-        val highlighted = dockletHighlightedSlot(
-            currentTab = currentTab,
-            networkStatusExpanded = networkStatusItem && networkStatusExpanded,
-        )
+        val selectedTarget = DockletSlotTarget.Tab(currentTab)
+        val networkStatusOpen = networkStatusItem && networkStatusExpanded
         val targets = remember(networkStatusItem) {
             (BottomTab.availableEntries.map(DockletSlotTarget::Tab) +
                 listOfNotNull(DockletSlotTarget.NetworkStatus.takeIf { networkStatusItem })).toImmutableList()
         }
         val titles = targets.map { it.title() }
         val currentOnSlotClick by rememberUpdatedState(onSlotClick)
-        val slots = remember(targets, titles, highlighted, apps.size, tabWarnings) {
+        val slots = remember(targets, titles, selectedTarget, networkStatusOpen, apps.size, tabWarnings) {
             targets.mapIndexed { index, target ->
                 DockletSlot(
                     icon = target.icon(),
                     contentDescription = titles[index],
-                    selected = target == highlighted,
+                    selected = target == selectedTarget,
+                    emphasized = target == DockletSlotTarget.NetworkStatus && networkStatusOpen,
                     badgeCount = if (target == DockletSlotTarget.Tab(BottomTab.EXPLORE)) apps.size else 0,
                     warning = target is DockletSlotTarget.Tab && tabWarnings[target.tab] == true,
                     onClick = { currentOnSlotClick(target) },
@@ -214,11 +212,6 @@ fun RootNavBar(
             ExpandablePanel(visible = appsExpanded) {
                 OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
             }
-            if (networkStatusItem) {
-                ExpandablePanel(visible = networkStatusExpanded) {
-                    ChainHealthPanel(model = chainsHealth)
-                }
-            }
             VerticalSpacer { DockletGeometry.PillProud }
             Docklet(
                 modifier = Modifier
@@ -235,7 +228,13 @@ fun RootNavBar(
                 slots = slots,
                 cardProgress = { cardState.clampedProgress },
                 backdrop = backdrop,
-            )
+            ) {
+                if (networkStatusItem) {
+                    DockletShelf(visible = networkStatusExpanded) {
+                        ChainHealthPanel(model = chainsHealth)
+                    }
+                }
+            }
         }
 
         val cameraActive by remember(cardState) {
@@ -296,6 +295,20 @@ private fun ExpandablePanel(visible: Boolean, content: @Composable () -> Unit) {
                 content()
             }
             VerticalSpacer { tiny }
+        }
+    }
+}
+
+@Composable
+private fun DockletShelf(visible: Boolean, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+        exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            content()
+            VerticalSpacer { DockletGeometry.NotchOverhang }
         }
     }
 }

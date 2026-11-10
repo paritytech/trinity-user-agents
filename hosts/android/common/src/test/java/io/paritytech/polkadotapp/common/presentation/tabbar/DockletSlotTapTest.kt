@@ -64,19 +64,6 @@ class DockletSlotTapTest {
         )
     }
 
-    @Test
-    fun `highlights Network Status when the chain-health panel is open`() {
-        assertEquals(
-            DockletSlotTarget.NetworkStatus,
-            dockletHighlightedSlot(currentTab = BottomTab.CHATS, networkStatusExpanded = true),
-        )
-    }
-
-    @Test
-    fun `highlights the current tab when the chain-health panel is closed`() {
-        assertEquals(Chats, dockletHighlightedSlot(currentTab = BottomTab.CHATS, networkStatusExpanded = false))
-    }
-
     private fun tap(target: DockletSlotTarget, current: BottomTab, onMain: Boolean, cardOpen: Boolean = false) =
         dockletSlotTap(target, current, onMain, cardOpen)
 

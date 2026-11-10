@@ -45,6 +45,9 @@ object DockletGeometry {
     val PillDiameter = 64.dp
     val PillProud = 10.dp
     val CutoutHalfWidth = 37.dp
+    val NotchCenterY = 22.dp
+    val NotchRadius = 34.dp
+    val NotchOverhang = NotchRadius - NotchCenterY
     val SlotWidth = 80.dp
     val ItemRowPadding = 4.dp
     val ItemRowHeight = 54.dp

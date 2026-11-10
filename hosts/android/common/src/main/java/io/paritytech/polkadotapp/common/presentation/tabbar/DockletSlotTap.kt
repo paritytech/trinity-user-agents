@@ -30,6 +30,3 @@ fun dockletSlotTap(
         }
     }
 }
-
-fun dockletHighlightedSlot(currentTab: BottomTab, networkStatusExpanded: Boolean): DockletSlotTarget =
-    if (networkStatusExpanded) DockletSlotTarget.NetworkStatus else DockletSlotTarget.Tab(currentTab)

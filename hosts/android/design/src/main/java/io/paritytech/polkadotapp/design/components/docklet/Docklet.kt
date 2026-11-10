@@ -9,6 +9,7 @@ import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,6 +61,7 @@ data class DockletSlot(
     val icon: ImageVector,
     val contentDescription: String,
     val selected: Boolean,
+    val emphasized: Boolean,
     val badgeCount: Int,
     val warning: Boolean,
     val onClick: () -> Unit,
@@ -71,11 +73,12 @@ fun Docklet(
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
     backdrop: DockletBackdrop?,
+    shelf: @Composable () -> Unit,
 ) {
     val haptics = rememberDockletHaptics()
     Box(modifier = modifier) {
         DockletGlassTheme {
-            DockSurface(slots, cardProgress, backdrop) { slot ->
+            DockSurface(slots, cardProgress, backdrop, shelf) { slot ->
                 if (cardProgress() <= 0f) haptics.perform(DockletMoment.SlotTap)
                 slot.onClick()
             }
@@ -88,42 +91,38 @@ private fun DockSurface(
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
     backdrop: DockletBackdrop?,
+    shelf: @Composable () -> Unit,
     onSlotTap: (DockletSlot) -> Unit,
 ) {
     val palette = LocalDockletPalette.current
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(DockletGeometry.DockHeight),
-    ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .dockletBackdrop(
-                    backdrop = backdrop,
-                    shape = DockShape,
-                    sigma = { DockletMaterials.DockBlurSigma },
-                )
-                .drawWithCache {
-                    val path = dockPath(size, density)
-                    onDrawBehind { drawDockletGlass(path, palette) }
-                }
-                .clip(DockShape),
-        ) {
-            SlotRow(
-                modifier = Modifier
-                    .padding(vertical = DockletGeometry.ItemRowPadding)
-                    .fillMaxWidth()
-                    .height(DockletGeometry.ItemRowHeight)
-                    .graphicsLayer {
-                        val dim = cardProgress().coerceIn(0f, 1f)
-                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
-                        renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
-                    },
-                slots = slots,
-                onSlotTap = onSlotTap,
+            .dockletBackdrop(
+                backdrop = backdrop,
+                shape = DockShape,
+                sigma = { DockletMaterials.DockBlurSigma },
             )
-        }
+            .drawWithCache {
+                val path = dockPath(size, density)
+                onDrawBehind { drawDockletGlass(path, palette) }
+            }
+            .clip(DockShape),
+    ) {
+        shelf()
+        SlotRow(
+            modifier = Modifier
+                .padding(vertical = DockletGeometry.ItemRowPadding)
+                .fillMaxWidth()
+                .height(DockletGeometry.ItemRowHeight)
+                .graphicsLayer {
+                    val dim = cardProgress().coerceIn(0f, 1f)
+                    alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
+                    renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
+                },
+            slots = slots,
+            onSlotTap = onSlotTap,
+        )
     }
 }
 
@@ -166,7 +165,7 @@ private fun SlotRow(
 private fun SlotItem(span: DockletSpan, slot: DockletSlot, iconShift: Dp, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val selection by animateFloatAsState(
-        targetValue = if (slot.selected) 1f else 0f,
+        targetValue = if (slot.selected || slot.emphasized) 1f else 0f,
         animationSpec = tween(HighlightMillis, easing = DockletMotion.HighlightEasing),
         label = "DockletSlotSelection",
     )
@@ -221,13 +220,14 @@ private fun DockletPreview() {
                 .padding(DockletGeometry.ItemRowPadding)
                 .width(372.dp),
             slots = persistentListOf(
-                DockletSlot(NovaIcons.ChatFilled, "", selected = true, badgeCount = 0, warning = false) {},
-                DockletSlot(NovaIcons.WalletFilled, "", selected = false, badgeCount = 0, warning = true) {},
-                DockletSlot(NovaIcons.GlobeAltFilled, "", selected = false, badgeCount = 3, warning = false) {},
-                DockletSlot(NovaIcons.SettingsFilled, "", selected = false, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.ChatFilled, "", selected = true, emphasized = false, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.WalletFilled, "", selected = false, emphasized = false, badgeCount = 0, warning = true) {},
+                DockletSlot(NovaIcons.GlobeAltFilled, "", selected = false, emphasized = false, badgeCount = 3, warning = false) {},
+                DockletSlot(NovaIcons.SettingsFilled, "", selected = false, emphasized = false, badgeCount = 0, warning = false) {},
             ),
             cardProgress = { 0f },
             backdrop = null,
+            shelf = {},
         )
     }
 }
