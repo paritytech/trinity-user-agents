@@ -18,7 +18,10 @@ use super::{
 	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
 	signed_pointer, source::StackSource,
 };
-use crate::{Spawner, background_task::BackgroundTask, time::Timer, unix_time::current_unix_secs};
+use crate::{
+	Spawner, background_task::BackgroundTask, time::Timer, unix_time::current_unix_secs,
+	wake::WakeSignal,
+};
 
 /// The largest descriptor the core reads.
 const MAX_DESCRIPTOR_BYTES: u32 = 1024 * 1024;
@@ -46,20 +49,16 @@ pub trait StackHost: Send + Sync {
 /// The stack a host build runs and the background refresh of its descriptor.
 pub struct StackRefresh {
 	shared: Arc<Shared>,
-	running: OnceLock<Running>,
-}
-
-/// The refresh loop, once started.
-struct Running {
-	/// Asks the loop for a fetch now.
-	forced: mpsc::UnboundedSender<()>,
-	_task: BackgroundTask,
+	/// The refresh loop, once started.
+	task: OnceLock<BackgroundTask>,
 }
 
 struct Shared {
 	source: Mutex<StackSource>,
 	records: Box<dyn StackRecords>,
 	timer: Arc<dyn Timer>,
+	/// Asks the loop for a fetch now.
+	refresh_requests: WakeSignal,
 }
 
 impl StackRefresh {
@@ -87,8 +86,13 @@ impl StackRefresh {
 		let source =
 			StackSource::load(pointer, bundled, stored.as_deref(), allows_reserved_values, now())?;
 		Ok(Self {
-			shared: Arc::new(Shared { source: Mutex::new(source), records, timer }),
-			running: OnceLock::new(),
+			shared: Arc::new(Shared {
+				source: Mutex::new(source),
+				records,
+				timer,
+				refresh_requests: WakeSignal::default(),
+			}),
+			task: OnceLock::new(),
 		})
 	}
 
@@ -109,11 +113,10 @@ impl StackRefresh {
 	/// Set-once: answers whether this call started the refresh.
 	pub fn start(&self, host: Box<dyn StackHost>, spawner: &Spawner) -> bool {
 		let mut started = false;
-		self.running.get_or_init(|| {
+		self.task.get_or_init(|| {
 			started = true;
-			let (forced, requests) = mpsc::unbounded();
-			let task = BackgroundTask::spawn(spawner, self.shared.clone().run(host, requests));
-			Running { forced, _task: task }
+			let requests = self.shared.refresh_requests.subscribe();
+			BackgroundTask::spawn(spawner, self.shared.clone().run(host, requests))
 		});
 		started
 	}
@@ -123,10 +126,7 @@ impl StackRefresh {
 	/// Requests made while a fetch is out lead to one more fetch, not one
 	/// each. Does nothing before [`Self::start`].
 	pub fn refresh_now(&self) {
-		if let Some(running) = self.running.get() {
-			// The loop holds the receiver for as long as this value lives.
-			let _ = running.forced.unbounded_send(());
-		}
+		self.shared.refresh_requests.wake();
 	}
 }
 
@@ -135,11 +135,7 @@ impl Shared {
 		self.source.lock().expect("stack source mutex poisoned")
 	}
 
-	async fn run(
-		self: Arc<Self>,
-		host: Box<dyn StackHost>,
-		mut forced: mpsc::UnboundedReceiver<()>,
-	) {
+	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {
 		let mut reported = self.source().status();
 		host.stack_changed(reported.clone());
 		let mut force = false;
@@ -158,11 +154,7 @@ impl Shared {
 			}
 			force = match select(self.timer.sleep(DUE_CHECK_INTERVAL), forced.next()).await {
 				Either::Left(_) => false,
-				Either::Right((Some(()), _)) => {
-					// Requests made while a fetch was out ask for one fetch, not one each.
-					while forced.try_recv().is_ok() {}
-					true
-				},
+				Either::Right((Some(()), _)) => true,
 				Either::Right((None, _)) => return,
 			};
 		}
