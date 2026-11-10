@@ -143,6 +143,9 @@ pub fn material_shader(
 	language: ShaderLanguage,
 	float_filterable: bool,
 ) -> Result<MaterialShader, MaterialFailure> {
+	// The compiler joins a backslash-ended line to the next before reading
+	// anything, and part 2's rules hold for the joined body.
+	let body = &body.replace("\\\n", "");
 	let fallback = !float_filterable;
 	let typed = typed_pass(params, body).ok_or(MaterialFailure::Unsupported)?;
 	let lowered = if fallback {
@@ -402,21 +405,22 @@ fn typed_pass(params: &[Param], body: &str) -> Option<String> {
 			}
 			continue;
 		};
-		// A sampler can be neither declared nor assigned, so a sampler's name after
-		// a type, before `=`, or alone before `;` is a declaration hiding it.
-		let declares_a_sampler_name = body.clone().any(|index| {
-			let Token::Word(name) = tokens[index].1 else { return false };
-			let next = |offset: usize| tokens.get(index + offset).map(|(_, token)| *token);
-			samplers.kind(name).is_some() &&
-				(matches!(tokens[index - 1].1, Token::Word(_)) ||
-					next(1) == Some(Token::Symbol(';')) ||
-					next(1) == Some(Token::Symbol('=')) &&
-						next(2) != Some(Token::Symbol('=')))
+		let calls = calls(&tokens, body.clone())?;
+		// A sampler can only be handed to a function, so its name anywhere else
+		// is something else's name hiding it.
+		let handed_on: Vec<usize> = calls
+			.iter()
+			.flat_map(|(name, close)| split_arguments(&tokens[name + 2..*close]))
+			.filter_map(bare_name)
+			.map(|(at, _)| at)
+			.collect();
+		let hidden = body.clone().any(|index| {
+			matches!(tokens[index], (at, Token::Word(name)) if samplers.kind(name).is_some() && !handed_on.contains(&at))
 		});
-		if hides_a_sampler || declares_a_sampler_name {
+		if hides_a_sampler || hidden {
 			return None;
 		}
-		for (name, close) in calls(&tokens, body)? {
+		for (name, close) in calls {
 			let Token::Word(function_name) = tokens[name].1 else { continue };
 			if !SAMPLING_FUNCTIONS.contains(&function_name) {
 				continue;
@@ -448,24 +452,8 @@ fn typed_pass(params: &[Param], body: &str) -> Option<String> {
 	Some(apply(body, edits))
 }
 
-/// Sampling calls Shaderlab's fallback routes through its filtering helpers.
-const FILTERED: [&str; 12] = [
-	"texture",
-	"textureProj",
-	"textureLod",
-	"textureOffset",
-	"textureProjOffset",
-	"textureLodOffset",
-	"textureProjLod",
-	"textureProjLodOffset",
-	"textureGrad",
-	"textureGradOffset",
-	"textureProjGrad",
-	"textureProjGradOffset",
-];
-
 /// Calls the fallback leaves as they are: they read texels or sizes, never
-/// filtered values.
+/// filtered values. Every other sampling call goes through a helper.
 const UNFILTERED: [&str; 3] = ["textureSize", "texelFetch", "texelFetchOffset"];
 
 /// The float fallback pass, over the typed pass's output: sampling calls go
@@ -499,7 +487,7 @@ fn fallback_pass(params: &[Param], typed: &str) -> Option<String> {
 			if UNFILTERED.contains(&function_name) {
 				continue;
 			}
-			if FILTERED.contains(&function_name) {
+			if SAMPLING_FUNCTIONS.contains(&function_name) {
 				let start = tokens[name].0;
 				edits.push(Edit {
 					start,

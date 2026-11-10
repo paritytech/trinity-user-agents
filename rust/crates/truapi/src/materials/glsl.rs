@@ -171,7 +171,8 @@ pub fn split_arguments<'t, 'a>(tokens: &'t [Located<'a>]) -> Vec<&'t [Located<'a
 	parts
 }
 
-/// Top-level functions: a type, a name and `(` at brace depth 0.
+/// Top-level functions: a type (maybe an array's), a name and `(` at brace
+/// depth 0.
 pub fn functions<'a>(tokens: &[Located<'a>]) -> Option<Vec<Function<'a>>> {
 	let mut functions = Vec::new();
 	let mut depth = 0usize;
@@ -184,7 +185,7 @@ pub fn functions<'a>(tokens: &[Located<'a>]) -> Option<Vec<Function<'a>>> {
 				if depth == 0 &&
 					index >= 2 && matches!(
 					(tokens[index - 2].1, tokens[index - 1].1),
-					(Token::Word(_), Token::Word(_))
+					(Token::Word(_) | Token::Symbol(']'), Token::Word(_))
 				) =>
 			{
 				let close = closing(tokens, index)?;

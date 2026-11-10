@@ -2,7 +2,7 @@
 //! 4.50 reader, as Shaderlab's `prepareForWebGPU` adapts them, then written
 //! by naga as Metal's shading language.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use naga::{
 	ResourceBinding, ShaderStage,
@@ -45,10 +45,19 @@ pub fn metal_shaders(
 	uniforms: &[Uniform],
 	textures: &[Texture],
 ) -> Result<(String, String), MaterialFailure> {
-	let vertex = format!(
-		"#version 450\nlayout(location = 0) in vec2 position;\nlayout(location = 0) out vec2 uv;\n{}\n{VERTEX_MAIN}\n",
-		uniform_block(uniforms, Stage::Vertex)
-	);
+	// The vertex stage is the same for every material.
+	static VERTEX: OnceLock<Result<String, MaterialFailure>> = OnceLock::new();
+	let vertex = VERTEX.get_or_init(|| {
+		let source = format!(
+			"#version 450\nlayout(location = 0) in vec2 position;\nlayout(location = 0) out vec2 uv;\n{}\n{VERTEX_MAIN}\n",
+			uniform_block(uniforms, Stage::Vertex)
+		);
+		let resources = BTreeMap::from([(
+			ResourceBinding { group: VERTEX_SET, binding: 0 },
+			msl::BindTarget { buffer: Some(VERTEX_BUFFER), ..Default::default() },
+		)]);
+		translate(&source, ShaderStage::Vertex, VERTEX_FUNCTION, resources)
+	});
 	let resources: String = textures
 		.iter()
 		.enumerate()
@@ -66,10 +75,6 @@ pub fn metal_shaders(
 		uniform_block(uniforms, Stage::Fragment),
 		adapt_for_naga(code, textures).ok_or(MaterialFailure::Unsupported)?
 	);
-	let vertex_resources = BTreeMap::from([(
-		ResourceBinding { group: VERTEX_SET, binding: 0 },
-		msl::BindTarget { buffer: Some(VERTEX_BUFFER), ..Default::default() },
-	)]);
 	let mut fragment_resources = BTreeMap::from([(
 		ResourceBinding { group: FRAGMENT_SET, binding: 0 },
 		msl::BindTarget { buffer: Some(FRAGMENT_BUFFER), ..Default::default() },
@@ -90,9 +95,21 @@ pub fn metal_shaders(
 		);
 	}
 	Ok((
-		translate(&vertex, ShaderStage::Vertex, VERTEX_FUNCTION, vertex_resources)?,
+		vertex.clone()?,
 		translate(&fragment, ShaderStage::Fragment, FRAGMENT_FUNCTION, fragment_resources)?,
 	))
+}
+
+/// Whether naga's GLSL reader takes `word` as a type: GLSL ES leaves these
+/// names free.
+fn naga_type_name(word: &str) -> bool {
+	const DIMENSIONS: [&str; 9] =
+		["1D", "1DArray", "2D", "2DArray", "2DMS", "2DMSArray", "3D", "Cube", "CubeArray"];
+	let texture = word.strip_prefix(['i', 'u']).unwrap_or(word);
+	matches!(word, "sampler" | "samplerShadow") ||
+		texture
+			.strip_prefix("texture")
+			.is_some_and(|dimension| DIMENSIONS.contains(&dimension))
 }
 
 /// The texture and sampler bindings of texture slot `slot`: binding 0 is the
@@ -127,14 +144,22 @@ fn uniform_block(uniforms: &[Uniform], stage: Stage) -> String {
 /// sampler: a `sampler2D` parameter becomes a texture and a sampler, a sampler
 /// handed to a sampling function is rebuilt from the two, and one handed to a
 /// function carries its sampler beside it. Precision qualifiers mean nothing in
-/// GLSL 4.50 and naga refuses some of them, so they go. naga loses a
+/// GLSL 4.50 and naga refuses some of them, so they go. Names naga reads as
+/// types are renamed. naga loses a
 /// declaration whose parameters have no names, so each gets one.
 fn adapt_for_naga(code: &str, textures: &[Texture]) -> Option<String> {
 	let tokens = located_tokens(code)?;
 	let mut edits: Vec<Edit> = tokens
 		.iter()
-		.filter(|(_, token)| matches!(token, Token::Word("lowp" | "mediump" | "highp")))
-		.map(|located| Edit { start: located.0, end: token_end(located), text: String::new() })
+		.filter_map(|located| {
+			let Token::Word(word) = located.1 else { return None };
+			let text = match word {
+				"lowp" | "mediump" | "highp" => String::new(),
+				word if naga_type_name(word) => format!("_shaderlab_name_{word}"),
+				_ => return None,
+			};
+			Some(Edit { start: located.0, end: token_end(located), text })
+		})
 		.collect();
 	for function in functions(&tokens)? {
 		let mut samplers: Vec<&str> =

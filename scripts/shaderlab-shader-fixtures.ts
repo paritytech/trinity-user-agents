@@ -153,6 +153,11 @@ const synthetic: { name: string; params: Param[]; body: string }[] = [
     body: "vec4 inner(sampler2D image, vec2 point) {\n  return texture(image, point);\n}\nvec4 outer(sampler2D image, vec2 point) {\n  return inner(image, point);\n}\nvec4 material(vec2 uv) {\n  return outer(r_base, uv) + outer(sp_art, uv);\n}\n",
   },
   {
+    name: "a function returning an array, with a sampler parameter",
+    params: [sampler("height", "samplerFloat")],
+    body: "float[2] pair(samplerFloat image, vec2 point) {\n  return float[2](texture(image, point), 1.0);\n}\nvec4 material(vec2 uv) {\n  return vec4(pair(sp_height, uv)[0]);\n}\n",
+  },
+  {
     name: "samplerVec4 read without a swizzle",
     params: [sampler("art", "samplerVec4")],
     body: "vec4 material(vec2 uv) {\n  return texture(sp_art, uv);\n}\n",
@@ -192,7 +197,12 @@ const accepted = vectors.cases
     ...fromMaterialText(vector.text),
   }));
 
-function compile(params: Param[], body: string, floatLinearFallback: boolean) {
+function compile(
+  name: string,
+  params: Param[],
+  body: string,
+  floatLinearFallback: boolean,
+) {
   const module = {
     version: 9,
     kind: "source",
@@ -210,7 +220,9 @@ function compile(params: Param[], body: string, floatLinearFallback: boolean) {
     });
     return { vertex, fragment };
   } catch (error) {
-    return { error: (error as Error).message };
+    throw new Error(
+      `Shaderlab cannot compile ${name}: ${(error as Error).message}`,
+    );
   }
 }
 
@@ -221,8 +233,8 @@ const cases = [...humanity, ...accepted, ...synthetic].map(
   ({ name, params, body }) => ({
     name,
     text: materialText(params, body),
-    normal: compile(params, body, false),
-    fallback: compile(params, body, true),
+    normal: compile(name, params, body, false),
+    fallback: compile(name, params, body, true),
   }),
 );
 

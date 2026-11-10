@@ -152,3 +152,28 @@ fn split_samplers_never_collide_with_a_material_name() {
 		);
 	}
 }
+
+fn translates(text: &str) -> bool {
+	let material = read_material(text.as_bytes()).unwrap_or_else(|error| panic!("{error}: {text}"));
+	[true, false]
+		.iter()
+		.all(|float_filterable| material.shader(ShaderLanguage::Metal, *float_filterable).is_ok())
+}
+
+/// The compiler joins a backslash-ended line to the next, so a sampler named
+/// across two lines is still read as one, on iOS as on Android.
+#[test]
+fn a_sampler_named_across_a_line_continuation_translates() {
+	assert!(translates(
+		"// @material 1\n// @control {\"name\":\"height\",\"label\":\"Height\",\"type\":\"samplerFloat\"}\nvec4 material(vec2 uv) {\n  return vec4(texture(s\\\np_height, uv));\n}\n"
+	));
+}
+
+/// `sampler` and `texture2D` are ordinary names in GLSL ES but types in the
+/// GLSL naga reads, so a material using them still draws on iOS.
+#[test]
+fn names_only_naga_reserves_translate() {
+	assert!(translates(
+		"// @material 1\nvec4 material(vec2 uv) {\n  float sampler = uv.x;\n  float texture2D = uv.y;\n  return vec4(sampler, texture2D, 0.0, 1.0);\n}\n"
+	));
+}
