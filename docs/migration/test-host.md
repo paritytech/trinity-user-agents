@@ -53,9 +53,9 @@ it, the first test fails with `@parity/truapi-host/testing/server needs esbuild`
 +import { createTestHostFixture, type TestHost } from "@parity/truapi-host/testing/playwright";
 ```
 
-`PASEO_ASSET_HUB`, `DEV_ACCOUNTS`, `fromNetworks` and the log types come from the same path. It provides no other
-network constants, so declare other chains yourself as `NetworkConfig`. `createTestHostServer` comes from
-`@parity/truapi-host/testing/server`.
+`PASEO_ASSET_HUB`, `DEV_ACCOUNTS`, `fromNetworks` and the log types come from the same path. `DEFAULT_CHAIN` and
+`LIVE_CHAINS.paseoAssetHub` are the same Paseo Asset Hub. No other chain is exported, so declare other chains yourself
+as `NetworkConfig`. `createTestHostServer` comes from `@parity/truapi-host/testing/server`.
 
 ## 3. Configure the fixture
 
@@ -91,11 +91,22 @@ export const test = base.extend<{ testHost: TestHost }>(
   product's own descriptors.
 - **`productAccounts`**: delete it. It still typechecks, but the fixture throws when the test file loads, because a
   product account can't be pinned (step 4).
-- **`accounts`** takes the lower-case dev account names, such as `"alice"` and `"bob"` (`DEV_ACCOUNT_NAMES` lists them),
-  or `{ name, entropy }` with 32 bytes of entropy. The `name` is also the username the host reports. `uri` throws when
-  the fixture is built, and `username` is a type error. So `{ name: "Alice", uri: "//Alice", username: "alice" }`
-  becomes `"alice"`. To keep an old username such as `alice.01`, use
-  `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`.
+- **`accounts`** takes the lower-case dev account names `"alice"`, `"bob"`, `"charlie"` and `"dave"`
+  (`DEV_ACCOUNT_NAMES`), or `{ name, entropy }` with 32 bytes of entropy. `eve` and `ferdie` are gone and fail at boot,
+  so give them entropy of your own. The `name` is also the username the host reports. `uri` throws when the fixture is
+  built, and `username` is a type error. So `{ name: "Alice", uri: "//Alice", username: "alice" }` becomes `"alice"`. To
+  keep an old username such as `alice.01`, use `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`. Each `DEV_ACCOUNTS`
+  entry is that entropy as a `Uint8Array`, not the old `{ name, uri, username }`.
+- **Old boot options.** `executionKind`, `initialState` and most of `behaviors` are gone and are type errors:
+  - `initialState.productStorage` is the `productStorage` option (0.30 and later).
+  - `initialState.theme` and `initialState.locale` are `mock: { theme, languageTag }`, and `initialState.features` is
+    `mock: { featureSupported }`, one answer for every feature.
+  - `initialState.grantedPermissions` is a `testHost.grantPermission(...)` call per permission.
+  - `behaviors.permission` is `testHost.setPermissionBehavior(...)` (see step 5), and
+    `behaviors.userConfirmation: "reject-all"` is `mock: { confirmUserActions: false }`.
+  - `behaviors.resourceAllocation` takes only the record form, naming the resources the host refuses.
+  - `executionKind: "Worker"`, `behaviors.navigation`, `behaviors.notification` and
+    `initialState.devicePermissionStatuses` have no equivalent.
 - **Server.** Delete any `createTestHostServer()` and `hostUrl` plumbing if you call the fixture once, since it starts
   its own server. If you call it once per signer, keep one shared server and pass its `hostUrl`, or each call starts its
   own. If you pass options to the server yourself, always pass `productUrl` with them. From 0.30 the server takes
@@ -113,7 +124,7 @@ key. Work out the address and fund it, or the first extrinsic fails with `Invali
 import { asProductId } from "@parity/truapi";
 import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
 
-const address = await productAccountAddress({ account: "alice", productId: asProductId("myapp.dot") });
+const address = await productAccountAddress({ account: "alice", productId: asProductId("myapp.dot"), index: 0 });
 ```
 
 - Fund it with the chain's native token (PAS on Paseo). The test host grants allowances without claiming PGAS, so fees
@@ -133,12 +144,17 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 - **Storage.** Read storage with `testHost.getProductStorageValue("key")`, not the old host's `localStorage` keys. It
   returns a string. `findProductStorage` returns the raw bytes. Product storage starts empty on every page load. From
   0.30, seed it with the `productStorage` fixture option or `testHost.seedProductStorage(key, value)`.
+- **Connection status.** `getConnectionStatus()` and `getChainStatus()` report the chain, as `"Connected"`,
+  `"Disconnected"` or `"Idle"`, where the old `getConnectionStatus()` reported the product as `"connected"`. An
+  assertion on `"connected"` still typechecks and then fails. Wait for the product with `testHost.waitForConnection()`.
 - **Permissions.** A permission is asked once and remembered. `await testHost.revokePermission(...)` or
   `grantPermission(...)` makes the next request reach the host again. `setPermissionBehavior` doesn't. It takes
   `"allow-all"` or `"deny-all"` (`"reject-all"` is another name for deny), so the old `"approve-all"` and
-  `"approve-once"` fail. Permission names are the core's, so `"TransactionSubmit"` is `"ChainSubmit"`.
-- **Signed out.** An empty `accounts` fails at boot. Use `loginBehavior: "manual"`. `simulateDisconnect` now drops only
-  the chain connection and doesn't sign the user out.
+  `"approve-once"` fail. `grantPermission` takes the permission name only, so drop a second argument such as
+  `{ domains }`. A `Remote` grant covers every domain. Permission names are the core's, so `"TransactionSubmit"` is
+  `"ChainSubmit"`.
+- **Signed out.** An empty `accounts` fails at boot. Use `loginBehavior: "manual"`. `simulateDisconnect` drops only the
+  chain connection and doesn't sign the user out, unlike the old package up to 0.12.
 - **Signing logs.** Don't assert exact signing-log counts. The new host can record more than one entry for a flow.
 - **Declining one signature.** From 0.30 call `testHost.setConfirmUserActions(false)` before the action and `true`
   after, rather than booting a second fixture with `mock: { confirmUserActions: false }`.
@@ -156,8 +172,11 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 - **Deep links.** Up to 0.29 the host page's own path and query don't reach the product, so put the route in
   `productUrl`, with one fixture per link. From 0.30 call `testHost.openDeepLink("/notes/1?view=raw#top")`, or open
   `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server` when you start the server yourself.
-- **Smaller renames.** Themes are capitalised (`setTheme("Dark")`). `getNavigationLog()` returns URLs. `ChainConfig` and
-  `Account` are no longer exported, so use `NetworkConfig` and `DevAccountName | DevAccount`.
+- **Smaller renames.** Themes are capitalised (`setTheme("Dark")`), and `getTheme()` returns the name as a string.
+  `getProductStorage()` returns `Uint8Array` values, not strings. `getNavigationLog()` returns URLs. `ChainConfig` and
+  `Account` are no longer exported, so use `NetworkConfig` and `DevAccountName | DevAccount`. `DevAccountInfo`,
+  `InitialState`, `InitialBehaviors`, `ProductStorageEntry`, `ResourceAllocationLogEntry`, `UserConfirmationLogEntry`,
+  `SUPPORTED_CHAINS`, the `PREVIEWNET*` constants and `TRUAPI_WIRE_SCHEMA_HASH` are gone too.
 
 ## 6. What isn't supported yet
 
@@ -171,8 +190,9 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 - **Full-page navigation.** A product that sets `location.href` reconnects only when both `@parity/truapi-host` and the
   product's own `@parity/truapi` are 0.30 or later. Until your product SDK brings truapi 0.30, skip those specs.
 - **Approving a login.** Up to 0.29 there is no way to answer a product's login request. From 0.30 boot with
-  `loginBehavior: "manual"` and call `testHost.setLoginBehavior("success")`, or `"reject"`. The old host approved by
-  default; this one rejects until told otherwise. The old custom function form has no equivalent.
+  `loginBehavior: "manual"` and call `testHost.setLoginBehavior("success")`, or `"reject"`. Until told, the host answers
+  `Rejected`. The old package up to 0.12 approved by default and also took a function, which has no equivalent. From
+  0.13 it had no login control.
 
 ## 7. Keep the rest the same
 
@@ -187,7 +207,7 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
 
 Run the full suite with the same command you used in step 1, not a single spec, since some specs rely on state an
 earlier one created. Compare it with the result you noted. `window.__TEST_HOST__` still exists in the browser, with the
-method names and shapes from step 5, and the old `getSentRpc` is `sentRpc` there.
+method names and shapes from step 5, and the fixture's `getSentRpc` is `sentRpc` there.
 
 If the host fails to boot, for example on an unknown account name, the fixture waits 30 seconds, which is also
 Playwright's default test timeout, so the test times out without saying why. The reason is in the page's

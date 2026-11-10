@@ -37,8 +37,8 @@ Others can appear under the old test SDK or a tool with its own product SDK.
 
 0.13.1 and older speak wire codec 1: the product reports itself connected, but
 no call is ever answered, every locator times out, and the host logs
-`invalid frame: frame is missing the message-type byte`. 0.16.0 and 0.17.0
-speak codec 2, and 0.18.0 onwards codec 3, the only codec the core is built
+`invalid frame: frame is missing the message-type byte`. 0.16.0 speaks
+codec 2, and 0.17.0 onwards codec 3, the only codec the core is built
 for. A codec-2 product answered the basic calls in testing (account, username,
 permission, storage, signing, allocation, statements, chain reads), but the
 subscriptions whose start frames changed in codec 3, such as theme, locale and
@@ -110,10 +110,10 @@ login request while the host is signed out, so a suite booting with
 `loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
 the first account, or the one named as a second argument. The old custom
 function form has no equivalent, because the answer is given in the page.
-The default differs: the old host approved login requests unless told
-otherwise, and this one answers `Rejected`, as a real signing host does, until
-a suite calls `setLoginBehavior("success")`. A suite that relied on the old
-default adds that call.
+Until a suite calls it, this host answers `Rejected`, as a real signing host
+does. The old package up to 0.12 approved login requests by default, so a suite
+written against it adds `setLoginBehavior("success")`. From 0.13 the old
+package had no login control.
 
 The statement-store controls are served, so they are not in this grep.
 `injectChatAction` is not: the core serves chat only to a product running as a
@@ -148,7 +148,7 @@ precondition 1:
 
 ```diff
 -"@parity/host-api-test-sdk": "0.17.0",
-+"@parity/truapi-host": "0.29.0",
++"@parity/truapi-host": "0.30.0",
 ```
 
 In a pnpm repo with a catalog, use `catalog:` and set the version in the
@@ -220,9 +220,23 @@ Two account options change shape:
   `alice`, `bob`, `charlie`, `dave`), or `{ name, entropy }` with 32 bytes of
   entropy. `uri` typechecks but throws when the fixture is built, and `username`
   is a type error. `{ name: "Alice", uri: "//Alice", username: "alice" }`
-  becomes `"alice"`. An unknown name such as `"Alice"` fails the host's boot.
+  becomes `"alice"`. An unknown name such as `"Alice"` fails the host's boot,
+  and so do the old `eve` and `ferdie`, which need entropy of their own.
 - The `name` is the username the host reports. To keep an old username, pair it
   with the dev account's entropy: `{ name: "alice.01", entropy: DEV_ACCOUNTS.alice }`.
+  Each `DEV_ACCOUNTS` entry is that entropy as a `Uint8Array`, not the old
+  `{ name, uri, username }`.
+- `executionKind`, `initialState` and every `behaviors` key but
+  `resourceAllocation` are type errors. `initialState.productStorage` is the
+  `productStorage` option (0.30 and later), `theme` and `locale` are
+  `mock: { theme, languageTag }`, `features` is `mock: { featureSupported }`,
+  and `grantedPermissions` is a `grantPermission` call each.
+  `behaviors.permission` is `setPermissionBehavior`, and
+  `behaviors.userConfirmation: "reject-all"` is
+  `mock: { confirmUserActions: false }`. `behaviors.resourceAllocation` takes
+  the record of refused resources only. `executionKind: "Worker"`,
+  `behaviors.navigation`, `behaviors.notification` and
+  `initialState.devicePermissionStatuses` have no equivalent.
 
 What a suite that starts the server itself needs depends on the release.
 
@@ -497,8 +511,7 @@ missed:
 - **Report unserved chains as a real host does.** By default the mock reports
   every chain as supported and leaves an unserved one silent, so a product's
   "network unavailable" path hangs. New suites should pass
-  `mock: { onlyServedChains: true }` (0.30 and later: #1432, which reached main
-  through #1431), which answers
+  `mock: { onlyServedChains: true }` (0.30 and later), which answers
   from the chains the suite declares. It becomes the default in a later
   breaking release.
 - **Role suffixes.** Besides `-people`, an id ending in `-asset-hub` or
@@ -509,13 +522,23 @@ missed:
   copy of the hash disagrees with it, and a suite that spreads it and overrides
   `rpcUrl` declares a genesis that endpoint may not serve.
 - **Removed exports.** `PREVIEWNET`, `PREVIEWNET_ASSET_HUB`,
-  `SUPPORTED_CHAINS`, `ChainConfig`, `Account` and `DevAccountInfo` are not
-  exported. Declare the chain inline, type it as `NetworkConfig`, and use
+  `SUPPORTED_CHAINS`, `ChainConfig`, `Account`, `DevAccountInfo`,
+  `InitialState`, `InitialBehaviors`, `ProductStorageEntry`,
+  `ResourceAllocationLogEntry`, `UserConfirmationLogEntry` and
+  `TRUAPI_WIRE_SCHEMA_HASH` are not exported. Declare the chain inline, type it as `NetworkConfig`, and use
   `DevAccount`.
 - **Permission tags are the core's,** so `"TransactionSubmit"` is
   `"ChainSubmit"`, and `grantPermission` with the old tag records a decision no
   request ever matches.
-- **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`, and
+  `getTheme()` answers the name as a string, not `{ name, variant }`.
+- **Connection status is the chain's.** `getConnectionStatus()` and
+  `getChainStatus()` answer `"Connected"`, `"Disconnected"` or `"Idle"` for the
+  chain. The old `getConnectionStatus()` answered `"connected"` for the
+  product, so an assertion on it typechecks and then fails. Gate on
+  `waitForConnection()` instead.
+- **`grantPermission` takes the tag only.** A second argument such as
+  `{ domains }` is `TS2554`, and a `Remote` grant covers every domain.
 - **Declining a signature in one test.** From 0.30 (#1926), call `testHost.setConfirmUserActions(false)`
   before the action and `true` after, rather than booting a second fixture
   with `mock: { confirmUserActions: false }`. A permission the core has
@@ -536,8 +559,10 @@ missed:
   `data` directly, not under `.statement`. From 0.30 they also carry
   `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
   also takes (#1935). A `Remote` permission log entry's `value` is the tagged
-  permission `{ tag: "Remote", value: { domains } }`, so read
-  `entry.value.value.domains`.
+  permission `{ tag: "Remote", value: { domains } }`. `value` is typed
+  `unknown`, so narrow it:
+  `(entry.value as { value: { domains: string[] } }).value.domains`.
+  `getProductStorage()` answers `Uint8Array` values, not strings.
 - **Removed members.** Some old `TestHostAPI` members have no equivalent, and a
   spec using one fails with `TS2339`: `clearChat`, `clearOperationLog`,
   `clearProductStorage`, `clearResourceAllocationLog`,
@@ -551,7 +576,7 @@ missed:
   `setUserConfirmationBehavior`. `seedProductStorage` returns in 0.30. Skip or
   rewrite those specs. `window.__TEST_HOST__` still exists, but it now names the
   same object as `window.__TRUAPI_TEST_HOST__`, with these names and the shapes
-  above, and the old `getSentRpc` is `sentRpc` there.
+  above, and the fixture's `getSentRpc` is `sentRpc` there.
 - **Deep links.** Up to 0.29 the host page's own path, query and hash configure
   the host and do not reach the product, so a spec opening the product at a
   route passes that route in `productUrl`. From 0.30 (#1932) the host page
@@ -697,8 +722,7 @@ reason is in the host page's `#test-host-error` element.
 
 The core logs why a call failed before mapping it to a protocol answer. In
 Chromium, core log lines reach `page.on("console")` in the default worker
-topology too (the `logLevel` option's JSDoc says otherwise and is out of date),
-but running on the main thread keeps them in order with the page's own output.
+topology too, but running on the main thread keeps them in order with the page's own output.
 Raise the level:
 
 ```ts
