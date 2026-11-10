@@ -1050,31 +1050,12 @@ impl SigningHostRuntime {
 			);
 			return;
 		};
-		self.start_material_fetch(db.clone());
+		start_materials(&self.services, db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
-	}
-
-	/// Installs the materials on the device over `db`, and fetches what saved
-	/// Pocket faces draw and `db` lacks, over the core's own Bulletin
-	/// connection.
-	#[cfg(not(target_arch = "wasm32"))]
-	fn start_material_fetch(&self, db: crate::store::Db) {
-		let timer: Arc<dyn crate::time::Timer> = Arc::new(crate::time::RealTimer);
-		let bulletin =
-			crate::BulletinLookup::new(Arc::new(Arc::downgrade(&self.services)), timer.clone());
-		let materials = crate::materials::Materials::new(
-			db,
-			Arc::new(bulletin),
-			timer,
-			self.services.spawner.clone(),
-		);
-		if self.services.install_materials(materials.clone()) {
-			(self.services.spawner)(Box::pin(materials.fetch_saved()));
-		}
 	}
 
 	/// Installs the NFT ledger over `db` and `durable`, with the static receive
@@ -1431,6 +1412,26 @@ impl SigningHostRuntime {
 			},
 		}
 	}
+}
+
+/// Installs the materials on the device over `db`, and fetches what saved
+/// Pocket faces draw and `db` lacks. Does nothing when materials are already
+/// installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
+	let materials = materials(services, db);
+	if services.install_materials(materials.clone()) {
+		(services.spawner)(Box::pin(materials.fetch_saved()));
+	}
+}
+
+/// The materials on the device over `db`, fetched over the core's own
+/// Bulletin connection.
+#[cfg(not(target_arch = "wasm32"))]
+fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::materials::Materials {
+	let timer: Arc<dyn crate::time::Timer> = Arc::new(crate::time::RealTimer);
+	let bulletin = crate::BulletinLookup::new(Arc::new(Arc::downgrade(services)), timer.clone());
+	crate::materials::Materials::new(db, Arc::new(bulletin), timer, services.spawner.clone())
 }
 
 /// Installs the durable transaction engine over `db`, reports its pending
@@ -4219,17 +4220,8 @@ mod tests {
 		runtime.set_core_db(db.clone());
 		runtime.start_core_services();
 		runtime.start_core_services();
-		let timer: Arc<dyn crate::time::Timer> = Arc::new(crate::time::RealTimer);
-		let lookup =
-			crate::BulletinLookup::new(Arc::new(Arc::downgrade(&runtime.services)), timer.clone());
-		let another = crate::materials::Materials::new(
-			db,
-			Arc::new(lookup),
-			timer,
-			runtime.services.spawner.clone(),
-		);
 
-		assert!(!runtime.services.install_materials(another));
+		assert!(!runtime.services.install_materials(materials(&runtime.services, db)));
 	}
 
 	/// Durable transactions do not depend on NFT purses, so the engine runs
