@@ -13,6 +13,15 @@ pub const ASSET_HUB_SPEC: &str = include_str!("../networks/paseo-next-v2-asset-h
 /// What identifies the test stack.
 pub const STACK_ID: &str = "https://stack.example/descriptor.json";
 
+/// A link to the test stack, unsigned.
+pub const STACK_LINK: &str =
+	"polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json";
+
+/// The test stack's descriptor at `generation`, as its server would serve it.
+pub fn descriptor_bytes(generation: &str) -> Vec<u8> {
+	serde_json::to_vec(&descriptor_json(generation)).expect("a JSON value serialises")
+}
+
 /// The genesis hash `spec` implies.
 pub fn genesis(spec: &str) -> [u8; 32] {
 	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")

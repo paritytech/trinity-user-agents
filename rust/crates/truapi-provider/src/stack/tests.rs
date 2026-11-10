@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_stack::{
-	ASSET_HUB_SPEC, PEOPLE_SPEC, RELAY_SPEC, STACK_ID, descriptor_json, genesis, stack,
-	synced_stack,
+	ASSET_HUB_SPEC, PEOPLE_SPEC, RELAY_SPEC, STACK_ID, STACK_LINK, descriptor_bytes,
+	descriptor_json, genesis, stack, synced_stack,
 };
 
 fn statement_protocol(stack: &LightStack, genesis_hash: [u8; 32]) -> bool {
@@ -118,10 +118,10 @@ fn a_spec_for_a_chain_outside_the_stack_is_refused() {
 /// identity has to be the one every other reader derives from that link.
 #[test]
 fn a_stack_opened_from_its_link_takes_the_links_identity() {
-	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
-	let link = "polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json%23top";
+	let descriptor = descriptor_bytes("one");
+	let link = format!("{STACK_LINK}%23top");
 
-	let stack = LightStack::open(link, &descriptor).expect("an unsigned link opens a plain file");
+	let stack = LightStack::open(&link, &descriptor).expect("an unsigned link opens a plain file");
 
 	assert_eq!((stack.id(), stack.generation()), (STACK_ID, "one"));
 }
@@ -130,7 +130,7 @@ fn a_stack_opened_from_its_link_takes_the_links_identity() {
 /// descriptor cannot stand in for a signed stack.
 #[test]
 fn a_keyed_link_refuses_an_unsigned_descriptor() {
-	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
+	let descriptor = descriptor_bytes("one");
 	let key = "11".repeat(32);
 	let link = format!("polkadotapp://stack?key=0x{key}&url=https%3A%2F%2Fstack.example%2Fd.json");
 
