@@ -6,9 +6,7 @@ use std::{
 
 use super::*;
 use crate::{
-	host_internal::bulletin::preimage_key,
-	platform::HostInfo,
-	test_support::{StubPlatform, test_spawner},
+	Spawner, host_internal::bulletin::preimage_key, platform::HostInfo, test_support::StubPlatform,
 	time::ManualTimer,
 };
 
@@ -43,7 +41,7 @@ fn image_loader(platform: Arc<StubPlatform>, timer: Arc<ManualTimer>) -> ImageLo
 		[1; 32],
 		BULLETIN_GENESIS,
 		[3; 32],
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	ImageLoader::new(services, timer)
 }

@@ -73,8 +73,8 @@ use truapi::v01::{
 };
 
 use crate::{
+	Spawner,
 	host_rpc_client::HostRpcClient,
-	subscription::Spawner,
 	time::{RealTimer, Timer},
 };
 
@@ -631,12 +631,9 @@ impl ChainRuntime {
 		.boxed()
 		.shared();
 		self.record_follow_start(follow_start_key, start.clone());
-		(self.spawner)(
-			async move {
-				let _ = start.await;
-			}
-			.boxed(),
-		);
+		self.spawner.spawn(async move {
+			let _ = start.await;
+		});
 
 		ManagedSubscription::new(
 			rx.boxed(),
@@ -1460,22 +1457,19 @@ impl ChainConnection {
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
-		(self.spawner)(
-			async move {
-				while let Some(result) = driver.next().await {
-					if let Err(error) = result {
-						warn!(target: "subxt", "chainHead backend error={error}");
-					}
-				}
-				// The backend can make no further progress; drop the cached
-				// Subxt bundle so the next caller rebuilds instead of hitting
-				// a permanently dead backend.
-				if let Some(connection) = pump_connection.upgrade() {
-					connection.invalidate_subxt_connection(generation);
+		self.spawner.spawn(async move {
+			while let Some(result) = driver.next().await {
+				if let Err(error) = result {
+					warn!(target: "subxt", "chainHead backend error={error}");
 				}
 			}
-			.boxed(),
-		);
+			// The backend can make no further progress; drop the cached
+			// Subxt bundle so the next caller rebuilds instead of hitting
+			// a permanently dead backend.
+			if let Some(connection) = pump_connection.upgrade() {
+				connection.invalidate_subxt_connection(generation);
+			}
+		});
 		let backend = Arc::new(backend);
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
@@ -1777,7 +1771,7 @@ impl ChainConnection {
 			return Err(follow_closed());
 		}
 
-		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
+		self.spawner.spawn(Abortable::new(pump, abort_registration).map(|_| ()));
 		Ok(remote_follow_id)
 	}
 

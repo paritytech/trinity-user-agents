@@ -174,7 +174,7 @@ fn serve_contracts(
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		scripted.lock().unwrap().respond(request)
 	}));
-	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let extrinsics = ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost));
 	let caller = EvmContractCaller::new(chain, extrinsics, GENESIS);
 	(node, provider, caller)
@@ -483,7 +483,7 @@ fn a_runtime_call_failure_preserves_the_rpc_error() {
 			.to_string(),
 		]
 	}));
-	let chain = ChainRuntime::new(provider, test_spawner());
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
 	let client = block_on(chain.rpc_client("contract_read", &GENESIS.0)).unwrap();
 	let mut rpc = subxt_rpcs::RpcClient::new(client);
 

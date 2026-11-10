@@ -13,9 +13,9 @@ use super::{
 	HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
 };
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, HostChainProvider, RuntimeFailure, encode_hex},
 	platform::{ChainProvider, ExtrinsicVersionHost},
-	subscription::Spawner,
 };
 
 const REVIVE_PALLET: &str = "Revive";

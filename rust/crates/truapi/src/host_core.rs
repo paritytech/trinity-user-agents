@@ -35,6 +35,7 @@ use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, latest, v01};
 
 use crate::{
+	Spawner,
 	frame::ProtocolMessage,
 	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
@@ -45,7 +46,7 @@ use crate::{
 		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
 		sso_service::Dispatch,
 	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
 	truapi_core::TrUApiCore,
 };

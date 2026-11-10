@@ -71,7 +71,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			[0; 32],
 			[0xbb; 32],
 			asset_hub_chain_genesis_hash,
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
 			ceiling,
@@ -129,7 +129,7 @@ fn concurrent_lookups_for_one_product_open_one_follow() {
 		[0; 32],
 		[0xbb; 32],
 		[0xcc; 32],
-		crate::test_support::test_spawner(),
+		crate::Spawner::for_test(),
 	);
 	let product = ProductId::for_test("peopl.dot");
 

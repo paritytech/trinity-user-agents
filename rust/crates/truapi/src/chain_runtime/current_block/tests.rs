@@ -12,11 +12,11 @@ use subxt::error::{BackendError, Hex, RpcError as SubxtRpcError};
 
 use super::*;
 use crate::{
+	Spawner,
 	chain_runtime::{RuntimeChainProvider, chain_halt::halt_schedule},
 	platform::JsonRpcConnection,
 	test_support::{
-		FollowRefusal, ScriptedChainHead, ScriptedProvider, sent_count, test_spawner,
-		wait_for_sent, wait_until,
+		FollowRefusal, ScriptedChainHead, ScriptedProvider, sent_count, wait_for_sent, wait_until,
 	},
 	time::ManualTimer,
 };
@@ -205,7 +205,7 @@ fn a_connection_that_never_opens_is_unavailable_at_the_deadline() {
 
 	let timer = Arc::new(ManualTimer::default());
 	let chain =
-		ChainRuntime::new(Arc::new(NeverConnects), test_spawner()).with_timer(timer.clone());
+		ChainRuntime::new(Arc::new(NeverConnects), Spawner::for_test()).with_timer(timer.clone());
 	let read = read_current_block(&chain);
 
 	wait_until(|| timer.sleeps() == 1, "the deadline starts");
@@ -231,7 +231,8 @@ fn a_chain_the_host_does_not_serve_is_no_connection_at_once() {
 	}
 
 	let timer = Arc::new(ManualTimer::default());
-	let chain = ChainRuntime::new(Arc::new(NoProvider), test_spawner()).with_timer(timer.clone());
+	let chain =
+		ChainRuntime::new(Arc::new(NoProvider), Spawner::for_test()).with_timer(timer.clone());
 
 	let error = block_on(chain.current_block(&GENESIS)).expect_err("the chain cannot be connected");
 
@@ -267,7 +268,7 @@ fn a_node_that_cannot_be_reached_for_a_while_is_read_once_it_can() {
 	let provider =
 		Arc::new(UnreachableAtFirst { attempts: AtomicUsize::new(0), unreachable_for: 2, node });
 	let timer = Arc::new(ManualTimer::default());
-	let chain = ChainRuntime::new(provider.clone(), test_spawner()).with_timer(timer.clone());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test()).with_timer(timer.clone());
 	let read = read_current_block(&chain);
 
 	for (pause_index, pause) in halt_schedule().into_iter().take(2).enumerate() {
@@ -297,7 +298,8 @@ fn a_node_never_reached_is_unavailable_after_the_last_pause() {
 	}
 
 	let timer = Arc::new(ManualTimer::default());
-	let chain = ChainRuntime::new(Arc::new(Unreachable), test_spawner()).with_timer(timer.clone());
+	let chain =
+		ChainRuntime::new(Arc::new(Unreachable), Spawner::for_test()).with_timer(timer.clone());
 	let read = read_current_block(&chain);
 
 	for (pause_index, pause) in halt_schedule().into_iter().enumerate() {
