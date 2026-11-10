@@ -1749,9 +1749,8 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may name a reserved value, and the values the host
-   * reserves besides the core's. Without it the core refuses its own reserved
-   * values, as on a real host.
+   * The host's rule on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
   reservedValues?: ReservedValues;
 }

@@ -54,10 +54,6 @@ fun previewnetStack(): BundledStack {
     return BundledStack(
         pointer = asset("stacks/previewnet.link").decodeToString().trim(),
         descriptor = asset("stacks/previewnet.json"),
-        reservedValues = ReservedValues(
-            allowed = false,
-            extraGenesisHashes = emptyList(),
-            extraTlds = emptyList(),
-        ),
+        reservedValues = ReservedValues(allowed = false),
     )
 }

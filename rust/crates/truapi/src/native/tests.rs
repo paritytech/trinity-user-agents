@@ -1878,8 +1878,7 @@ fn runtime_config_passes_the_reserved_values_through() {
 
 #[test]
 fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
-	// A build that reserves a TLD of its own must not start another stack on
-	// it.
+	// A build that reserves a TLD must not start a stack on it.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"paseo", [0xa1; 32], [0xb2; 32], None,
 	));

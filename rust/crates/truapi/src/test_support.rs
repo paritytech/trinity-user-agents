@@ -342,8 +342,8 @@ pub fn test_stack(
 	asset_hub: Option<[u8; 32]>,
 ) -> crate::platform::Stack {
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	let reserved_values = crate::platform::ReservedValues { allowed: true, ..Default::default() };
-	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, &reserved_values)
+	let allowed = crate::platform::ReservedValues::ALLOWED;
+	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, &allowed)
 		.expect("test stack is valid")
 }
 

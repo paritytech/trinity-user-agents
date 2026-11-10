@@ -27,11 +27,7 @@ enum class TrUAPIStack(
         return BundledStack(
             pointer = read("link").decodeToString().trim(),
             descriptor = read("json"),
-            reservedValues = ReservedValues(
-                allowed = allowsReservedValues,
-                extraGenesisHashes = emptyList(),
-                extraTlds = emptyList(),
-            ),
+            reservedValues = ReservedValues(allowed = allowsReservedValues),
         )
     }
 

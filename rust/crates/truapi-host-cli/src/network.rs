@@ -161,9 +161,8 @@ impl Stack {
 	/// The stack the core runs on: the descriptor's `network` and TLD, and the
 	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
 	///
-	/// Allows the core's reserved values, which the CLI checks itself, so call
-	/// it only on a stack from [`NetworkSource::resolve_checked`]. The CLI
-	/// reserves none of its own.
+	/// Allows Polkadot's reserved values, which the CLI checks itself, so call
+	/// it only on a stack from [`NetworkSource::resolve_checked`].
 	pub fn core_stack(&self) -> Result<truapi::platform::Stack, StackError> {
 		let genesis = self.genesis();
 		let chains = StackChains {
@@ -176,7 +175,7 @@ impl Stack {
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
-			&ReservedValues { allowed: true, ..Default::default() },
+			&ReservedValues::ALLOWED,
 		)
 	}
 

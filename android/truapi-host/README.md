@@ -43,11 +43,10 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `reservedValues` is what the build decides about reserved values, which are
-  Polkadot's genesis hashes and the `dot` TLD plus the `extraGenesisHashes` and
-  `extraTlds` the build adds. A build can only add to the core's list. The core
-  refuses a stack that names a reserved value unless `allowed` is true, which it
-  is only in a Polkadot or Polkadot-fork build.
+- `reservedValues.allowed` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD, or an entry of the build's own `extraGenesisHashes` and
+  `extraTlds`.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -425,11 +424,7 @@ val runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer = "polkadotapp://stack?key=0x…&url=…",
         descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
-        reservedValues = ReservedValues(
-            allowed = false,
-            extraGenesisHashes = emptyList(),
-            extraTlds = emptyList(),
-        ),
+        reservedValues = ReservedValues(allowed = false),
     ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.

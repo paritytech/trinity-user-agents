@@ -46,8 +46,8 @@ pub struct HostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 }
 
-/// The stack a host build ships: its pointer, its signed descriptor, and
-/// what the build decides about reserved values for it.
+/// The stack a host build ships: its pointer, its signed descriptor, and the
+/// build's rule on reserved values.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
@@ -56,8 +56,7 @@ pub struct BundledStack {
 	/// The bundled descriptor's bytes, as served: a signed envelope that
 	/// verifies under the pointer's key.
 	pub descriptor: Vec<u8>,
-	/// Whether the stack may name a reserved value, and the values this build
-	/// reserves besides the core's.
+	/// The build's rule on reserved values.
 	pub reserved_values: ReservedValues,
 }
 

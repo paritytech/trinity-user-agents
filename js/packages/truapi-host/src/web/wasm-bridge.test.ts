@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
-import type { ReservedValues } from "../runtime.js";
+import type { BundledStack, ReservedValues } from "../runtime.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -34,6 +34,23 @@ const glueUrl = new URL(
   "../../dist/wasm/web/truapi_server.js",
   import.meta.url,
 );
+/** Starts a pairing host on a stack, as the production bundle does. */
+async function pairingHostStarter(): Promise<(stack: BundledStack) => unknown> {
+  const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+  const { createWasmRawCallbacks } =
+    await import("../generated/host-callbacks-adapter.js");
+  initSync({ module: readFileSync(wasmUrl) });
+  const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+  return (stack) =>
+    new WasmPairingHostRuntime(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      { ...hostConfig, stack },
+    );
+}
+
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
 const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
@@ -125,64 +142,38 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   it("refuses a stack pointer without a key", async () => {
     // A copy the host fetches later is checked against the pointer's key, so
     // the production bundle refuses a pointer without one.
-    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } =
-      await import("../generated/host-callbacks-adapter.js");
-    initSync({ module: readFileSync(wasmUrl) });
-    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
-    const pointer = new URL(hostConfig.stack.pointer);
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const pointer = new URL(stack.pointer);
     pointer.searchParams.delete("key");
 
-    expect(
-      () =>
-        new WasmPairingHostRuntime(
-          {
-            ...createWasmRawCallbacks(createMockHost().callbacks),
-            requestWorkerTransition: () => {},
-          },
-          {
-            ...hostConfig,
-            stack: { ...hostConfig.stack, pointer: pointer.href },
-          },
-        ),
-    ).toThrow("runtimeConfig.stack: stack pointer has no key");
+    expect(() => start({ ...stack, pointer: pointer.href })).toThrow(
+      "runtimeConfig.stack: stack pointer has no key",
+    );
   });
 
   it("holds a stack to the reserved values its build adds", async () => {
-    // A build reserves the values of a network it ships so that no other
-    // stack passes for that network. Previewnet runs on `testnet`, so a build
-    // that reserves that TLD or one of previewnet's genesis hashes starts it
-    // only when it allows the stack reserved values.
-    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } =
-      await import("../generated/host-callbacks-adapter.js");
-    initSync({ module: readFileSync(wasmUrl) });
-    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
-    const envelope = JSON.parse(
-      new TextDecoder().decode(hostConfig.stack.descriptor),
-    );
-    const previewnetGenesis: string = JSON.parse(atob(envelope.payload))
-      .chains[0].genesisHash;
-    const start = (reservedValues: ReservedValues) =>
-      new WasmPairingHostRuntime(
-        {
-          ...createWasmRawCallbacks(createMockHost().callbacks),
-          requestWorkerTransition: () => {},
-        },
-        { ...hostConfig, stack: { ...hostConfig.stack, reservedValues } },
-      );
+    // A build that reserves previewnet's TLD or one of its genesis hashes
+    // starts previewnet only when it allows the stack reserved values.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
+    const genesisHash: string = JSON.parse(atob(envelope.payload)).chains[0]
+      .genesisHash;
+    const reserving = (reservedValues: ReservedValues) => () =>
+      start({ ...stack, reservedValues });
 
-    expect(() => start({ extraTlds: ["testnet"] })).toThrow(
+    expect(reserving({ extraTlds: ["testnet"] })).toThrow(
       "runtimeConfig.stack: stack uses the reserved tld testnet",
     );
-    expect(() => start({ extraGenesisHashes: [previewnetGenesis] })).toThrow(
-      `runtimeConfig.stack: stack uses the reserved genesis hash ${previewnetGenesis}`,
+    expect(reserving({ extraGenesisHashes: [genesisHash] })).toThrow(
+      `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
     );
-    expect(() =>
-      start({
+    expect(
+      reserving({
         allowed: true,
         extraTlds: ["testnet"],
-        extraGenesisHashes: [previewnetGenesis],
+        extraGenesisHashes: [genesisHash],
       }),
     ).not.toThrow();
   });

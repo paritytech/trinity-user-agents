@@ -225,11 +225,9 @@ pointer, the signed descriptor its build bundles, and the build's
 uses `Stack::new`, and a test-host browser bundle passes
 `runtimeConfig.testStack`. Each constructor documents what it refuses.
 
-The reserved values are the core's own list, Polkadot's Relay, Asset Hub,
-People and Bulletin genesis hashes and the `dot` TLD, plus the genesis hashes
-and TLDs a build names in `ReservedValues`. A build can add to the core's list
-and has no way to shorten it. A stack that names a reserved value, under any
-chain role, starts only when the build sets `allowed` for it.
+The core reserves Polkadot's genesis hashes and the `dot` TLD, and a build can
+reserve more in `ReservedValues` but not fewer. A stack that names a reserved
+value under any chain role starts only when the build sets `allowed`.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have

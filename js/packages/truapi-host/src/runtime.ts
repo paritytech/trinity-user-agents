@@ -61,25 +61,19 @@ export interface ChainConnection {
 export type LogLevel = string;
 
 /**
- * What a host build decides about reserved values for its stack. The reserved
- * values are the core's own, Polkadot's genesis hashes and the `dot` TLD, plus
- * the ones the build adds here. A build can only add to the core's list.
+ * A host build's rule on reserved values for its stack. The core reserves
+ * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
+ * and cannot reserve fewer.
  */
 export interface ReservedValues {
   /**
-   * Whether the stack may name a reserved value, the core's or the build's.
-   * Only a Polkadot or Polkadot-fork build sets it. Defaults to `false`.
+   * Whether the stack may name reserved values. Only a Polkadot or
+   * Polkadot-fork build sets it. Defaults to `false`.
    */
   allowed?: boolean;
-  /**
-   * Genesis hashes the build reserves besides the core's, as 0x-prefixed hex
-   * or bytes.
-   */
+  /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
   extraGenesisHashes?: (string | Uint8Array)[];
-  /**
-   * dotNS TLDs the build reserves besides the core's, without the leading
-   * dot.
-   */
+  /** dotNS TLDs reserved on top of the core's, without the leading dot. */
   extraTlds?: string[];
 }
 
@@ -95,11 +89,7 @@ export interface BundledStack {
    * under the pointer's key.
    */
   descriptor: Uint8Array;
-  /**
-   * Whether the stack may name a reserved value, and the values this build
-   * reserves besides the core's. Without it the core refuses a stack that
-   * names one of its own reserved values.
-   */
+  /** The build's rule on reserved values. Defaults to refusing the core's. */
   reservedValues?: ReservedValues;
 }
 

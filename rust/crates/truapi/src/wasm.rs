@@ -599,30 +599,27 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
 }
 
-/// A stack's `reservedValues`, at `path`: `allowed`, which defaults to false,
-/// and the `extraGenesisHashes` and `extraTlds` the build reserves besides the
-/// core's, which default to none.
+/// A stack config's optional `reservedValues`, at `path`. Each of its fields
+/// is optional.
 fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValues, JsValue> {
 	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
 		return Ok(ReservedValues::default());
 	};
-	let entries =
-		|name: &str| get_optional_array_at(&reserved_values, name, &format!("{path}.{name}"));
 	Ok(ReservedValues {
 		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
 			.unwrap_or(false),
-		extra_genesis_hashes: entries("extraGenesisHashes")?
-			.into_iter()
-			.map(|hash| bytes32_from_js(hash, &format!("{path}.extraGenesisHashes")))
-			.collect::<Result<_, _>>()?,
-		extra_tlds: entries("extraTlds")?
-			.into_iter()
-			.map(|tld| {
-				tld.as_string().ok_or_else(|| {
-					JsValue::from_str(&format!("{path}.extraTlds must hold strings"))
-				})
-			})
-			.collect::<Result<_, _>>()?,
+		extra_genesis_hashes: get_optional_array_at(
+			&reserved_values,
+			"extraGenesisHashes",
+			&format!("{path}.extraGenesisHashes"),
+			bytes32_from_js,
+		)?,
+		extra_tlds: get_optional_array_at(
+			&reserved_values,
+			"extraTlds",
+			&format!("{path}.extraTlds"),
+			string_from_js,
+		)?,
 	})
 }
 
@@ -725,15 +722,15 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 	}
 }
 
-fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+/// The property `name` of `value`, or `None` when it is null or undefined.
+fn get_optional_property(value: &JsValue, name: &str) -> Result<Option<JsValue>, JsValue> {
 	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Err(JsValue::from_str(&format!("{path} is required")));
-	}
-	if !property.is_object() {
-		return Err(JsValue::from_str(&format!("{path} must be an object")));
-	}
-	Ok(property)
+	Ok((!property.is_null() && !property.is_undefined()).then_some(property))
+}
+
+fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+	get_optional_object(value, name, path)?
+		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
 fn get_optional_object(
@@ -741,14 +738,11 @@ fn get_optional_object(
 	name: &str,
 	path: &str,
 ) -> Result<Option<JsValue>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	if !property.is_object() {
+	let property = get_optional_property(value, name)?;
+	if property.as_ref().is_some_and(|property| !property.is_object()) {
 		return Err(JsValue::from_str(&format!("{path} must be an object")));
 	}
-	Ok(Some(property))
+	Ok(property)
 }
 
 fn get_optional_string_at(
@@ -756,25 +750,42 @@ fn get_optional_string_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<String>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	property
+	get_optional_property(value, name)?
+		.map(|property| string_from_js(property, path))
+		.transpose()
+}
+
+fn string_from_js(value: JsValue, path: &str) -> Result<String, JsValue> {
+	value
 		.as_string()
-		.map(Some)
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
 fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
+	get_optional_property(value, name)?
+		.map(|property| {
+			property
+				.as_bool()
+				.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+		})
+		.transpose()
+}
+
+/// Each entry of an optional array property, read with `entry`. Empty when
+/// the property is absent.
+fn get_optional_array_at<T>(
+	value: &JsValue,
+	name: &str,
+	path: &str,
+	entry: impl Fn(JsValue, &str) -> Result<T, JsValue>,
+) -> Result<Vec<T>, JsValue> {
+	let Some(property) = get_optional_property(value, name)? else {
+		return Ok(Vec::new());
+	};
+	if !Array::is_array(&property) {
+		return Err(JsValue::from_str(&format!("{path} must be an array")));
 	}
-	property
-		.as_bool()
-		.map(Some)
-		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+	Array::from(&property).iter().map(|item| entry(item, path)).collect()
 }
 
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
@@ -788,11 +799,9 @@ fn get_optional_bytes32_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<[u8; 32]>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	bytes32_from_js(property, path).map(Some)
+	get_optional_property(value, name)?
+		.map(|property| bytes32_from_js(property, path))
+		.transpose()
 }
 
 /// A 32-byte value given as a hex string or a `Uint8Array`.
@@ -807,18 +816,6 @@ fn bytes32_from_js(value: JsValue, path: &str) -> Result<[u8; 32], JsValue> {
 	bytes.try_into().map_err(|bytes: Vec<u8>| {
 		JsValue::from_str(&format!("{path} must be exactly 32 bytes, got {}", bytes.len()))
 	})
-}
-
-/// The entries of an optional array property, none when it is absent.
-fn get_optional_array_at(value: &JsValue, name: &str, path: &str) -> Result<Vec<JsValue>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(Vec::new());
-	}
-	if !Array::is_array(&property) {
-		return Err(JsValue::from_str(&format!("{path} must be an array")));
-	}
-	Ok(Array::from(&property).to_vec())
 }
 
 #[cfg(feature = "test-host")]

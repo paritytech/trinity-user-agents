@@ -3,9 +3,9 @@
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link and against the reserved values, the core's and those the build adds in
-//! its [`ReservedValues`]. The [`Stack`] it returns holds the network, the
-//! dotNS TLD and each chain's genesis hash, and answers `get_chain_info`.
+//! link and against the build's [`ReservedValues`]. The [`Stack`] it returns
+//! holds the network, the dotNS TLD and each chain's genesis hash, and answers
+//! `get_chain_info`.
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
@@ -48,30 +48,35 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// What a host build decides about reserved values for the stack it starts.
+/// A host build's rule on reserved values for its stack.
 ///
-/// The reserved values are the core's own list, Polkadot's genesis hashes and
-/// the `dot` TLD, plus the ones the build names here. A build can only add to
-/// the core's list. A stack that names a reserved value starts only when
-/// `allowed` is set.
+/// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
+/// reserve more here and cannot reserve fewer. A stack that names a reserved
+/// value starts only when `allowed` is set.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValues {
-	/// Whether the stack may name a reserved value, the core's or the build's.
-	/// Only a Polkadot or Polkadot-fork build sets it.
+	/// Whether the stack may name reserved values. Only a Polkadot or
+	/// Polkadot-fork build sets it.
 	pub allowed: bool,
-	/// Genesis hashes the build reserves besides the core's.
+	/// Genesis hashes reserved on top of the core's.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_genesis_hashes: Vec<[u8; 32]>,
-	/// dotNS TLDs the build reserves besides the core's, without the leading
-	/// dot.
+	/// dotNS TLDs reserved on top of the core's, without the leading dot.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_tlds: Vec<String>,
 }
 
 impl ReservedValues {
+	/// Allows the stack every reserved value and reserves no extra ones.
+	pub const ALLOWED: Self =
+		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
+
 	fn refuse_tld(&self, tld: &str) -> Result<(), StackError> {
-		let is_reserved =
-			tld == RESERVED_TLD || self.extra_tlds.iter().any(|reserved| reserved == tld);
-		if is_reserved && !self.allowed {
+		if self.allowed {
+			return Ok(());
+		}
+		if tld == RESERVED_TLD || self.extra_tlds.iter().any(|extra| extra == tld) {
 			return Err(StackError::ReservedTld { tld: tld.to_owned() });
 		}
 		Ok(())
@@ -81,15 +86,16 @@ impl ReservedValues {
 		&self,
 		genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
 	) -> Result<(), StackError> {
+		if self.allowed {
+			return Ok(());
+		}
 		let is_reserved = |genesis_hash: &[u8; 32]| {
 			RESERVED_GENESIS_HASHES.contains(genesis_hash) ||
 				self.extra_genesis_hashes.contains(genesis_hash)
 		};
 		match genesis_hashes.into_iter().find(is_reserved) {
-			Some(genesis_hash) if !self.allowed => {
-				Err(StackError::ReservedGenesis { genesis_hash })
-			},
-			_ => Ok(()),
+			Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
+			None => Ok(()),
 		}
 	}
 }
@@ -155,14 +161,14 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The stack runs on a reserved TLD, which this build does not allow it.
+	/// The TLD is reserved, and the build does not allow it.
 	#[display("stack uses the reserved tld {tld}, which this build does not allow")]
 	ReservedTld {
 		/// The reserved TLD.
 		tld: String,
 	},
-	/// A chain, under any role, has a reserved genesis hash, which this build
-	/// does not allow the stack.
+	/// A chain, under any role, has a reserved genesis hash, and the build
+	/// does not allow it.
 	#[display(
 		"stack uses the reserved genesis hash 0x{}, which this build does not allow",
 		hex::encode(genesis_hash)
@@ -176,8 +182,7 @@ pub enum StackError {
 impl Stack {
 	/// The stack a host build bundles: `pointer` is the stack's link
 	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `reserved_values` the values the stack may name only
-	/// when the build allows it.
+	/// build ships, and `reserved_values` the build's rule on reserved values.
 	///
 	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
 	/// and `expiresAt` are not checked, because the bundled copy is the only one
