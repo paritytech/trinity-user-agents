@@ -315,7 +315,9 @@ Two ways to lose work that involve no pushing at all:
   that sends telemetry from a host. Read it before adding an event, a log line
   or a metric, and before touching a sender. It covers which Sentry product a
   signal belongs in, which field a query can select on, why every captured event
-  sets a fingerprint, and what the core's marker table decides.
+  sets a fingerprint, and what the core's marker table decides. Its `Adding a
+  signal` subsection shows what a host event looks like on each host, how a
+  core log line is registered and raised, and how to check one in Sentry.
 
 ## Scope of a change
 
