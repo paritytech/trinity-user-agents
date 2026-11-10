@@ -883,6 +883,8 @@ mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
 #[cfg(feature = "runtime")]
+mod spawner;
+#[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
 pub mod subscription;
@@ -949,6 +951,9 @@ mod nft_purse;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 mod pocket_cards;
+
+#[cfg(feature = "runtime")]
+pub use spawner::Spawner;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;

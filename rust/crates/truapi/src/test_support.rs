@@ -14,8 +14,6 @@ use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::subscription::thread_per_subscription_spawner;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	host_logic::{
@@ -23,7 +21,6 @@ use crate::{
 		sso::pairing,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	subscription::Spawner,
 };
 
 use crate::platform::{
@@ -68,24 +65,6 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
 		assert!(std::time::Instant::now() < deadline, "{message}");
 		std::thread::sleep(Duration::from_millis(5));
 	}
-}
-
-/// Test spawner that matches the current target.
-pub fn test_spawner() -> Spawner {
-	#[cfg(not(target_arch = "wasm32"))]
-	{
-		thread_per_subscription_spawner()
-	}
-	#[cfg(target_arch = "wasm32")]
-	{
-		immediate_spawner()
-	}
-}
-
-/// Synchronous spawner for tests that should complete work immediately.
-#[cfg(target_arch = "wasm32")]
-pub fn immediate_spawner() -> Spawner {
-	Arc::new(futures::executor::block_on)
 }
 
 /// Test hook invoked after each recorded auth state.
