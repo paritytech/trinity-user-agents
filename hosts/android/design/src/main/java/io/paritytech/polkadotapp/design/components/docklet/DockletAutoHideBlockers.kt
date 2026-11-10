@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
-data class DockletAutoHideBlockers(
+class DockletAutoHideBlockers(
     val shownAtRest: Boolean,
     val searchOpen: Boolean,
     val keyboardUp: Boolean,
