@@ -806,9 +806,9 @@ impl NativeTrUApiHostRuntime {
 	/// after each change, until the subscription is cancelled.
 	pub fn observe_pocket_cards(
 		&self,
-		observer: Box<dyn NativePocketObserver>,
+		observer: Arc<dyn NativePocketObserver>,
 	) -> Arc<NativeSubscription> {
-		observe_pocket_cards(&self.pocket, observer.into(), &self.spawner)
+		observe_pocket_cards(&self.pocket, observer, &self.spawner)
 	}
 
 	/// Add a card the user approved, with the face they approved it by. An id
@@ -1151,7 +1151,7 @@ impl NativeProductExecution {
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
-		observer: Box<dyn NativeRendererObserver>,
+		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		let control = self
@@ -1165,15 +1165,15 @@ impl NativeProductExecution {
 			_ => None,
 		};
 		let stream = control.render(request)?;
-		let observer: Arc<dyn NativeRendererObserver> = match card_id {
+		let observer = match card_id {
 			Some(card_id) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
-				observer.into(),
+				observer,
 				&self.spawner,
 			),
-			None => observer.into(),
+			None => observer,
 		};
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
