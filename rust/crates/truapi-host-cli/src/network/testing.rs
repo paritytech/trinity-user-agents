@@ -14,6 +14,7 @@ use trinity_stack::{Descriptor, Document, Pointer};
 use truapi::latest::ChainIdentifier;
 
 use super::{ChainEndpoint, Stack, stack::light_client};
+use crate::chain::{ChainAccess, ChainBackend};
 
 /// Paseo's light spec, answered from without network access.
 pub const RELAY_LIGHT_SPEC: &str =
@@ -56,6 +57,17 @@ pub fn light_spec_genesis(spec: &str) -> [u8; 32] {
 	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")
 }
 
+/// `chain_backend` for a test stack. A light client would keep its specs in a
+/// directory of the system's temporary one, never in the user's state.
+pub fn test_access(chain_backend: ChainBackend) -> ChainAccess {
+	match chain_backend {
+		ChainBackend::Rpc => ChainAccess::Rpc,
+		ChainBackend::LightClient => ChainAccess::LightClient {
+			spec_directory: std::env::temp_dir().join("truapi-host-test-light-specs"),
+		},
+	}
+}
+
 /// The pointer test stacks are read under.
 pub fn test_pointer() -> Pointer {
 	Pointer::new("https://stack.example/descriptor.json", None).expect("a descriptor URL")
@@ -83,7 +95,8 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(&test_pointer(), descriptor, self.chain_backend()).expect("edited stack refused")
+		Self::new(&test_pointer(), descriptor, &test_access(self.chain_backend()))
+			.expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.

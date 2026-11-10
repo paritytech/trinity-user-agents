@@ -9,7 +9,7 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
 use super::{Network, Stack};
 use crate::{
-	chain::ChainBackend,
+	chain::ChainAccess,
 	stack_descriptor::{FetchError, describe_pin_change, fetch, reads_same, unix_now},
 };
 
@@ -76,7 +76,7 @@ pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> R
 	let is_built_in = Network::value_variants()
 		.iter()
 		.any(|network| network.built_in_stack().pointer().stack_id() == stack_id);
-	if is_built_in && let Err(error) = Stack::new(pointer, descriptor.clone(), ChainBackend::Rpc) {
+	if is_built_in && let Err(error) = Stack::new(pointer, descriptor.clone(), &ChainAccess::Rpc) {
 		bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
 	}
 	Ok(())
@@ -94,9 +94,10 @@ impl Network {
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching anything.
 	#[cfg(test)]
-	pub fn bundled_stack(self, chain_backend: ChainBackend) -> Stack {
+	pub fn bundled_stack(self, chain_backend: crate::chain::ChainBackend) -> Stack {
+		let chain_access = super::testing::test_access(chain_backend);
 		let built_in = self.built_in_stack();
-		Stack::new(&built_in.pointer(), built_in.open_bundled(), chain_backend)
+		Stack::new(&built_in.pointer(), built_in.open_bundled(), &chain_access)
 			.expect("invalid bundled stack")
 	}
 
@@ -108,7 +109,7 @@ impl Network {
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
-		chain_backend: ChainBackend,
+		chain_access: &ChainAccess,
 	) -> Result<(Stack, BuiltInOrigin)> {
 		let built_in = self.built_in_stack();
 		let value = self.to_possible_value().expect("network without a --network value");
@@ -125,7 +126,7 @@ impl Network {
 		}
 		let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
 		let now = unix_now() as i64;
-		let refresh = refresh_stack(name, &pointer, built_in.bundle, fetched, now, chain_backend)?;
+		let refresh = refresh_stack(name, &pointer, built_in.bundle, fetched, now, chain_access)?;
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
 			Some(notice) => tracing::info!("{notice}"),
@@ -229,7 +230,7 @@ fn refresh_stack(
 	bundled: &[u8],
 	fetched: Fetched,
 	now_unix_seconds: i64,
-	chain_backend: ChainBackend,
+	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
 	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
 		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
@@ -267,7 +268,7 @@ fn refresh_stack(
 			Some(reason) => Err(reason),
 			None => {
 				ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
-				Stack::new(pointer, accepted.stack.descriptor, chain_backend)
+				Stack::new(pointer, accepted.stack.descriptor, chain_access)
 					.map_err(|error| format!("cannot run: {error:#}"))
 			},
 		};
@@ -279,7 +280,7 @@ fn refresh_stack(
 				pointer.url()
 			);
 			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
-			let bundled = Stack::new(pointer, bundled_copy.stack.descriptor, chain_backend)?;
+			let bundled = Stack::new(pointer, bundled_copy.stack.descriptor, chain_access)?;
 			(bundled, bundled_copy.stale, BuiltInCopy::Rejected, None)
 		},
 	};

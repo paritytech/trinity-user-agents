@@ -114,14 +114,16 @@ async fn a_wrong_spec_is_refused_and_an_unreachable_one_is_not_wrong() {
 	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 
 	let swapped = stack_served_at(&server, "people.json", "relay.json", directory.path());
-	let wrong = light_client(&swapped).load_spec(relay).await;
-	assert!(
-		matches!(
-			&wrong,
-			Err(MissingSpec::Wrong(ProviderError::LightSpec { role, genesis, error }))
-				if role == "Relay" && *genesis == relay && *error == trinity_stack::Error::SpecDigest
-		),
-		"{wrong:?}"
+	let Err(MissingSpec::Wrong(wrong)) = light_client(&swapped).load_spec(relay).await else {
+		panic!("the relay is served People's spec");
+	};
+	assert_eq!(
+		wrong,
+		ProviderError::LightSpec {
+			role: "Relay".to_owned(),
+			genesis: relay,
+			source: trinity_stack::Error::SpecDigest,
+		}
 	);
 	assert_eq!(kept_specs(directory.path()), Vec::<PathBuf>::new(), "a refused spec is not kept");
 

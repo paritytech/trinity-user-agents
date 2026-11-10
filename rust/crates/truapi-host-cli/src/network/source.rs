@@ -10,7 +10,7 @@ use super::{
 	checks::verify_chains,
 };
 use crate::{
-	chain::ChainBackend,
+	chain::ChainAccess,
 	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
 };
 
@@ -18,7 +18,7 @@ impl NetworkSource {
 	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
 	/// with a stack, in a message that names where the stack came from.
 	pub fn new(
-		chain_backend: ChainBackend,
+		chain_access: ChainAccess,
 		network: Option<Network>,
 		stack: Option<StackArg>,
 	) -> Result<Self> {
@@ -29,7 +29,7 @@ impl NetworkSource {
 			(None, Some(stack)) => NetworkChoice::Stack(stack),
 			(network, None) => NetworkChoice::BuiltIn(network.unwrap_or_default()),
 		};
-		Ok(Self { chain_backend, network })
+		Ok(Self { chain_access, network })
 	}
 
 	/// The network a command runs against, the built-in network or the stack,
@@ -75,14 +75,14 @@ impl NetworkSource {
 				let stack = load_descriptor(&stack_arg.value)
 					.await
 					.and_then(|(pointer, descriptor)| {
-						Stack::new(&pointer, descriptor, self.chain_backend)
+						Stack::new(&pointer, descriptor, &self.chain_access)
 					})
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
 			},
 			NetworkChoice::BuiltIn(network) => {
 				let (stack, origin) =
-					network.resolve_built_in(fetch_timeout, self.chain_backend).await?;
+					network.resolve_built_in(fetch_timeout, &self.chain_access).await?;
 				(stack, Some(origin))
 			},
 		};

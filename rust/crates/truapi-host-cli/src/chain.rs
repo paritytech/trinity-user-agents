@@ -4,7 +4,7 @@
 //! `truapi-provider` connects to it on the selected backend. When a
 //! connection's response stream ends, the core's chain runtime connects again.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use clap::ValueEnum;
 use futures::{
@@ -51,6 +51,18 @@ pub enum ChainBackend {
 	LightClient,
 }
 
+/// A [`ChainBackend`] with what it needs to run.
+pub enum ChainAccess {
+	/// WebSocket JSON-RPC to the network's nodes.
+	Rpc,
+	/// The embedded light client, keeping checked light specs in
+	/// `spec_directory`.
+	LightClient {
+		/// Where checked light specs are kept between runs.
+		spec_directory: PathBuf,
+	},
+}
+
 /// Chain provider shared by the host runtime, dotNS reads and Bulletin
 /// preimage lookups.
 ///
@@ -74,7 +86,7 @@ impl CliChainProvider {
 	/// A provider for `network`'s chains over its chain backend.
 	pub fn new(network: &Stack) -> Self {
 		let routed_endpoints: Vec<ChainEndpoint> = network.chains().iter().cloned().collect();
-		let backend = match network.light_client() {
+		let backend = match network.share_light_client() {
 			None => Backend::Rpc(Box::new(
 				routed_endpoints
 					.iter()
@@ -84,7 +96,7 @@ impl CliChainProvider {
 					})
 					.build(),
 			)),
-			Some(light) => Backend::LightClient(Arc::clone(light)),
+			Some(light) => Backend::LightClient(light),
 		};
 		Self { people_genesis: network.genesis().people, routed_endpoints, backend }
 	}

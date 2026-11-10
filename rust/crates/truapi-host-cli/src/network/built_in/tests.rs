@@ -91,7 +91,7 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
+	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, &ChainAccess::Rpc)
 }
 
 const NOW: i64 = 1_800_000_000;

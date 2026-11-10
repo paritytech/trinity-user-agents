@@ -1,15 +1,16 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_stack, test_pointer},
+		testing::{edit_chain, edit_stack, test_access, test_pointer},
 	},
 	*,
 };
+use crate::chain::ChainBackend;
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
 	let pointer = test_pointer();
-	Stack::new(&pointer, descriptor, ChainBackend::Rpc)
+	Stack::new(&pointer, descriptor, &ChainAccess::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -143,10 +144,10 @@ fn test_light_client_without_a_light_spec_error() {
 		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
 	});
 
-	let error = Stack::new(&pointer, descriptor.clone(), ChainBackend::LightClient)
+	let error = Stack::new(&pointer, descriptor.clone(), &test_access(ChainBackend::LightClient))
 		.unwrap_err()
 		.to_string();
 
 	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
-	Stack::new(&pointer, descriptor, ChainBackend::Rpc).expect("RPC needs no light spec");
+	Stack::new(&pointer, descriptor, &ChainAccess::Rpc).expect("RPC needs no light spec");
 }

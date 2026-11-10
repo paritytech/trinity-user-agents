@@ -2,6 +2,7 @@ use super::{
 	super::{Network, STACK_ENV, StackArg},
 	*,
 };
+use crate::chain::ChainBackend;
 
 /// A stack from `source`.
 fn stack_arg(source: &'static str) -> Option<StackArg> {
@@ -14,7 +15,7 @@ fn stack_arg(source: &'static str) -> Option<StackArg> {
 fn test_network_with_stack_error() {
 	for source in ["--stack", STACK_ENV] {
 		let Err(error) =
-			NetworkSource::new(ChainBackend::Rpc, Some(Network::Previewnet), stack_arg(source))
+			NetworkSource::new(ChainAccess::Rpc, Some(Network::Previewnet), stack_arg(source))
 		else {
 			panic!("--network accepted with {source}");
 		};
@@ -27,6 +28,7 @@ fn test_network_with_stack_error() {
 #[test]
 fn test_stack_on_either_backend() {
 	for chain_backend in [ChainBackend::Rpc, ChainBackend::LightClient] {
-		assert!(NetworkSource::new(chain_backend, None, stack_arg(STACK_ENV)).is_ok());
+		let chain_access = super::super::testing::test_access(chain_backend);
+		assert!(NetworkSource::new(chain_access, None, stack_arg(STACK_ENV)).is_ok());
 	}
 }

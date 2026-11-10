@@ -46,8 +46,8 @@ async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<(
 	let loads = light.chains(stack.chains()).into_iter().map(|genesis| async move {
 		match light.load_spec(genesis).await {
 			Ok(()) => Ok(()),
-			Err(MissingSpec::Unreachable(reason)) => {
-				tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
+			Err(unreachable @ MissingSpec::Unreachable { .. }) => {
+				tracing::warn!("{unreachable}; the chain is unavailable until it can be fetched");
 				Ok(())
 			},
 			Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),

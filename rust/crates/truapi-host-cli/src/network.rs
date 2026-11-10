@@ -8,7 +8,7 @@ use truapi::{
 };
 
 use crate::{
-	chain::{ChainBackend, StackLightClient},
+	chain::{ChainAccess, ChainBackend, StackLightClient},
 	stack_descriptor::Roles,
 };
 
@@ -78,7 +78,7 @@ fn namespace_of(id: &str) -> &str {
 /// or `--stack`. Built only by [`NetworkSource::new`], which refuses the
 /// flag combinations no command can run.
 pub struct NetworkSource {
-	chain_backend: ChainBackend,
+	chain_access: ChainAccess,
 	network: NetworkChoice,
 }
 
@@ -170,8 +170,14 @@ impl Stack {
 	}
 
 	/// The stack's light client, when it runs on one.
-	pub fn light_client(&self) -> Option<&Arc<StackLightClient>> {
-		self.light_client.as_ref()
+	pub fn light_client(&self) -> Option<&StackLightClient> {
+		self.light_client.as_deref()
+	}
+
+	/// The stack's light client for a chain provider to hold. Every provider
+	/// built from this stack shares the one client, so a chain syncs once.
+	pub fn share_light_client(&self) -> Option<Arc<StackLightClient>> {
+		self.light_client.clone()
 	}
 
 	/// The chain set this network serves, for `Features::supported_chains`.

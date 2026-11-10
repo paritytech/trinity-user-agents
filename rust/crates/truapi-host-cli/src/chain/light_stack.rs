@@ -45,11 +45,20 @@ impl core::fmt::Debug for StackLightClient {
 }
 
 /// Why a chain's light spec is not in the provider.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, derive_more::Error)]
 pub enum MissingSpec {
 	/// The spec could not be fetched. The chain is unavailable, not wrong.
-	Unreachable(String),
+	#[display("the light spec of {role} at {url} is unreachable: {cause}")]
+	Unreachable {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// Where the spec is published.
+		url: String,
+		/// Why the fetch failed.
+		cause: String,
+	},
 	/// The spec is not the one the descriptor names.
+	#[display("{_0}")]
 	Wrong(ProviderError),
 }
 
@@ -93,8 +102,8 @@ impl StackLightClient {
 			match self.load_spec(genesis).await {
 				Ok(()) => {},
 				Err(MissingSpec::Wrong(error)) => return Err(error),
-				Err(MissingSpec::Unreachable(reason)) => {
-					return Err(ProviderError::Transport { reason });
+				Err(unreachable @ MissingSpec::Unreachable { .. }) => {
+					return Err(ProviderError::Transport { reason: unreachable.to_string() });
 				},
 			}
 		}
@@ -125,11 +134,12 @@ impl StackLightClient {
 			return Ok(());
 		}
 
-		let bytes = fetch(&url, FETCH_TIMEOUT).await.map_err(|cause| {
-			MissingSpec::Unreachable(format!(
-				"the light spec of {role} at {url} is unreachable: {cause}"
-			))
-		})?;
+		let bytes = match fetch(&url, FETCH_TIMEOUT).await {
+			Ok(bytes) => bytes,
+			Err(cause) => {
+				return Err(MissingSpec::Unreachable { role, url, cause: cause.to_string() });
+			},
+		};
 		self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;
 		let kept_at = kept.display().to_string();
 		match tokio::task::spawn_blocking(move || keep(&kept, &bytes)).await {

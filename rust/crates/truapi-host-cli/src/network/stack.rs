@@ -8,13 +8,13 @@ use truapi::platform::DOTNS_TLDS;
 
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{
-	chain::{ChainBackend, StackLightClient},
+	chain::{ChainAccess, StackLightClient},
 	stack_descriptor::{ROLE_NAMES, Roles},
 };
 
 impl Stack {
 	/// The stack `pointer` names, read from `descriptor` and connected to over
-	/// `chain_backend`. Fails when People,
+	/// `chain_access`. Fails when People,
 	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
 	/// when the TLD is not one the core serves, when the namespace is not a
 	/// lowercase label or is the `polkadot` one, when the stack has
@@ -23,7 +23,7 @@ impl Stack {
 	pub fn new(
 		pointer: &Pointer,
 		descriptor: Descriptor,
-		chain_backend: ChainBackend,
+		chain_access: &ChainAccess,
 	) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
@@ -64,20 +64,14 @@ impl Stack {
 				"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
 			)
 		})?;
-		let light_client = match chain_backend {
-			ChainBackend::Rpc => None,
-			ChainBackend::LightClient => {
-				Some(Arc::new(light_client(pointer, &descriptor, &chains, light_spec_directory())?))
+		let light_client = match chain_access {
+			ChainAccess::Rpc => None,
+			ChainAccess::LightClient { spec_directory } => {
+				Some(Arc::new(light_client(pointer, &descriptor, &chains, spec_directory.clone())?))
 			},
 		};
 		Ok(Self { light_client, descriptor, chains, identity_backend, pop_controller })
 	}
-}
-
-/// Where the CLI keeps checked light specs: under its state directory,
-/// outside any `--base-path`, since a spec is the same for every session.
-fn light_spec_directory() -> PathBuf {
-	crate::default_base_path().join("light-specs")
 }
 
 /// The light client of the stack `pointer` names, keeping its specs in
