@@ -984,7 +984,8 @@ pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativePublicProfileObserver, NativeRendererObserver, NativeSubscription, WsBridgeEndpoint,
+	WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -996,7 +997,9 @@ pub use platform::{
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
-pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
+pub use public_profile::{
+	ProfileAvatar, PublicProfile, PublicProfileError, PublicProfileResolutionOptions,
+};
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]

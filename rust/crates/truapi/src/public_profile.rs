@@ -1,4 +1,4 @@
-//! Public profile records resolved from dotNS.
+//! Public profile metadata resolved from dotNS through [`PublicProfiles`].
 
 #[cfg(not(target_arch = "wasm32"))]
 mod dao;
@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
+use futures::stream;
 use tracing::{instrument, warn};
 
 pub use record::ProfileAvatar;
@@ -19,6 +20,7 @@ use record::ProfileRecord;
 use crate::{store::DbError, unix_time::current_unix_secs};
 
 use crate::{
+	Subscription,
 	dotns_views::{decode_view, network_tld_from_view, protocol_registry, read_view, tld_node},
 	host_logic::dotns_gateway::{
 		ContentResolver, DotnsError, DotnsTransport, ProtocolRegistry, is_dotted_lite_username,
@@ -33,6 +35,17 @@ const PROFILE_RECORD_KEY: &str = "profile";
 /// How long a resolved record is served before the chain is read again.
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
+
+/// Controls profile metadata freshness and the initial stream value.
+///
+/// Options affect metadata resolution; image bytes remain cached separately by CID.
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PublicProfileResolutionOptions {
+	/// Reads dotNS even when stored metadata is still fresh.
+	pub force_fresh: bool,
+	/// Suppresses a stale stored profile before resolving through dotNS.
+	pub skip_stale: bool,
+}
 
 /// The understood metadata in a dotNS public profile.
 ///
@@ -146,10 +159,73 @@ impl PublicProfiles {
 		Self { services }
 	}
 
+	/// Resolves public profiles with optional cached-first delivery.
+	///
+	/// Options can force a lookup and suppress stale stored metadata. A resolved value
+	/// is emitted when no stored value was emitted or when the profile differs.
+	/// Dropping the stream cancels resolution. At most two profiles are emitted.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn observe(
+		self,
+		username: String,
+		options: PublicProfileResolutionOptions,
+	) -> Subscription<PublicProfile, PublicProfileError> {
+		let PublicProfileResolutionOptions { force_fresh, skip_stale } = options;
+		enum Resolution {
+			Stored(PublicProfiles, String),
+			Refresh(PublicProfiles, String, ProfileRecord),
+		}
+
+		Subscription::new(stream::try_unfold(
+			Some(Resolution::Stored(self, username)),
+			move |state| async move {
+				let Some(state) = state else { return Ok(None) };
+				match state {
+					Resolution::Stored(profiles, username) => {
+						validate_username(&username)?;
+						if let Some(cached) = profiles.stored_record(&username).await? {
+							let fresh = cached.is_fresh(current_unix_secs());
+							if fresh || !skip_stale {
+								let profile = PublicProfile { avatar: cached.record.avatar() };
+								let next = (force_fresh || !fresh).then_some(Resolution::Refresh(
+									profiles,
+									username,
+									cached.record,
+								));
+								return Ok(Some((profile, next)));
+							}
+						}
+						let record = profiles.refresh_record(&username).await?;
+						Ok(Some((PublicProfile { avatar: record.avatar() }, None)))
+					},
+					Resolution::Refresh(profiles, username, previous) => {
+						let record = profiles.refresh_record(&username).await?;
+						let profile = PublicProfile { avatar: record.avatar() };
+						let previous = PublicProfile { avatar: previous.avatar() };
+						if profile == previous { Ok(None) } else { Ok(Some((profile, None))) }
+					},
+				}
+			},
+		))
+	}
+
+	/// Resolves one profile without native storage.
+	///
+	/// Browsers have no profile cache, so the options have no effect. Resolution
+	/// failures terminate the stream; dropping the stream cancels the lookup.
+	#[cfg(target_arch = "wasm32")]
+	pub fn observe(
+		self,
+		username: String,
+		_options: PublicProfileResolutionOptions,
+	) -> Subscription<PublicProfile, PublicProfileError> {
+		Subscription::new(stream::once(async move { self.resolve(&username, false).await }))
+	}
+
 	/// Resolves a profile using the native record cache.
 	///
-	/// Records expire after one hour; `force` bypasses the cache. Missing or malformed
-	/// records are empty. Invalid usernames, lookup failures and storage failures return errors.
+	/// Records are fresh for one hour; `force` bypasses that freshness policy.
+	/// Missing or malformed records are empty. Lookup and storage failures return errors.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(
@@ -158,24 +234,38 @@ impl PublicProfiles {
 		force: bool,
 	) -> Result<PublicProfile, PublicProfileError> {
 		validate_username(username)?;
-		let db = self.services.core_db()?;
-		let now = current_unix_secs();
 		if !force {
+			let db = self.services.core_db()?;
 			let cached_username = username.to_owned();
-			let cached =
-				db.read(move |conn| dao::fresh_record(conn, &cached_username, now)).await?;
+			let now = current_unix_secs();
+			let cached = db.write(move |tx| dao::fresh_record(tx, &cached_username, now)).await?;
 			if let Some(record) = cached {
 				return Ok(PublicProfile { avatar: record.avatar() });
 			}
 		}
+		let record = self.refresh_record(username).await?;
+		Ok(PublicProfile { avatar: record.avatar() })
+	}
 
+	#[cfg(not(target_arch = "wasm32"))]
+	async fn stored_record(
+		&self,
+		username: &str,
+	) -> Result<Option<dao::CachedRecord>, PublicProfileError> {
+		let db = self.services.core_db()?;
+		let username = username.to_owned();
+		Ok(db.write(move |tx| dao::stored_record(tx, &username)).await?)
+	}
+
+	#[cfg(not(target_arch = "wasm32"))]
+	async fn refresh_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
+		let db = self.services.core_db()?;
 		let record = self.read_record(username).await?;
 		let (stored_username, stored_record) = (username.to_owned(), record.clone());
-		db.write(move |tx| {
-			dao::store_record(tx, &stored_username, &stored_record, now, now + RECORD_TTL_SECS)
-		})
-		.await?;
-		Ok(PublicProfile { avatar: record.avatar() })
+		let expires_at = current_unix_secs() + RECORD_TTL_SECS;
+		db.write(move |tx| dao::store_record(tx, &stored_username, &stored_record, expires_at))
+			.await?;
+		Ok(record)
 	}
 
 	/// Resolves a profile directly from the chain.

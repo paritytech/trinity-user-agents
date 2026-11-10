@@ -440,11 +440,18 @@ request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
 host's disk cache. JavaScript bindings are deferred.
 
-For avatars, `resolvePublicProfile(username, force)` resolves a
-[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
-hosts cache records for one hour; `force` refreshes them. The returned avatar CID
-selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
-resolver reads the chain on each call.
+For avatars, `observe_public_profile(username, options)` streams a
+[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit stored metadata immediately, including stale records, and read
+dotNS when explicitly forced or when the record is missing or older than one hour.
+Callers supply `PublicProfileResolutionOptions` with explicit `force_fresh` and
+`skip_stale` fields. The first bypasses metadata freshness; the second suppresses
+stale stored values. Current app callers set `skip_stale` to false. A changed result is the
+second and final value; an unchanged result renews freshness without another
+emission when a stored value was emitted. If a stale value was skipped, the
+resolved value is emitted even when unchanged. SQLite retains up to 1,000 records by last use, independently of
+freshness. The returned avatar CID selects the host's image cache; only a miss
+needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 

@@ -16,14 +16,14 @@ fn record_with_avatar() -> ProfileRecord {
 	}
 }
 
-async fn store(db: &Db, username: &'static str, record: ProfileRecord, now: u64, expires_at: u64) {
-	db.write(move |tx| store_record(tx, username, &record, now, expires_at))
+async fn store(db: &Db, username: &'static str, record: ProfileRecord, expires_at: u64) {
+	db.write(move |tx| store_record(tx, username, &record, expires_at))
 		.await
 		.expect("row written");
 }
 
 async fn fresh(db: &Db, username: &'static str, now: u64) -> Option<ProfileRecord> {
-	db.read(move |conn| fresh_record(conn, username, now)).await.expect("row read")
+	db.write(move |tx| fresh_record(tx, username, now)).await.expect("row read")
 }
 
 async fn row_count(db: &Db) -> u32 {
@@ -37,7 +37,7 @@ async fn row_count(db: &Db) -> u32 {
 #[tokio::test]
 async fn a_record_is_served_until_it_expires() {
 	let (_dir, db) = open_temporary_core_db();
-	store(&db, "alice.01", record_with_avatar(), 100, 200).await;
+	store(&db, "alice.01", record_with_avatar(), 200).await;
 
 	assert_eq!(fresh(&db, "alice.01", 199).await, Some(record_with_avatar()));
 	assert_eq!(fresh(&db, "alice.01", 200).await, None);
@@ -46,7 +46,7 @@ async fn a_record_is_served_until_it_expires() {
 #[tokio::test]
 async fn a_name_without_a_record_is_cached_as_an_empty_one() {
 	let (_dir, db) = open_temporary_core_db();
-	store(&db, "bob.02", ProfileRecord::default(), 100, 200).await;
+	store(&db, "bob.02", ProfileRecord::default(), 200).await;
 
 	assert_eq!(fresh(&db, "bob.02", 150).await, Some(ProfileRecord::default()));
 }
@@ -55,8 +55,7 @@ async fn a_name_without_a_record_is_cached_as_an_empty_one() {
 async fn a_clock_correction_cannot_extend_a_records_lifetime() {
 	let (_dir, db) = open_temporary_core_db();
 	let written_at = 10_000;
-	store(&db, "alice.01", ProfileRecord::default(), written_at, written_at + RECORD_TTL_SECS)
-		.await;
+	store(&db, "alice.01", ProfileRecord::default(), written_at + RECORD_TTL_SECS).await;
 
 	assert_eq!(
 		(fresh(&db, "alice.01", written_at - 1).await, fresh(&db, "alice.01", written_at).await,),
@@ -65,28 +64,97 @@ async fn a_clock_correction_cannot_extend_a_records_lifetime() {
 }
 
 #[tokio::test]
-async fn a_write_deletes_expired_rows_and_keeps_the_table_under_its_cap() {
+async fn stale_metadata_survives_other_profile_writes() {
 	let (_dir, db) = open_temporary_core_db();
-	store(&db, "expired.01", ProfileRecord::default(), 0, 50).await;
+	store(&db, "alice.01", record_with_avatar(), 200).await;
+	store(&db, "bob.02", ProfileRecord::default(), 400).await;
+
+	let stored: Vec<u8> = db
+		.read(|conn| {
+			Ok(conn.query_row(
+				"SELECT public_record FROM public_profiles WHERE username = 'alice.01'",
+				[],
+				|row| row.get(0),
+			)?)
+		})
+		.await
+		.unwrap();
+
+	assert_eq!(stored, record_with_avatar().encode());
+}
+
+#[tokio::test]
+async fn reading_a_record_protects_it_from_capacity_eviction() {
+	let (_dir, db) = open_temporary_core_db();
 	db.write(|tx| {
 		for index in 0..MAX_ROWS {
 			store_record(
 				tx,
 				&format!("user{index}"),
 				&ProfileRecord::default(),
-				100,
-				1000 + u64::from(index),
+				200 + u64::from(index),
 			)?;
 		}
 		Ok(())
 	})
 	.await
-	.expect("rows written");
+	.unwrap();
 
-	store(&db, "newest.01", ProfileRecord::default(), 100, 100 + RECORD_TTL_SECS).await;
+	assert_eq!(fresh(&db, "user0", 100).await, Some(ProfileRecord::default()));
+	store(&db, "newest.01", ProfileRecord::default(), 100 + RECORD_TTL_SECS).await;
 
-	assert_eq!(row_count(&db).await, MAX_ROWS);
-	assert_eq!(fresh(&db, "expired.01", 0).await, None, "deleted once it expired");
-	assert_eq!(fresh(&db, "user0", 100).await, None, "closest to expiry, deleted over the cap");
-	assert_eq!(fresh(&db, "newest.01", 100).await, Some(ProfileRecord::default()));
+	assert_eq!(
+		(fresh(&db, "user0", 100).await, fresh(&db, "user1", 100).await, row_count(&db).await),
+		(Some(ProfileRecord::default()), None, MAX_ROWS),
+	);
+}
+
+#[tokio::test]
+async fn stale_reads_update_recency_without_renewing_freshness() {
+	let (_dir, db) = open_temporary_core_db();
+	store(&db, "alice.01", record_with_avatar(), 200).await;
+	store(&db, "bob.02", ProfileRecord::default(), 400).await;
+
+	let cached = db
+		.write(|tx| {
+			let cached = stored_record(tx, "alice.01")?.unwrap();
+			let order: Vec<String> = tx
+				.prepare("SELECT username FROM public_profiles ORDER BY access_order")?
+				.query_map([], |row| row.get(0))?
+				.collect::<Result<_, _>>()?;
+			Ok((cached.is_fresh(300), cached.record, order))
+		})
+		.await
+		.unwrap();
+
+	assert_eq!(
+		cached,
+		(false, record_with_avatar(), vec!["bob.02".to_owned(), "alice.01".to_owned()]),
+	);
+}
+
+#[tokio::test]
+async fn undecodable_records_are_missing_and_do_not_gain_recency() {
+	let (_dir, db) = open_temporary_core_db();
+	db.write(|tx| {
+		tx.execute("INSERT INTO public_profiles VALUES ('broken.01', X'FF', 200, 1)", [])?;
+		Ok(())
+	})
+	.await
+	.unwrap();
+
+	let (missing, order) = db
+		.write(|tx| {
+			let missing = stored_record(tx, "broken.01")?.is_none();
+			let order: u64 = tx.query_row(
+				"SELECT access_order FROM public_profiles WHERE username = 'broken.01'",
+				[],
+				|row| row.get(0),
+			)?;
+			Ok((missing, order))
+		})
+		.await
+		.unwrap();
+
+	assert_eq!((missing, order), (true, 1));
 }

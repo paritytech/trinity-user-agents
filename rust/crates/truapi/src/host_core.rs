@@ -1248,6 +1248,19 @@ impl SigningHostRuntime {
 			.await
 	}
 
+	/// Resolves public profile metadata with optional cached-first delivery.
+	///
+	/// Options control forced lookups and stale stored values; browsers resolve once.
+	/// At most two values precede completion or an error. Dropping the stream cancels resolution.
+	pub fn observe_public_profile(
+		&self,
+		username: &str,
+		options: crate::PublicProfileResolutionOptions,
+	) -> crate::Subscription<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.observe(username.to_owned(), options)
+	}
+
 	/// The image `reference` names, checked against its CID and the image policy.
 	pub async fn load_image(
 		&self,
