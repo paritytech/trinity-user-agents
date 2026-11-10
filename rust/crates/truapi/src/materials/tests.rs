@@ -18,8 +18,9 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::{PreimageHost, ProductId},
 	pocket_cards::PocketCards,
+	spawner::Spawner,
 	store::{Db, open_temporary_core_db},
-	test_support::{test_spawner, wait_until},
+	test_support::wait_until,
 	time::ManualTimer,
 };
 
@@ -74,7 +75,8 @@ impl Device {
 	fn over(db: Db) -> Self {
 		let bulletin = Arc::new(FakeBulletin::default());
 		let timer = Arc::new(ManualTimer::default());
-		let materials = Materials::new(db.clone(), bulletin.clone(), timer.clone(), test_spawner());
+		let materials =
+			Materials::new(db.clone(), bulletin.clone(), timer.clone(), Spawner::for_test());
 		Self { materials, bulletin, timer, db }
 	}
 
@@ -309,7 +311,7 @@ fn the_start_up_fetch_gets_what_saved_faces_name_and_the_device_lacks() {
 	device.keep(&kept);
 	device.save_face(&[preimage_key(&kept), preimage_key(&missing)]);
 
-	(test_spawner())(device.materials.clone().fetch_saved().boxed());
+	Spawner::for_test().spawn(device.materials.clone().fetch_saved());
 	wait_until(
 		|| device.bulletin.lookups(preimage_key(&missing)) == 1,
 		"the missing one is looked up",
@@ -333,7 +335,7 @@ fn the_start_up_fetch_gives_up_at_the_deadline() {
 	let id = preimage_key(TEXT);
 	device.save_face(&[id]);
 
-	(test_spawner())(device.materials.clone().fetch_saved().boxed());
+	Spawner::for_test().spawn(device.materials.clone().fetch_saved());
 	wait_until(|| device.bulletin.open_lookups(id) == 1, "the material is looked up");
 	device.pass_the_deadline();
 

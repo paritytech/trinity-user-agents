@@ -155,7 +155,7 @@ pub struct HostAccountRingVrfSignRequest {
 }
 
 /// User's authentication state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostAccountConnectionStatusSubscribeItem {
 	/// User is not logged in to the host.
 	Disconnected,

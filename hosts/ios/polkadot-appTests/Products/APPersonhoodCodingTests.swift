@@ -14,6 +14,7 @@ struct APPersonhoodCodingTests {
     func aliasRequestMessageRoundtrip() throws {
         let request = PolkadotHostRemoteMessage.AliasRequest(
             callingProductId: try! ProductId("caller.product.dot"),
+            keyHandle: RingVrfKeyHandle(productId: try! ProductId("peopl.dot"), index: .index(1)),
             context: ProductProofContext(productId: try! ProductId("target.product.dot"), suffix: .index(0)),
             ring: RingLocation(chainId: Data.random(of: 32)!, junctions: [.palletInstance(1)])
         )
@@ -27,6 +28,7 @@ struct APPersonhoodCodingTests {
         }
 
         #expect(decodedRequest.callingProductId == request.callingProductId)
+        #expect(decodedRequest.keyHandle == request.keyHandle)
         #expect(decodedRequest.context == request.context)
         #expect(decodedRequest.ring == request.ring)
     }
@@ -54,6 +56,7 @@ struct APPersonhoodCodingTests {
     func createProofRequestMessageRoundtrip() throws {
         let request = PolkadotHostRemoteMessage.CreateProofRequest(
             callingProductId: try! ProductId("caller.product.dot"),
+            keyHandle: RingVrfKeyHandle(productId: try! ProductId("peopl.dot"), index: .index(1)),
             context: ProductProofContext(productId: try! ProductId("target.product.dot"), suffix: .index(1)),
             ring: RingLocation(
                 chainId: Data.random(of: 32)!,
@@ -71,6 +74,7 @@ struct APPersonhoodCodingTests {
         }
 
         #expect(decodedRequest.callingProductId == request.callingProductId)
+        #expect(decodedRequest.keyHandle == request.keyHandle)
         #expect(decodedRequest.context == request.context)
         #expect(decodedRequest.ring == request.ring)
         #expect(decodedRequest.message == request.message)

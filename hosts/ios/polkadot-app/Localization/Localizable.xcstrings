@@ -262,17 +262,6 @@
         }
       }
     },
-    "address.copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Address copied"
-          }
-        }
-      }
-    },
     "app.permissions.title.format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1964,50 +1953,6 @@
         }
       }
     },
-    "identity.card.scan.qr.hint" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show this QR to someone who wants to add you as a contact or send you %@"
-          }
-        }
-      }
-    },
-    "identity.card.scan.qr.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scan with a camera"
-          }
-        }
-      }
-    },
-    "identity.card.share.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$@ and add me – my username is %2$@."
-          }
-        }
-      }
-    },
-    "identity.card.share.message.no.link" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Add me – my username is %@."
-          }
-        }
-      }
-    },
     "leave.chat.action" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2274,28 +2219,6 @@
         }
       }
     },
-    "network.status.connecting" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connecting..."
-          }
-        }
-      }
-    },
-    "network.status.waiting" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for network"
-          }
-        }
-      }
-    },
     "no.message" : {
       "comment" : "Displayed as a placeholder when there is no message for the request",
       "extractionState" : "manual",
@@ -2535,6 +2458,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "report.issue.github.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub username (optional)"
+          }
+        }
+      }
+    },
+    "report.issue.github.username.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid GitHub username"
           }
         }
       }
@@ -3232,13 +3177,24 @@
         }
       }
     },
+    "spa.action.closeApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close app"
+          }
+        }
+      }
+    },
     "spa.action.openChat" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Open chat"
+            "value" : "Proceed in Chat"
           }
         }
       }
@@ -3260,7 +3216,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Refresh"
+            "value" : "Reload"
           }
         }
       }
@@ -3684,17 +3640,6 @@
         }
       }
     },
-    "wallet.main.idCard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ID card"
-          }
-        }
-      }
-    },
     "wallet.main.purse" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3702,17 +3647,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Purse"
-          }
-        }
-      }
-    },
-    "wallet.main.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pocket"
           }
         }
       }

@@ -34,8 +34,8 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
 	pocket_cards::saved_faces,
+	spawner::Spawner,
 	store::{Db, DbError},
-	subscription::Spawner,
 	time::Timer,
 };
 
@@ -107,7 +107,7 @@ impl Materials {
 		};
 		if let Some((abort, registration)) = started {
 			let fetch = Abortable::new(self.clone().fetch(id, abort), registration);
-			(self.0.spawner)(fetch.map(drop).boxed());
+			self.0.spawner.spawn(fetch.map(drop));
 		}
 		Caller { answers, id, materials: self.clone() }.boxed()
 	}

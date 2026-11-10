@@ -107,7 +107,12 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
                     try await backgroundExecutor.execute {
                         try await markStallActivity("Topup") {
                             try await topupService.topUp(depositWallet, amount: .plank(amount))
-                            try await coinageService.loadVouchers(amount: amount, externalAssetHolder: depositWallet)
+                            _ = try await markStallRegion("Loading vouchers") {
+                                try await coinageService.loadVouchers(
+                                    amount: amount,
+                                    externalAssetHolder: depositWallet
+                                )
+                            }
                         }
                     }
 

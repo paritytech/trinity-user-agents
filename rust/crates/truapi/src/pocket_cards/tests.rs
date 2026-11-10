@@ -4,11 +4,7 @@ use futures::{StreamExt, channel::mpsc::unbounded, executor::block_on};
 use tempfile::TempDir;
 
 use super::*;
-use crate::{
-	store::open_temporary_core_db,
-	test_support::{test_spawner, wait_until},
-	time::ManualTimer,
-};
+use crate::{Spawner, store::open_temporary_core_db, test_support::wait_until, time::ManualTimer};
 
 const LOYALTY: &str = "loyalty.dot";
 const PERSONHOOD: &str = "personhood.dot";
@@ -333,9 +329,9 @@ fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops
 	let (faces, drawn) = unbounded();
 	let keeper = cards.clone();
 	let keeper_timer = timer.clone();
-	test_spawner()(Box::pin(async move {
+	Spawner::for_test().spawn(async move {
 		keeper.keep_faces(product(LOYALTY), "stamps".into(), drawn, keeper_timer).await;
-	}));
+	});
 	let kept = || kept_face(&cards, LOYALTY, "stamps");
 	let drawn = |text: &str| (face(text), cards.next_draw());
 

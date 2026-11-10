@@ -3,6 +3,7 @@ import SnapKit
 import SwiftUI
 import TrUAPIHost
 import UIKit
+import UIKitExt
 
 /// A card opened: the card itself at the top of the screen, with its product
 /// filling the space below.
@@ -20,10 +21,10 @@ final class PocketCardScreenViewController: UIViewController {
     private let card: PocketCardViewModel
     private let product: SPAViewProtocol
     private let face: UIHostingController<PocketOpenedCardView>
-    private weak var origin: PocketCardOrigin?
+    private weak var origin: PocketOrigin?
 
     private let scrollView = FaceScrollView()
-    private let backSwipe = UIScreenEdgePanGestureRecognizer()
+    private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private var productHeight: Constraint?
 
     private var pendingFaceShown: Bool? = true
@@ -32,9 +33,10 @@ final class PocketCardScreenViewController: UIViewController {
     private var pageMoveTarget: CGPoint?
     private var lastPagePull: CGFloat = 0
     private var lastPageOffset: CGFloat = 0
+    private var isClosing = false
     private var isInFlight = false
 
-    init(card: PocketCardViewModel, product: SPAViewProtocol, origin: PocketCardOrigin? = nil) {
+    init(card: PocketCardViewModel, product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.card = card
         self.product = product
         self.origin = origin
@@ -60,8 +62,8 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
-        setupBackSwipe()
         setupPageDrag()
+        pullDown.install()
 
         // The card flies over the page when it is opened and closed.
         scrollView.bringSubviewToFront(face.view)
@@ -73,17 +75,16 @@ final class PocketCardScreenViewController: UIViewController {
         applyPendingFace(animated: false)
     }
 
-    // The stack's own swipes would pop the card beside its back swipe.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        setSystemBackSwipesEnabled(false)
+        navigationController?.setSystemBackSwipesEnabled(false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        setSystemBackSwipesEnabled(true)
+        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -91,7 +92,7 @@ final class PocketCardScreenViewController: UIViewController {
 
         guard parent != nil else { return }
 
-        origin?.setOpenCard(card.key)
+        origin?.setOpenItem(.card(card.key))
     }
 
     override func didMove(toParent parent: UIViewController?) {
@@ -107,6 +108,7 @@ final class PocketCardScreenViewController: UIViewController {
     /// it, so a card opened again must find it free to show.
     func handBackProduct() {
         product.pageScrollView.panGestureRecognizer.removeTarget(self, action: nil)
+        product.pageScrollView.alwaysBounceVertical = false
         for child in children {
             child.willMove(toParent: nil)
             child.view.removeFromSuperview()
@@ -131,6 +133,8 @@ final class PocketCardScreenViewController: UIViewController {
 
 extension PocketCardScreenViewController: TabBarRootStandIn {}
 
+extension PocketCardScreenViewController: PocketFlightScreen {}
+
 // MARK: - NavigationTransitionAnimating
 
 extension PocketCardScreenViewController: NavigationTransitionAnimating {
@@ -138,27 +142,23 @@ extension PocketCardScreenViewController: NavigationTransitionAnimating {
         flight(opening: operation == .push)
     }
 
-    private func flight(opening: Bool) -> PocketCardFlight? {
-        guard let origin else { return nil }
-
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            // Nothing carries the card back, so the Pocket is whole again before the screen slides off it.
-            origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
-            return nil
-        }
-
+    private func flight(opening: Bool) -> PocketFlight {
         // From here on, not from when the flight starts: a face moved in
         // between would fly in already folded away.
         isInFlight = true
-        return PocketCardFlight(screen: self, origin: origin, key: card.key, opening: opening)
+        return PocketFlight(screen: self, origin: origin, opening: opening)
     }
 }
 
 // MARK: - Card flight
 
 extension PocketCardScreenViewController {
+    var pocketItem: PocketItem {
+        .card(card.key)
+    }
+
     /// Without the margins the screen draws around the card.
-    func cardFrame(in view: UIView) -> CGRect {
+    func itemFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
             dx: PocketCardSize.sideMargin,
             dy: PocketOpenedCardView.verticalInset
@@ -175,13 +175,13 @@ extension PocketCardScreenViewController {
 
     /// Moves the card with its page hanging off it, so the page never covers
     /// the card the Pocket draws in its place.
-    func moveCard(by offset: CGPoint) {
+    func moveItem(by offset: CGPoint) {
         face.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
         product.controller.view.transform = face.view.transform
     }
 
     /// The Pocket draws the card while it flies.
-    func setCardHidden(_ hidden: Bool) {
+    func setItemHidden(_ hidden: Bool) {
         face.view.alpha = hidden ? 0 : 1
     }
 
@@ -195,17 +195,17 @@ extension PocketCardScreenViewController {
         scrollView.clipsToBounds = true
         view.backgroundColor = .bgSurfaceMain
         setPageAlpha(1)
-        moveCard(by: .zero)
-        setCardHidden(false)
+        moveItem(by: .zero)
+        setItemHidden(false)
         applyPendingFace(animated: true)
     }
 
     /// Leaves the Pocket alone once another card's screen has taken it over.
     func showCardInPocket() {
-        guard let origin, origin.openCard == card.key else { return }
+        guard let origin, origin.openItem == .card(card.key) else { return }
 
-        origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
-        origin.setOpenCard(nil)
+        origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
+        origin.setOpenItem(nil)
     }
 }
 
@@ -240,11 +240,18 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
 // MARK: - Private
 
 private extension PocketCardScreenViewController {
+    func close() {
+        guard !isInFlight, !isClosing else { return }
+
+        isClosing = true
+        navigationController?.popViewController(animated: true)
+    }
+
     func setupScrollView() {
         view.addSubview(scrollView)
         scrollView.snp.makeConstraints { make in
-            make.top.bottom.equalTo(view.safeAreaLayoutGuide)
-            make.leading.trailing.equalToSuperview()
+            make.top.equalTo(view.safeAreaLayoutGuide)
+            make.bottom.leading.trailing.equalToSuperview()
         }
 
         scrollView.delegate = self
@@ -253,6 +260,7 @@ private extension PocketCardScreenViewController {
     }
 
     func setupPageDrag() {
+        product.pageScrollView.alwaysBounceVertical = true
         product.pageScrollView.panGestureRecognizer.addTarget(self, action: #selector(followPageDrag))
     }
 
@@ -323,29 +331,6 @@ private extension PocketCardScreenViewController {
             make.width.equalTo(scrollView.frameLayoutGuide)
             productHeight = make.height.equalTo(scrollView.frameLayoutGuide)
                 .offset(-PocketOpenedCardView.height).constraint
-        }
-    }
-
-    /// Closes the card once the swipe ends, as Android's back gesture does,
-    /// so the close plays in full rather than following the finger.
-    func setupBackSwipe() {
-        backSwipe.edges = .left
-        backSwipe.addTarget(self, action: #selector(swipedBack))
-        view.addGestureRecognizer(backSwipe)
-        scrollView.panGestureRecognizer.require(toFail: backSwipe)
-        product.pageScrollView.panGestureRecognizer.require(toFail: backSwipe)
-    }
-
-    @objc func swipedBack() {
-        guard backSwipe.state == .ended, backSwipe.velocity(in: view).x >= 0 else { return }
-
-        navigationController?.popViewController(animated: true)
-    }
-
-    func setSystemBackSwipesEnabled(_ enabled: Bool) {
-        navigationController?.interactivePopGestureRecognizer?.isEnabled = enabled
-        if #available(iOS 26, *) {
-            navigationController?.interactiveContentPopGestureRecognizer?.isEnabled = enabled
         }
     }
 
