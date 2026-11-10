@@ -32,7 +32,7 @@ fn unreachable() -> StackFetchResponse {
 struct MemoryRecords(Mutex<HashMap<String, Vec<u8>>>);
 
 #[async_trait::async_trait]
-impl StackRecords for MemoryRecords {
+impl StackRecords for Arc<MemoryRecords> {
 	fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.0.lock().expect("records mutex poisoned").get(stack_id).cloned())
 	}
@@ -98,7 +98,8 @@ impl Started {
 
 fn load(records: Arc<MemoryRecords>, timer: Arc<ManualTimer>) -> StackRefresh {
 	let (link, bundled) = sign_test_descriptor(&published_test_descriptor(1, "first", PEOPLE));
-	StackRefresh::load(&link, &bundled, false, records, timer).expect("bundled copy is valid")
+	StackRefresh::load(&link, &bundled, false, Box::new(records), timer)
+		.expect("bundled copy is valid")
 }
 
 /// A core on the bundled copy whose host answers fetches with `responses`.
@@ -112,7 +113,7 @@ fn start(records: Arc<MemoryRecords>, responses: Vec<StackFetchResponse>) -> Sta
 		responses: Mutex::new(responses.into()),
 		statuses: Mutex::new(told),
 	};
-	assert!(refresh.start(Arc::new(host), &Spawner::for_test()));
+	assert!(refresh.start(Box::new(host), &Spawner::for_test()));
 	Started { refresh, fetches, timer, statuses }
 }
 
@@ -243,5 +244,5 @@ fn the_refresh_starts_once() {
 		statuses: Mutex::new(told),
 	};
 
-	assert!(!started.refresh.start(Arc::new(second), &Spawner::for_test()));
+	assert!(!started.refresh.start(Box::new(second), &Spawner::for_test()));
 }
