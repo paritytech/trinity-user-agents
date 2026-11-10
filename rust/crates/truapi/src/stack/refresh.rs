@@ -58,7 +58,7 @@ struct Running {
 
 struct Shared {
 	source: Mutex<StackSource>,
-	records: Arc<dyn StackRecords>,
+	records: Box<dyn StackRecords>,
 	timer: Arc<dyn Timer>,
 }
 
@@ -76,7 +76,7 @@ impl StackRefresh {
 		pointer: &str,
 		bundled: &[u8],
 		allows_reserved_values: bool,
-		records: Arc<dyn StackRecords>,
+		records: Box<dyn StackRecords>,
 		timer: Arc<dyn Timer>,
 	) -> Result<Self, StackError> {
 		let pointer = signed_pointer(pointer)?;
@@ -107,7 +107,7 @@ impl StackRefresh {
 	/// drops. Reports the current status to `host` first.
 	///
 	/// Set-once: answers whether this call started the refresh.
-	pub fn start(&self, host: Arc<dyn StackHost>, spawner: &Spawner) -> bool {
+	pub fn start(&self, host: Box<dyn StackHost>, spawner: &Spawner) -> bool {
 		let mut started = false;
 		self.running.get_or_init(|| {
 			started = true;
@@ -137,7 +137,7 @@ impl Shared {
 
 	async fn run(
 		self: Arc<Self>,
-		host: Arc<dyn StackHost>,
+		host: Box<dyn StackHost>,
 		mut forced: mpsc::UnboundedReceiver<()>,
 	) {
 		let mut reported = self.source().status();

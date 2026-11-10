@@ -141,7 +141,7 @@ impl NativeTrUApiHostRuntime {
 			pointer,
 			descriptor,
 			*allows_reserved_values,
-			Arc::new(core_db.clone()),
+			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 		)
 		.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
@@ -526,7 +526,7 @@ impl NativeTrUApiHostRuntime {
 	/// them stays on the copy it started from.
 	pub fn set_stack_callbacks(&self, callbacks: Arc<dyn NativeStackCallbacks>) -> bool {
 		self.stack_refresh
-			.start(Arc::new(StackCallbackHost { stack: callbacks }), &self.spawner)
+			.start(Box::new(StackCallbackHost { stack: callbacks }), &self.spawner)
 	}
 
 	/// The stack the runtime runs: its verified descriptor, whether it is
