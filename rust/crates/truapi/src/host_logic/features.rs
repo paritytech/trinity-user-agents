@@ -6,7 +6,7 @@
 //! from its [`crate::platform::Stack`] instead.
 
 use crate::platform::Features;
-use truapi::v01::{GenericError, HostFeatureSupportedRequest, HostFeatureSupportedResponse};
+use truapi::latest::{GenericError, HostFeatureSupportedRequest, HostFeatureSupportedResponse};
 
 /// Forward a feature-support query to the platform implementation.
 pub async fn feature_supported<P: Features + ?Sized>(
