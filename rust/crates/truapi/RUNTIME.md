@@ -496,26 +496,22 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `set_funding_providers`, `get_funding_quote`, `select_funding_options`, `select_funding_provider`, `cancel_funding`,
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
-  reports something the user did or the host owns. The host reads back only
-  `funding_history`, whenever it shows history. Everything else it draws,
-  the core pushes through the callbacks, the
-  `FundingFeed` a Rust host installs with `set_funding_feed` before its
-  funding platform:
-  `funding_session_changed` carries a session's status, the session as the
-  core holds it (choice, cancel offer, amounts) and its progress;
-  `funding_options_changed` carries what the overlay offers;
-  `funding_in_progress_changed` comes once each time funding resumes and
-  again whenever it changes, so the host
-  keeps a launch marker that starts funding at its next launch. Amounts
+  reports something the user did or the host owns. The core tells the host
+  what changed with `funding_changed(intent, kind)` (`Session`, `Options`,
+  `Quotes`, `InProgress` or `Providers`), and the host reads it back:
+  `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`,
+  `funding_entries`, `funding_summary` and `funding_history`. A Rust host
+  installs a `FundingFeed` with `set_funding_feed` before its funding
+  platform and gets the same notices. `InProgress` comes once each time
+  funding resumes and again whenever it changes, and the native runtime keeps
+  a launch marker that `funding_resume_pending` reads at the next launch. Amounts
   cross the FFI as decimal strings.
   Sessions are stored in the core database, one row each; a row the core
   cannot read is skipped and left in place.
   The core owns the funding history. A session is stored only once the user
   starts it in the overlay. When funding resumes, every session in flight
-  and every ended one the host has not acknowledged comes through
-  `funding_session_changed` again. An ended
-  session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session` once it
+  and every ended one the host has not acknowledged is announced again. An
+  ended session is announced each time funding resumes until the host calls `acknowledge_funding_session` once it
   has told the user how it ended. A released withdrawal whose
   provider still owes its payout outcome, or the refund of a failed payout,
   is kept and served whether or not the host acknowledged it, and is handed
@@ -544,8 +540,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
   The host lists its providers with `set_funding_providers`, each with the
-  Worker manifest it ships for it. Before the overlay shows, the core sends
-  `funding_options_changed(intent, options)`: `candidates` are the
+  Worker manifest it ships for it. Before the overlay shows, the core
+  announces the session's options, which `funding_options(intent)` works out
+  as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
@@ -642,8 +639,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  A native host's `funding_session_changed` carries the session's
-  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
+  `funding_progress(intent)` gives the session's progress: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
   provider saw the payment) and `Added`; out, `Started`, `Received` (released
   to the provider) and `Sent` (paid out). A milestone the provider skipped
   takes the time of the first later one. `band` is the line under them, what
