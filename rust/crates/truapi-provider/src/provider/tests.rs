@@ -517,18 +517,19 @@ fn a_wrong_spec_added_after_the_build_is_refused() {
 		.add_light_spec(relay, PEOPLE_SPEC.as_bytes())
 		.expect_err("People's spec is not the relay's");
 
-	assert!(
-		matches!(&error, crate::ProviderError::LightSpec { role, genesis, .. }
-			if role == "Relay" && *genesis == relay),
-		"{error}"
+	assert_eq!(
+		error,
+		crate::ProviderError::LightSpec {
+			role: "Relay".to_owned(),
+			genesis: relay,
+			source: trinity_stack::Error::SpecDigest,
+		}
 	);
-	assert!(
-		matches!(
-			EmbeddedChainProvider::builder()
-				.build()
-				.add_light_spec(relay, RELAY_SPEC.as_bytes()),
-			Err(crate::ProviderError::NoStack)
-		),
+	assert_eq!(
+		EmbeddedChainProvider::builder()
+			.build()
+			.add_light_spec(relay, RELAY_SPEC.as_bytes()),
+		Err(crate::ProviderError::NoStack),
 		"a provider without a stack has no descriptor to check a spec against"
 	);
 }
@@ -593,6 +594,6 @@ fn a_database_is_read_only_by_its_own_stack_and_generation() {
 	assert!(block_on(next.store_blob(people, WITHOUT_CODE.to_owned())).expect("the store answers"));
 	assert_eq!(
 		store.stored.lock().expect("test store").get(&key(STACK_ID)),
-		Some(&crate::storage::seal(STACK_ID, "two", WITHOUT_CODE))
+		Some(&crate::storage::Owner { stack: STACK_ID, generation: "two" }.seal(WITHOUT_CODE))
 	);
 }

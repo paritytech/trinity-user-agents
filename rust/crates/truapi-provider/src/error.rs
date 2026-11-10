@@ -92,21 +92,21 @@ pub enum ProviderError {
 	},
 	/// A stack's link or descriptor was refused.
 	#[cfg(feature = "smoldot")]
-	#[display("stack refused: {error}")]
+	#[display("stack refused: {source}")]
 	Stack {
 		/// The rule the link or the descriptor broke.
-		error: trinity_stack::Error,
+		source: trinity_stack::Error,
 	},
 	/// A light spec is not the one the stack's descriptor names for the chain.
 	#[cfg(feature = "smoldot")]
-	#[display("light spec of {role} (0x{}) refused: {error}", hex::encode(genesis))]
+	#[display("light spec of {role} (0x{}) refused: {source}", hex::encode(genesis))]
 	LightSpec {
 		/// The chain's role in the descriptor.
 		role: String,
 		/// The chain's genesis hash.
 		genesis: [u8; 32],
 		/// How the spec differs from the descriptor.
-		error: trinity_stack::Error,
+		source: trinity_stack::Error,
 	},
 	/// A light spec was handed to a provider built without a stack.
 	#[display(
