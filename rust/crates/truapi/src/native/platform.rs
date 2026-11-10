@@ -800,7 +800,11 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		self.funding.detected_country().await
 	}
 
-	fn funding_quotes_changed(&self, intent: String, _quotes: crate::platform::FundingQuoteList) {
+	fn funding_quotes_changed(
+		&self,
+		intent: String,
+		_quotes: Option<crate::platform::FundingQuoteList>,
+	) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
 	}
 }
@@ -817,10 +821,6 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 
 	fn funding_options_changed(&self, intent: String) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Options);
-	}
-
-	fn funding_quotes_withdrawn(&self, intent: String) {
-		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
 	}
 
 	fn funding_providers_changed(&self) {

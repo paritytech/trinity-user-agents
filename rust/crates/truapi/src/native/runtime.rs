@@ -502,15 +502,6 @@ impl NativeTrUApiHostRuntime {
 		}
 	}
 
-	/// Replace the funding providers this host offers, each with the Worker
-	/// manifest JSON it ships for it.
-	pub fn set_funding_providers(
-		&self,
-		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_providers(providers)?)
-	}
-
 	/// Ask every funding provider to price `amount` for session `intent`, on
 	/// the rail, asset, network and country the last `select_funding_options`
 	/// named; card and bank take the fiat asset `FundingOptions.asset` shows.

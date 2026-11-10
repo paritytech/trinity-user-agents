@@ -3187,7 +3187,8 @@ fn the_host_reads_back_what_the_core_says_changed() {
 }
 
 // Funding is available once the configuration offers a provider, and the
-// host hears so only when the list really changed, not on each refresh.
+// host hears so only when the list really changed, not on each refresh; a
+// list that went empty comes back with the next refresh naming it.
 #[test]
 fn providers_change_is_announced_only_when_the_list_changes() {
 	use super::funding_feed::FundingChangeKind;
@@ -3215,9 +3216,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 			host.funding_available(),
 			configure(&["ramp.dot"]),
 			configure(&["ramp.dot"]),
-			configure(&[])
+			configure(&[]),
+			configure(&["ramp.dot"])
 		),
-		(false, (1, true), (1, true), (2, false))
+		(false, (1, true), (1, true), (2, false), (3, true))
 	);
 }
 

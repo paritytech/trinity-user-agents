@@ -17,7 +17,10 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, Weak},
+	sync::{
+		Arc, Mutex, Weak,
+		atomic::{AtomicBool, Ordering},
+	},
 };
 
 use core::time::Duration;
@@ -170,31 +173,6 @@ impl FundingQuotes {
 			.is_some_and(|watch| core::mem::take(&mut watch.start_when_quoted))
 	}
 
-	/// Disarm session `intent`'s start when quoted, and stop its quotes when
-	/// `selection` names another rail, asset, network or country than their
-	/// ask, which drops its list. Returns whether it stopped them.
-	fn reselect(&self, intent: &str, selection: &FundingSelection) -> bool {
-		let mut watches = lock(&self.watches);
-		let Some(watch) = watches.by_session.get_mut(intent) else {
-			return false;
-		};
-		watch.start_when_quoted = false;
-		let ask = &watch.ask;
-		// A field the user has not picked yet does not move the ask.
-		let kept = |picked: &Option<String>, asked: Option<&str>| {
-			picked.as_deref().is_none_or(|picked| Some(picked) == asked)
-		};
-		if ask.rail == selection.rail &&
-			kept(&selection.asset, Some(&ask.asset)) &&
-			kept(&selection.network, ask.network.as_deref()) &&
-			kept(&selection.country, ask.country.as_deref())
-		{
-			return false;
-		}
-		watches.by_session.remove(intent);
-		true
-	}
-
 	/// Keep `list` as what session `intent`'s host is shown, and say whether
 	/// to show it: only a list of the session's
 	/// current request, while the session can still be quoted. A session that
@@ -246,8 +224,7 @@ impl FundingQuotes {
 	}
 
 	/// What session `intent`'s running request asks.
-	#[cfg(test)]
-	pub(crate) fn asked(&self, intent: &str) -> Option<FundingQuoteAsk> {
+	pub fn asked(&self, intent: &str) -> Option<FundingQuoteAsk> {
 		lock(&self.watches).by_session.get(intent).map(|watch| watch.ask.clone())
 	}
 
@@ -285,15 +262,19 @@ impl FundingQuotes {
 	}
 }
 
-/// The country the host last detected, and when.
+/// The country the host last detected, and when, with whether a detection
+/// for the overlay's options is under way.
 #[derive(Default)]
-struct DetectedCountry(Mutex<Option<(u64, Option<String>)>>);
+struct DetectedCountry {
+	found: Mutex<Option<(u64, Option<String>)>>,
+	asking: AtomicBool,
+}
 
 impl DetectedCountry {
 	/// The country detected at most an hour before `now_ms`, or a minute
 	/// before when none was found; `None` once it is due to be asked again.
 	fn recent(&self, now_ms: u64) -> Option<Option<String>> {
-		let (at_ms, country) = lock(&self.0).clone()?;
+		let (at_ms, country) = lock(&self.found).clone()?;
 		let reuse_ms = match country {
 			Some(_) => DETECTED_COUNTRY_REUSE_MS,
 			None => UNDETECTED_COUNTRY_RETRY_MS,
@@ -302,7 +283,16 @@ impl DetectedCountry {
 	}
 
 	fn store(&self, now_ms: u64, country: Option<String>) {
-		*lock(&self.0) = Some((now_ms, country));
+		*lock(&self.found) = Some((now_ms, country));
+	}
+
+	/// Claim the one background detection, unless it is under way.
+	fn start_asking(&self) -> bool {
+		!self.asking.swap(true, Ordering::AcqRel)
+	}
+
+	fn done_asking(&self) {
+		self.asking.store(false, Ordering::Release);
 	}
 }
 
@@ -335,16 +325,7 @@ impl RuntimeServices {
 	pub fn request_selected_quotes(self: &Arc<Self>, intent: &str, amount: u128) -> Option<u64> {
 		let session = self.funding().get(intent)?;
 		let selection = self.funding().selection(intent)?;
-		let candidates = self.funding_providers().candidates(session.direction);
-		let asset = selected_asset(&candidates, &selection).filter(|_| amount > 0)?;
-		let ask = FundingQuoteAsk {
-			direction: session.direction,
-			rail: selection.rail,
-			asset,
-			network: selection.network.filter(|_| selection.rail == FundingRail::Crypto),
-			amount,
-			country: selection.country,
-		};
+		let ask = self.ask_on(session.direction, &selection, amount).filter(|_| amount > 0)?;
 		if let Some(request_id) = self.funding_quotes().running(intent, &ask) {
 			return Some(request_id);
 		}
@@ -487,11 +468,43 @@ impl RuntimeServices {
 	/// Stop session `intent`'s quotes when `selection` no longer matches their
 	/// ask, telling the host its list is gone; see [`FundingQuotes::reselect`].
 	pub fn withdraw_unselected_quotes(&self, intent: &str, selection: &FundingSelection) {
-		if self.funding_quotes().reselect(intent, selection) &&
-			let Some(feed) = self.funding().feed()
-		{
-			feed.funding_quotes_withdrawn(intent.to_string());
+		let quotes = self.funding_quotes();
+		quotes.disarm(intent);
+		let Some(running) = quotes.asked(intent) else {
+			return;
+		};
+		// A token not picked yet on the same rail does not move the ask.
+		let kept = match self.ask_on(running.direction, selection, running.amount) {
+			Some(ask) => ask == running,
+			None => selection.rail == running.rail,
+		};
+		if kept {
+			return;
 		}
+		quotes.end(intent);
+		if let Some(platform) = self.funding().platform() {
+			platform.funding_quotes_changed(intent.to_string(), None);
+		}
+	}
+
+	/// The ask `selection` makes for `amount` in `direction`: its rail,
+	/// network for crypto and country, and its asset, for card and bank the
+	/// fiat asset the core resolves. `None` while it names no asset.
+	fn ask_on(
+		&self,
+		direction: FundingDirection,
+		selection: &FundingSelection,
+		amount: u128,
+	) -> Option<FundingQuoteAsk> {
+		let candidates = self.funding_providers().candidates(direction);
+		Some(FundingQuoteAsk {
+			direction,
+			rail: selection.rail,
+			asset: selected_asset(&candidates, selection)?,
+			network: selection.network.clone().filter(|_| selection.rail == FundingRail::Crypto),
+			amount,
+			country: selection.country.clone(),
+		})
 	}
 
 	/// Mark `list`'s best quote and show it to session `intent`'s host, unless
@@ -513,11 +526,22 @@ impl RuntimeServices {
 			return false;
 		}
 		if let Some(platform) = self.funding().platform() {
-			platform.funding_quotes_changed(intent.to_string(), list.clone());
+			platform.funding_quotes_changed(intent.to_string(), Some(list.clone()));
 		}
 		self.send_funding_options(intent);
 		self.start_if_quoted(intent, list);
 		true
+	}
+
+	/// Claim the one background detection for the overlays' options, or
+	/// `false` while it is under way; [`Self::funding_country_asked`] ends it.
+	pub fn ask_funding_country(&self) -> bool {
+		self.funding_quotes().detected.start_asking()
+	}
+
+	/// End the background detection [`Self::ask_funding_country`] claimed.
+	pub fn funding_country_asked(&self) {
+		self.funding_quotes().detected.done_asking();
 	}
 
 	/// The country the host detected within the reuse window, without

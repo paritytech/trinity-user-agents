@@ -86,9 +86,6 @@ pub struct FundingProviders {
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
 	changed: WakeSignal,
-	/// The providers the host's configuration last listed, so a refresh
-	/// that lists the same ones changes nothing.
-	configured: Mutex<Option<Vec<FundingProviderEntry>>>,
 }
 
 impl FundingProviders {
@@ -164,9 +161,11 @@ impl FundingProviders {
 
 	/// Make `offered` the providers, keeping what dotNS said of each one
 	/// listed before. Returns whether the providers the core goes by changed.
-	fn offer(&self, mut offered: Vec<OfferedProvider>) -> bool {
+	fn offer(&self, mut offered: Vec<OfferedProvider>) -> Offered {
 		let mut entries = lock(&self.entries);
 		let before = manifests(&entries);
+		let listed_before: Vec<ProductId> =
+			entries.iter().map(|entry| entry.product_id.clone()).collect();
 		for entry in &mut offered {
 			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
 				entry.live = known.live.clone();
@@ -177,7 +176,10 @@ impl FundingProviders {
 			}
 		}
 		*entries = offered;
-		manifests(&entries) != before
+		Offered {
+			manifests_changed: manifests(&entries) != before,
+			listed_changed: entries.iter().map(|entry| &entry.product_id).ne(listed_before.iter()),
+		}
 	}
 
 	/// Keep `manifest` as what dotNS says `product_id` publishes. A provider
@@ -305,15 +307,20 @@ impl Drop for ManifestRead {
 
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
-	/// manifests. A shipped manifest that does not parse is refused, and
-	/// nothing changes.
+	/// manifests, telling the feed when the providers listed changed. A
+	/// shipped manifest that does not parse is refused, and nothing changes.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let offered = offered_providers(entries)?;
-		if self.funding_providers().offer(offered) {
+		let offered = self.funding_providers().offer(offered_providers(entries)?);
+		if offered.manifests_changed {
 			self.funding_providers_changed();
+		}
+		if offered.listed_changed &&
+			let Some(feed) = self.funding().feed()
+		{
+			feed.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
 		Ok(())
@@ -322,8 +329,8 @@ impl RuntimeServices {
 	/// Offer the providers the host's remote configuration lists by name,
 	/// then the `bundled` ones it does not name, telling the feed when the
 	/// list changed. A name that is not a product id is skipped and logged.
-	/// A call listing what the last one did changes nothing, so the host can
-	/// call it on every refresh.
+	/// A call listing what the last one did changes nothing the host sees,
+	/// so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
@@ -333,24 +340,7 @@ impl RuntimeServices {
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
-		// Swapped under the lock and applied after it, so the host callbacks
-		// applying it runs never wait on this lock.
-		let before = {
-			let mut configured = lock(&self.funding_providers().configured);
-			if configured.as_ref() == Some(&entries) {
-				return Ok(());
-			}
-			configured.replace(entries.clone())
-		};
-		if let Err(error) = self.set_funding_providers(entries.clone()) {
-			*lock(&self.funding_providers().configured) = None;
-			return Err(error);
-		}
-		let changed = before.as_deref().unwrap_or_default() != entries.as_slice();
-		if changed && let Some(feed) = self.funding().feed() {
-			feed.funding_providers_changed();
-		}
-		Ok(())
+		self.set_funding_providers(entries)
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send
@@ -434,7 +424,7 @@ impl RuntimeServices {
 		);
 		let detected_country = self.recent_funding_country();
 		if detected_country.is_none() {
-			self.detect_country_for_options(intent);
+			self.detect_country_for_options();
 		}
 		Some(FundingOptions {
 			candidates,
@@ -448,14 +438,21 @@ impl RuntimeServices {
 		})
 	}
 
-	/// Ask the host for the user's country in the background, and send
-	/// session `intent` its options again once it answered one.
-	fn detect_country_for_options(self: &Arc<Self>, intent: &str) {
+	/// Ask the host for the user's country in the background, unless a
+	/// detection is under way, and send every overlay still up its options
+	/// again once it answered one.
+	fn detect_country_for_options(self: &Arc<Self>) {
+		if !self.ask_funding_country() {
+			return;
+		}
 		let services = self.clone();
-		let intent = intent.to_string();
 		(self.spawner)(Box::pin(async move {
-			if services.detected_funding_country().await.is_some() {
-				services.send_funding_options(&intent);
+			let found = services.detected_funding_country().await.is_some();
+			services.funding_country_asked();
+			if found {
+				for intent in services.funding().presenting() {
+					services.send_funding_options(&intent);
+				}
 			}
 		}));
 	}
@@ -557,6 +554,14 @@ impl RuntimeServices {
 			self.send_funding_options(&intent);
 		}
 	}
+}
+
+/// What offering a list of providers changed.
+struct Offered {
+	/// The manifests the core goes by.
+	manifests_changed: bool,
+	/// Which providers the host lists.
+	listed_changed: bool,
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,

@@ -2718,11 +2718,19 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		self.announced.lock().expect("announced mutex poisoned").push(intent);
 	}
 
-	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
-		self.quote_lists
-			.lock()
-			.expect("quote lists mutex poisoned")
-			.push((intent, quotes));
+	fn funding_quotes_changed(
+		&self,
+		intent: String,
+		quotes: Option<crate::platform::FundingQuoteList>,
+	) {
+		match quotes {
+			Some(quotes) => self
+				.quote_lists
+				.lock()
+				.expect("quote lists mutex poisoned")
+				.push((intent, quotes)),
+			None => self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent),
+		}
 	}
 }
 
@@ -2734,10 +2742,6 @@ impl crate::runtime::FundingFeed for RecordingFundingPlatform {
 	}
 
 	fn funding_options_changed(&self, _intent: String) {}
-
-	fn funding_quotes_withdrawn(&self, intent: String) {
-		self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent);
-	}
 }
 
 fn funding_services() -> Arc<RuntimeServices> {
@@ -9464,6 +9468,39 @@ fn a_selection_on_another_route_withdraws_the_quotes() {
 	assert_eq!(
 		(select(v01::FundingRail::Card, "EUR"), select(v01::FundingRail::Crypto, "USDC")),
 		((true, true, vec![]), (false, false, vec![intent.clone()]))
+	);
+}
+
+// A selection is compared with the ask it would make, so reporting the
+// same card selection again with a network keeps the running request, and a
+// currency that changes the resolved fiat asset withdraws it.
+#[test]
+fn a_reselection_is_compared_as_the_ask_it_makes() {
+	let (services, platform, intent) = auto_start_session();
+	request_card_quotes(&services, &intent, Duration::from_millis(100));
+	let card = |asset: Option<&str>, network: Option<&str>| {
+		crate::host_logic::funding_providers::FundingSelection {
+			rail: v01::FundingRail::Card,
+			asset: asset.map(str::to_string),
+			network: network.map(str::to_string),
+			country: None,
+			currency: None,
+		}
+	};
+	let running =
+		|services: &Arc<RuntimeServices>| services.funding_quotes().asked(&intent).is_some();
+	services.select_funding_options(&intent, card(Some("EUR"), Some("polkadot")));
+	let with_network = running(&services);
+	services.select_funding_options(&intent, card(Some("USD"), None));
+	let other_asset = running(&services);
+
+	assert_eq!(
+		(
+			with_network,
+			other_asset,
+			platform.withdrawn.lock().expect("withdrawn mutex poisoned").len()
+		),
+		(true, false, 1)
 	);
 }
 

@@ -2354,8 +2354,8 @@ pub trait FundingPlatform: Send + Sync {
 
 	/// Observe the quote list the host requested, for the provider list:
 	/// again whenever a provider answers, and each time the core asks every
-	/// provider again.
-	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+	/// provider again. `None` once a selection on another route withdrew it.
+	fn funding_quotes_changed(&self, intent: String, quotes: Option<FundingQuoteList>) {
 		let _ = (intent, quotes);
 	}
 }

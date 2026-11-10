@@ -258,12 +258,6 @@ pub trait FundingFeed: Send + Sync {
 	/// after each quote list, which can teach the core new limits.
 	fn funding_options_changed(&self, intent: String);
 
-	/// Session `intent`'s quote list is gone: the user selected another
-	/// route than it priced.
-	fn funding_quotes_withdrawn(&self, intent: String) {
-		let _ = intent;
-	}
-
 	/// The host's configuration changed the funding providers it offers.
 	fn funding_providers_changed(&self) {}
 }
