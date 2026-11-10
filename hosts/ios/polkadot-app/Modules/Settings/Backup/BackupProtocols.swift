@@ -3,13 +3,13 @@ import ChainRegistry
 
 protocol BackupViewProtocol: ControllerBackedProtocol {
     func updateViewModel(_ viewModel: BackupViewModel)
-    func updateRestoredBalance(_ viewModel: BackupRestoredBalanceViewModel?)
 }
 
 @MainActor
 protocol BackupPresenterProtocol: AnyObject {
     func setup()
-    func handleButtonTap(type: BackupButtonsView.ButtonType)
+    func selectSecretPhrase()
+    func selectCloudBackup()
     func onRestoredBalanceUpdate()
     func onRestoredBalanceClose()
     func onRestoredBalanceWhyUpdate()

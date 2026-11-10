@@ -32,11 +32,15 @@ struct BackupRestoredBalanceCard: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: DSSpacings.mediumIncreased) {
-            if let balance = viewModel.balance {
-                balanceBlock(balance)
+            VStack(alignment: .leading, spacing: DSSpacings.small) {
+                if let balance = viewModel.balance {
+                    balanceBlock(balance)
+                    Rectangle()
+                        .fill(.strokePrimary)
+                        .frame(height: 1)
+                }
+                textContent
             }
-
-            textContent
 
             HStack {
                 DSButton(

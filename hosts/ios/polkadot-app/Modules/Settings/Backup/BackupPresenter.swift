@@ -13,6 +13,7 @@ final class BackupPresenter {
     private let balanceFormatterFactory: AssetBalanceFormatterFactoryProtocol
     private let logger: LoggerProtocol
 
+    private var statusType: BackupViewModel.BackupStatusType?
     private var showsRecoveredBalance = false
     private var isRecoveryInProgress = false
     private var coinageAmounts: CoinageAmounts?
@@ -44,17 +45,20 @@ final class BackupPresenter {
         )
     }
 
-    private func provideRestoredBalance() {
+    private func provideViewModel() {
+        view?.updateViewModel(
+            BackupViewModel(statusType: statusType, restoredBalance: restoredBalanceViewModel())
+        )
+    }
+
+    private func restoredBalanceViewModel() -> BackupRestoredBalanceViewModel? {
         guard showsRecoveredBalance else {
-            view?.updateRestoredBalance(nil)
-            return
+            return nil
         }
 
-        view?.updateRestoredBalance(
-            BackupRestoredBalanceViewModel(
-                balance: coinageAmounts.map(restoredBalance),
-                isUpdating: isRecoveryInProgress
-            )
+        return BackupRestoredBalanceViewModel(
+            balance: coinageAmounts.map(restoredBalance),
+            isUpdating: isRecoveryInProgress
         )
     }
 
@@ -98,16 +102,21 @@ extension BackupPresenter: BackupPresenterProtocol {
         wireframe.showWhyBackupUpdate(from: view)
     }
 
-    func handleButtonTap(type: BackupButtonsView.ButtonType) {
-        switch type {
-        case .backup:
+    func selectSecretPhrase() {
+        wireframe.showWarning(from: view) { [weak self] in
+            self?.authorize()
+        }
+    }
+
+    func selectCloudBackup() {
+        switch statusType {
+        case .notFound:
             interactor.backupMnemonic()
-        case .secretPhase:
-            wireframe.showWarning(from: view) { [weak self] in
-                self?.authorize()
-            }
-        case .settings:
+        case .cloudIsOff:
             wireframe.showEnableCloud(from: view)
+        case .created,
+             nil:
+            break
         }
     }
 }
@@ -127,7 +136,8 @@ private extension BackupPresenter {
 
 extension BackupPresenter: BackupInteractorOutputProtocol {
     func didReceiveBackupStatus(_ status: BackupViewModel.BackupStatusType) {
-        view?.updateViewModel(BackupViewModel(statusType: status))
+        statusType = status
+        provideViewModel()
     }
 
     func didReceiveBackupComplete(with result: Result<Void, any Error>) {
@@ -141,16 +151,16 @@ extension BackupPresenter: BackupInteractorOutputProtocol {
 
     func didReceive(showsRecoveredBalance: Bool) {
         self.showsRecoveredBalance = showsRecoveredBalance
-        provideRestoredBalance()
+        provideViewModel()
     }
 
     func didReceive(isRecoveryInProgress: Bool) {
         self.isRecoveryInProgress = isRecoveryInProgress
-        provideRestoredBalance()
+        provideViewModel()
     }
 
     func didReceive(coinageAmounts: CoinageAmounts) {
         self.coinageAmounts = coinageAmounts
-        provideRestoredBalance()
+        provideViewModel()
     }
 }
