@@ -6,8 +6,10 @@ use std::{
 use futures::{
 	FutureExt, StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
-	executor::block_on,
+	executor::{LocalPool, block_on},
+	future::BoxFuture,
 	stream::BoxStream,
+	task::SpawnExt,
 };
 use truapi::latest::{
 	BoxProps, GenericError, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode,
@@ -73,10 +75,13 @@ struct Device {
 
 impl Device {
 	fn over(db: Db) -> Self {
+		Self::with_spawner(db, Spawner::for_test())
+	}
+
+	fn with_spawner(db: Db, spawner: Spawner) -> Self {
 		let bulletin = Arc::new(FakeBulletin::default());
 		let timer = Arc::new(ManualTimer::default());
-		let materials =
-			Materials::new(db.clone(), bulletin.clone(), timer.clone(), Spawner::for_test());
+		let materials = Materials::new(db.clone(), bulletin.clone(), timer.clone(), spawner);
 		Self { materials, bulletin, timer, db }
 	}
 
@@ -196,6 +201,36 @@ fn a_lookup_that_ends_after_the_deadline_reports_once() {
 	device.bulletin.end(id);
 
 	assert_eq!(next(&mut answers), None);
+}
+
+/// A material that arrives just as the deadline passes draws, with no
+/// fallback first: an answer already in hand beats the deadline. The test runs
+/// the fetch itself, so both are ready before the fetch looks at either.
+#[test]
+fn an_answer_ready_with_the_deadline_draws_without_falling_back() {
+	let queued: Arc<Mutex<Vec<BoxFuture<'static, ()>>>> = Arc::default();
+	let queue = Arc::clone(&queued);
+	let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
+	let (_dir, db) = open_temporary_core_db();
+	let device = Device::with_spawner(db, spawner);
+	let id = preimage_key(TEXT);
+	let mut pool = LocalPool::new();
+	let mut answers = device.materials.observe(id);
+	for task in queued.lock().unwrap().drain(..) {
+		pool.spawner().spawn(task).unwrap();
+	}
+	wait_until(
+		|| {
+			pool.run_until_stalled();
+			device.bulletin.lookups(id) == 1 && device.timer.sleeps() == 1
+		},
+		"the fetch waits on the lookup and the deadline",
+	);
+
+	device.bulletin.answer(id, TEXT.to_vec());
+	device.timer.advance(FETCH_DEADLINE);
+
+	assert_eq!(pool.run_until(answers.next()), Some(Ok(TEXT.to_vec())));
 }
 
 /// A face naming one material in many places, or open in two places at once,
