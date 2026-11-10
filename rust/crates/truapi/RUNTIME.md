@@ -734,12 +734,18 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and hands the host each id hashed with the product. Without it,
+  `set_payment_callbacks`: the core asks the host to `follow_payment` an id
+  and the host pushes each engine status with `notify_payment_status`. The
+  core keeps the latest status per id, shows the pending one when the engine
+  has not answered within 250 ms, keeps the last 512 final statuses, and
+  ends a stream whose engine stopped early with the abandoned status. The
+  core requires a session and hands the host each id hashed with the product,
+  and offers only the main purse. Without it,
   `request` and `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  hosts use `set_top_up_callbacks`, following ids through `follow_top_up` and
+  `notify_top_up_status` by the same rules as payments. The core
   requires a session, checks the source keys, passes a `ProductAccount`
   source through for the host to derive, and hands the host each id hashed
   with the product. The host owns claiming, retries, partial claims and

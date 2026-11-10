@@ -434,15 +434,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call
-	/// installed it. Report each later status with
+	/// installed it. Push what each followed top-up reports with
 	/// [`Self::notify_top_up_status`].
 	pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
-		let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+		let platform = Arc::new(TopUpCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
 	}
 
-	/// Report a later status of `product_id`'s top-up `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	/// Push a status the engine reported for `product_id`'s top-up `id`,
+	/// which the core asked to follow through `follow_top_up`. `MyApp.dot`
+	/// names the same top-up as `myapp.dot`.
 	///
 	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
 	/// and Kotlin.
@@ -459,15 +460,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's payment engine. Set-once; answers whether this
-	/// call installed it. Report each later status with
+	/// call installed it. Push what each followed payment reports with
 	/// [`Self::notify_payment_status`].
 	pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
-		let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+		let platform = Arc::new(PaymentCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
 	}
 
-	/// Report a later status of `product_id`'s payment `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	/// Push a status the engine reported for `product_id`'s payment `id`,
+	/// which the core asked to follow through `follow_payment`. `MyApp.dot`
+	/// names the same payment as `myapp.dot`.
 	///
 	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
 	/// and Kotlin.
@@ -484,19 +486,19 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's balance view. Set-once; answers whether this call
-	/// installed it. Report each change with [`Self::notify_balance`].
+	/// installed it. Push each balance with [`Self::notify_balance`].
 	pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
-		let platform = Arc::new(BalanceCallbackPlatform::new(callbacks));
+		let platform = Arc::new(BalanceCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
 	}
 
-	/// Report the new balance of `purse` (`None` for the main purse), a
-	/// decimal string of CASH units, to the products following it. The
-	/// balance is the user's, so one call reaches every such product; the
-	/// core passes it on only to those that still hold balance access.
-	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+	/// Push the user's spendable balance, a decimal string of CASH units,
+	/// while the core follows it through `follow_balance`. The balance is the
+	/// user's, so one call reaches every product following it that still
+	/// holds balance access.
+	pub fn notify_balance(&self, available: u128) {
 		if let Some(platform) = self.balance.get() {
-			platform.notify_balance(purse, available);
+			platform.notify_balance(available);
 		}
 	}
 
