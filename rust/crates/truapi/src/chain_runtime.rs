@@ -38,7 +38,7 @@ use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::mpsc,
-	future::{AbortHandle, Abortable, BoxFuture, Shared},
+	future::{AbortHandle, Abortable, BoxFuture, Shared, join_all},
 	pin_mut,
 	stream::BoxStream,
 };
@@ -73,8 +73,8 @@ use truapi::v01::{
 };
 
 use crate::{
+	Spawner,
 	host_rpc_client::HostRpcClient,
-	subscription::Spawner,
 	time::{RealTimer, Timer},
 };
 
@@ -631,12 +631,9 @@ impl ChainRuntime {
 		.boxed()
 		.shared();
 		self.record_follow_start(follow_start_key, start.clone());
-		(self.spawner)(
-			async move {
-				let _ = start.await;
-			}
-			.boxed(),
-		);
+		self.spawner.spawn(async move {
+			let _ = start.await;
+		});
 
 		ManagedSubscription::new(
 			rx.boxed(),
@@ -757,6 +754,77 @@ impl ChainRuntime {
 			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadCallResponse { operation })
+	}
+
+	/// Starts calls concurrently and returns their outcomes in request order.
+	///
+	/// Every request must belong to the supplied follow. The timeout starts
+	/// after all startup responses arrive and applies only to unfinished calls.
+	/// A stopped follow fails unfinished calls while retaining completed results.
+	pub async fn chain_head_call_batch(
+		&self,
+		follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+		requests: Vec<RemoteChainHeadCallRequest>,
+		label: &'static str,
+		timeout: Duration,
+		timer: &dyn Timer,
+	) -> Vec<Result<Vec<u8>, String>> {
+		let operations =
+			join_all(requests.into_iter().map(|request| self.remote_chain_head_call(request)))
+				.await;
+		let mut results = vec![None; operations.len()];
+		let mut pending = HashMap::new();
+		for (index, response) in operations.into_iter().enumerate() {
+			match response.map(|response| response.operation) {
+				Ok(OperationStartedResult::Started { operation_id }) => {
+					pending.insert(operation_id, index);
+				},
+				Ok(OperationStartedResult::LimitReached) => {
+					results[index] = Some(Err(format!("{label} operation limit reached")));
+				},
+				Err(failure) => results[index] = Some(Err(failure.reason())),
+			}
+		}
+		let timeout = timer.sleep(timeout).fuse();
+		pin_mut!(timeout);
+		let failure = loop {
+			if pending.is_empty() {
+				break None;
+			}
+			let next = follow.next().fuse();
+			pin_mut!(next);
+			let item = futures::select! {
+				item = next => item,
+				() = timeout => break Some(format!("{label} runtime call timed out")),
+			};
+			let (operation_id, result) = match item {
+				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, output }) => {
+					(operation_id, Ok(output))
+				},
+				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id }) => {
+					(operation_id, Err(format!("{label} runtime call was inaccessible")))
+				},
+				Some(RemoteChainHeadFollowItem::OperationError { operation_id, error }) => {
+					(operation_id, Err(error))
+				},
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					break Some(format!("{label} follow stopped during runtime call"));
+				},
+				_ => continue,
+			};
+			if let Some(index) = pending.remove(&operation_id) {
+				results[index] = Some(result);
+			}
+		};
+		if let Some(error) = failure {
+			for index in pending.into_values() {
+				results[index] = Some(Err(error.clone()));
+			}
+		}
+		results
+			.into_iter()
+			.map(|result| result.expect("every call has an outcome"))
+			.collect()
 	}
 
 	/// Release pinned blocks.
@@ -1460,22 +1528,19 @@ impl ChainConnection {
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
-		(self.spawner)(
-			async move {
-				while let Some(result) = driver.next().await {
-					if let Err(error) = result {
-						warn!(target: "subxt", "chainHead backend error={error}");
-					}
-				}
-				// The backend can make no further progress; drop the cached
-				// Subxt bundle so the next caller rebuilds instead of hitting
-				// a permanently dead backend.
-				if let Some(connection) = pump_connection.upgrade() {
-					connection.invalidate_subxt_connection(generation);
+		self.spawner.spawn(async move {
+			while let Some(result) = driver.next().await {
+				if let Err(error) = result {
+					warn!(target: "subxt", "chainHead backend error={error}");
 				}
 			}
-			.boxed(),
-		);
+			// The backend can make no further progress; drop the cached
+			// Subxt bundle so the next caller rebuilds instead of hitting
+			// a permanently dead backend.
+			if let Some(connection) = pump_connection.upgrade() {
+				connection.invalidate_subxt_connection(generation);
+			}
+		});
 		let backend = Arc::new(backend);
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
@@ -1777,7 +1842,7 @@ impl ChainConnection {
 			return Err(follow_closed());
 		}
 
-		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
+		self.spawner.spawn(Abortable::new(pump, abort_registration).map(|_| ()));
 		Ok(remote_follow_id)
 	}
 
@@ -2523,46 +2588,6 @@ pub async fn wait_for_chain_head_storage_value(
 				_ => {}
 			},
 			() = timeout => return Err(format!("{} storage lookup timed out", lookup.label)),
-		}
-	}
-}
-
-/// Waits for one runtime-API call operation's output from a
-/// `chainHead_v1_follow` stream.
-pub async fn wait_for_chain_head_call_output(
-	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-	operation_id: &str,
-	label: &'static str,
-	timeout: Duration,
-) -> Result<Vec<u8>, String> {
-	let timeout = futures_timer::Delay::new(timeout).fuse();
-	pin_mut!(timeout);
-	loop {
-		let next = follow.next().fuse();
-		pin_mut!(next);
-		futures::select! {
-			item = next => match item {
-				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id: item_operation_id, output })
-					if item_operation_id == operation_id =>
-				{
-					return Ok(output);
-				}
-				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
-					if item_operation_id == operation_id =>
-				{
-					return Err(format!("{label} runtime call was inaccessible"));
-				}
-				Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
-					if item_operation_id == operation_id =>
-				{
-					return Err(error);
-				}
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					return Err(format!("{label} follow stopped during runtime call"));
-				}
-				_ => {}
-			},
-			() = timeout => return Err(format!("{label} runtime call timed out")),
 		}
 	}
 }

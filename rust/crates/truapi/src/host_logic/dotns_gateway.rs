@@ -399,9 +399,9 @@ pub enum DotnsError {
 	/// A name's content resolver could not be located.
 	#[error("DotnsRegistry.resolver()")]
 	Resolver(#[source] DotnsCallError),
-	/// A product's manifest record could not be read.
+	/// A text record could not be read.
 	#[error("ContentResolver.text()")]
-	ManifestText(#[source] DotnsCallError),
+	TextRecord(#[source] DotnsCallError),
 	/// The stored dispatcher address has the wrong width.
 	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
 	DispatcherAddressLength {
@@ -448,11 +448,11 @@ pub enum DotnsCallError {
 
 /// How a caller reaches Asset Hub for dotNS reads.
 ///
-/// The surface is one storage read plus one contract view. The headless CLI
+/// The surface is storage reads and single or batched contract views. The headless CLI
 /// implements it over plain RPC. The in-core runtime implements it over a
 /// `chainHead_v1` follow. The resolution steps below are written once.
 #[async_trait::async_trait]
-pub trait DotnsTransport {
+pub trait DotnsTransport: Send {
 	/// Reads one storage value. `None` when the entry is absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
@@ -461,6 +461,16 @@ pub trait DotnsTransport {
 	/// [`EvmContractError::Reverted`] is an answer from the contract; any other
 	/// error leaves the view's result unknown.
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError>;
+
+	/// Reads independent contract views for the same destination.
+	///
+	/// Returns one result per input in input order, retaining individual failures.
+	/// The transport controls concurrency and the block context.
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>>;
 }
 
 /// Resolves the `DotnsPopController` address from `DotnsGateway.DispatcherAddress`.

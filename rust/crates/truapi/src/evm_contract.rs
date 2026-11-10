@@ -8,14 +8,14 @@ use parity_scale_codec::{Decode, Encode, Input};
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 use thiserror::Error;
 
-use super::{
-	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
-	HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
-};
 use crate::{
+	Spawner,
+	chain::{
+		BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
+		HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
+	},
 	chain_runtime::{ChainRuntime, HostChainProvider, RuntimeFailure, encode_hex},
 	platform::{ChainProvider, ExtrinsicVersionHost},
-	subscription::Spawner,
 };
 
 const REVIVE_PALLET: &str = "Revive";
@@ -57,7 +57,7 @@ pub enum EvmContractError {
 	/// Sending failed or the watch ended before a finalized block included
 	/// the extrinsic. The node may have received it, so a block can still
 	/// include it until its era ends: follow `extrinsic` through
-	/// [`Mortality::death`](super::Mortality::death) before signing the
+	/// [`Mortality::death`](crate::chain::Mortality::death) before signing the
 	/// write again. Resubmitting the same `extrinsic` is safe, since its
 	/// nonce lets the chain include it at most once; signing a new one is not.
 	#[error("extrinsic {hash:?} was not finalized: {event:?}", hash = .extrinsic.extrinsic.hash())]
@@ -213,20 +213,33 @@ impl PreparedEvmTransaction<'_> {
 	}
 }
 
+/// Reads one contract for every ABI-encoded input.
+///
+/// Returns ABI data or a transport, dispatch, revert or decoding error for each input,
+/// in input order. The runtime transport determines concurrency and the block context.
+/// The batch completes before returning an owned iterator that decodes its results.
+pub async fn read_batch<Runtime: RuntimeApiCaller>(
+	runtime: &mut Runtime,
+	contract: &[u8; 20],
+	inputs: Vec<Vec<u8>>,
+) -> impl Iterator<Item = Result<Vec<u8>, EvmContractError>> + use<Runtime> {
+	let calls = inputs
+		.iter()
+		.map(|input| ReviveApiCallArgs::new(&VIEW_CALL_ORIGIN, contract, input).encode())
+		.collect();
+	runtime.call_batch("ReviveApi_call", calls).await.into_iter().map(|output| {
+		let output = output.map_err(|error| EvmContractError::Simulation(error.into()))?;
+		Ok(Simulation::decode(&output)?.output)
+	})
+}
+
 async fn simulate(
 	runtime: &mut impl RuntimeApiCaller,
 	origin: &[u8; 32],
 	contract: &[u8; 20],
 	input: &[u8],
 ) -> Result<Simulation, EvmContractError> {
-	let args = ReviveApiCallArgs {
-		origin: *origin,
-		dest: *contract,
-		value: 0,
-		gas_limit: None,
-		storage_deposit_limit: None,
-		input_data: input,
-	};
+	let args = ReviveApiCallArgs::new(origin, contract, input);
 	let output = runtime
 		.call("ReviveApi_call", &args.encode())
 		.await
@@ -400,6 +413,19 @@ struct ReviveApiCallArgs<'a> {
 	storage_deposit_limit: Option<u128>,
 	/// ABI-encoded call data.
 	input_data: &'a [u8],
+}
+
+impl<'a> ReviveApiCallArgs<'a> {
+	fn new(origin: &[u8; 32], contract: &[u8; 20], input: &'a [u8]) -> Self {
+		Self {
+			origin: *origin,
+			dest: *contract,
+			value: 0,
+			gas_limit: None,
+			storage_deposit_limit: None,
+			input_data: input,
+		}
+	}
 }
 
 /// What a contract call would do if its origin sent it now: its return data
