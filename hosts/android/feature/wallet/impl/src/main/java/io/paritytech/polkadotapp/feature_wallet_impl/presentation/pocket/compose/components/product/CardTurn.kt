@@ -93,7 +93,11 @@ internal class CardTurnState(initialAngle: Float = 0f) {
     }
 
     suspend fun turnTo(side: PocketCardSide) {
-        if (side != sideAt(heading)) turnOver()
+        if (side != sideAt(heading)) {
+            turnOver()
+        } else if (angle != heading) {
+            settle(heading, 0f, MutatePriority.Default, TURN_OVER_STIFFNESS)
+        }
     }
 
     /**
@@ -108,10 +112,8 @@ internal class CardTurnState(initialAngle: Float = 0f) {
         settle(heading, 0f, MutatePriority.Default, TURN_OVER_STIFFNESS)
     }
 
-    /** Turns the card for its page, answering as the turn starts. Asking for the front of a card without a back succeeds. */
-    suspend fun requestSide(side: PocketCardSide, hasBack: Boolean): FaceShownAnswer {
-        if (side == PocketCardSide.BACK && !hasBack) return FaceShownAnswer.NO_BACK
-
+    /** Turns the card for its page, answering as the turn starts. */
+    suspend fun requestSide(side: PocketCardSide): FaceShownAnswer {
         CoroutineScope(currentCoroutineContext()).launch { turnTo(side) }
         return FaceShownAnswer.APPLIED
     }

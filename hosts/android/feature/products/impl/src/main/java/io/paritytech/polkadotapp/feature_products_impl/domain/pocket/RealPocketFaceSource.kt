@@ -33,7 +33,8 @@ class RealPocketFaceSource @Inject constructor(
 
     override fun observeBack(key: PocketCardKey): Flow<JsWidget?> = flow {
         val kept = cachedFace(key, PocketCardSide.BACK)?.also { emit(it.toJsWidget()) }
-        val shipped = publishedCards.findAnswered(key.productId, key.cardId).getOrNull()?.definition?.back
+        val published = publishedCards.findAnswered(key.productId, key.cardId).getOrNull() ?: return@flow
+        val shipped = published.definition.back
         if (shipped == null) {
             emit(null)
             return@flow

@@ -293,7 +293,8 @@ internal suspend fun answer(
     turn: CardTurnState,
     hasBack: Boolean,
 ): FaceShownAnswer = when {
+    request.back && request.shown && !hasBack -> FaceShownAnswer.NO_BACK
     fold.dragging || turn.dragging -> FaceShownAnswer.USER_MOVING
     !request.back -> fold.showFace(request.shown)
-    else -> turn.requestSide(side = if (request.shown) PocketCardSide.BACK else PocketCardSide.FRONT, hasBack = hasBack)
+    else -> turn.requestSide(if (request.shown) PocketCardSide.BACK else PocketCardSide.FRONT)
 }
