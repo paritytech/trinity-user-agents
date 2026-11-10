@@ -23,7 +23,13 @@ pub enum ShaderLanguage {
 /// A material's shaders and how to feed them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialShader {
-	/// The vertex shader: a full-screen quad.
+	/// The vertex shader: a full-screen quad from one `vec2 position` attribute
+	/// in clip space, drawn without culling. The fragment shader works out
+	/// `uv`, which runs from the node's top left, from the fragment position:
+	/// counting from the bottom when the quad faces front and from the top when
+	/// it faces back. So the quad must face front on a target whose fragment
+	/// positions count up from the bottom (OpenGL's default framebuffer), and
+	/// back on one whose positions count down from the top (Metal).
 	pub vertex: String,
 	/// The fragment shader.
 	pub fragment: String,
@@ -100,7 +106,8 @@ pub enum UniformRole {
 	/// How the texture in this slot is read: 1 when it holds 32-bit floats the
 	/// GPU cannot filter, else 0.
 	SamplingMode(usize),
-	/// 1 when drawing into a bottom-up target, -1 into a top-down one.
+	/// 1 when drawing into a bottom-up target, -1 into a top-down one. It
+	/// mirrors the quad, which also turns which way it faces (see `vertex`).
 	TargetFlip,
 }
 
@@ -149,34 +156,39 @@ pub fn material_shader(
 			.iter()
 			.any(|token| matches!(token, Token::Word(word) if names.contains(word)))
 	};
-	let (uniforms, vertex_block_size, fragment_block_size) = uniforms(params, fallback);
-	let shader = MaterialShader {
-		vertex: VERTEX.to_string(),
-		fragment: fragment(params, &lowered, fallback),
+	let textures = textures(params);
+	let (uniforms, vertex_block_size, fragment_block_size) = uniforms(params, &textures, fallback);
+	let (vertex, fragment) = match language {
+		ShaderLanguage::GlslEs => (
+			format!(
+				"#version 300 es\nin vec2 position;out vec2 uv;\nuniform float _shaderlab_target_flip;\n{VERTEX_MAIN}"
+			),
+			fragment(params, &uniforms, &lowered, fallback),
+		),
+		ShaderLanguage::Metal => {
+			let helpers = if fallback { fallback_helpers() } else { String::new() };
+			metal_shaders(&format!("{helpers}\n{lowered}"), &uniforms, &textures)?
+		},
+	};
+	Ok(MaterialShader {
+		vertex,
+		fragment,
 		uniforms,
 		vertex_block_size,
 		fragment_block_size,
-		textures: textures(params),
+		textures,
 		reads_time: reads(&["sl_time"]),
 		reads_motion: reads(&["sl_tilt", "sl_orientation", "sl_rotation"]),
-	};
-	match language {
-		ShaderLanguage::GlslEs => Ok(shader),
-		ShaderLanguage::Metal => {
-			let helpers = if fallback { fallback_helpers() } else { String::new() };
-			let code = format!("{helpers}\n{lowered}");
-			let (vertex, fragment) = metal_shaders(&code, &shader.uniforms, &shader.textures)?;
-			Ok(MaterialShader { vertex, fragment, ..shader })
-		},
-	}
+	})
 }
 
-const VERTEX: &str = "#version 300 es
-in vec2 position;out vec2 uv;
-uniform float _shaderlab_target_flip;
-void main(){uv=vec2(position.x*.5+.5,.5-position.y*.5);gl_Position=vec4(position.x,position.y*_shaderlab_target_flip,0.,1.);}";
+/// The vertex stage's `main`, as Shaderlab writes it.
+pub const VERTEX_MAIN: &str = "void main(){uv=vec2(position.x*.5+.5,.5-position.y*.5);gl_Position=vec4(position.x,position.y*_shaderlab_target_flip,0.,1.);}";
 
-fn fragment(params: &[Param], body: &str, fallback: bool) -> String {
+/// The fragment stage's `main`, as Shaderlab writes it.
+pub const FRAGMENT_MAIN: &str = "void main(){vec2 uv=vec2(gl_FragCoord.x, gl_FrontFacing ? sl_resolution.y-gl_FragCoord.y : gl_FragCoord.y)/sl_resolution;result=material(uv);}";
+
+fn fragment(params: &[Param], uniforms: &[Uniform], body: &str, fallback: bool) -> String {
 	let arguments: Vec<String> = params
 		.iter()
 		.map(|param| match uniform_kind(param.kind) {
@@ -185,8 +197,11 @@ fn fragment(params: &[Param], body: &str, fallback: bool) -> String {
 		})
 		.collect();
 	let sampling = if fallback {
-		let modes: Vec<String> =
-			sampling_modes(params).map(|name| format!("uniform int {name};")).collect();
+		let modes: Vec<String> = uniforms
+			.iter()
+			.filter(|uniform| matches!(uniform.role, UniformRole::SamplingMode(_)))
+			.map(|uniform| format!("uniform int {};", uniform.name))
+			.collect();
 		format!("{}{}", modes.join("\n"), fallback_helpers())
 	} else {
 		String::new()
@@ -209,18 +224,8 @@ uniform highp sampler2D r_noise;
 {sampling}
 #line 1
 {body}
-void main(){{vec2 uv=vec2(gl_FragCoord.x, gl_FrontFacing ? sl_resolution.y-gl_FragCoord.y : gl_FragCoord.y)/sl_resolution;result=material(uv);}}",
+{FRAGMENT_MAIN}",
 		arguments.join("\n")
-	)
-}
-
-/// The fallback's mode uniforms, in Shaderlab's order.
-fn sampling_modes(params: &[Param]) -> impl Iterator<Item = String> + '_ {
-	core::iter::once(mode_uniform("r_input")).chain(
-		params
-			.iter()
-			.filter(|param| uniform_kind(param.kind).is_none())
-			.map(|param| mode_uniform(&format!("sp_{}", param.name))),
 	)
 }
 
@@ -230,7 +235,7 @@ fn mode_uniform(sampler: &str) -> String {
 
 /// Uniforms of both stages, laid out by std140 in Shaderlab's order, and the
 /// two blocks' sizes.
-fn uniforms(params: &[Param], fallback: bool) -> (Vec<Uniform>, u32, u32) {
+fn uniforms(params: &[Param], textures: &[Texture], fallback: bool) -> (Vec<Uniform>, u32, u32) {
 	let vertex =
 		[("_shaderlab_target_flip".to_string(), UniformKind::Float, UniformRole::TargetFlip)];
 	let mut fragment = vec![
@@ -244,13 +249,18 @@ fn uniforms(params: &[Param], fallback: bool) -> (Vec<Uniform>, u32, u32) {
 		Some((format!("p_{}", param.name), uniform_kind(param.kind)?, UniformRole::Argument(index)))
 	}));
 	if fallback {
-		let slots = textures(params).into_iter().enumerate().filter_map(|(slot, texture)| {
-			matches!(texture.role, TextureRole::Input | TextureRole::Argument(_)).then_some(slot)
-		});
+		// Shaderlab's order: the input, then each image argument. The base and the
+		// noise image are always 8-bit, so they take a literal mode.
 		fragment.extend(
-			sampling_modes(params)
-				.zip(slots)
-				.map(|(name, slot)| (name, UniformKind::Int, UniformRole::SamplingMode(slot))),
+			textures
+				.iter()
+				.enumerate()
+				.filter(|(_, texture)| {
+					matches!(texture.role, TextureRole::Input | TextureRole::Argument(_))
+				})
+				.map(|(slot, texture)| {
+					(mode_uniform(&texture.name), UniformKind::Int, UniformRole::SamplingMode(slot))
+				}),
 		);
 	}
 	let (mut uniforms, vertex_size) = std140(Stage::Vertex, vertex.into_iter().collect());
@@ -392,11 +402,16 @@ fn typed_pass(params: &[Param], body: &str) -> Option<String> {
 			}
 			continue;
 		};
-		let declares_a_sampler_name = body.clone().skip(1).any(|index| {
-			matches!(
-				(tokens[index - 1].1, tokens[index].1),
-				(Token::Word(_), Token::Word(name)) if samplers.kind(name).is_some()
-			)
+		// A sampler can be neither declared nor assigned, so a sampler's name after
+		// a type, before `=`, or alone before `;` is a declaration hiding it.
+		let declares_a_sampler_name = body.clone().any(|index| {
+			let Token::Word(name) = tokens[index].1 else { return false };
+			let next = |offset: usize| tokens.get(index + offset).map(|(_, token)| *token);
+			samplers.kind(name).is_some() &&
+				(matches!(tokens[index - 1].1, Token::Word(_)) ||
+					next(1) == Some(Token::Symbol(';')) ||
+					next(1) == Some(Token::Symbol('=')) &&
+						next(2) != Some(Token::Symbol('=')))
 		});
 		if hides_a_sampler || declares_a_sampler_name {
 			return None;

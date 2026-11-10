@@ -87,7 +87,8 @@ pub struct Edit {
 }
 
 /// Applies `edits` last offset first, so earlier offsets stay valid. Edits at
-/// one offset land in the order they were made, as in Shaderlab.
+/// one offset are applied in the order they were made, so the last made ends
+/// up first, as in Shaderlab.
 pub fn apply(source: &str, mut edits: Vec<Edit>) -> String {
 	edits.sort_by_key(|edit| core::cmp::Reverse(edit.start));
 	let mut edited = source.to_string();

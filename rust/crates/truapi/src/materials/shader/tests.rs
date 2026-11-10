@@ -96,6 +96,7 @@ fn with_height(body: &str) -> String {
 fn a_name_hiding_a_sampler_and_a_sampler_array_are_unsupported() {
 	for body in [
 		"vec4 material(vec2 uv) {\n  vec2 r_input = uv;\n  return vec4(r_input, 0.0, 1.0);\n}",
+		"vec4 material(vec2 uv) {\n  vec2 a = uv, r_input = uv;\n  return vec4(length(r_input));\n}",
 		"float spread(vec2 sp_height) {\n  return length(sp_height);\n}\nvec4 material(vec2 uv) {\n  return vec4(spread(uv));\n}",
 		"float read(samplerFloat image, vec2 point) {\n  float image = 1.0;\n  return image;\n}\nvec4 material(vec2 uv) {\n  return vec4(read(sp_height, uv));\n}",
 		"vec4 pick(sampler2D images[2], vec2 point) {\n  return texture(images[0], point);\n}\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}",

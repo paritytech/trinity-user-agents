@@ -63,12 +63,7 @@ fn every_material_translates_with_its_slots_where_the_description_says() {
 				assert_eq!(shader.textures[slot].name, name, "{}", case.name);
 			}
 			for (name, slot) in bound(&shader.fragment, "sampler") {
-				assert_eq!(
-					format!("{}_sampler", shader.textures[slot].name),
-					name,
-					"{}",
-					case.name
-				);
+				assert_eq!(sampler_name(&shader.textures[slot].name), name, "{}", case.name);
 			}
 		}
 	}
@@ -141,4 +136,19 @@ fn a_body_that_does_not_type_check_is_unsupported() {
 			.err(),
 		Some(MaterialFailure::Unsupported)
 	);
+}
+
+/// A split-off sampler's name can never meet a material's own names, so a
+/// material draws on iOS wherever it draws on Android.
+#[test]
+fn split_samplers_never_collide_with_a_material_name() {
+	let text = "// @material 1\n// @control {\"name\":\"foo\",\"label\":\"Foo\",\"type\":\"samplerFloat\"}\n// @control {\"name\":\"foo_sampler\",\"label\":\"Foo sampler\",\"type\":\"samplerFloat\"}\nvec4 material(vec2 uv) {\n  float foo_sampler = texture(sp_foo, uv);\n  return vec4(foo_sampler + texture(sp_foo_sampler, uv));\n}\n";
+	let material = read_material(text.as_bytes()).unwrap();
+
+	for float_filterable in [true, false] {
+		assert!(
+			material.shader(ShaderLanguage::Metal, float_filterable).is_ok(),
+			"{float_filterable}"
+		);
+	}
 }

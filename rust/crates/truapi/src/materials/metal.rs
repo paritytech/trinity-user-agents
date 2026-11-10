@@ -17,7 +17,7 @@ use super::{
 		Edit, SAMPLING_FUNCTIONS, Token, apply, bare_name, calls, functions, located_tokens,
 		split_arguments, token_end,
 	},
-	shader::{Stage, Texture, Uniform},
+	shader::{FRAGMENT_MAIN, Stage, Texture, Uniform, VERTEX_MAIN},
 };
 
 /// The vertex function an app looks up in the Metal library.
@@ -38,10 +38,6 @@ const VERTEX_SET: u32 = 1;
 const FRAGMENT_BUFFER: u8 = 0;
 const VERTEX_BUFFER: u8 = 1;
 
-const VERTEX_MAIN: &str = "void main(){uv=vec2(position.x*.5+.5,.5-position.y*.5);gl_Position=vec4(position.x,position.y*_shaderlab_target_flip,0.,1.);}";
-
-const FRAGMENT_MAIN: &str = "void main(){vec2 uv=vec2(gl_FragCoord.x, gl_FrontFacing ? sl_resolution.y-gl_FragCoord.y : gl_FragCoord.y)/sl_resolution;result=material(uv);}";
-
 /// Metal's vertex and fragment shaders for `code`, the material's functions
 /// after the typed and fallback passes, fed by `uniforms` and `textures`.
 pub fn metal_shaders(
@@ -57,10 +53,11 @@ pub fn metal_shaders(
 		.iter()
 		.enumerate()
 		.map(|(slot, texture)| {
-			let (texture_binding, sampler_binding) = (2 * slot + 1, 2 * slot + 2);
+			let (texture_binding, sampler_binding) = bindings(slot);
 			format!(
-				"layout(set = {FRAGMENT_SET}, binding = {texture_binding}) uniform texture2D {name};\nlayout(set = {FRAGMENT_SET}, binding = {sampler_binding}) uniform sampler {name}_sampler;\n",
-				name = texture.name
+				"layout(set = {FRAGMENT_SET}, binding = {texture_binding}) uniform texture2D {name};\nlayout(set = {FRAGMENT_SET}, binding = {sampler_binding}) uniform sampler {sampler};\n",
+				name = texture.name,
+				sampler = sampler_name(&texture.name)
 			)
 		})
 		.collect();
@@ -79,13 +76,13 @@ pub fn metal_shaders(
 	)]);
 	for slot in 0..textures.len() {
 		let index = u8::try_from(slot).map_err(|_| MaterialFailure::Unsupported)?;
-		let binding = 2 * slot as u32;
+		let (texture_binding, sampler_binding) = bindings(slot);
 		fragment_resources.insert(
-			ResourceBinding { group: FRAGMENT_SET, binding: binding + 1 },
+			ResourceBinding { group: FRAGMENT_SET, binding: texture_binding },
 			msl::BindTarget { texture: Some(index), ..Default::default() },
 		);
 		fragment_resources.insert(
-			ResourceBinding { group: FRAGMENT_SET, binding: binding + 2 },
+			ResourceBinding { group: FRAGMENT_SET, binding: sampler_binding },
 			msl::BindTarget {
 				sampler: Some(msl::BindSamplerTarget::Resource(index)),
 				..Default::default()
@@ -96,6 +93,19 @@ pub fn metal_shaders(
 		translate(&vertex, ShaderStage::Vertex, VERTEX_FUNCTION, vertex_resources)?,
 		translate(&fragment, ShaderStage::Fragment, FRAGMENT_FUNCTION, fragment_resources)?,
 	))
+}
+
+/// The texture and sampler bindings of texture slot `slot`: binding 0 is the
+/// uniform block.
+fn bindings(slot: usize) -> (u32, u32) {
+	let texture = 2 * slot as u32 + 1;
+	(texture, texture + 1)
+}
+
+/// The sampler split off a sampler named `name`. Material names cannot start
+/// with `_shaderlab_`, so it never meets one of them.
+fn sampler_name(name: &str) -> String {
+	format!("_shaderlab_sampler_{name}")
 }
 
 /// The stage's non-opaque uniforms as one std140 block, in the description's
@@ -139,7 +149,7 @@ fn adapt_for_naga(code: &str, textures: &[Texture]) -> Option<String> {
 					end: param.kind_at + param.kind.len(),
 					text: "texture2D".to_string(),
 				});
-				text.push_str(&format!(", sampler {name}_sampler"));
+				text.push_str(&format!(", sampler {}", sampler_name(name)));
 				samplers.extend(param.name);
 			}
 			edits.push(Edit { start: param.end, end: param.end, text });
@@ -159,11 +169,15 @@ fn adapt_for_naga(code: &str, textures: &[Texture]) -> Option<String> {
 					edits.push(Edit {
 						start: at,
 						end: at + sampler.len(),
-						text: format!("sampler2D({sampler}, {sampler}_sampler)"),
+						text: format!("sampler2D({sampler}, {})", sampler_name(sampler)),
 					});
 				} else {
 					let end = token_end(argument.last()?);
-					edits.push(Edit { start: end, end, text: format!(", {sampler}_sampler") });
+					edits.push(Edit {
+						start: end,
+						end,
+						text: format!(", {}", sampler_name(sampler)),
+					});
 				}
 			}
 		}
