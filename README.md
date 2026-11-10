@@ -455,7 +455,15 @@ needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
-iOS contacts and chat views resolve profile metadata first, then reuse Kingfisher's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+iOS contacts and chat views consume `resolvePublicProfile(username:options:)`
+as a finite `AsyncThrowingStream`. New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+Kingfisher's shared cache stores images by CID without a
+freshness expiry, with a 100 MiB disk budget. Avatar loaders keep the displayed
+image while a replacement loads and cancel metadata observation and image work
+when their view is reused or released.
 
 ### Trinity stack descriptors
 

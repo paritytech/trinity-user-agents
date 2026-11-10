@@ -19,6 +19,7 @@ import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
 import DesignSystem
+import Kingfisher
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
@@ -158,6 +159,7 @@ extension ServiceCoordinator {
     @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinator? {
+        KingfisherManager.shared.cache.diskStorage.config.sizeLimit = 100 * 1_024 * 1_024
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 
         // The dashboard is only reachable after onboarding cached the TLD, so built-in accounts

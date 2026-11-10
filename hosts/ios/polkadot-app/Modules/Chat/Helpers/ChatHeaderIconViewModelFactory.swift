@@ -1,18 +1,17 @@
 import PolkadotUI
 
-/// Keeps the header's icon while the peer's icon stays the same. The header loads its icon again on every chat
-/// update, so a public profile avatar is reread once, when the chat opens.
+/// Keeps the header's loader while its logical icon stays the same.
 final class ChatHeaderIconViewModelFactory {
     private let productFactory: ProductIconViewModelMaking
     private let publicProfileFactory: PublicProfileAvatarViewModelMaking
-    private var current: (icon: Chat.PeerMetadata.Icon, viewModel: (any ImageViewModelProtocol)?)?
+    private var current: (icon: Chat.PeerMetadata.Icon, viewModel: AnyImageViewModel?)?
 
     init(productFactory: ProductIconViewModelMaking, publicProfileFactory: PublicProfileAvatarViewModelMaking) {
         self.productFactory = productFactory
         self.publicProfileFactory = publicProfileFactory
     }
 
-    func viewModel(for icon: Chat.PeerMetadata.Icon) -> (any ImageViewModelProtocol)? {
+    func viewModel(for icon: Chat.PeerMetadata.Icon) -> AnyImageViewModel? {
         if let current, current.icon == icon {
             return current.viewModel
         }
@@ -20,7 +19,7 @@ final class ChatHeaderIconViewModelFactory {
         let viewModel = icon.imageViewModel(
             using: productFactory,
             publicProfileFactory: publicProfileFactory,
-            refresh: true
+            options: .init(forceFresh: true, skipStale: false)
         )
         current = (icon, viewModel)
         return viewModel

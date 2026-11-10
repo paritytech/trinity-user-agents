@@ -39,6 +39,7 @@ extension AsyncImageView: UIViewRepresentable {
     @MainActor
     public final class Coordinator {
         private var viewModel: (any ImageViewModelProtocol)?
+        private var settings: ImageViewModelSettings?
 
         func load(
             _ next: any ImageViewModelProtocol,
@@ -46,16 +47,21 @@ extension AsyncImageView: UIViewRepresentable {
             settings: ImageViewModelSettings,
             animated: Bool
         ) {
-            if let viewModel, viewModel as AnyObject !== next as AnyObject {
+            if let current = viewModel as? any IdentifiableImageViewModelProtocol,
+               let next = next as? any IdentifiableImageViewModelProtocol,
+               current.identifier == next.identifier, self.settings == settings { return }
+            if let viewModel, viewModel as AnyObject !== next as AnyObject || self.settings != settings {
                 viewModel.cancel(on: imageView)
             }
             viewModel = next
+            self.settings = settings
             next.loadImage(on: imageView, settings: settings, animated: animated, completion: nil)
         }
 
         func cancel(on imageView: UIImageView) {
             viewModel?.cancel(on: imageView)
             viewModel = nil
+            settings = nil
             imageView.image = nil
         }
     }

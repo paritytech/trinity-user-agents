@@ -4,24 +4,15 @@ import PolkadotUI
 import enum TrUAPIHost.ImageFormat
 import UniformTypeIdentifiers
 
-final class PublicProfileAvatarImageOptionsFactory: ImageProcessingOptionsProducing {
-    static let cache: ImageCache = {
-        let cache = ImageCache(name: "public-profile-avatars")
-        cache.diskStorage.config.sizeLimit = 100 * 1_024 * 1_024
-        return cache
-    }()
-
-    private let format: ImageFormat
-    private let targetCache: ImageCache
+final class CIDImageOptionsFactory: ImageProcessingOptionsProducing {
+    private let format: ImageFormat?
     private let base: ImageProcessingOptionsProducing
 
     init(
-        format: ImageFormat,
-        cache: ImageCache = PublicProfileAvatarImageOptionsFactory.cache,
+        format: ImageFormat?,
         base: ImageProcessingOptionsProducing = ImageProcessingOptionsFactory()
     ) {
         self.format = format
-        targetCache = cache
         self.base = base
     }
 
@@ -29,9 +20,8 @@ final class PublicProfileAvatarImageOptionsFactory: ImageProcessingOptionsProduc
         let options = base.options(for: settings, animated: animated)
         let processor = KingfisherParsedOptionsInfo(options).processor
         return options + [
-            .processor(PublicProfileAvatarImageProcessor(format: format, processor: processor)),
+            .processor(CIDImageProcessor(format: format, processor: processor)),
             .cacheSerializer(FormatIndicatedCacheSerializer.png),
-            .targetCache(targetCache),
             .cacheOriginalImage,
             .memoryCacheExpiration(.never),
             .diskCacheExpiration(.never),
@@ -40,13 +30,14 @@ final class PublicProfileAvatarImageOptionsFactory: ImageProcessingOptionsProduc
     }
 }
 
-private struct PublicProfileAvatarImageProcessor: ImageProcessor {
-    let format: ImageFormat
+private struct CIDImageProcessor: ImageProcessor {
+    let format: ImageFormat?
     let processor: any ImageProcessor
 
-    var identifier: String { "public-profile:\(format)|\(processor.identifier)" }
+    var identifier: String { "cid:\(String(describing: format))|\(processor.identifier)" }
 
     func process(item: ImageProcessItem, options: KingfisherParsedOptionsInfo) -> KFCrossPlatformImage? {
+        guard let format else { return processor.process(item: item, options: options) }
         let expectedType: UTType =
             switch format {
             case .png: .png

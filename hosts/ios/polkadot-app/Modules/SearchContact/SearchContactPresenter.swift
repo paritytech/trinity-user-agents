@@ -212,9 +212,11 @@ private extension SearchContactPresenter {
         return SearchContactListConfiguration(
             userName: payload.username,
             avatarViewModel: avatarViewModel,
-            icon: payload.username.isEmpty ? nil : publicProfileAvatarViewModelFactory.createViewModel(
-                for: payload.username,
-                refresh: false
+            icon: payload.username.isEmpty ? nil : AnyImageViewModel(
+                publicProfileAvatarViewModelFactory.createViewModel(
+                    for: payload.username,
+                    options: .init(forceFresh: false, skipStale: false)
+                )
             )
         )
     }

@@ -1,136 +1,93 @@
-import Kingfisher
 import PolkadotUI
 import TrUAPIHost
 import UIKit
 
-@MainActor private var avatarRequestKey: Void?
+@MainActor
+final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
+    private nonisolated let username: String
+    private let profiles: @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
+        PublicProfile,
+        Error
+    >
+    private let imageLoader: any CIDImageLoading
+    private var options: PublicProfileResolutionOptions
+    private var task: Task<Void, Never>?
+    private weak var imageView: UIImageView?
 
-final class PublicProfileAvatarViewModel {
-    private let username: String
-    private let resolveProfile: @Sendable (String, Bool) async throws -> PublicProfile
-    private let loadAvatar: @Sendable (ProfileAvatar) async throws -> Data
-    @MainActor private var refresh: Bool
+    nonisolated var identifier: String { "profile:\(username)" }
 
-    private final class Request {
-        let id = UUID()
-        weak var owner: PublicProfileAvatarViewModel?
-        var task: Task<Void, Never>?
-
-        init(owner: PublicProfileAvatarViewModel) {
-            self.owner = owner
-        }
-
-        deinit { task?.cancel() }
-    }
-
-    init(
+    nonisolated init(
         username: String,
-        refresh: Bool,
-        resolveProfile: @escaping @Sendable (String, Bool) async throws -> PublicProfile,
-        loadAvatar: @escaping @Sendable (ProfileAvatar) async throws -> Data
+        options: PublicProfileResolutionOptions,
+        profiles: @escaping @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
+            PublicProfile,
+            Error
+        >,
+        imageLoader: any CIDImageLoading
     ) {
         self.username = username
-        self.refresh = refresh
-        self.resolveProfile = resolveProfile
-        self.loadAvatar = loadAvatar
+        self.options = options
+        self.profiles = profiles
+        self.imageLoader = imageLoader
     }
 
-    @MainActor
-    private func request(on imageView: UIImageView) -> Request? {
-        objc_getAssociatedObject(imageView, &avatarRequestKey) as? Request
-    }
-}
-
-extension PublicProfileAvatarViewModel: ImageViewModelProtocol {
-    @MainActor
     func loadImage(
         on imageView: UIImageView,
         settings: ImageViewModelSettings,
         animated: Bool,
         completion: ((Bool) -> Void)?
     ) {
-        if let current = request(on: imageView), current.owner === self, current.task != nil { return }
-        let shouldRefresh = refresh
-        refresh = false
-        let current = prepareRequest(on: imageView)
-        let identifier = current.id
-        current.task = Task { [weak imageView] in
-            defer {
-                if let imageView, request(on: imageView)?.id == identifier { request(on: imageView)?.task = nil }
-            }
-            var displayedAvatar: ProfileAvatar?
-            for force in shouldRefresh ? [false, true] : [false] {
-                guard !Task.isCancelled,
-                      imageView.flatMap({ request(on: $0)?.id }) == identifier else { return }
-                do {
-                    let profile = try await resolveProfile(username, force)
+        if self.imageView === imageView, task != nil { return }
+        if let current = self.imageView { cancel(on: current) }
+        self.imageView = imageView
+        let requestOptions = options
+        task = Task { [weak self, profiles, username, requestOptions, imageLoader, weak imageView] in
+            do {
+                try Task.checkCancellation()
+                let updates = try await profiles(username, requestOptions)
+                try Task.checkCancellation()
+                var keepsCurrentImage = false
+                for try await profile in updates {
                     try Task.checkCancellation()
-                    guard let imageView, request(on: imageView)?.id == identifier else { return }
-                    if let avatar = profile.avatar, avatar == displayedAvatar, imageView.image != nil { continue }
-                    try await display(
-                        profile.avatar,
-                        on: imageView,
-                        identifier: identifier,
-                        settings: settings,
-                        animated: animated && (!shouldRefresh || force)
-                    )
-                    displayedAvatar = profile.avatar
-                } catch {
-                    guard !Task.isCancelled, let imageView, request(on: imageView)?.id == identifier else { return }
-                    if !force { imageView.image = nil }
+                    guard let imageView else { return }
+                    if let avatar = profile.avatar {
+                        if keepsCurrentImage { imageLoader.cancel(on: imageView) }
+                        imageLoader.load(
+                            .bulletin(cid: avatar.cid, declaredFormat: avatar.format),
+                            on: imageView,
+                            settings: settings,
+                            animated: animated,
+                            keepsCurrentImageWhileLoading: keepsCurrentImage,
+                            completion: completion
+                        )
+                        keepsCurrentImage = true
+                    } else {
+                        imageLoader.cancel(on: imageView)
+                        imageView.image = nil
+                        keepsCurrentImage = false
+                        completion?(false)
+                    }
                 }
+                if !Task.isCancelled { self?.options.forceFresh = false }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.options.forceFresh = false
+                completion?(imageView?.image != nil)
             }
-            guard let imageView, request(on: imageView)?.id == identifier else { return }
-            completion?(imageView.image != nil)
         }
     }
 
-    @MainActor
     func cancel(on imageView: UIImageView) {
-        guard request(on: imageView)?.owner === self else { return }
-        objc_setAssociatedObject(imageView, &avatarRequestKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        guard self.imageView === imageView else { return }
+        task?.cancel()
+        task = nil
+        imageLoader.cancel(on: imageView)
         imageView.image = nil
-    }
-}
-
-@MainActor
-private extension PublicProfileAvatarViewModel {
-    private func prepareRequest(on imageView: UIImageView) -> Request {
-        if request(on: imageView)?.owner !== self {
-            imageView.kf.cancelDownloadTask()
-            imageView.kf.setImage(with: nil as Source?)
-        }
-        let current = Request(owner: self)
-        objc_setAssociatedObject(imageView, &avatarRequestKey, current, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        return current
+        self.imageView = nil
     }
 
-    func display(
-        _ avatar: ProfileAvatar?,
-        on imageView: UIImageView,
-        identifier: UUID,
-        settings: ImageViewModelSettings,
-        animated: Bool
-    ) async throws {
-        guard let avatar else {
-            imageView.image = nil
-            return
-        }
-        let provider = PublicProfileAvatarImageDataProvider(avatar: avatar, loadAvatar: loadAvatar)
-        let options = PublicProfileAvatarImageOptionsFactory(format: avatar.format).options(
-            for: settings,
-            animated: animated
-        )
-        let image = try await KingfisherManager.shared
-            .retrieveImage(with: .provider(provider), options: options).image
-        try Task.checkCancellation()
-        guard request(on: imageView)?.id == identifier else { return }
-        if animated {
-            UIView.transition(with: imageView, duration: 0.25, options: .transitionCrossDissolve) {
-                imageView.image = image
-            }
-        } else {
-            imageView.image = image
-        }
+    isolated deinit {
+        task?.cancel()
+        if let imageView { imageLoader.cancel(on: imageView) }
     }
 }

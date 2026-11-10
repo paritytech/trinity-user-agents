@@ -146,7 +146,6 @@
 
         func clearSDKCaches() async {
             await KingfisherManager.shared.cache.clearCache()
-            await PublicProfileAvatarImageOptionsFactory.cache.clearCache()
         }
     }
 #endif

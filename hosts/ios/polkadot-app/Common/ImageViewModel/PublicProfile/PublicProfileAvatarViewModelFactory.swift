@@ -3,38 +3,49 @@ import PolkadotUI
 import TrUAPIHost
 
 protocol PublicProfileAvatarViewModelMaking {
-    /// With `refresh`, display the cached avatar before forcing a metadata refresh.
-    func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol
+    func createViewModel(for username: String, options: PublicProfileResolutionOptions)
+        -> any IdentifiableImageViewModelProtocol
 }
 
 final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
-    private let resolveProfile: @Sendable (String, Bool) async throws -> PublicProfile
-    private let loadAvatar: @Sendable (ProfileAvatar) async throws -> Data
+    private let profiles: @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
+        PublicProfile,
+        Error
+    >
+    private let imageLoader: any CIDImageLoading
 
     init(
-        resolveProfile: @escaping @Sendable (String, Bool) async throws -> PublicProfile,
-        loadAvatar: @escaping @Sendable (ProfileAvatar) async throws -> Data
+        profiles: @escaping @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
+            PublicProfile,
+            Error
+        >,
+        imageLoader: any CIDImageLoading
     ) {
-        self.resolveProfile = resolveProfile
-        self.loadAvatar = loadAvatar
+        self.profiles = profiles
+        self.imageLoader = imageLoader
     }
 
     convenience init(runtimeProvider: TrUAPIHostRuntimeProviding) {
-        self.init(resolveProfile: { username, force in
-            try await runtimeProvider.sharedRuntime().resolvePublicProfile(username: username, force: force)
-        }, loadAvatar: { avatar in
-            try await runtimeProvider.sharedRuntime().loadImage(
-                reference: .bulletin(cid: avatar.cid, declaredFormat: avatar.format)
-            ).bytes
-        })
+        self.init(profiles: { username, options in
+            let runtime = try runtimeProvider.sharedRuntime()
+            try Task.checkCancellation()
+            return runtime.resolvePublicProfile(username: username, options: options)
+        }, imageLoader: CIDImageLoader(loadImage: { reference in
+            let runtime = try runtimeProvider.sharedRuntime()
+            try Task.checkCancellation()
+            return try await runtime.loadImage(reference: reference).bytes
+        }))
     }
 
-    func createViewModel(for username: String, refresh: Bool) -> any ImageViewModelProtocol {
+    func createViewModel(
+        for username: String,
+        options: PublicProfileResolutionOptions
+    ) -> any IdentifiableImageViewModelProtocol {
         PublicProfileAvatarViewModel(
             username: username,
-            refresh: refresh,
-            resolveProfile: resolveProfile,
-            loadAvatar: loadAvatar
+            options: options,
+            profiles: profiles,
+            imageLoader: imageLoader
         )
     }
 }

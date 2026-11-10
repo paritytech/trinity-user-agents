@@ -7,12 +7,12 @@ public struct SearchContactListConfiguration: HashableContentConfiguration {
     public var userName: String
     public var avatarViewModel: AvatarViewModel
     /// Loaded over the placeholder while preserving the row's identity.
-    public var icon: (any ImageViewModelProtocol)?
+    public var icon: AnyImageViewModel?
 
     public init(
         userName: String,
         avatarViewModel: AvatarViewModel,
-        icon: (any ImageViewModelProtocol)? = nil
+        icon: AnyImageViewModel? = nil
     ) {
         self.userName = userName
         self.avatarViewModel = avatarViewModel
@@ -24,18 +24,6 @@ public struct SearchContactListConfiguration: HashableContentConfiguration {
     }
 
     public func updated(for _: UIConfigurationState) -> Self { self }
-
-    /// The row's content identity excludes its asynchronous image loader.
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(userName)
-        hasher.combine(avatarViewModel)
-    }
-
-    /// Compares the content shown while an avatar loads.
-    public static func == (lhs: SearchContactListConfiguration, rhs: SearchContactListConfiguration) -> Bool {
-        lhs.userName == rhs.userName &&
-            lhs.avatarViewModel == rhs.avatarViewModel
-    }
 }
 
 final class SearchContactListView: UIView, UIContentView {

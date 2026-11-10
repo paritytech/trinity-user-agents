@@ -73,7 +73,8 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
                 avatarViewModel: avatarViewModel,
                 icon: peerMetadata.icon.imageViewModel(
                     using: productIconViewModelFactory,
-                    publicProfileFactory: publicProfileAvatarViewModelFactory
+                    publicProfileFactory: publicProfileAvatarViewModelFactory,
+                    options: .init(forceFresh: false, skipStale: false)
                 ),
                 sender: peerMetadata.name,
                 message: lastMessage,
