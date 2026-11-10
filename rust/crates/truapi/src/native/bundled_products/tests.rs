@@ -59,11 +59,11 @@ fn bundled_funding_providers_ship_a_funding_worker() {
 	assert_eq!(
 		providers
 			.iter()
-			.map(|entry| (entry.product_id.as_str().to_string(), entry.origin, entry.has_app))
+			.map(|entry| (entry.product_id.as_str().to_string(), entry.origin, entry.app))
 			.collect::<Vec<_>>(),
 		vec![
-			("bank.dot".to_string(), FundingProviderOrigin::Bundled, Some(false)),
-			("ramp.dot".to_string(), FundingProviderOrigin::Bundled, Some(true)),
+			("bank.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Absent),
+			("ramp.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Shipped),
 		]
 	);
 	assert_eq!(providers[0].worker_manifest.as_deref(), Some(FUNDING));

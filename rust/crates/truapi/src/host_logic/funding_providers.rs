@@ -33,10 +33,24 @@ pub struct FundingProviderEntry {
 	pub root_manifest: Option<String>,
 	/// Where the provider's manifests come from.
 	pub origin: FundingProviderOrigin,
-	/// Whether the provider ships an App, when the host knows, as for one
-	/// it bundles. `None` leaves the core to look its App up on dotNS when
-	/// an App route is shown.
-	pub has_app: Option<bool>,
+	/// Whether the provider ships an App, as the host knows for one it
+	/// bundles.
+	pub app: FundingProviderApp,
+}
+
+/// Whether a funding provider ships an App, so an App route of its can be
+/// shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingProviderApp {
+	/// The host does not know: the core looks the App up on dotNS when an
+	/// App route is shown.
+	#[default]
+	Unknown,
+	/// It ships one.
+	Shipped,
+	/// It ships none, so it shows only external pages.
+	Absent,
 }
 
 /// The providers the host offers from its remote configuration's
@@ -59,7 +73,7 @@ pub fn provider_config(
 				worker_manifest: None,
 				root_manifest: None,
 				origin: FundingProviderOrigin::Published,
-				has_app: None,
+				app: FundingProviderApp::Unknown,
 			});
 		}
 	}

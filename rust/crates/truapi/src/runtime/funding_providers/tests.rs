@@ -78,7 +78,7 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 				worker_manifest: worker_manifest.clone(),
 				root_manifest: None,
 				origin: FundingProviderOrigin::Published,
-				has_app: None,
+				app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 			})
 			.collect(),
 	)
@@ -131,7 +131,7 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 			worker_manifest: Some(manifest(CARD_IN)),
 			root_manifest: None,
 			origin: FundingProviderOrigin::Bundled,
-			has_app: None,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.expect("offered"),
 	);
@@ -154,7 +154,7 @@ fn an_unreadable_snapshot_is_refused_when_offered() {
 			worker_manifest: Some(worker_manifest.to_string()),
 			root_manifest: None,
 			origin: FundingProviderOrigin::Published,
-			has_app: None,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.map(|offered| offered.len())
 		.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
@@ -200,7 +200,7 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 					worker_manifest: Some(manifest(CARD_IN)),
 					root_manifest: None,
 					origin: FundingProviderOrigin::Published,
-					has_app: None,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		)
@@ -298,7 +298,7 @@ fn a_candidate_carries_its_providers_brand() {
 			worker_manifest: Some(manifest(CARD_IN)),
 			root_manifest: Some(root("Shipped")),
 			origin: FundingProviderOrigin::Bundled,
-			has_app: None,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.expect("offered"),
 	);

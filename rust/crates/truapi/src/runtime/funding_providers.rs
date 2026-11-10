@@ -28,8 +28,9 @@ use crate::{
 		funding::FundingSessionError,
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
-			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
-			LearnedSupport, LimitScope, amount_limits, country_support, provider_config,
+			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
+			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
+			provider_config,
 		},
 		funding_view,
 		worker_manifest::WorkerManifest,
@@ -46,8 +47,8 @@ struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
 	origin: FundingProviderOrigin,
-	/// Whether it ships an App, when the host said.
-	has_app: Option<bool>,
+	/// Whether it ships an App, as the host said.
+	app: FundingProviderApp,
 	/// What dotNS last said the provider publishes: its Worker manifest, or
 	/// `None` for nothing usable. `None` until dotNS has answered.
 	live: Option<Option<WorkerManifest>>,
@@ -259,12 +260,12 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
-	/// Whether `provider_id` ships an App, when the host said so.
-	pub fn has_app(&self, provider_id: &ProductId) -> Option<bool> {
+	/// Whether `provider_id` ships an App, as the host said.
+	pub fn app(&self, provider_id: &ProductId) -> FundingProviderApp {
 		lock(&self.entries)
 			.iter()
 			.find(|entry| entry.product_id == *provider_id)
-			.and_then(|entry| entry.has_app)
+			.map_or(FundingProviderApp::Unknown, |entry| entry.app)
 	}
 
 	/// Whether the host offers no funding provider.
@@ -591,7 +592,7 @@ fn offered_providers(
 				product_id,
 				snapshot,
 				origin: entry.origin,
-				has_app: entry.has_app,
+				app: entry.app,
 				live: None,
 				reading: false,
 				brand,

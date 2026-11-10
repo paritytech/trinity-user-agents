@@ -278,7 +278,7 @@ fn the_provider_config_lists_published_then_unnamed_bundled() {
 		worker_manifest: Some("{}".to_string()),
 		root_manifest: None,
 		origin: FundingProviderOrigin::Bundled,
-		has_app: Some(true),
+		app: crate::host_logic::funding_providers::FundingProviderApp::Shipped,
 	};
 	let names = ["ramp.dot", "bank.dot", "ramp.dot", "not a product!"].map(str::to_string);
 	let (entries, invalid) =

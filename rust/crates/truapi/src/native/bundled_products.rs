@@ -12,7 +12,7 @@ use crate::{
 	host_logic::{
 		dev_server::DevServerProduct,
 		dotns::ProductLink,
-		funding_providers::{FundingProviderEntry, FundingProviderOrigin},
+		funding_providers::{FundingProviderApp, FundingProviderEntry, FundingProviderOrigin},
 		worker_manifest::WorkerManifest,
 	},
 	image_loader::ImageReference,
@@ -200,7 +200,11 @@ pub fn bundled_funding_providers(
 					worker_manifest: Some(json),
 					root_manifest: reader.read_text(join(&product.path, ROOT_MANIFEST)),
 					origin: FundingProviderOrigin::Bundled,
-					has_app: Some(product.has_app),
+					app: if product.has_app {
+						FundingProviderApp::Shipped
+					} else {
+						FundingProviderApp::Absent
+					},
 				}),
 				Ok(_) => None,
 				Err(error) => {
