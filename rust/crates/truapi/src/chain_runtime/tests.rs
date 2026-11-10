@@ -2672,7 +2672,7 @@ fn a_budget_line_names_four_dropped_dotns_follows_inside_the_detail_a_host_recei
 	assert_eq!(holding.len(), FOLLOWS_A_NODE_BUDGETS);
 	assert_eq!(
 		line,
-		"this connection to chain 0xabababababababababababababababababababababababababababababababab holds 4 of 4 follows, the next is refused: dotns:10:manifest:notes-worker-demo.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:11:manifest:some.longish.product.identifier.paseo open 600s, event 588s, calls 7, cal\u{2026}, dotns:12:manifest:peopl.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:13:manifest:a.dot open 600s, event 588s, calls 7, call 570s, dropped"
+		"this connection to chain 0xabababababababababababababababababababababababababababababababab holds 4 of 4 follows, the next is refused: dotns:10:manifest:notes-worker-demo.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:11:manifest:some.longish.product.identifier.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:12:manifest:peopl.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:13:manifest:a.dot open 600s, event 588s, calls 7, call 570s, dropped"
 	);
 	assert!(
 		line.chars().count() <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
@@ -2724,4 +2724,60 @@ fn only_an_unreachable_node_is_a_transient_connect_failure() {
 	for error in refused {
 		assert_eq!(kind_for(error), RuntimeFailureKind::HostFailure, "{}", error());
 	}
+}
+
+/// A follow left open for a day carries wider numbers than a fresh one, so a
+/// line of four such follows with long product ids outruns the detail a host
+/// receives. It is the names that give way: every follow still says how long
+/// it has been open, when it was last used and that its receiver is gone.
+#[test]
+fn a_budget_line_of_day_old_follows_shortens_names_and_keeps_every_activity() {
+	let opened = SystemTime::now();
+	let products = [
+		"notes-worker-demo.paseo",
+		"some.longish.product.identifier.paseo",
+		"another.rather.long.product.identifier.paseo",
+		"a.dot",
+	];
+	let mut follows = HashMap::new();
+	for (index, product) in products.into_iter().enumerate() {
+		let (sender, receiver) = mpsc::unbounded();
+		drop(receiver);
+		follows.insert(
+			format!("truapi:dotns:{}:manifest:{product}", index + 1000),
+			FollowState {
+				with_runtime: false,
+				client_subscription_id: None,
+				remote_subscription_id: Some("REMOTE".to_string()),
+				abort: None,
+				sender,
+				cancelled: Arc::new(AtomicBool::new(false)),
+				activity: FollowActivity {
+					opened_at: opened,
+					last_event_at: Some(opened + Duration::from_secs(12)),
+					calls: 123_456,
+					last_call_at: Some(opened + Duration::from_secs(30)),
+				},
+			},
+		);
+	}
+
+	let holding = ChainConnection::follows_holding_a_slot(&follows);
+	let line = ChainConnection::budget_line(
+		&encode_hex(&[0xab; 32]),
+		&holding,
+		&follows,
+		opened + Duration::from_secs(86_400),
+	);
+
+	let activity = "open 86400s, event 86388s, calls 123456, call 86370s, dropped";
+	assert!(
+		line.chars().count() <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
+		"the host receives {} of {} chars: {line}",
+		line.chars().count(),
+		crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+	);
+	assert_eq!(line.matches(activity).count(), FOLLOWS_A_NODE_BUDGETS, "{line}");
+	assert!(line.contains(&format!("dotns:1003:manifest:a.dot {activity}")), "{line}");
+	assert!(line.contains('\u{2026}'), "a long name is cut and says so: {line}");
 }
