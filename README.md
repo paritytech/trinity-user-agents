@@ -745,7 +745,7 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
 
