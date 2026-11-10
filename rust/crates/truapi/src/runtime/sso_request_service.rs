@@ -126,8 +126,6 @@ enum StoredSessionActivationError {
 	Read(String),
 	#[display("stored auth session changed during activation")]
 	Changed,
-	#[display("failed to clear previous session: {_0}")]
-	Cleanup(String),
 }
 
 #[derive(Default)]
@@ -302,7 +300,7 @@ impl SsoRequestService {
 		.await;
 		#[cfg(test)]
 		self.wait_at_external_session_activation_pause().await;
-		self.set_connected_session_if_current(resolved, activation_epoch, true).await?;
+		self.set_connected_session_if_current(resolved, activation_epoch, true).await;
 		Ok(())
 	}
 
@@ -332,9 +330,7 @@ impl SsoRequestService {
 		}
 		let (activation_epoch, read) = {
 			let hold = self.hold_owner().await;
-			self.drain_session_deletions(hold.as_ref())
-				.await
-				.map_err(StoredSessionActivationError::Cleanup)?;
+			self.drain_session_deletions(hold.as_ref()).await;
 			let epoch = self.advance_session_lifecycle();
 			let read = self.platform.read_core_storage(CoreStorageKey::AuthSession).await;
 			(epoch, read)
@@ -366,9 +362,7 @@ impl SsoRequestService {
 		)
 		.await;
 		let hold = self.hold_owner().await;
-		self.drain_session_deletions(hold.as_ref())
-			.await
-			.map_err(StoredSessionActivationError::Cleanup)?;
+		self.drain_session_deletions(hold.as_ref()).await;
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
@@ -381,16 +375,12 @@ impl SsoRequestService {
 			},
 		};
 		if let Some((clear_auth, error)) = error {
-			if self.begin_session_clear(clear_auth, Some(activation_epoch), None) &&
-				let Err(reason) = self.drain_session_deletions(hold.as_ref()).await
-			{
-				warn!(%reason, "session cleanup remains pending");
+			if self.begin_session_clear(clear_auth, Some(activation_epoch), None) {
+				self.drain_session_deletions(hold.as_ref()).await;
 			}
 			return Err(error);
 		}
-		self.prepare_session_installation(hold.as_ref(), &resolved)
-			.await
-			.map_err(StoredSessionActivationError::Cleanup)?;
+		self.prepare_session_installation(hold.as_ref(), &resolved).await;
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
@@ -404,9 +394,7 @@ impl SsoRequestService {
 				.write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
 				.await;
 		}
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "session cleanup remains pending");
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 		Ok(())
 	}
 
@@ -444,9 +432,7 @@ impl SsoRequestService {
 		if !self.is_current_login_attempt(generation) {
 			return Ok(false);
 		}
-		self.prepare_session_installation(hold.as_ref(), session)
-			.await
-			.map_err(|reason| truapi::latest::GenericError { reason })?;
+		self.prepare_session_installation(hold.as_ref(), session).await;
 		let mut epoch = {
 			let mut selection = self.selection.lock().expect("session selection mutex poisoned");
 			if selection.login_generation != generation {
@@ -482,17 +468,13 @@ impl SsoRequestService {
 				return Ok(true);
 			}
 		}
-		self.drain_session_deletions(hold.as_ref())
-			.await
-			.map_err(|reason| truapi::latest::GenericError { reason })?;
+		self.drain_session_deletions(hold.as_ref()).await;
 		Ok(false)
 	}
 
 	async fn discard_login_session(&self) {
 		let hold = self.hold_owner().await;
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "cancelled login cleanup remains pending");
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 	}
 
 	/// Discard pairing bootstrap material so the next login generates a new
@@ -599,7 +581,8 @@ impl SsoRequestService {
 		true
 	}
 
-	async fn drain_session_deletions(&self, hold: Option<&OwnerHold>) -> Result<(), String> {
+	/// Retry the deletions cleared sessions still owe; failed ones stay queued.
+	async fn drain_session_deletions(&self, hold: Option<&OwnerHold>) {
 		let pending_auth_deletion = self
 			.selection
 			.lock()
@@ -607,7 +590,7 @@ impl SsoRequestService {
 			.pending_auth_deletion;
 		let pending_grants = hold.is_some_and(|hold| hold.owner.begin_cleanup(&hold.barrier));
 		if !pending_auth_deletion && !pending_grants {
-			return Ok(());
+			return;
 		}
 		if self.session_state.current().is_none() {
 			self.auth_state.store_disconnected();
@@ -630,7 +613,9 @@ impl SsoRequestService {
 			Some(hold) => hold.owner.finish_cleanup(&hold.barrier).await,
 			None => Ok(()),
 		};
-		auth_result.and(grants_result)
+		if let Err(reason) = auth_result.and(grants_result) {
+			warn!(%reason, "session cleanup remains pending");
+		}
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
@@ -643,23 +628,16 @@ impl SsoRequestService {
 			return;
 		}
 		let hold = self.hold_owner().await;
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "session cleanup remains pending");
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 	}
 
-	async fn prepare_session_installation(
-		&self,
-		hold: Option<&OwnerHold>,
-		session: &SessionInfo,
-	) -> Result<(), String> {
-		self.drain_session_deletions(hold).await?;
+	async fn prepare_session_installation(&self, hold: Option<&OwnerHold>, session: &SessionInfo) {
+		self.drain_session_deletions(hold).await;
 		if let Some(hold) = hold {
 			hold.owner
 				.prepare_session(&hold.barrier, self.session_state.current().as_ref(), session)
 				.await;
 		}
-		Ok(())
 	}
 
 	async fn set_connected_session_if_current(
@@ -667,13 +645,13 @@ impl SsoRequestService {
 		session: SessionInfo,
 		activation_epoch: u64,
 		external_session: bool,
-	) -> Result<bool, String> {
+	) -> bool {
 		let hold = self.hold_owner().await;
 		if self.session_epoch() != activation_epoch {
-			return Ok(false);
+			return false;
 		}
-		self.prepare_session_installation(hold.as_ref(), &session).await?;
-		Ok(self.install_session_if_current(session, activation_epoch, external_session, None))
+		self.prepare_session_installation(hold.as_ref(), &session).await;
+		self.install_session_if_current(session, activation_epoch, external_session, None)
 	}
 
 	fn install_session_if_current(
@@ -722,9 +700,7 @@ impl SsoRequestService {
 	#[cfg(test)]
 	pub async fn set_connected_session_for_tests(&self, session: SessionInfo) {
 		let epoch = self.advance_session_lifecycle();
-		self.set_connected_session_if_current(session, epoch, false)
-			.await
-			.expect("test session installs");
+		self.set_connected_session_if_current(session, epoch, false).await;
 	}
 
 	// Stale peer notifications wake only their own waiters.
@@ -734,9 +710,7 @@ impl SsoRequestService {
 			return;
 		}
 		let hold = self.hold_owner().await;
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "session cleanup remains pending");
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 	}
 
 	/// Whether the selected session's SSO channel is `key`.
@@ -766,10 +740,7 @@ impl SsoRequestService {
 		}
 
 		let hold = self.hold_owner().await;
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "session cleanup remains pending");
-			return self.current_session();
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 		{
 			let selection = self.selection.lock().expect("session selection mutex poisoned");
 			if selection.session_epoch != epoch ||
@@ -786,9 +757,7 @@ impl SsoRequestService {
 		{
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
 		}
-		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
-			warn!(%reason, "session cleanup remains pending");
-		}
+		self.drain_session_deletions(hold.as_ref()).await;
 		self.current_session()
 	}
 }

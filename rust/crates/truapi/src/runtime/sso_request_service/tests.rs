@@ -101,11 +101,14 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			storage.values.lock().unwrap().clone(),
 			BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
 		);
+		block_on(host.activate_external_session(&blob)).unwrap();
 		assert_eq!(
-			block_on(host.activate_external_session(&blob)),
-			Err("storage deletion failed".to_string())
+			(host.session_state.current(), storage.values.lock().unwrap().clone()),
+			(
+				Some(session.clone()),
+				BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
+			)
 		);
-		assert_eq!(host.session_state.current(), None);
 
 		*storage.failure.lock().unwrap() = None;
 		block_on(host.activate_external_session(&blob)).unwrap();
