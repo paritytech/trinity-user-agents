@@ -395,10 +395,10 @@ class DockletHideStateTest {
         assertTrue(state.isOffScreen)
     }
 
-    private fun TestScope.hideState(animations: Boolean = true) = DockletHideState(
+    private fun TestScope.hideState() = DockletHideState(
         scope = CoroutineScope(coroutineContext + TestMonotonicFrameClock(this) + Job()),
         haptics = { moments += it },
-        animationsEnabled = { animations },
+        animationsEnabled = { true },
         onLanded = { landings += it },
     ).also { it.drawbridge = bridge }
 

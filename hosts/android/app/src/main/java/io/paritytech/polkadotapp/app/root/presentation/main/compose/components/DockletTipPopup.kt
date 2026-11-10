@@ -14,7 +14,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
-import io.paritytech.polkadotapp.design.components.docklet.DockletTipGesture
 import io.paritytech.polkadotapp.design.components.tooltip.NonFocusablePopupProperties
 import io.paritytech.polkadotapp.design.components.tooltip.PolkadotTooltip
 import io.paritytech.polkadotapp.design.components.tooltip.PolkadotTooltipContent
@@ -22,6 +21,8 @@ import io.paritytech.polkadotapp.design.components.tooltip.TooltipAlignment
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import kotlin.math.hypot
 import io.paritytech.polkadotapp.common.R as RCommon
+
+private const val FlingAwayDp = 56f
 
 @Composable
 fun DockletTipPopup(
@@ -53,7 +54,7 @@ fun DockletTipPopup(
                         moved = maxOf(moved, hypot(delta.x, delta.y).toDp().value)
                         if (!change.pressed) break
                     }
-                    if (DockletTipGesture.flungAway(moved)) currentOnRestore()
+                    if (moved > FlingAwayDp) currentOnRestore()
                 }
             },
         ) {

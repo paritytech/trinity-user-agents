@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.app.root.presentation.root
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import io.paritytech.polkadotapp.app.root.domain.main.DockletHideCause
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import kotlinx.coroutines.Dispatchers
@@ -51,20 +50,20 @@ class RootNavBarViewModelDockletTest {
     }
 
     @Test
-    fun `a hide shows the tip the interactor picks and marks it shown`() {
-        every { interactor.dockletTipFor(DockletHideCause.Swipe) } returns DockletTip.Tucked
+    fun `a hide shows its tip once the interactor allows it and marks it shown`() {
+        every { interactor.shouldShowDockletTip(DockletTip.Tucked) } returns true
 
-        viewModel.onDockletHidden(DockletHideCause.Swipe)
+        viewModel.onDockletHidden(DockletTip.Tucked)
 
         assertEquals(DockletTip.Tucked, viewModel.dockletTip.value)
         verify { interactor.markDockletTipShown(DockletTip.Tucked) }
     }
 
     @Test
-    fun `a hide with no tip left shows none`() {
-        every { interactor.dockletTipFor(DockletHideCause.Auto) } returns null
+    fun `a hide whose tip was already shown shows none`() {
+        every { interactor.shouldShowDockletTip(DockletTip.AutoHidden) } returns false
 
-        viewModel.onDockletHidden(DockletHideCause.Auto)
+        viewModel.onDockletHidden(DockletTip.AutoHidden)
 
         assertNull(viewModel.dockletTip.value)
         verify(exactly = 0) { interactor.markDockletTipShown(any()) }

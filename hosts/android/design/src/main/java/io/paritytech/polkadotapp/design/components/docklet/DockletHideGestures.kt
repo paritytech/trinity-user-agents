@@ -31,6 +31,15 @@ fun rememberDockletHideSwipe(state: DockletHideState, enabled: () -> Boolean): M
                 val downRoot = placement.rootOf(down.position)
                 var direction = DockletDirection.Undecided
                 var hiding = false
+                fun classify(position: Offset) {
+                    if (direction != DockletDirection.Undecided || hiding) return
+                    val delta = placement.rootOf(position) - downRoot
+                    direction = DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false)
+                    if (direction == DockletDirection.Sideways) {
+                        hiding = true
+                        state.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
+                    }
+                }
                 if (state.isMoving) {
                     hiding = true
                     down.consume()
@@ -42,28 +51,13 @@ fun rememberDockletHideSwipe(state: DockletHideState, enabled: () -> Boolean): M
                         val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) {
                             released = !change.isConsumed
-                            if (direction == DockletDirection.Undecided && !hiding) {
-                                val upRoot = placement.rootOf(change.position)
-                                val delta = upRoot - downRoot
-                                direction = DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false)
-                                if (direction == DockletDirection.Sideways) {
-                                    hiding = true
-                                    state.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
-                                }
-                            }
+                            classify(change.position)
                             if (hiding) state.moveHide(dockletPoint(placement.rootOf(change.position)), change.uptimeMillis.milliseconds)
                             if (hiding || direction == DockletDirection.Vertical) change.consume()
                             break
                         }
                         val changeRoot = placement.rootOf(change.position)
-                        if (direction == DockletDirection.Undecided && !hiding) {
-                            val delta = changeRoot - downRoot
-                            direction = DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false)
-                            if (direction == DockletDirection.Sideways) {
-                                hiding = true
-                                state.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
-                            }
-                        }
+                        classify(change.position)
                         if (hiding) state.moveHide(dockletPoint(changeRoot), change.uptimeMillis.milliseconds)
                         if (hiding || direction == DockletDirection.Vertical) change.consume()
                     }

@@ -74,11 +74,12 @@ internal fun rememberDockletCardGestures(
                 var dragging = false
                 var hiding = false
                 var direction = DockletDirection.Undecided
-                if (atRest && hideState.isMoving) {
+                fun startHiding() {
                     hiding = true
                     endPress()
                     hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
                 }
+                if (atRest && hideState.isMoving) startHiding()
                 var moved = 0f
                 var amount = 0f
                 val travelUp = (latestFrames().rest.top - latestFrames().step2.top)
@@ -93,11 +94,7 @@ internal fun rememberDockletCardGestures(
                                 val upRoot = placement.rootOf(change.position)
                                 val delta = upRoot - downRoot
                                 moved = max(moved, delta.getDistance())
-                                if (DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false) == DockletDirection.Sideways) {
-                                    hiding = true
-                                    endPress()
-                                    hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
-                                }
+                                if (DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = false) == DockletDirection.Sideways) startHiding()
                             }
                             if (hiding) hideState.moveHide(dockletPoint(placement.rootOf(change.position)), change.uptimeMillis.milliseconds)
                             released = DockletGestures.isRelease(change.isConsumed, ownsGesture, dragging)
@@ -115,20 +112,13 @@ internal fun rememberDockletCardGestures(
                         if (atRest) {
                             val upward = (-delta.y).toDp()
                             if (direction == DockletDirection.Undecided && !hiding) {
-                                direction = DockletGestures.direction(
-                                    drag = DpOffset(delta.x.toDp(), delta.y.toDp()),
-                                    settling = hideState.isMoving,
-                                )
+                                direction = DockletGestures.direction(DpOffset(delta.x.toDp(), delta.y.toDp()), settling = hideState.isMoving)
                                 if (direction == DockletDirection.Vertical && delta.y < 0f) {
                                     dragging = true
                                     endPress()
                                     state.startSwipeUp()
                                 }
-                                if (direction == DockletDirection.Sideways) {
-                                    hiding = true
-                                    endPress()
-                                    hideState.startHide(dockletPoint(downRoot), down.uptimeMillis.milliseconds)
-                                }
+                                if (direction == DockletDirection.Sideways) startHiding()
                             }
                             if (hiding) hideState.moveHide(dockletPoint(changeRoot), change.uptimeMillis.milliseconds)
                             if (dragging) {

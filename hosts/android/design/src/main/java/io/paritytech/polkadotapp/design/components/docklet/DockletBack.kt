@@ -27,5 +27,3 @@ fun dockletBackEdge(swipeEdge: Int, sdkInt: Int): DockletBackEdge = when (swipeE
     BackEventCompat.EDGE_LEFT -> if (sdkInt >= Build.VERSION_CODES.VANILLA_ICE_CREAM) DockletBackEdge.Left else DockletBackEdge.None
     else -> DockletBackEdge.None
 }
-
-fun dockletSearchBackStep(step: DockletStep): DockletStep = if (step == DockletStep.Step2) DockletStep.Step1 else DockletStep.Rest

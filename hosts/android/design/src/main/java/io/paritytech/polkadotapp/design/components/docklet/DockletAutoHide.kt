@@ -56,7 +56,7 @@ class DockletAutoHide(private val scope: CoroutineScope, private val onHide: () 
         idleJob = null
     }
 
-    companion object {
+    private companion object {
         val OutsideDelay: Duration = Duration.ZERO
         val IdleDelay: Duration = 3.seconds
     }

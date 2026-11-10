@@ -46,7 +46,6 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.app.root.domain.main.DockletHideCause
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotAction
@@ -60,7 +59,6 @@ import io.paritytech.polkadotapp.design.components.docklet.DockletLanding
 import io.paritytech.polkadotapp.design.components.docklet.DockletMaterials
 import io.paritytech.polkadotapp.design.components.docklet.DockletStep
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackdrop
-import io.paritytech.polkadotapp.design.components.docklet.dockletSearchBackStep
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletCardState
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlowMasks
@@ -114,7 +112,7 @@ fun RootNavBarOverlay(
     backdropSource: View?,
     onTabSelected: (BottomTab) -> Unit,
     onScannerTooltipDismiss: () -> Unit,
-    onDockletHidden: (DockletHideCause) -> Unit,
+    onDockletHidden: (DockletTip) -> Unit,
     takeSessionPeek: () -> Boolean,
     onDockletTipDismiss: () -> Unit,
     onAppClick: (Long) -> Unit,
@@ -168,7 +166,7 @@ fun RootNavBarOverlay(
         when (landing) {
             DockletLanding.HiddenBySwipe, DockletLanding.HiddenQuietly -> {
                 pull.collapsePanels()
-                onDockletHidden(if (landing == DockletLanding.HiddenQuietly) DockletHideCause.Auto else DockletHideCause.Swipe)
+                onDockletHidden(if (landing == DockletLanding.HiddenQuietly) DockletTip.AutoHidden else DockletTip.Tucked)
                 if (!hidden && takeSessionPeek()) peek()
             }
             DockletLanding.Shown -> {
@@ -216,7 +214,7 @@ fun RootNavBarOverlay(
     // Composed only while open, so it registers after the screens' own BackHandlers and runs before them.
     if (cardOpen) {
         val searchBack = {
-            if (dockletSearchBackStep(cardState.step) == DockletStep.Step1) changeCardStep(DockletStep.Step1) else pull.collapsePanels()
+            if (cardState.step == DockletStep.Step2) changeCardStep(DockletStep.Step1) else pull.collapsePanels()
         }
         BackHandler(onBack = searchBack)
         OverlayBackCallback(onBack = searchBack)

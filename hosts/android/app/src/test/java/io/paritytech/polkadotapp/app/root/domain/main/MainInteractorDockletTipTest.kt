@@ -2,11 +2,10 @@ package io.paritytech.polkadotapp.app.root.domain.main
 
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.app.root.data.storage.OneShotTooltip
 import io.paritytech.polkadotapp.app.root.data.storage.TooltipStorage
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MainInteractorDockletTipTest {
@@ -24,34 +23,33 @@ class MainInteractorDockletTipTest {
 
     @Test
     fun `the first swipe hide shows the tucked tip`() {
-        assertEquals(DockletTip.Tucked, interactor.dockletTipFor(DockletHideCause.Swipe))
+        assertTrue(interactor.shouldShowDockletTip(DockletTip.Tucked))
     }
 
     @Test
     fun `the tucked tip shows once ever`() {
         interactor.markDockletTipShown(DockletTip.Tucked)
 
-        assertNull(interactor.dockletTipFor(DockletHideCause.Swipe))
-        verify { tooltipStorage.markShown(OneShotTooltip.DockletTucked) }
+        assertFalse(interactor.shouldShowDockletTip(DockletTip.Tucked))
     }
 
     @Test
     fun `the first auto-hide shows its own tip`() {
-        assertEquals(DockletTip.AutoHidden, interactor.dockletTipFor(DockletHideCause.Auto))
+        assertTrue(interactor.shouldShowDockletTip(DockletTip.AutoHidden))
     }
 
     @Test
     fun `after the auto-hide tip neither tip shows again`() {
         interactor.markDockletTipShown(DockletTip.AutoHidden)
 
-        assertNull(interactor.dockletTipFor(DockletHideCause.Auto))
-        assertNull(interactor.dockletTipFor(DockletHideCause.Swipe))
+        assertFalse(interactor.shouldShowDockletTip(DockletTip.AutoHidden))
+        assertFalse(interactor.shouldShowDockletTip(DockletTip.Tucked))
     }
 
     @Test
     fun `the tucked tip leaves the auto-hide tip still to come`() {
         interactor.markDockletTipShown(DockletTip.Tucked)
 
-        assertEquals(DockletTip.AutoHidden, interactor.dockletTipFor(DockletHideCause.Auto))
+        assertTrue(interactor.shouldShowDockletTip(DockletTip.AutoHidden))
     }
 }

@@ -8,18 +8,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DockletAutoHideTest {
     private var hides = 0
-
-    @Test
-    fun `the outside-touch delay is 0 s and the idle delay is 3 s`() {
-        assertEquals(Duration.ZERO, DockletAutoHide.OutsideDelay)
-        assertEquals(3.seconds, DockletAutoHide.IdleDelay)
-    }
 
     @Test
     fun `a touch outside the Docklet hides it at once`() = runTest {

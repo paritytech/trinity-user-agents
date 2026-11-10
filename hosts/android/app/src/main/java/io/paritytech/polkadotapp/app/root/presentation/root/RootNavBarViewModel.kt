@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.app.root.presentation.root
 
 import androidx.compose.ui.unit.Dp
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.app.root.domain.main.DockletHideCause
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
@@ -94,8 +93,8 @@ class RootNavBarViewModel @Inject constructor(
         bottomNavHeightProvider.set(value)
     }
 
-    fun onDockletHidden(cause: DockletHideCause) {
-        val tip = interactor.dockletTipFor(cause) ?: return
+    fun onDockletHidden(tip: DockletTip) {
+        if (!interactor.shouldShowDockletTip(tip)) return
         dockletTip.value = tip
         interactor.markDockletTipShown(tip)
     }

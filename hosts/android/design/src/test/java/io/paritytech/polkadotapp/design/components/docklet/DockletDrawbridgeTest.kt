@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.design.components.docklet
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -102,13 +101,6 @@ class DockletDrawbridgeTest {
             assertEquals(0.75f * dock.width.value, bridge.hideTravel(touchX = dock.left.value), EPS)
             assertEquals(bridge.map(DockletPoint(dock.left.value, bridge.pivot.y), DockletPose(hidden.angle, 0f, 0f)).y, bridge.glowFrame.top.value, EPS)
         }
-    }
-
-    @Test
-    fun `the grab zone reaches 47 dp in from the edge`() {
-        assertTrue(reference.inGrabZone(DockletPoint(360f, 500f)))
-        assertFalse(reference.inGrabZone(DockletPoint(340f, 500f)))
-        assertFalse(reference.inGrabZone(DockletPoint(395f, 400f)))
     }
 
     @Test

@@ -39,7 +39,7 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
     private val dockRight = dock.right.value
     private val dockBottom = dock.bottom.value
     private val dockWidth = dock.width.value
-    val width = screenWidth.value
+    private val width = screenWidth.value
     val height = screenHeight.value
 
     val pivot = DockletPoint(dockRight + PivotGap, dockTop + dock.height.value / 2)
@@ -90,9 +90,6 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
 
     fun backBand(): ClosedFloatingPointRange<Float> = glowTop - BackBandSlop..dockBottom + BackBandSlop
 
-    fun inGrabZone(point: DockletPoint): Boolean =
-        point.x >= width - GrabZoneWidth && point.y in glowTop..glowTop + glowLength
-
     fun aimedProgress(point: DockletPoint, progress: Float): Float =
         rawAim(point, rawAim(point, progress))
 
@@ -103,15 +100,15 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
 
     companion object {
         const val QuarterTurn = (PI / 2).toFloat()
-        const val PivotGap = 14f
-        const val ExtraSlide = 60f
         const val GlowWidth = 24f
-        const val GrabZoneWidth = 47f
-        const val EdgeZoneLength = 200f
-        const val GlowTopClearance = 56f
-        const val GlowBottomClearance = 8f
-        const val GrabSlop = 16f
-        const val BackBandSlop = 24f
+        private const val PivotGap = 14f
+        private const val ExtraSlide = 60f
+        private const val GrabZoneWidth = 47f
+        private const val EdgeZoneLength = 200f
+        private const val GlowTopClearance = 56f
+        private const val GlowBottomClearance = 8f
+        private const val GrabSlop = 16f
+        private const val BackBandSlop = 24f
         private const val SlideExponent = 3
         private const val HideTravelShare = 0.75f
         private const val EdgeTravelMultiple = 1.2f
@@ -124,7 +121,7 @@ class DockletDrawbridge(dock: DockletFrame, screenWidth: Dp, screenHeight: Dp) {
 
         fun rubberBand(distance: Float, limit: Float): Float = limit * (1f - 1f / (1f + distance / limit))
 
-        fun overshoot(beyond: Float): Float = OvershootCap * (1f - 1f / (1f + OvershootRate * beyond))
+        private fun overshoot(beyond: Float): Float = OvershootCap * (1f - 1f / (1f + OvershootRate * beyond))
 
         fun progressFromTravel(raw: Float): Float = when {
             raw < 0f -> -overshoot(-raw)

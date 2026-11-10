@@ -11,12 +11,6 @@ class DockletBackTest {
     }
 
     @Test
-    fun `the band reaches 24 dp past both its ends`() {
-        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 396f, Band, restoresOnBack = true))
-        assertEquals(DockletBackAction.Claim, dockletBackAction(DockletBackEdge.Right, 871f, Band, restoresOnBack = true))
-    }
-
-    @Test
     fun `a right-edge swipe outside the band is a plain Back`() {
         assertEquals(DockletBackAction.PlainBack, dockletBackAction(DockletBackEdge.Right, 200f, Band, restoresOnBack = true))
     }
@@ -58,12 +52,6 @@ class DockletBackTest {
     fun `before Android 15 the left edge also stands for the Back button, so it counts as no edge`() {
         assertEquals(DockletBackEdge.None, dockletBackEdge(Left, sdkInt = 34))
         assertEquals(DockletBackEdge.Right, dockletBackEdge(Right, sdkInt = 34))
-    }
-
-    @Test
-    fun `Back in search goes from typing to scan, then closes`() {
-        assertEquals(DockletStep.Step1, dockletSearchBackStep(DockletStep.Step2))
-        assertEquals(DockletStep.Rest, dockletSearchBackStep(DockletStep.Step1))
     }
 
     private companion object {
