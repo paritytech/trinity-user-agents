@@ -69,6 +69,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            case let .bundled(directory):
+                try await configuration.page.applied(to: serveFiles(at: directory))
             #if DEBUG
                 case let .devServer(url, _):
                     url
@@ -142,11 +144,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
-        let served = try await contentLoader.open(
-            configuration.productDomain,
-            kind: configuration.executable,
-            policy: .untilCancelled
-        ).archive
+        let served = try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
+            .archive
         try checkNotDisposed()
 
         guard served != servedContent else { return }
@@ -165,8 +164,7 @@ private extension SPARustRuntime {
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let served = try await contentLoader.open(domain, kind: configuration.executable, policy: .untilCancelled)
-            .archive
+        let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 
@@ -175,11 +173,19 @@ private extension SPARustRuntime {
     }
 
     func serve(_ content: DotNsResolvedContent) async throws -> URL {
+        let productURL = try await serveFiles(at: content.localURL)
+        servedContent = content
+        return productURL
+    }
+
+    /// Serves the App's files at `contentURL` under the page's base domain,
+    /// which is what permission grants and web storage are keyed by.
+    func serveFiles(at contentURL: URL) async throws -> URL {
         let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
-            productFileProvider: DotNsFileProvider(contentURL: content.localURL)
+            productFileProvider: DotNsFileProvider(contentURL: contentURL)
         )
 
         guard let productURL = schemeHandler.getProductUrl() else {
@@ -189,7 +195,6 @@ private extension SPARustRuntime {
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()
         await schemeHandlerProxy.setHandler(schemeHandler)
-        servedContent = content
 
         return productURL
     }

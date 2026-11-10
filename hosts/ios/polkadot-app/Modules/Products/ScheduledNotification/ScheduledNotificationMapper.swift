@@ -19,8 +19,8 @@ extension ScheduledNotificationMapper: CoreDataMapperProtocol {
             )
         }
 
-        return ScheduledNotificationEntry(
-            productId: try ProductId(productId),
+        return try ScheduledNotificationEntry(
+            productId: ProductId(productId),
             notificationId: UInt32(bitPattern: entity.notificationId)
         )
     }

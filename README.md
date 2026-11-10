@@ -175,6 +175,8 @@ scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           Run the CLI on both chain backends and compare what each serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
                            ci.yml change gates
@@ -239,6 +241,8 @@ JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/tru
 a single package with tree-shakeable subpath entries:
 
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
+- `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
+  leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
@@ -259,11 +263,16 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node, which only the WASM build compiles, are not counted
-against it. A light-client connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. Only a provider built with `catalog()` resolves a genesis nobody
+registered from the catalog, so one for remote nodes never starts the light client
+for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
+running after its last connection closes. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
+On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
+certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,
 stall verdict) as a watch.
 The crate
@@ -305,6 +314,18 @@ allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
 only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
 `AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
 runtime's type by name.
+
+### Contract calls
+
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
+
+```rust
+let transaction = contracts.dry_run(&signer, &contract, &input).await?;
+transaction.execute_until_finalized().await?;
+```
 
 ### Durable transactions
 
@@ -406,6 +427,21 @@ backlog in one batch, then each live page.
 A host without a core database, such as the browser core, answers
 `Unsupported` to the served calls.
 
+### Images
+
+Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
+[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+A reference is a Bulletin CID, with the format its source declares if it
+declares one. The core reads the blob with `bitswap_v1_get` over its own
+Bulletin connection, the call the CLI host's preimage lookup also makes, and
+returns the bytes only once they hash to the CID. It passes on PNG, JPEG, GIF
+and WebP, read from the file header, up to 2 MiB and 4096 pixels per side, and
+rejects bytes in a format other than the declared one. A load asks again every
+6 seconds while Bulletin does not hold the blob, and a second after a failed
+request, such as a light client's before its first Bitswap peer connects, for
+up to 30 seconds in all. The content key it returns is the CID, for keying a
+host's disk cache. The browser core does not expose it.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -451,6 +487,8 @@ A method returning `Subscription` generates a streaming handler. See the
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
+Rust embedders use `truapi::Spawner::new(handle)` with a Tokio runtime handle on native targets and `truapi::Spawner::default()` on WASM. Shared core code schedules background work with `spawner.spawn(async move { ... })`, which dispatches to the platform executor. The native runtime must remain alive to run its tasks; submissions after shutdown are cancelled.
+
 ## Develop
 
 Common tasks are wrapped in the top-level `Makefile`. Run `make help` for the full list.
@@ -470,7 +508,8 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
-Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Unit tests schedule tasks with the `#[cfg(test)]` helpers in [`spawner.rs`](rust/crates/truapi/src/spawner.rs). Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Contract response fixtures encode the Revive result structs, re-exported only in test builds.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
 Product ID and link parsing rules are tested in Rust. Native ProductId tests
@@ -504,7 +543,15 @@ make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 make e2e-funding-cli                # funding requests and statuses against a scripted funding host
+make e2e-cli-backends               # the phases above and the dev diagnosis on rpc and light-client
 ```
+
+`make e2e-cli-backends` (`scripts/cli-backends-e2e.ts`) runs the signing and
+pairing phases and the `dev` playground diagnosis once per chain backend, then
+checks the CLI's routing rules and the live chain tests. It fails when a Chain,
+Statement Store or Preimage example fails on either backend or the two disagree.
+`SESSION=<name>` creates or selects the signing session; reports land in
+`target/cli-backends/`.
 
 The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from

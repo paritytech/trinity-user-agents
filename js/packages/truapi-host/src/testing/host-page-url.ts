@@ -52,6 +52,98 @@ export interface HostPageConfig {
    * logs why a call failed before mapping it to a protocol answer.
    */
   logLevel?: string;
+  /**
+   * Product storage the host holds before the product loads, by the product's
+   * own keys, stored as UTF-8. It travels in the page URL, so a reload of the
+   * host page starts from it again.
+   */
+  productStorage?: Record<string, string>;
+}
+
+/**
+ * Query parameters the host page reads as its own configuration. Every other
+ * parameter on the host page belongs to the product's deep link.
+ */
+const HOST_PAGE_PARAMS = new Set([
+  "product",
+  "mock",
+  "productId",
+  "runtimeConfig",
+  "storage",
+  "accounts",
+  "login",
+  "topology",
+  "allowances",
+  "withheld",
+  "logLevel",
+]);
+
+/** Paths the test host server answers with its own assets. */
+const HOST_PAGE_ASSETS = ["/test-host.js", "/test-host-worker.js", "/wasm/"];
+
+/**
+ * The URL the product loads, as a real host builds it from the address bar:
+ * the host page's path is appended to the product's own path, its query
+ * parameters other than the host's configuration are added, and its hash
+ * replaces the product's. A relative `productUrl` resolves against `host`.
+ */
+export function productUrlFor(
+  productUrl: string,
+  host: { href: string; pathname: string; search: string; hash: string },
+): string {
+  const target = new URL(productUrl, host.href);
+  if (host.pathname !== "/") {
+    target.pathname = target.pathname.replace(/\/$/, "") + host.pathname;
+  }
+  for (const [name, value] of new URLSearchParams(host.search)) {
+    if (!HOST_PAGE_PARAMS.has(name)) target.searchParams.append(name, value);
+  }
+  if (host.hash) target.hash = host.hash;
+  return target.toString();
+}
+
+/**
+ * The host page URL that opens the product at `link`, a path with an optional
+ * query and hash such as `/notes/1?view=raw#top`.
+ *
+ * `hostUrl` is a configured host page URL, as `createTestHostServer` returns
+ * one. The link's path and hash replace the host page's, and its query
+ * parameters are added to the host's configuration.
+ */
+export function deepLinkUrl(hostUrl: string, link: string): string {
+  if (!link.startsWith("/")) {
+    throw new Error(
+      `testHost deep link "${link}" must start with "/": it is a path within ` +
+        "the product, not a URL.",
+    );
+  }
+  const parsed = new URL(link, "http://deep-link.invalid");
+  if (
+    HOST_PAGE_ASSETS.some((asset) =>
+      asset.endsWith("/")
+        ? parsed.pathname.startsWith(asset)
+        : parsed.pathname === asset,
+    )
+  ) {
+    throw new Error(
+      `testHost deep link "${link}" names a path the test host serves ` +
+        "itself, so the host page would not load.",
+    );
+  }
+  const url = new URL(hostUrl);
+  url.pathname = parsed.pathname;
+  for (const [name, value] of parsed.searchParams) {
+    if (HOST_PAGE_PARAMS.has(name)) {
+      throw new Error(
+        `testHost deep link "${link}" carries \`${name}\`, which the host ` +
+          "page reads as its own configuration, so the product would not " +
+          "receive it.",
+      );
+    }
+    url.searchParams.append(name, value);
+  }
+  url.hash = parsed.hash;
+  return url.toString();
 }
 
 /** Apply `config` to a host page URL, returning the configured URL. */
@@ -62,6 +154,9 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
   if (config.productId) url.searchParams.set("productId", config.productId);
   if (config.runtimeConfig) {
     url.searchParams.set("runtimeConfig", JSON.stringify(config.runtimeConfig));
+  }
+  if (config.productStorage && Object.keys(config.productStorage).length) {
+    url.searchParams.set("storage", JSON.stringify(config.productStorage));
   }
   if (config.accounts) {
     // `name` for a built-in, `name:<64 hex>` when the test supplies entropy.
@@ -86,4 +181,36 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
   }
   if (config.logLevel) url.searchParams.set("logLevel", config.logLevel);
   return url.toString();
+}
+
+/** Why a derivation URI cannot name an account. */
+const NO_DERIVATION_URI =
+  "is not supported by the TrUAPI test host: a session activates from 32 " +
+  "bytes of BIP-39 entropy, not a `//Alice`-style derivation path, so the " +
+  "addresses differ from polkadot-js's by construction. Use a built-in name " +
+  "(alice, bob, charlie, dave) or pass explicit entropy.";
+
+/** Account names for the page URL, rejecting anything the host cannot honour. */
+export function accountNames(
+  accounts: (string | { name: string; uri?: string; entropy?: Uint8Array })[],
+): (string | { name: string; entropy: Uint8Array })[] {
+  return accounts.map((account) => {
+    if (typeof account === "string") return account;
+    if (account.uri !== undefined) {
+      throw new Error(
+        `testHost account "${account.name}": \`uri\` ${NO_DERIVATION_URI}`,
+      );
+    }
+    // Entropy is carried through rather than reduced to a name: it is the only
+    // way to sign as an identity that is not one of the built-ins.
+    if (account.entropy !== undefined) {
+      if (account.entropy.length !== 32) {
+        throw new Error(
+          `testHost account "${account.name}": entropy must be 32 bytes, got ${account.entropy.length}`,
+        );
+      }
+      return { name: account.name, entropy: account.entropy };
+    }
+    return account.name;
+  });
 }

@@ -156,6 +156,41 @@ describe("createMockHost callbacks", () => {
     expect(host.sentRpc()).toEqual(["rpc-1"]);
   });
 
+  it("declines reviews after setConfirmUserActions(false), until reset", async () => {
+    const host = createMockHost();
+    const review = {
+      tag: "ResourceAllocation" as const,
+      value: { callingProductId: asProductId("mock.dot"), resources: [] },
+    };
+    const confirm = () =>
+      host.callbacks.userConfirmation.confirmUserAction(review);
+    const permission = () =>
+      host.callbacks.userConfirmation.confirmPermission(review);
+
+    expect(await confirm()).toBe(true);
+    host.setConfirmUserActions(false);
+    expect(await confirm()).toBe(false);
+    expect(await permission()).toBe("Deny");
+    host.setConfirmUserActions(true);
+    expect(await confirm()).toBe(true);
+
+    host.setConfirmUserActions(false);
+    host.reset();
+    expect(await confirm()).toBe(true);
+  });
+
+  it("restores a declining boot value on reset", async () => {
+    const host = createMockHost({ confirmUserActions: false });
+    host.setConfirmUserActions(true);
+    host.reset();
+    expect(
+      await host.callbacks.userConfirmation.confirmUserAction({
+        tag: "ResourceAllocation",
+        value: { callingProductId: asProductId("mock.dot"), resources: [] },
+      }),
+    ).toBe(false);
+  });
+
   it("replays scripted chain frames", async () => {
     const host = createMockHost({ chainResponses: ["f1", "f2"] });
     const conn = await host.callbacks.chain.connect(new Uint8Array(32));
@@ -217,6 +252,81 @@ describe("createMockHost callbacks", () => {
       [Symbol.asyncIterator]()
       .next();
     expect(miss.value).toEqual(ok(undefined));
+  });
+
+  it("a preimage lookup receives a value seeded after it opened", async () => {
+    // A product subscribes and waits for content to land, as it does under a
+    // real host, so a seed made after the lookup opened has to reach it.
+    const value = new Uint8Array([1, 2, 3]);
+    const key = createMockHost().seedPreimage(value);
+    const host = createMockHost();
+    const waiting = host.callbacks.preimage
+      .lookupPreimage(key)
+      [Symbol.asyncIterator]();
+    const other = host.callbacks.preimage
+      .lookupPreimage(new Uint8Array(32).fill(9))
+      [Symbol.asyncIterator]();
+    expect(await drain(waiting, 1)).toEqual([ok(undefined)]);
+    expect(await drain(other, 1)).toEqual([ok(undefined)]);
+
+    host.seedPreimage(value);
+
+    expect(await drain(waiting, 1)).toEqual([ok(value)]);
+    // A seed reaches only the lookups waiting on its own key.
+    await expect(drain(other, 1)).rejects.toThrow("delivered 0 of 1");
+  });
+
+  it("seeding a preimage already held does not deliver it again", async () => {
+    const value = new Uint8Array([1, 2, 3]);
+    const host = createMockHost();
+    const key = host.seedPreimage(value);
+    const lookup = host.callbacks.preimage
+      .lookupPreimage(key)
+      [Symbol.asyncIterator]();
+    expect(await drain(lookup, 1)).toEqual([ok(value)]);
+
+    host.seedPreimage(value);
+
+    await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
+  });
+
+  it("reports unserved chains as unsupported only when asked to", async () => {
+    const unserved = `0x${"ab".repeat(32)}`;
+    const supported = async (
+      genesisHash: string,
+      options: { featureSupported?: boolean; onlyServedChains?: boolean } = {},
+    ) =>
+      (
+        await createMockHost(options).callbacks.features.featureSupported({
+          tag: "Chain",
+          value: { genesisHash },
+        })
+      ).supported;
+    // The default keeps answering every chain as supported, so existing
+    // suites that rely on a silent chain they never declared keep working.
+    expect(await supported(unserved)).toBe(true);
+    // onlyServedChains answers as a real host does, which makes a product's
+    // "network unavailable" path reachable.
+    const served = { onlyServedChains: true };
+    expect(await supported(MOCK_GENESIS.assetHub, served)).toBe(true);
+    expect(await supported(unserved, served)).toBe(false);
+    expect(
+      await supported(MOCK_GENESIS.assetHub, { featureSupported: false }),
+    ).toBe(false);
+  });
+
+  it("writeProductStorage seeds an entry without counting as a host call", async () => {
+    const host = createMockHost();
+    const stored = host.callbacks.productStorage.subscribeStorage("k");
+    const updates = stored[Symbol.asyncIterator]();
+    await updates.next();
+    const calls = host.getHostCallCount();
+    host.writeProductStorage("k", new Uint8Array([7]));
+    expect(host.getHostCallCount()).toBe(calls);
+    expect(await host.callbacks.productStorage.read("k")).toEqual(
+      new Uint8Array([7]),
+    );
+    expect(await drain(updates, 1)).toEqual([ok({ value: "0x07" })]);
   });
 
   it("permission policy can deny device and allow remote", async () => {
@@ -1014,6 +1124,29 @@ describe("statement injection through the chain connection", () => {
         },
       },
     });
+  });
+
+  it("reports the channel, expiry and decryption key a statement carries", () => {
+    const host = createMockHost();
+    const channel = `0x${"cc".repeat(32)}`;
+    const decryptionKey = `0x${"dd".repeat(32)}`;
+    const injected = host.injectStatement({
+      topics: [`0x${"aa".repeat(32)}`],
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(injected).toMatchObject({
+      channel,
+      expiry: 7688681351006057567n,
+      decryptionKey,
+    });
+    expect(host.getStatements()[0]).toMatchObject({ channel, decryptionKey });
+
+    const plain = host.injectStatement({ topics: [] });
+    expect(plain.channel).toBeUndefined();
+    expect(plain.expiry).toBeUndefined();
+    expect(plain.decryptionKey).toBeUndefined();
   });
 
   it("retains a statement injected before the product subscribes", async () => {

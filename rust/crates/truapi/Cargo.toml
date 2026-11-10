@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.28.0"
+version = "0.30.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -49,6 +49,8 @@ runtime = [
     "dep:nanoid",
     "dep:blake2b_simd",
     "dep:sp-crypto-hashing",
+    "dep:alloy-primitives",
+    "dep:alloy-sol-types",
     "dep:schnorrkel",
     "dep:substrate-bip39",
     "dep:zeroize",
@@ -84,17 +86,18 @@ runtime = [
     "dep:itertools",
     "dep:binary-merkle-tree",
     "dep:hash-db",
+    "dep:imagesize",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime", "dep:strum"]
+mock = ["runtime"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
-strum = { workspace = true, optional = true }
+strum = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
@@ -116,6 +119,8 @@ url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-sol-types = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
 substrate-bip39 = { workspace = true, optional = true }
 zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
@@ -130,6 +135,7 @@ tracing = { workspace = true, optional = true }
 # `registry` + `std` only: pulls the Registry + per-layer filter/reload, but
 # not `env-filter` (which drags in `regex`, heavy on wasm).
 tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
+imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
@@ -166,7 +172,6 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 [dev-dependencies]
 bip39 = { workspace = true }
 scale-info = { workspace = true, features = ["std"] }
-strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"

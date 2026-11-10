@@ -7,24 +7,18 @@ import UIKit
 /// The shelf's content: the settings and connection status pair at its top edge, then the open products
 /// as a grid. The bar supplies the material and the growth; this view supplies what the shelf shows.
 struct TabBarShelfView: View {
-    let chips: [TabBarShelfChip]
-    let mountedChipId: UUID?
+    let model: TabBarBarViewModel
     /// The product cell holding the selection pill. Set only while the shelf is open, so the pill leaves the cell
     /// as the shelf closes.
     let pillProductId: UUID?
-    let onChipTapped: (UUID) -> Void
-    let onChipCloseRequested: (UUID) -> Void
-    let onConnectionStatusTapped: () -> Void
-    let onSettingsTapped: () -> Void
-    let showsSettingsAttention: Bool
 
     var body: some View {
         VStack(spacing: DSSpacings.large) {
-            iconRow
-            if chips.isEmpty {
-                emptyState
+            TabBarShelfIconRow(model: model)
+            if model.shelfChips.isEmpty {
+                TabBarShelfEmptyState()
             } else {
-                grid
+                TabBarShelfGrid(model: model, pillProductId: pillProductId)
             }
         }
         .padding(DSSpacings.mediumIncreased)
@@ -32,53 +26,36 @@ struct TabBarShelfView: View {
     }
 }
 
-private extension TabBarShelfView {
-    static let iconSize: CGFloat = 28
-    static let touchSize: CGFloat = 44
-    static let columns = [GridItem(.adaptive(minimum: 56), spacing: DSSpacings.small, alignment: .top)]
+/// The connection status and settings buttons at the top edge of the shelf.
+private struct TabBarShelfIconRow: View {
+    let model: TabBarBarViewModel
 
-    var iconRow: some View {
+    var body: some View {
         HStack(spacing: DSSpacings.large) {
             Spacer()
             iconButton(
                 DSTabBarConnectionGlyph.image,
-                label: String(localized: .Common.connectionStatusAccessibilityLabel),
-                action: onConnectionStatusTapped
+                label: .Common.connectionStatusAccessibilityLabel,
+                action: { model.onShelfConnectionStatusTapped?() }
             )
             iconButton(
                 UIImage.tabSettings,
-                label: String(localized: .tabSettings),
-                showsAttention: showsSettingsAttention,
-                action: onSettingsTapped
+                label: .tabSettings,
+                showsAttention: model.showsSettingsAttention,
+                action: { model.onShelfSettingsTapped?() }
             )
             .accessibilityId(AccessibilityID.Tab.settings)
         }
     }
+}
 
-    var emptyState: some View {
-        Text(.Products.productTabsEmpty)
-            .typography(.bodySmall)
-            .foregroundStyle(Color.fgSecondary)
-            .lineLimit(1)
-    }
-
-    var grid: some View {
-        LazyVGrid(columns: Self.columns, spacing: DSSpacings.small) {
-            ForEach(chips, id: \.id) { chip in
-                TabBarShelfCell(
-                    chip: chip,
-                    isSelected: chip.id == mountedChipId,
-                    hasPill: chip.id == pillProductId,
-                    action: { onChipTapped(chip.id) },
-                    onClose: { onChipCloseRequested(chip.id) }
-                )
-            }
-        }
-    }
+private extension TabBarShelfIconRow {
+    static let iconSize: CGFloat = 28
+    static let touchSize: CGFloat = 44
 
     func iconButton(
         _ image: UIImage,
-        label: String,
+        label: LocalizedStringResource,
         showsAttention: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -94,8 +71,41 @@ private extension TabBarShelfView {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(Text(label))
     }
+}
+
+/// The message the shelf shows while no products are open.
+private struct TabBarShelfEmptyState: View {
+    var body: some View {
+        Text(.Products.productTabsEmpty)
+            .typography(.bodySmall)
+            .foregroundStyle(Color.fgSecondary)
+            .lineLimit(1)
+    }
+}
+
+/// The open products as a grid of cells.
+private struct TabBarShelfGrid: View {
+    let model: TabBarBarViewModel
+    let pillProductId: UUID?
+
+    var body: some View {
+        LazyVGrid(columns: Self.columns, spacing: DSSpacings.small) {
+            ForEach(model.shelfChips) { chip in
+                TabBarShelfCell(
+                    chip: chip,
+                    isSelected: chip.id == model.mountedChipId,
+                    hasPill: chip.id == pillProductId,
+                    model: model
+                )
+            }
+        }
+    }
+}
+
+private extension TabBarShelfGrid {
+    static let columns = [GridItem(.adaptive(minimum: 56), spacing: DSSpacings.small, alignment: .top)]
 }
 
 /// One open product: its icon with the name beneath, highlighted when it is the mounted product and enclosed by
@@ -104,11 +114,12 @@ private struct TabBarShelfCell: View {
     let chip: TabBarShelfChip
     let isSelected: Bool
     let hasPill: Bool
-    let action: () -> Void
-    let onClose: () -> Void
+    let model: TabBarBarViewModel
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            model.onShelfChipTapped?(chip.id)
+        } label: {
             VStack(spacing: DSSpacings.small) {
                 icon
                 Text(verbatim: chip.name)
@@ -127,13 +138,13 @@ private struct TabBarShelfCell: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
             Button(role: .destructive) {
-                onClose()
+                close()
             } label: {
                 Label(String(localized: .Common.close), systemImage: "xmark")
             }
         }
         .accessibilityAction(named: String(localized: .Common.close)) {
-            onClose()
+            close()
         }
     }
 }
@@ -156,5 +167,9 @@ private extension TabBarShelfCell {
             }
         }
         .frame(width: Self.iconSize, height: Self.iconSize)
+    }
+
+    func close() {
+        model.onShelfChipCloseRequested?(chip.id)
     }
 }

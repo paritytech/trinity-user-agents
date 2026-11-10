@@ -32,7 +32,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,13 +50,16 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.coreMarkers
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -84,7 +86,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
@@ -114,7 +115,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     )
 
     private var execution: TrUAPIProductExecution? = null
-    private var pocketBridge: ProductPocketHostBridge? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -291,19 +291,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
             cachedChains.set(chains)
-            val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
-                pocket = pocket,
                 game = gameBridge(productId),
             )
             execution = opened
-            pocketBridge = pocket
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            pocket.start(opened::notifyPocketCardsChanged)
             chainProvider.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
@@ -350,10 +346,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
-        // Before the execution closes: a card change arriving afterwards would republish through a
-        // handle that no longer exists.
-        pocketBridge?.stop()
-        pocketBridge = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()
@@ -435,22 +427,31 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
 
-// Info lines leave the device; everything else stays on it.
+// Logs one core line at the severity its marker carries, which is what decides whether the line
+// leaves the device and how loud it is when it lands.
 internal fun logCoreLine(marker: String, detail: String) {
-    val exported = EXPORTED_CORE_MARKER_PREFIXES.any { prefix -> marker.startsWith(prefix) }
-    val priority = if (exported) Log.INFO else Log.DEBUG
+    val priority = CORE_MARKER_PRIORITIES[marker] ?: Log.DEBUG
     Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
 }
 
-// An allowlist rather than the inverse: a marker the core adds later stays local until someone says
-// what it carries. `truapi.native.*` is what stays behind, because those lines carry notification
-// bodies, URLs and permission requests. The iOS host keeps the same list in `logCoreLine`.
-private val EXPORTED_CORE_MARKER_PREFIXES = listOf(
-    "truapi.tracing.",
-    "truapi.chain.",
-    "truapi.core.",
-    "truapi.ws_bridge.",
-)
+// The priority each core marker is logged at, read once from the core's own table. A marker the
+// table keeps on the device, or does not list at all, has no priority here and is logged below the
+// level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
+// cannot answer costs the log line instead of every top-level helper in this file.
+private val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
+    coreMarkers().mapNotNull { (marker, markerClass) ->
+        when (markerClass) {
+            is MarkerClass.Export ->
+                marker to when (markerClass.severity) {
+                    Severity.INFO -> Log.INFO
+                    Severity.WARN -> Log.WARN
+                    Severity.ERROR -> Log.ERROR
+                }
+
+            MarkerClass.Local -> null
+        }
+    }.toMap()
+}
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"

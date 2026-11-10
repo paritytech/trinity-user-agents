@@ -22,6 +22,7 @@ mod errors;
 mod events;
 mod executor;
 mod platform;
+mod pocket;
 mod renderer;
 mod runtime;
 mod subscribers;
@@ -34,23 +35,24 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
+	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
+	NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
-pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
+pub use pocket::NativePocketObserver;
+pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
-use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
@@ -212,7 +214,7 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 /// Largest nesting a face may carry, matching what the core accepts on the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
-const MAX_FACE_DEPTH: u32 = 64;
+pub(crate) const MAX_FACE_DEPTH: u32 = 64;
 
 /// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
@@ -330,23 +332,6 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 	Some(deepest + 1)
 }
 
-/// The bytes to keep a face under, so it can be drawn again at a cold start.
-///
-/// SCALE, the encoding the tree already travels in, rather than a shape a host
-/// invents for its own store: a host that writes its own cannot read back what
-/// the protocol later adds, and two hosts disagree about what they kept.
-#[uniffi::export]
-pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
-	node.encode()
-}
-
-/// Read back a face kept as [`encode_renderer_node`] wrote it.
-#[uniffi::export]
-pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
-		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })
-}
-
 /// Screen a product-supplied Pocket card id with the rules every Pocket call
 /// already applies, so a card declared in a manifest is refused where it is
 /// declared rather than at its first wire call.
@@ -400,6 +385,22 @@ pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
 #[uniffi::export]
 pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);
+}
+
+/// Every marker the core may address to a host, keyed by its dotted target.
+///
+/// A host reads this once and looks each marker it is handed up in the result.
+/// A target the map does not hold stays on the device, because nothing has
+/// said what its detail carries. The core refuses such a target before a host
+/// is handed it, so this is the host's backstop rather than its first line.
+/// Pure and stateless, so a host may call it whenever it likes, though reading
+/// it once at startup is what it is for.
+#[uniffi::export]
+pub fn core_markers() -> std::collections::HashMap<String, crate::markers::MarkerClass> {
+	crate::markers::MARKERS
+		.iter()
+		.map(|marker| (marker.target.to_string(), marker.class))
+		.collect()
 }
 
 #[cfg(test)]

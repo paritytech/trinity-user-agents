@@ -21,6 +21,7 @@ final class SPANativeRuntimeInteractor {
     /// `setup`, released on deinit.
     private let workerManager: ProductWorkerManaging
     private let workerProductId: ProductId
+    private let chainStatusProvider: ChainStatusProviding?
     private var workerToken: ProductWorkerToken?
     private var workerTask: Task<Void, Never>?
 
@@ -35,6 +36,7 @@ final class SPANativeRuntimeInteractor {
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
+    private var chainStatusTask: Task<Void, Never>?
 
     init(
         nativeApi: ProductsNativeApiProtocol,
@@ -47,7 +49,8 @@ final class SPANativeRuntimeInteractor {
         productRepository: AnyDataProviderRepository<Product>,
         chatProviderFactory: ChatContactDataProviderMaking,
         workerManager: ProductWorkerManaging,
-        workerProductId: ProductId
+        workerProductId: ProductId,
+        chainStatusProvider: ChainStatusProviding?
     ) {
         self.nativeApi = nativeApi
         self.scriptsFactory = scriptsFactory
@@ -60,12 +63,14 @@ final class SPANativeRuntimeInteractor {
         self.chatProviderFactory = chatProviderFactory
         self.workerManager = workerManager
         self.workerProductId = workerProductId
+        self.chainStatusProvider = chainStatusProvider
     }
 
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
         reloadTask?.cancel()
+        chainStatusTask?.cancel()
         workerTask?.cancel()
         workerToken?.unlock()
 
@@ -86,6 +91,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
         jsEngine = engine
         acquireWorker()
+        subscribeToChainStatus()
         setupTask = Task { [weak self] in
             await self?.performSetup(engine: engine)
         }
@@ -156,6 +162,20 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
 }
 
 private extension SPANativeRuntimeInteractor {
+    func subscribeToChainStatus() {
+        guard let chainStatusProvider else { return }
+
+        chainStatusTask = Task { [weak self, chainStatusProvider, logger] in
+            do {
+                for try await rows in chainStatusProvider.statusStream() {
+                    self?.presenter?.didReceiveChainStatus(rows)
+                }
+            } catch {
+                logger.error("SPA: Chain status stream failed: \(error)")
+            }
+        }
+    }
+
     /// Holds the worker for the screen's lifetime. Acquire waits for the boot, so
     /// if the screen is torn down first the token is released instead of leaked.
     func acquireWorker() {
@@ -212,7 +232,7 @@ private extension SPANativeRuntimeInteractor {
             // is what permission grants and web storage are keyed by.
             let content = try await contentLoader.open(
                 domain,
-                kind: configuration.executable,
+                kind: .app,
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             )
@@ -289,12 +309,11 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 
     func serveAppliedBuild() {
         let domain = configuration.productDomain
-        let kind = configuration.executable
 
         reloadTask?.cancel()
         reloadTask = Task { [weak self, contentLoader] in
             do {
-                let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
+                let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
 
                 guard !Task.isCancelled else { return }
 
@@ -311,7 +330,7 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 
 private extension SPANativeRuntimeInteractor {
     var servedContentId: ProductId? {
-        try? resolvedProduct?.contentId(for: configuration.executable)
+        try? resolvedProduct?.contentId(for: .app)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {

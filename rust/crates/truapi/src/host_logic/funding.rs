@@ -13,9 +13,11 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::error;
 use truapi::latest::{
-	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
-	FundingFailure, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
-	GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
+	FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
+	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit, FundingDetail,
+	FundingDirection, FundingFact, FundingFailure, FundingFrameTarget, FundingInboundUpdate,
+	FundingOutboundUpdate, FundingPayout, FundingQuote, FundingRail, FundingReceived,
+	FundingUpdate, GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
 };
 use url::Url;
 
@@ -23,29 +25,47 @@ use crate::platform::ProductId;
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has not recorded yet the core keeps in
-/// full, newest first, so a host that never records them cannot grow the
-/// stored sessions without bound. Older ones are compacted into the session
-/// pack.
-const UNACKNOWLEDGED_LIMIT: usize = 200;
+/// How many ended sessions the host has not acknowledged yet are handed to it
+/// again when funding resumes, newest first, so a host that never
+/// acknowledges them is not handed an ever longer list.
+pub const UNACKNOWLEDGED_LIMIT: usize = 200;
 /// Most top-ups a provider may name for one session, and most top-ups or
 /// payments it may hold started for one at a time, as getcash claims or pays
 /// in up to three attempts, each under a new id after the host refused the
 /// last.
 const TOP_UP_LIMIT: usize = 3;
+/// How many `Details` updates a session keeps.
+const DETAILS_LIMIT: usize = 8;
+/// How many sets of deposit instructions a session keeps.
+const DEPOSITS_LIMIT: usize = 8;
+/// Most decimals an asset's amount can carry and still fit a `u128`.
+const DECIMALS_LIMIT: u8 = 38;
+/// URI schemes deposit instructions cannot use: a page, a script or a file
+/// instead of a payment.
+const NOT_PAYMENT_SCHEMES: &[&str] = &[
+	"about",
+	"blob",
+	"data",
+	"file",
+	"ftp",
+	"http",
+	"https",
+	"javascript",
+	"vbscript",
+	"ws",
+	"wss",
+];
 /// How long an assigned session with no funds moving waits for its
 /// provider's next update before it expires, so a provider that went silent
 /// cannot hold the session and its worker for good. A bank transfer can take
 /// days, so this is longer than the unassigned window.
 const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has recorded the core keeps in full per
-/// owner, newest first. Older ones are compacted into the session pack.
-pub(crate) const RECORDED_PER_OWNER: usize = 64;
-
-/// An ended session the host recorded, compacted once newer recorded sessions
-/// of its owner pushed it out of the full record. It keeps what history needs,
-/// so its owner can still read how it ended and the host can still list it;
-/// the pack is never trimmed.
+/// How long a top-up the user cancelled before paying stays open to a payment
+/// that arrives anyway, as a bank transfer already sent can take days.
+const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+/// An ended session as the session pack keeps it once nothing can change it.
+/// It keeps what history needs, so its owner can still read how it ended and
+/// the host can still list it; the pack is never trimmed.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingSessionSummary {
@@ -61,24 +81,27 @@ pub struct FundingSessionSummary {
 	pub stage: FundingStage,
 	/// When the session was opened, in Unix milliseconds.
 	pub opened_at_ms: u64,
-}
-
-impl From<FundingSession> for FundingSessionSummary {
-	fn from(session: FundingSession) -> Self {
-		Self {
-			intent: session.intent,
-			owner_product_id: session.owner_product_id,
-			direction: session.direction,
-			amount: session.amount,
-			stage: session.stage,
-			opened_at_ms: session.opened_at_ms,
-		}
-	}
+	/// The provider that served it, `None` when none took it.
+	pub provider_id: Option<ProductId>,
+	/// The quote the provider was chosen on, with its rail, asset and
+	/// network. `None` when no provider took it.
+	pub choice: Option<FundingChoice>,
+	/// How the host shows its ending: the row's status.
+	pub status: FundingStatus,
+	/// The provider's payout outcome on a withdrawal, once it reported one.
+	pub payout: Option<FundingPayout>,
+	/// What a refund returned to the balance once its claims were final.
+	pub refunded: Option<u128>,
+	/// The provider's latest transaction id.
+	pub transaction_id: Option<String>,
+	/// The provider's latest reference.
+	pub reference: Option<String>,
 }
 
 impl FundingSession {
 	/// The session as history keeps it, leaving the session as it is.
 	pub fn summary(&self) -> FundingSessionSummary {
+		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
@@ -86,6 +109,13 @@ impl FundingSession {
 			amount: self.amount,
 			stage: self.stage.clone(),
 			opened_at_ms: self.opened_at_ms,
+			provider_id: self.provider_id.clone(),
+			choice: self.choice.clone(),
+			status: self.status(ended_at_ms),
+			payout: self.payout().cloned(),
+			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+			transaction_id: self.transaction_id(),
+			reference: self.reference(),
 		}
 	}
 }
@@ -123,11 +153,11 @@ pub struct FundingSession {
 	/// When the session expires if no provider takes it, in Unix
 	/// milliseconds.
 	pub deadline_ms: u64,
-	/// Whether the host has recorded the session's outcome in its own
-	/// history. An ended session is handed to the host until it has.
+	/// Whether the host has told the user how the session ended. An ended
+	/// session is handed to the host until it has.
 	pub acknowledged: bool,
 	/// Product id of the provider the user chose. `None` until they choose.
-	pub provider_id: Option<String>,
+	pub provider_id: Option<ProductId>,
 	/// When the provider was assigned, in Unix milliseconds.
 	pub assigned_at_ms: Option<u64>,
 	/// Where the user's cancel stands, while one is pending or answered.
@@ -138,6 +168,386 @@ pub struct FundingSession {
 	/// session, oldest first. A `Crediting` or `Collecting` report must name
 	/// one the host took.
 	pub started: Vec<StartedFunds>,
+	/// What the user chose the provider on: its quote, and the rail and
+	/// asset it priced. `None` until chosen, or when chosen unquoted.
+	pub choice: Option<FundingChoice>,
+	/// The refund of a failed payout, once the provider reported starting
+	/// it.
+	pub refund: Option<FundingRefund>,
+	/// The provider's latest `Progress`. Not stored, since the provider
+	/// reports it again as it checks.
+	#[codec(skip)]
+	pub detail: Option<FundingDetailRecord>,
+}
+
+/// A provider's latest `Progress`, with the step it was reported in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingDetailRecord {
+	/// The fact and its time.
+	pub detail: FundingDetail,
+	/// The session's step when it was reported; the detail is shown only
+	/// while the session is still on it.
+	pub step: u32,
+	/// When it was reported, in Unix milliseconds.
+	pub at_ms: u64,
+}
+
+/// The top-up a provider gives a failed payout back with, and what it
+/// returned.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingRefund {
+	/// The top-up.
+	pub top_up: StartedFunds,
+	/// What its claims returned to the user's balance once they were final.
+	/// `None` while the core follows them.
+	pub refunded: Option<u128>,
+}
+
+/// The quote a session's provider was chosen on, with the rail and asset it
+/// priced.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingChoice {
+	/// The quote.
+	pub quote: FundingQuote,
+	/// The rail the user pays or is paid by.
+	pub rail: FundingRail,
+	/// The asset symbol the user pays with or receives.
+	pub asset: String,
+	/// The network a crypto quote was asked for.
+	pub network: Option<String>,
+}
+
+impl FundingChoice {
+	/// The balance amount the quote moves in `direction`: what it credits
+	/// inbound, what it debits outbound.
+	pub fn balance_amount(&self, direction: FundingDirection) -> u128 {
+		match direction {
+			FundingDirection::In => self.quote.receive_amount,
+			FundingDirection::Out => self.quote.send_amount,
+		}
+	}
+}
+
+/// A session's progress as a host draws it: its milestones, each with when it
+/// was reached, the line under them, and when the provider was last heard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingProgress {
+	/// The milestones in order: Started, Received and Added in; Started,
+	/// Received and Sent out. One reached later fills in any skipped before
+	/// it with its time.
+	pub steps: Vec<FundingProgressStep>,
+	/// The line under the milestones, saying what is happening now.
+	pub band: FundingBand,
+	/// When the provider last reported on the session, a `Progress`
+	/// included, or took it, in Unix milliseconds, for "Checked with the
+	/// provider 12s ago". `None` until a provider takes the session.
+	pub last_heard_at_ms: Option<u64>,
+	/// The line under the band: the provider's latest `Progress` fact for
+	/// the current step. `None` when it reported none for this step, and the
+	/// host shows "Checked with the provider" with `last_heard_at_ms`.
+	pub detail: Option<FundingDetail>,
+	/// When the session failed, if it did.
+	pub failed_at_ms: Option<u64>,
+	/// The provider's transaction id, from its latest `Details`.
+	pub transaction_id: Option<String>,
+	/// The provider's reference, from its latest `Details`.
+	pub reference: Option<String>,
+	/// Where and what the user pays, from the provider's latest `Deposit`.
+	pub deposit: Option<FundingDeposit>,
+	/// What arrived when it differs from what was asked, from the latest
+	/// `PaymentReceived`.
+	pub mismatch: Option<FundingReceived>,
+	/// Whether the provider is retrying: it named another top-up after a
+	/// first one claimed only part of the amount.
+	pub retrying: bool,
+	/// How the payout went, once the provider reported it on a released
+	/// outbound session.
+	pub payout: Option<FundingPayout>,
+	/// What a failed payout's refund returned to the user's balance, once
+	/// its claims are final.
+	pub refunded: Option<u128>,
+	/// Where the session stands, in one line the host words.
+	pub status: FundingStatus,
+	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
+	/// provider reports first, in Unix milliseconds, so the host reads the
+	/// progress again then. `None` while a top-up waits on the user's
+	/// payment.
+	pub longer_at_ms: Option<u64>,
+	/// Whether money moved: the provider started or named a top-up or
+	/// payment, or holds the user's payment. Until then a second cancel ends
+	/// the session; from then on a cancel is a request the provider answers,
+	/// and only the provider can end the session.
+	pub money_moved: bool,
+}
+
+/// Where a session stands, one line for the host to word: in flight by
+/// rail, then how it ended.
+///
+/// Each variant names the subtitle hosts show for it in their history, so
+/// both apps word a session the same way. A row's title is its amount:
+/// "$50 CASH" in flight, "+$50 CASH" in green once added, "-$50 CASH" out,
+/// unsigned once nothing moved. The rail sits in a pill on the right ("Card",
+/// "Bank" or "Crypto"). Sessions in flight are listed under "In progress",
+/// ended ones under "Completed", where `{moment}` reads "Today at 12:45",
+/// "Yesterday at 12:45", "Jun 12 at 16:40" or, in another year,
+/// "Jun 12, 2025".
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingStatus {
+	/// Inbound bank: waiting for the user's transfer.
+	///
+	/// Shown as "Waiting for your transfer".
+	#[codec(index = 0)]
+	WaitingForTransfer,
+	/// Inbound card: waiting for the user to pay on the provider's screens.
+	///
+	/// Shown as "Waiting for your payment".
+	#[codec(index = 1)]
+	WaitingForPayment,
+	/// Inbound crypto: waiting for the user's deposit.
+	///
+	/// Shown as "Waiting for your deposit".
+	#[codec(index = 2)]
+	WaitingForDeposit,
+	/// Inbound: the provider has the payment and is turning it into the
+	/// user's balance asset.
+	///
+	/// Shown as "On its way".
+	#[codec(index = 3)]
+	ConvertingToCash,
+	/// Inbound: the provider started crediting the user's balance.
+	///
+	/// Shown as "Adding to your balance".
+	#[codec(index = 4)]
+	AddingToBalance,
+	/// Outbound: the user started the withdrawal and pays the provider.
+	///
+	/// Shown as "Withdrawal initiated".
+	#[codec(index = 5)]
+	TransactionInitiated,
+	/// Outbound crypto, after release: the provider converts what it
+	/// collected to `asset`.
+	///
+	/// Shown as "Converting to {asset}…".
+	#[codec(index = 6)]
+	ConvertingTo {
+		/// The asset the user receives.
+		asset: String,
+	},
+	/// Outbound card or bank, after release: the provider prepares the
+	/// payout.
+	///
+	/// Shown as "Preparing your payout".
+	#[codec(index = 7)]
+	PreparingPayout,
+	/// Outbound, after release: a payout attempt failed and the provider
+	/// is trying again.
+	///
+	/// Shown as "The provider is retrying the payout", in amber.
+	#[codec(index = 8)]
+	RetryingPayout,
+	/// Inbound: the provider is retrying, with another top-up after one
+	/// claimed only part of the amount.
+	///
+	/// Shown as "The provider is retrying. Don't pay again", in amber.
+	#[codec(index = 9)]
+	Retrying,
+	/// Nothing came from the provider for longer than its quote said the
+	/// session takes; on a top-up, only once the provider holds the user's
+	/// payment.
+	///
+	/// Shown in amber as "Delayed, don't pay again" on a top-up, which only
+	/// gets here once the user paid, and "Taking longer than usual" on a
+	/// withdrawal.
+	#[codec(index = 10)]
+	TakingLonger,
+	/// Inbound, ended: the balance was credited.
+	///
+	/// Shown as "{moment}".
+	#[codec(index = 11)]
+	ToppedUp,
+	/// Outbound, ended: the provider paid the user out.
+	///
+	/// Shown as "{moment}".
+	#[codec(index = 12)]
+	Sent,
+	/// Inbound, ended: the provider gave the user's payment back instead of
+	/// crediting it.
+	///
+	/// Shown as "Refunded · {moment}".
+	#[codec(index = 13)]
+	Refunded,
+	/// Outbound: the payout failed after the balance was debited. `refunded`
+	/// is what the provider's refund returned, once final.
+	///
+	/// Shown as "Payout failed · {moment}"; the amount is unsigned.
+	#[codec(index = 14)]
+	PayoutFailed {
+		/// What came back to the balance. `None` until the refund's claims
+		/// are final.
+		refunded: Option<u128>,
+	},
+	/// Ended without moving value.
+	///
+	/// Shown as "Expired · {moment}" when it expired, otherwise "Payment
+	/// failed · {moment}"; the detail screen gives the reason.
+	#[codec(index = 15)]
+	Failed {
+		/// Why.
+		reason: FundingFailure,
+	},
+	/// The user asked to cancel and the provider has not answered.
+	///
+	/// Shown as "Cancel requested, waiting for the provider".
+	#[codec(index = 16)]
+	CancelRequested,
+	/// The provider can cancel on these terms and waits for the user, who
+	/// answers with `confirm_funding_cancel`. The offer's expiry is on the
+	/// session's `cancel`.
+	///
+	/// Shown as "Cancel offer waiting for you".
+	#[codec(index = 17)]
+	CancelOffered {
+		/// What the provider keeps, in payment balance units.
+		fee: u128,
+		/// What the user gets back, in payment balance units.
+		refund: u128,
+	},
+	/// The provider will not cancel, and has reported nothing since. The
+	/// session carries on.
+	///
+	/// Shown as "The provider can't cancel".
+	#[codec(index = 18)]
+	CancelRefused {
+		/// Why, as the provider put it.
+		reason: String,
+	},
+	/// The user accepted the provider's offer and the provider is refunding
+	/// the user.
+	///
+	/// Shown as "Cancelling…".
+	#[codec(index = 19)]
+	Cancelling,
+	/// Outbound, ended: cancelled on the provider's terms after the balance
+	/// was debited. `refunded` is what came back, once final.
+	///
+	/// Shown as "Cancelled · {moment}".
+	#[codec(index = 20)]
+	Cancelled {
+		/// What came back to the balance. `None` until the refund's claims
+		/// are final.
+		refunded: Option<u128>,
+	},
+	/// Outbound, ended: the user accepted a cancel, but the payout landed
+	/// first, so the money reached its destination.
+	///
+	/// Shown as "{moment}".
+	#[codec(index = 21)]
+	PaidOutAfterCancel,
+}
+
+/// One step of a session's progress.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingProgressStep {
+	/// The step.
+	pub step: FundingStep,
+	/// When it was reached, in Unix milliseconds.
+	pub reached_at_ms: Option<u64>,
+}
+
+/// A milestone a session reaches, labelled on its timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingStep {
+	/// The session was opened.
+	///
+	/// Shown as "Started".
+	Started,
+	/// The provider has the user's payment: in, it saw the payment; out,
+	/// the user's balance paid it.
+	///
+	/// Shown as "Received" in and "Received by provider" out.
+	Received,
+	/// In: the funds reached the user's balance.
+	///
+	/// Shown as "Added".
+	Added,
+	/// Out: the provider paid the user out.
+	///
+	/// Shown as "Sent".
+	Sent,
+}
+
+/// What is happening now, for the line under a session's milestones.
+///
+/// Hosts word it with the session's rail, asset and amount: "{rail}" is
+/// "card" or "bank", "{asset}" the crypto the user pays or receives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingBand {
+	/// In: nothing from the user yet.
+	///
+	/// Shown as "Waiting for your payment" (card), "If you've sent the money
+	/// from your bank, it's on its way to us. We'll let you know when it's
+	/// arrived." (bank) or "Waiting for your deposit" (crypto).
+	AwaitingPayment,
+	/// In: the provider saw the payment and is confirming it.
+	///
+	/// Shown as "Checking your payment" (card or bank) or "Confirming your
+	/// {asset} deposit" (crypto).
+	CheckingPayment,
+	/// In: the payment is confirmed and being converted.
+	///
+	/// Shown as "Your money is on its way".
+	OnItsWay,
+	/// In: the provider is crediting the user's balance.
+	///
+	/// Shown as "Adding {amount} CASH to your balance".
+	Adding,
+	/// In, ended: the balance was credited.
+	///
+	/// Shown as "{amount} CASH added to your balance".
+	Added,
+	/// Out: the user's Cash is being paid to the provider.
+	///
+	/// Shown as "Converting your Cash".
+	Converting,
+	/// Out, released: the provider is preparing the payout.
+	///
+	/// Shown as "The provider is preparing your payout" (card or bank) or
+	/// "Exchanging your money for {asset}" (crypto).
+	PreparingPayout,
+	/// Out, released: the payout is under way.
+	///
+	/// Shown as "Sending the money to your {rail}" or "Sending your {asset}".
+	Sending,
+	/// Out, ended: the payout arrived.
+	///
+	/// Shown as "Sent to your {rail}" or "Your {asset} is on its way to your
+	/// wallet".
+	Sent,
+	/// The provider is retrying a payment or payout.
+	///
+	/// Shown in amber as "The provider is retrying. Don't pay again." (card
+	/// or bank top-up, or "Don't send the money again." by bank) or "The
+	/// provider is retrying the payout" (withdrawal).
+	Retrying,
+	/// Nothing came from the provider for longer than its quote said.
+	///
+	/// Shown in amber as "Delayed. Your top-up will continue automatically,
+	/// don't pay again." (top-up) or "Taking longer than usual. It will
+	/// continue automatically." (withdrawal).
+	Delayed,
+	/// A cancel is being asked, offered or settled; the status says which.
+	Cancel,
+	/// Ended without moving the money it was for: failed, expired, refunded
+	/// or cancelled; the status says which.
+	Ended,
 }
 
 /// One update a provider reported, and when the core stored it.
@@ -155,6 +565,8 @@ pub struct FundingUpdateRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct StartedFunds {
+	/// Which way they move: a top-up a withdrawal is refunded with moves in.
+	pub direction: FundingDirection,
 	/// The id the host received, with the provider's product hashed in.
 	pub host_id: [u8; 32],
 	/// Amount it asks to move, which the session settles from.
@@ -173,7 +585,7 @@ pub struct StartedFunds {
 }
 
 /// What recording funds a provider starts for a session found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartRecord {
 	/// Recorded now.
 	New,
@@ -223,6 +635,15 @@ pub enum FundingCancel {
 	/// The user declined the offer, or it lapsed. The session carries on.
 	#[codec(index = 4)]
 	Declined,
+	/// The user accepted the offer, but the payout landed first: the
+	/// withdrawal ended as paid out, on none of these terms.
+	#[codec(index = 5)]
+	Overtaken {
+		/// The fee the user accepted.
+		fee: u128,
+		/// The refund the user accepted.
+		refund: u128,
+	},
 }
 
 /// What a user's cancel did.
@@ -243,7 +664,7 @@ pub enum CancelOutcome {
 }
 
 /// What the user's answer to a cancel offer did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum CancelConfirmation {
 	/// The offer was accepted and passed to the provider to settle.
@@ -261,7 +682,7 @@ pub enum CancelConfirmation {
 }
 
 /// The terms of a cancel offer the user accepts, as the host showed them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct CancelTerms {
 	/// What the provider keeps, in payment balance units.
@@ -286,6 +707,8 @@ pub enum Settlement {
 	TopUps(Vec<StartedFunds>),
 	/// The payment an outbound session collects through.
 	Payment(StartedFunds),
+	/// The top-up a released withdrawal's failed payout is refunded with.
+	Refund(StartedFunds),
 }
 
 /// Stage of a session, as the core persists it.
@@ -374,17 +797,25 @@ impl FundingSession {
 			cancel: None,
 			updates: Vec::new(),
 			started: Vec::new(),
+			choice: None,
+			refund: None,
+			detail: None,
 		}
 	}
 
-	/// Assign the session to the provider the user chose. Returns whether it
-	/// was open and not yet assigned.
-	pub fn assign(&mut self, provider_id: &str, now_ms: u64) -> bool {
+	/// Assign the session to the provider the user chose, on the quote they
+	/// chose it by. A session without an amount takes the amount the quote
+	/// prices. Returns whether it was open and not yet assigned.
+	pub fn assign(&mut self, provider_id: &ProductId, choice: FundingChoice, now_ms: u64) -> bool {
 		if self.is_terminal() || self.provider_id.is_some() {
 			return false;
 		}
-		self.provider_id = Some(provider_id.to_string());
+		self.provider_id = Some(provider_id.clone());
 		self.assigned_at_ms = Some(now_ms);
+		if self.amount.is_none() {
+			self.amount = Some(choice.balance_amount(self.direction));
+		}
+		self.choice = Some(choice);
 		true
 	}
 
@@ -395,13 +826,287 @@ impl FundingSession {
 			direction: self.direction,
 			amount: self.amount,
 			expires_at: self.expires_at(),
-			last_update: self.last_update().cloned(),
+			last_update: self.last_ranked_update().cloned(),
+			quote: self.choice.as_ref().map(|choice| choice.quote.clone()),
 		}
 	}
 
 	/// The provider's most recent update.
 	pub fn last_update(&self) -> Option<&FundingUpdate> {
 		self.updates.last().map(|record| &record.update)
+	}
+
+	/// The provider's most recent update that moves the session on, which
+	/// `Deposit` and `Details` do not.
+	pub fn last_ranked_update(&self) -> Option<&FundingUpdate> {
+		self.updates
+			.iter()
+			.rev()
+			.map(|record| &record.update)
+			.find(|update| update.rank().is_some())
+	}
+
+	/// The session's progress for its direction and rail at `now_ms`.
+	pub fn progress(&self, now_ms: u64) -> FundingProgress {
+		let steps: &[FundingStep] = match self.direction {
+			FundingDirection::In => {
+				&[FundingStep::Started, FundingStep::Received, FundingStep::Added]
+			},
+			FundingDirection::Out => {
+				&[FundingStep::Started, FundingStep::Received, FundingStep::Sent]
+			},
+		};
+		let first = |matches: fn(&FundingUpdate) -> bool| {
+			self.updates
+				.iter()
+				.find(|record| matches(&record.update))
+				.map(|record| record.at_ms)
+		};
+		let reached = |step: FundingStep| match (step, &self.stage) {
+			(FundingStep::Started, _) => Some(self.opened_at_ms),
+			(FundingStep::Received, FundingStage::Released { settled_at_ms, .. }) => {
+				Some(*settled_at_ms)
+			},
+			(FundingStep::Received, _) if self.direction == FundingDirection::In => {
+				first(FundingUpdate::is_inbound_progress)
+			},
+			(FundingStep::Added, FundingStage::Delivered { settled_at_ms, .. }) => {
+				Some(*settled_at_ms)
+			},
+			(FundingStep::Sent, FundingStage::Released { .. }) => match self.payout() {
+				Some(FundingPayout::PaidOut) => first(|update| {
+					matches!(update, FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }))
+				}),
+				_ => None,
+			},
+			_ => None,
+		};
+		let mut times: Vec<Option<u64>> = steps.iter().map(|step| reached(*step)).collect();
+		// A provider may skip a step; one reached later says the earlier
+		// ones were passed by then.
+		for index in (0..times.len().saturating_sub(1)).rev() {
+			if times[index].is_none() {
+				times[index] = times[index + 1];
+			}
+		}
+		FundingProgress {
+			steps: steps
+				.iter()
+				.zip(times)
+				.map(|(step, reached_at_ms)| FundingProgressStep { step: *step, reached_at_ms })
+				.collect(),
+			band: self.band(now_ms),
+			last_heard_at_ms: self
+				.updates
+				.last()
+				.map(|record| record.at_ms)
+				.max(self.detail.as_ref().map(|record| record.at_ms))
+				.max(self.assigned_at_ms),
+			detail: self
+				.detail
+				.as_ref()
+				.filter(|record| record.step == self.step())
+				.map(|record| record.detail.clone()),
+			failed_at_ms: match self.stage {
+				FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
+				_ => None,
+			},
+			transaction_id: self.transaction_id(),
+			reference: self.reference(),
+			deposit: self.latest(|update| match update {
+				FundingUpdate::In(FundingInboundUpdate::Deposit { deposit }) => Some(deposit),
+				_ => None,
+			}),
+			mismatch: self
+				.latest(|update| match update {
+					FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+						mismatch, ..
+					}) => Some(mismatch),
+					_ => None,
+				})
+				.flatten(),
+			retrying: self.is_progress_retrying(),
+			payout: self.payout().cloned(),
+			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+			status: self.status(now_ms),
+			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
+			money_moved: self.money_moved(),
+		}
+	}
+
+	/// Where the session stands at `now_ms`.
+	pub fn status(&self, now_ms: u64) -> FundingStatus {
+		let rail = self.choice.as_ref().map(|choice| choice.rail);
+		match &self.stage {
+			FundingStage::Delivered { .. } => return FundingStatus::ToppedUp,
+			FundingStage::Failed { reason: FundingFailure::Refunded, .. } => {
+				return FundingStatus::Refunded;
+			},
+			FundingStage::Failed { reason, .. } => {
+				return FundingStatus::Failed { reason: reason.clone() };
+			},
+			FundingStage::Released { .. } if self.is_cancel_accepted() => {
+				let refunded = self.refund.as_ref().and_then(|refund| refund.refunded);
+				return match refunded {
+					Some(_) => FundingStatus::Cancelled { refunded },
+					None => FundingStatus::Cancelling,
+				};
+			},
+			FundingStage::Released { .. } => match self.payout() {
+				Some(FundingPayout::PaidOut)
+					if matches!(self.cancel, Some(FundingCancel::Overtaken { .. })) =>
+				{
+					return FundingStatus::PaidOutAfterCancel;
+				},
+				Some(FundingPayout::PaidOut) => return FundingStatus::Sent,
+				Some(FundingPayout::Failed { .. }) => {
+					return FundingStatus::PayoutFailed {
+						refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+					};
+				},
+				None => {},
+			},
+			FundingStage::Open => {},
+		}
+		match &self.cancel {
+			Some(FundingCancel::Requested) => return FundingStatus::CancelRequested,
+			Some(FundingCancel::Offered { fee, refund, .. }) => {
+				return FundingStatus::CancelOffered { fee: *fee, refund: *refund };
+			},
+			Some(FundingCancel::Refused { reason }) => {
+				return FundingStatus::CancelRefused { reason: reason.clone() };
+			},
+			Some(FundingCancel::Accepted { .. }) => return FundingStatus::Cancelling,
+			Some(FundingCancel::Declined | FundingCancel::Overtaken { .. }) | None => {},
+		}
+		if self.is_progress_retrying() {
+			return FundingStatus::Retrying;
+		}
+		if self.is_payout_retrying() {
+			return FundingStatus::RetryingPayout;
+		}
+		if self.longer_at_ms().is_some_and(|at_ms| now_ms >= at_ms) {
+			return FundingStatus::TakingLonger;
+		}
+		match (self.direction, &self.stage) {
+			(FundingDirection::Out, FundingStage::Released { .. }) => match &self.choice {
+				Some(choice) if choice.rail == FundingRail::Crypto => {
+					FundingStatus::ConvertingTo { asset: choice.asset.clone() }
+				},
+				_ => FundingStatus::PreparingPayout,
+			},
+			(FundingDirection::Out, _) => FundingStatus::TransactionInitiated,
+			(FundingDirection::In, _) => match self.last_ranked_update() {
+				None | Some(FundingUpdate::In(FundingInboundUpdate::AwaitingPayment)) => match rail
+				{
+					Some(FundingRail::Bank) => FundingStatus::WaitingForTransfer,
+					Some(FundingRail::Crypto) => FundingStatus::WaitingForDeposit,
+					Some(FundingRail::Card) | None => FundingStatus::WaitingForPayment,
+				},
+				Some(
+					FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
+					FundingUpdate::In(FundingInboundUpdate::Delivered),
+				) => FundingStatus::AddingToBalance,
+				Some(_) => FundingStatus::ConvertingToCash,
+			},
+		}
+	}
+
+	/// The line under the session's milestones at `now_ms`.
+	fn band(&self, now_ms: u64) -> FundingBand {
+		match self.status(now_ms) {
+			FundingStatus::WaitingForTransfer |
+			FundingStatus::WaitingForPayment |
+			FundingStatus::WaitingForDeposit => FundingBand::AwaitingPayment,
+			FundingStatus::ConvertingToCash => match self.last_ranked_update() {
+				Some(FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+					finalized: false,
+					..
+				})) => FundingBand::CheckingPayment,
+				_ => FundingBand::OnItsWay,
+			},
+			FundingStatus::AddingToBalance => FundingBand::Adding,
+			FundingStatus::TransactionInitiated => FundingBand::Converting,
+			FundingStatus::ConvertingTo { .. } | FundingStatus::PreparingPayout => {
+				if self.has_converting() {
+					FundingBand::Sending
+				} else {
+					FundingBand::PreparingPayout
+				}
+			},
+			FundingStatus::ToppedUp => FundingBand::Added,
+			FundingStatus::Sent | FundingStatus::PaidOutAfterCancel => FundingBand::Sent,
+			FundingStatus::Retrying | FundingStatus::RetryingPayout => FundingBand::Retrying,
+			FundingStatus::TakingLonger => FundingBand::Delayed,
+			FundingStatus::CancelRequested |
+			FundingStatus::CancelOffered { .. } |
+			FundingStatus::CancelRefused { .. } |
+			FundingStatus::Cancelling => FundingBand::Cancel,
+			FundingStatus::Refunded |
+			FundingStatus::PayoutFailed { .. } |
+			FundingStatus::Failed { .. } |
+			FundingStatus::Cancelled { .. } => FundingBand::Ended,
+		}
+	}
+
+	/// When a session the provider still works on counts as taking longer:
+	/// its chosen quote's time after the provider's latest report, or after
+	/// it was assigned. `None` without a quoted time, while a top-up waits on
+	/// the user's payment, or once it ended.
+	pub fn longer_at_ms(&self) -> Option<u64> {
+		if !self.serves_provider() || self.awaits_users_payment() {
+			return None;
+		}
+		let eta_ms = self.choice.as_ref()?.quote.eta_secs?.saturating_mul(1_000);
+		let heard_at_ms = self.updates.last().map(|record| record.at_ms).or(self.assigned_at_ms)?;
+		Some(heard_at_ms.saturating_add(eta_ms))
+	}
+
+	/// Whether a top-up still waits on the user's payment, which can take
+	/// days by bank: until money moved. A withdrawal never does, so its
+	/// clock runs from the quote as soon as it is assigned.
+	fn awaits_users_payment(&self) -> bool {
+		self.direction == FundingDirection::In && !self.money_moved()
+	}
+
+	/// Whether the provider is retrying: it named another top-up after a
+	/// first one claimed only part of the amount.
+	fn is_progress_retrying(&self) -> bool {
+		!self.is_terminal() && self.top_up_ids().len() > 1
+	}
+
+	/// Whether the provider's latest word on a released withdrawal's payout,
+	/// with none reported yet, is that it is retrying it.
+	fn is_payout_retrying(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			self.payout().is_none() &&
+			self.updates.iter().rev().find_map(|record| match record.update {
+				FundingUpdate::Out(FundingOutboundUpdate::Converting) => Some(false),
+				FundingUpdate::Out(FundingOutboundUpdate::PayoutRetrying) => Some(true),
+				_ => None,
+			}) == Some(true)
+	}
+
+	/// What `field` reads from the provider's most recent update it reads
+	/// anything from.
+	fn latest<T: Clone>(&self, field: impl Fn(&FundingUpdate) -> Option<&T>) -> Option<T> {
+		self.updates.iter().rev().find_map(|record| field(&record.update)).cloned()
+	}
+
+	/// The provider's latest transaction id.
+	fn transaction_id(&self) -> Option<String> {
+		self.latest(|update| match update {
+			FundingUpdate::Details { transaction_id, .. } => transaction_id.as_ref(),
+			_ => None,
+		})
+	}
+
+	/// The provider's latest reference.
+	fn reference(&self) -> Option<String> {
+		self.latest(|update| match update {
+			FundingUpdate::Details { reference, .. } => reference.as_ref(),
+			_ => None,
+		})
 	}
 
 	/// Store `update` from `provider_id`. A `Failed` update ends the session.
@@ -412,18 +1117,61 @@ impl FundingSession {
 	/// report named yet.
 	pub fn report(
 		&mut self,
-		provider_id: &str,
+		provider_id: &ProductId,
 		update: FundingUpdate,
 		host_id: impl Fn(&[u8; 32]) -> [u8; 32],
 		now_ms: u64,
 	) -> Result<(), HostFundingReportError> {
-		if self.is_terminal() || self.provider_id.as_deref() != Some(provider_id) {
+		if self.provider_id.as_ref() != Some(provider_id) {
+			return Err(HostFundingReportError::NotFound);
+		}
+		if let FundingUpdate::Progress { detail } = update {
+			if !self.serves_provider() {
+				return Err(HostFundingReportError::NotFound);
+			}
+			if !self.fits(&detail) {
+				return Err(HostFundingReportError::InvalidDetail);
+			}
+			self.detail = Some(FundingDetailRecord { detail, step: self.step(), at_ms: now_ms });
+			return Ok(());
+		}
+		if update.is_inbound_progress() && self.takes_late_arrival(now_ms) {
+			self.reopen_for_late_arrival();
+		}
+		if matches!(
+			update,
+			FundingUpdate::Out(
+				FundingOutboundUpdate::Converting |
+					FundingOutboundUpdate::Payout { .. } |
+					FundingOutboundUpdate::Refunding { .. } |
+					FundingOutboundUpdate::PayoutRetrying
+			)
+		) {
+			if !self.is_terminal() {
+				return Err(HostFundingReportError::OutOfOrder);
+			}
+			return self.report_after_release(update, host_id, now_ms);
+		}
+		// A released withdrawal's provider still works on its payout, so it
+		// can name the payout's transaction or reference until it reports
+		// how the payout went.
+		if matches!(update, FundingUpdate::Details { .. }) && self.awaits_provider() {
+			if !self.detail_fits(&update, now_ms) {
+				return Err(HostFundingReportError::InvalidDetail);
+			}
+			self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
+			return Ok(());
+		}
+		if self.is_terminal() {
 			return Err(HostFundingReportError::NotFound);
 		}
 		if !self.follows(&update) {
 			return Err(HostFundingReportError::OutOfOrder);
 		}
-		if let Some((id, amount)) = named_funds(&update) {
+		if !self.detail_fits(&update, now_ms) {
+			return Err(HostFundingReportError::InvalidDetail);
+		}
+		if let Some((id, amount)) = update.named_funds() {
 			let named = host_id(id);
 			let record = self
 				.started
@@ -437,22 +1185,243 @@ impl FundingSession {
 			self.stage = FundingStage::Failed { reason: reason.clone(), settled_at_ms: now_ms };
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
-		// A provider that reports its next step has carried on, so a decline
-		// it was owed is not repeated.
-		if self.is_terminal() || matches!(self.cancel, Some(FundingCancel::Declined)) {
+		// A provider that reports its next step has carried on: a decline it
+		// was owed is not repeated, and its refusal is no longer news.
+		if self.is_terminal() ||
+			matches!(self.cancel, Some(FundingCancel::Declined | FundingCancel::Refused { .. }))
+		{
 			self.cancel = None;
 		}
 		Ok(())
 	}
 
+	/// Store what the provider reports about paying the user out of a
+	/// released outbound session: that it is converting, once, that it is
+	/// retrying the payout, any number of times, then the payout outcome,
+	/// once, and after a failed payout or a cancel the user accepted the
+	/// top-up refunding it, once. The host is handed the session again, as
+	/// what it recorded no longer holds.
+	fn report_after_release(
+		&mut self,
+		update: FundingUpdate,
+		host_id: impl Fn(&[u8; 32]) -> [u8; 32],
+		now_ms: u64,
+	) -> Result<(), HostFundingReportError> {
+		if !matches!(self.stage, FundingStage::Released { .. }) {
+			return Err(HostFundingReportError::NotFound);
+		}
+		if let FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id, amount }) = &update
+		{
+			// A cancel the user accepted is refunded on its terms; a failed
+			// payout up to what was debited.
+			let fits = match (&self.cancel, &self.stage) {
+				(Some(FundingCancel::Accepted { refund, .. }), _) => *amount == *refund,
+				(_, FundingStage::Released { debited, .. }) => *amount <= *debited,
+				_ => false,
+			};
+			if !self.awaits_refund() || !fits {
+				return Err(HostFundingReportError::OutOfOrder);
+			}
+			let named = host_id(top_up_id);
+			let record = self
+				.started
+				.iter_mut()
+				.find(|record| record.host_id == named && record.named_at_ms.is_none())
+				.filter(|record| record.amount == *amount)
+				.ok_or(HostFundingReportError::NotStarted)?;
+			record.named_at_ms = Some(now_ms);
+			self.refund = Some(FundingRefund { top_up: record.clone(), refunded: None });
+		} else {
+			let converting = self.has_converting();
+			// A payout that lands although the user accepted a cancel won the
+			// race: the session ends as paid out. Anything else on the way to
+			// a payout is refused once the cancel was accepted.
+			let lands = matches!(update, FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }));
+			if self.payout().is_some() ||
+				(self.is_cancel_accepted() && !lands) ||
+				(matches!(update, FundingUpdate::Out(FundingOutboundUpdate::Converting)) &&
+					converting)
+			{
+				return Err(HostFundingReportError::OutOfOrder);
+			}
+			// The payout won over an accepted cancel: keep what the user
+			// accepted, so the ended session says so.
+			if matches!(
+				update,
+				FundingUpdate::Out(FundingOutboundUpdate::Payout {
+					outcome: FundingPayout::PaidOut
+				})
+			) {
+				self.cancel = match self.cancel.take() {
+					Some(FundingCancel::Accepted { fee, refund }) => {
+						Some(FundingCancel::Overtaken { fee, refund })
+					},
+					_ => None,
+				};
+			}
+		}
+		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
+		if matches!(self.cancel, Some(FundingCancel::Refused { .. })) {
+			self.cancel = None;
+		}
+		self.acknowledged = false;
+		Ok(())
+	}
+
+	/// Which step the session is on, for telling whether a `Progress` is
+	/// still current: its stage and how many of the provider's steps it
+	/// reported. References and deposit instructions do not move it.
+	fn step(&self) -> u32 {
+		let stage = match self.stage {
+			FundingStage::Open => 0,
+			FundingStage::Failed { .. } => 1,
+			FundingStage::Delivered { .. } => 2,
+			FundingStage::Released { .. } => 3,
+		};
+		let steps = self
+			.updates
+			.iter()
+			.filter(|record| {
+				!matches!(
+					record.update,
+					FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) |
+						FundingUpdate::Details { .. }
+				)
+			})
+			.count();
+		u32::try_from(steps).unwrap_or(u32::MAX >> 2) << 2 | stage
+	}
+
+	/// Whether `detail` fits the session: counts within their totals, a
+	/// confirmation count on a crypto session, a bank's send on an inbound
+	/// bank one, and an `Other` text within its limits.
+	fn fits(&self, detail: &FundingDetail) -> bool {
+		let rail = self.choice.as_ref().map(|choice| choice.rail);
+		match &detail.fact {
+			FundingFact::Confirmations { done, required } => {
+				*required > 0 &&
+					done <= required &&
+					rail.is_none_or(|rail| rail == FundingRail::Crypto)
+			},
+			FundingFact::Parts { done, total } => *total > 0 && done <= total,
+			FundingFact::SentByBank => {
+				self.direction == FundingDirection::In &&
+					rail.is_none_or(|rail| rail == FundingRail::Bank)
+			},
+			FundingFact::Attempt { n, of } => *n > 0 && of.is_none_or(|of| of >= *n),
+			FundingFact::Other { text } => is_plain_line(text),
+			FundingFact::Checked |
+			FundingFact::PriceChecked |
+			FundingFact::Scheduled |
+			FundingFact::ExpectedBy |
+			FundingFact::InReview => true,
+		}
+	}
+
+	/// Whether the session's provider still has work on it: it is in flight,
+	/// or it ended and the provider still owes the user something.
+	pub fn serves_provider(&self) -> bool {
+		!self.is_terminal() || self.awaits_provider()
+	}
+
+	/// Whether a provider is assigned and still has work on the session.
+	pub fn has_working_provider(&self) -> bool {
+		self.provider_id.is_some() && self.serves_provider()
+	}
+
+	/// Whether the session ended but its provider still owes the user: a
+	/// released withdrawal whose payout outcome it has not reported, or
+	/// whose refund, after a failed payout or a cancel the user accepted, is
+	/// not settled yet. Whether the host acknowledged the session does not
+	/// matter.
+	fn awaits_provider(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			match (&self.refund, self.payout()) {
+				(Some(refund), _) => refund.refunded.is_none(),
+				(None, None | Some(FundingPayout::Failed { .. })) => true,
+				(None, Some(FundingPayout::PaidOut)) => false,
+			}
+	}
+
+	/// Whether a released withdrawal is owed a refund the provider has not
+	/// reported: its payout failed, or the user accepted the provider's
+	/// cancel offer.
+	pub fn awaits_refund(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			self.refund.is_none() &&
+			(matches!(self.payout(), Some(FundingPayout::Failed { .. })) ||
+				self.is_cancel_accepted())
+	}
+
+	/// Whether the user accepted the provider's cancel offer.
+	fn is_cancel_accepted(&self) -> bool {
+		matches!(self.cancel, Some(FundingCancel::Accepted { .. }))
+	}
+
+	/// Whether the provider reported converting a withdrawal's funds.
+	fn has_converting(&self) -> bool {
+		self.updates.iter().any(|record| {
+			matches!(record.update, FundingUpdate::Out(FundingOutboundUpdate::Converting))
+		})
+	}
+
+	/// The provider's payout outcome, once it reported one.
+	fn payout(&self) -> Option<&FundingPayout> {
+		self.updates.iter().find_map(|record| match &record.update {
+			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }) => Some(outcome),
+			_ => None,
+		})
+	}
+
+	/// Whether `update`'s own data is within its limits. `Details` and
+	/// `Deposit` sit outside the order of the others, so the session keeps
+	/// a bounded number of each; their texts are short plain lines; deposit
+	/// instructions name something to pay, have not expired, and pay by the
+	/// rail and asset of the quote the user chose, when there was one.
+	fn detail_fits(&self, update: &FundingUpdate, now_ms: u64) -> bool {
+		let kept = |same: fn(&FundingUpdate) -> bool| {
+			self.updates.iter().filter(|record| same(&record.update)).count()
+		};
+		match update {
+			FundingUpdate::Details { transaction_id, reference } => {
+				kept(|update| matches!(update, FundingUpdate::Details { .. })) < DETAILS_LIMIT &&
+					(transaction_id.is_some() || reference.is_some()) &&
+					[transaction_id, reference]
+						.into_iter()
+						.flatten()
+						.all(|text| is_plain_line(text))
+			},
+			FundingUpdate::In(FundingInboundUpdate::Deposit { deposit }) => {
+				kept(|update| {
+					matches!(update, FundingUpdate::In(FundingInboundUpdate::Deposit { .. }))
+				}) < DEPOSITS_LIMIT &&
+					deposit.fits(self.choice.as_ref(), now_ms)
+			},
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				mismatch: Some(received),
+				..
+			}) => is_plain_line(&received.asset),
+			_ => true,
+		}
+	}
+
 	/// Whether the provider may offer to cancel on these terms. An inbound
-	/// session whose credit started can no longer be cancelled, and an offer
-	/// cannot hand back more than the session moves. An outbound offer waits
-	/// for the refund a released withdrawal settles through.
+	/// session whose credit started can no longer be cancelled; an outbound
+	/// one can be offered only once released, refunded through `Refunding`,
+	/// and not after its payout outcome or refund was reported. An offer
+	/// cannot hand back more than the session moves.
 	fn offer_fits(&self, fee: u128, refund: u128) -> bool {
-		self.direction == FundingDirection::In &&
-			!self.funds_started() &&
-			self.amount.is_none_or(|amount| fee.saturating_add(refund) <= amount)
+		let cap = match (self.direction, &self.stage) {
+			(FundingDirection::In, _) if self.funds_started() => return false,
+			(FundingDirection::In, _) => self.amount,
+			(FundingDirection::Out, FundingStage::Released { debited, .. })
+				if self.payout().is_none() && self.refund.is_none() =>
+			{
+				Some(*debited)
+			},
+			(FundingDirection::Out, _) => return false,
+		};
+		cap.is_none_or(|cap| fee.saturating_add(refund) <= cap)
 	}
 
 	/// Whether `update` may come next. Updates only move forward, a session
@@ -462,14 +1431,18 @@ impl FundingSession {
 		let fits_direction = match update {
 			FundingUpdate::In(_) => self.direction == FundingDirection::In,
 			FundingUpdate::Out(_) => self.direction == FundingDirection::Out,
-			FundingUpdate::Failed { .. } => true,
+			FundingUpdate::Failed { .. } |
+			FundingUpdate::Details { .. } |
+			FundingUpdate::Progress { .. } => true,
 		};
-		let last = self.last_update().map(update_rank);
-		let rank = Some(update_rank(update));
+		let last = self.last_ranked_update().and_then(FundingUpdate::rank);
+		let rank = update.rank();
 		let top_ups = self.top_up_ids();
 		fits_direction &&
 			match update {
+				FundingUpdate::Details { .. } => true,
 				FundingUpdate::Failed { .. } => !self.funds_started(),
+				FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) => !self.funds_moving(),
 				FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, .. }) => {
 					last <= rank && top_ups.len() < TOP_UP_LIMIT && !top_ups.contains(&top_up_id)
 				},
@@ -495,9 +1468,10 @@ impl FundingSession {
 
 	/// Record funds the serving provider starts for the session under
 	/// `host_id`, not yet taken by the host. The caller checked the session
-	/// is open and served in their direction.
+	/// takes funds moving in `direction`.
 	pub fn record_start(
 		&mut self,
+		direction: FundingDirection,
 		host_id: [u8; 32],
 		amount: u128,
 		terms: [u8; 32],
@@ -514,6 +1488,7 @@ impl FundingSession {
 			return StartRecord::Full;
 		}
 		self.started.push(StartedFunds {
+			direction,
 			host_id,
 			amount,
 			terms,
@@ -522,6 +1497,29 @@ impl FundingSession {
 			named_at_ms: None,
 		});
 		StartRecord::New
+	}
+
+	/// Whether a payment for this top-up may still arrive although the user
+	/// cancelled it: it was cancelled before money moved, a provider served
+	/// it, and less than a week passed. A bank transfer the user had already
+	/// sent still reaches the provider then.
+	pub fn takes_late_arrival(&self, now_ms: u64) -> bool {
+		self.direction == FundingDirection::In &&
+			self.provider_id.is_some() &&
+			self.started.is_empty() &&
+			matches!(
+				self.stage,
+				FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms }
+					if now_ms < settled_at_ms.saturating_add(LATE_ARRIVAL_MS)
+			)
+	}
+
+	/// Open the cancelled top-up again for the payment that arrived, so it
+	/// settles as any other and the host is handed it again.
+	pub fn reopen_for_late_arrival(&mut self) {
+		self.stage = FundingStage::Open;
+		self.cancel = None;
+		self.acknowledged = false;
 	}
 
 	/// Mark the funds under `host_id` as taken by the host. Returns whether
@@ -550,7 +1548,7 @@ impl FundingSession {
 	/// Whether funds are moving: the provider named a top-up or a payment
 	/// request it started. The named funds then decide the outcome.
 	pub fn funds_moving(&self) -> bool {
-		self.updates.iter().any(|record| named_funds(&record.update).is_some())
+		self.updates.iter().any(|record| record.update.named_funds().is_some())
 	}
 
 	/// Whether the provider started a top-up or payment request for the
@@ -577,13 +1575,18 @@ impl FundingSession {
 	/// What the core must follow to end the session, once the provider has
 	/// handed the outcome over.
 	pub fn settlement_due(&self) -> Option<Settlement> {
+		if let Some(refund) = &self.refund &&
+			refund.refunded.is_none()
+		{
+			return Some(Settlement::Refund(refund.top_up.clone()));
+		}
 		if self.is_terminal() {
 			return None;
 		}
 		let mut named = self.started.iter().filter(|record| record.named_at_ms.is_some());
-		// The last step, not the last update: an answer to a cancel or a
-		// detail must not hide the outcome the provider handed over.
-		match self.last_update()? {
+		// The last step, not the last update: a detail or deposit must not
+		// hide the outcome the provider handed over.
+		match self.last_ranked_update()? {
 			FundingUpdate::In(FundingInboundUpdate::Delivered) => {
 				Some(Settlement::TopUps(named.cloned().collect()))
 			},
@@ -622,15 +1625,32 @@ impl FundingSession {
 				FundingStage::Released { debited, settled_at_ms: now_ms }
 			},
 		};
-		self.cancel = None;
+		// A released withdrawal stays with its provider, and so does the
+		// user's cancel of it.
+		if !self.serves_provider() {
+			self.cancel = None;
+		}
 		true
 	}
 
-	/// Whether the host still has to hear of the session when funding
-	/// resumes: it is in flight, or it ended and the host has not recorded
-	/// the outcome.
+	/// Record what a failed payout's refund returned once its claims are
+	/// final, and hand the session to the host again. Returns whether it
+	/// changed.
+	pub fn settle_refund(&mut self, refunded: u128) -> bool {
+		match &mut self.refund {
+			Some(refund) if refund.refunded.is_none() => {
+				refund.refunded = Some(refunded);
+				self.acknowledged = false;
+				true
+			},
+			_ => false,
+		}
+	}
+
+	/// Whether the session is kept: it is in flight, the host has not
+	/// recorded its outcome, or its provider still owes the user.
 	pub fn needs_handoff(&self) -> bool {
-		!self.is_terminal() || !self.acknowledged
+		!self.is_terminal() || !self.acknowledged || self.awaits_provider()
 	}
 
 	/// Cancel at the user's request.
@@ -642,7 +1662,12 @@ impl FundingSession {
 	/// never ends the session itself. An inbound session whose credit
 	/// started is too late to cancel.
 	pub fn cancel(&mut self, now_ms: u64) -> CancelOutcome {
-		if self.is_terminal() {
+		// A withdrawal whose payout failed or whose refund was reported is
+		// owed its refund in full, so there is nothing left to cancel.
+		if !self.serves_provider() ||
+			matches!(self.payout(), Some(FundingPayout::Failed { .. })) ||
+			self.refund.is_some()
+		{
 			return CancelOutcome::Refused;
 		}
 		if self.provider_id.is_none() {
@@ -666,6 +1691,7 @@ impl FundingSession {
 				FundingCancel::Offered { .. } |
 				FundingCancel::Accepted { .. },
 			) => CancelOutcome::Pending,
+			Some(FundingCancel::Overtaken { .. }) => CancelOutcome::TooLate,
 			Some(FundingCancel::Refused { .. } | FundingCancel::Declined) | None => {
 				self.cancel = Some(FundingCancel::Requested);
 				CancelOutcome::Requested
@@ -683,7 +1709,7 @@ impl FundingSession {
 		terms: Option<CancelTerms>,
 		now_ms: u64,
 	) -> CancelConfirmation {
-		if self.is_terminal() {
+		if !self.serves_provider() {
 			return CancelConfirmation::NoOffer;
 		}
 		let Some(FundingCancel::Offered { fee, refund, expires_at }) = self.cancel else {
@@ -721,7 +1747,7 @@ impl FundingSession {
 	/// When the provider's open cancel offer lapses, if it has one that does.
 	fn cancel_offer_expires_at(&self) -> Option<u64> {
 		match self.cancel {
-			Some(FundingCancel::Offered { expires_at, .. }) if !self.is_terminal() => expires_at,
+			Some(FundingCancel::Offered { expires_at, .. }) if self.serves_provider() => expires_at,
 			_ => None,
 		}
 	}
@@ -741,10 +1767,10 @@ impl FundingSession {
 	/// with no reason, so the user can ask again. Returns whether it changed
 	/// the session.
 	pub fn answer_cancel(&mut self, answer: FundingCancelAnswer, now_ms: u64) -> bool {
-		if self.is_terminal() || self.cancel != Some(FundingCancel::Requested) {
+		if !self.serves_provider() || self.cancel != Some(FundingCancel::Requested) {
 			return false;
 		}
-		match answer {
+		let answered = match answer {
 			FundingCancelAnswer::Stopped if !self.money_moved() => {
 				self.fail(FundingFailure::Cancelled, now_ms)
 			},
@@ -763,7 +1789,12 @@ impl FundingSession {
 				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
 				true
 			},
+		};
+		// A released withdrawal was handed to the host already.
+		if answered && self.is_terminal() {
+			self.acknowledged = false;
 		}
+		answered
 	}
 
 	/// Record that the provider heard the user's answer to its offer. A
@@ -795,7 +1826,9 @@ impl FundingSession {
 			FundingCancel::Declined => Some(CancelCall::Settle(FundingCancelDecision::Declined)),
 			// The provider answered already; asking again would invite a new
 			// offer while the user looks at this one.
-			FundingCancel::Offered { .. } | FundingCancel::Refused { .. } => None,
+			FundingCancel::Offered { .. } |
+			FundingCancel::Refused { .. } |
+			FundingCancel::Overtaken { .. } => None,
 		}
 	}
 
@@ -848,31 +1881,116 @@ impl FundingSession {
 	}
 }
 
-/// The provider's id and amount of the funds `update` names, if any.
-pub fn named_funds(update: &FundingUpdate) -> Option<(&[u8; 32], u128)> {
-	match update {
-		FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
-			Some((top_up_id, *amount))
-		},
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
-			Some((payment_id, *amount))
-		},
-		_ => None,
+impl FundingUpdate {
+	/// The provider's id and amount of the funds this update names, if any.
+	pub fn named_funds(&self) -> Option<(&[u8; 32], u128)> {
+		match self {
+			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
+				Some((top_up_id, *amount))
+			},
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
+				Some((payment_id, *amount))
+			},
+			FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id, amount }) => {
+				Some((top_up_id, *amount))
+			},
+			_ => None,
+		}
+	}
+
+	/// Whether this update says the user's payment arrived and is on its way
+	/// to the balance.
+	fn is_inbound_progress(&self) -> bool {
+		matches!(
+			self,
+			FundingUpdate::In(
+				FundingInboundUpdate::PaymentReceived { .. } |
+					FundingInboundUpdate::Converting |
+					FundingInboundUpdate::Crediting { .. }
+			)
+		)
+	}
+
+	/// This update's order within a session: a later update ranks higher,
+	/// and a top-up and a payment request rank where funds start moving.
+	/// `Deposit`, `Details` and what follows a release have no place in the
+	/// order.
+	fn rank(&self) -> Option<u8> {
+		Some(match self {
+			FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: false, ..
+			}) => 1,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: true, ..
+			}) => 2,
+			FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
+			FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
+			FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
+			FundingUpdate::Failed { .. } => 6,
+			FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) |
+			FundingUpdate::Details { .. } |
+			FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Refunding { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Converting) |
+			FundingUpdate::Out(FundingOutboundUpdate::PayoutRetrying) |
+			FundingUpdate::Progress { .. } => return None,
+		})
 	}
 }
 
-/// Order of an update within a session: a later update ranks higher, and a
-/// top-up and a payment request rank where funds start moving.
-fn update_rank(update: &FundingUpdate) -> u8 {
-	match update {
-		FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: false }) => 1,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true }) => 2,
-		FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
-		FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
-		FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
-		FundingUpdate::Failed { .. } => 6,
+impl FundingDeposit {
+	/// Whether the deposit names something to pay that has not expired by
+	/// `now_ms`, with plain texts, and pays by the rail and asset of `choice`,
+	/// the quote the user chose, when there was one.
+	fn fits(&self, choice: Option<&FundingChoice>, now_ms: u64) -> bool {
+		let live = |expires_at: &Option<u64>| expires_at.is_none_or(|at| at > now_ms);
+		let chosen = |rail: FundingRail, asset: &str| {
+			choice.is_none_or(|choice| {
+				choice.rail == rail && choice.asset.eq_ignore_ascii_case(asset)
+			})
+		};
+		match self {
+			FundingDeposit::Crypto {
+				address,
+				network,
+				asset,
+				amount,
+				decimals,
+				uri,
+				expires_at,
+				..
+			} => {
+				*amount > 0 &&
+					*decimals <= DECIMALS_LIMIT &&
+					[address, network, asset].into_iter().all(|text| is_plain_line(text)) &&
+					uri.as_deref().is_none_or(is_payment_uri) &&
+					live(expires_at) &&
+					chosen(FundingRail::Crypto, asset)
+			},
+			FundingDeposit::Bank {
+				amount,
+				currency,
+				decimals,
+				beneficiary,
+				account,
+				bank_code,
+				reference,
+				expires_at,
+			} => {
+				*amount > 0 &&
+					*decimals <= DECIMALS_LIMIT &&
+					is_plain_line(currency) &&
+					is_plain_line(reference) &&
+					[beneficiary, account, bank_code]
+						.into_iter()
+						.flatten()
+						.all(|text| is_plain_line(text)) &&
+					live(expires_at) &&
+					chosen(FundingRail::Bank, currency)
+			},
+		}
 	}
 }
 
@@ -890,6 +2008,24 @@ pub enum FundingSessionError {
 	InvalidProvider {
 		/// Why the id was refused.
 		reason: String,
+	},
+	/// The chosen quote is not one the core offered for this session, or it
+	/// expired.
+	#[display("unknown or expired funding quote {quote_id}")]
+	UnknownQuote {
+		/// The quote id the host named.
+		quote_id: String,
+	},
+	/// The chosen quote prices a different amount than the session asks to
+	/// move.
+	#[display("funding quote {quote_id} prices {priced}, the session asks for {amount}")]
+	QuoteAmountMismatch {
+		/// The quote id the host named.
+		quote_id: String,
+		/// The balance amount the quote prices.
+		priced: u128,
+		/// The session's amount.
+		amount: u128,
 	},
 	/// The stored funding records are in a format newer than this app reads,
 	/// as after a downgrade. They are left as they are, and the core writes
@@ -960,1036 +2096,69 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 	}
 }
 
-/// Split `sessions` into those kept in full and the ended ones to compact.
-/// Kept in full: every open one, the ended ones the host has not recorded yet,
-/// newest first up to a fixed bound, and the newest ended ones it has recorded,
-/// up to a fixed bound per owner. The ended ones past either bound go to the
-/// pack, so no outcome is lost.
+/// Split `sessions` into those kept in full and the ended ones to compact
+/// into the pack. Kept in full: every one its provider still has work on, a
+/// released withdrawal whose payout outcome is not in, as a payout can still
+/// land after a cancel was refunded, and a cancelled top-up a late payment
+/// may still open again. Every other ended session is compacted at once,
+/// whether or not the host acknowledged it.
 pub fn retained(
 	sessions: impl IntoIterator<Item = FundingSession>,
-) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
-	let (mut open, ended): (Vec<_>, Vec<_>) =
-		sessions.into_iter().partition(|session| !session.is_terminal());
-	let (mut unrecorded, mut recorded): (Vec<_>, Vec<_>) =
-		ended.into_iter().partition(|session| !session.acknowledged);
-	unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-	let unrecorded_overflow = unrecorded.split_off(UNACKNOWLEDGED_LIMIT.min(unrecorded.len()));
-	// Grouped by owner, newest first within each, so each owner's newest run is
-	// what survives the per-owner bound.
-	recorded.sort_by(|a, b| {
-		a.owner_product_id
-			.cmp(&b.owner_product_id)
-			.then_with(|| b.settled_at_ms().cmp(&a.settled_at_ms()))
-	});
-	open.append(&mut unrecorded);
-	let mut owner: Option<Option<ProductId>> = None;
-	let mut owner_run = 0;
-	let (newest, older): (Vec<_>, Vec<_>) = recorded.into_iter().partition(|session| {
-		if owner.as_ref() == Some(&session.owner_product_id) {
-			owner_run += 1;
-		} else {
-			owner = Some(session.owner_product_id.clone());
-			owner_run = 1;
-		}
-		owner_run <= RECORDED_PER_OWNER
-	});
-	open.extend(newest);
-	let compacted = older.into_iter().chain(unrecorded_overflow);
-	(open, compacted.map(FundingSessionSummary::from).collect())
+	now_ms: u64,
+) -> (Vec<FundingSession>, Vec<FundingSession>) {
+	sessions.into_iter().partition(|session| {
+		session.serves_provider() ||
+			(matches!(session.stage, FundingStage::Released { .. }) &&
+				session.payout().is_none()) ||
+			session.takes_late_arrival(now_ms)
+	})
+}
+
+/// Whether `uri` is a payment URI a host can put in a QR code: short, with
+/// no spaces or hidden characters, and of a scheme that is not a page, a
+/// script or a file.
+fn is_payment_uri(uri: &str) -> bool {
+	uri.len() <= FUNDING_DEPOSIT_URI_MAX_BYTES &&
+		!uri.chars().any(|c| c.is_whitespace() || is_hidden(c)) &&
+		Url::parse(uri).is_ok_and(|url| !NOT_PAYMENT_SCHEMES.contains(&url.scheme()))
+}
+
+/// Whether `text` is a non-empty line of plain text within the limits a
+/// provider's update text keeps to: no line breaks, control characters,
+/// invisible characters or characters that change the text's direction.
+fn is_plain_line(text: &str) -> bool {
+	!text.trim().is_empty() &&
+		text.len() <= FUNDING_DETAIL_MAX_BYTES &&
+		text.chars().count() <= FUNDING_DETAIL_MAX_CHARS &&
+		!text.chars().any(is_hidden)
+}
+
+/// Whether `c` breaks a line, is invisible, or changes the text's direction.
+fn is_hidden(c: char) -> bool {
+	c.is_control() ||
+		matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
+			'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+}
+
+/// A quote chosen for a USDT top-up of 100, for tests.
+#[cfg(test)]
+pub fn test_choice() -> FundingChoice {
+	FundingChoice {
+		quote: FundingQuote {
+			quote_id: "q-test".to_string(),
+			send_amount: 102,
+			receive_amount: 100,
+			provider_fee: 2,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at: None,
+			asset_decimals: 6,
+		},
+		rail: FundingRail::Crypto,
+		asset: "USDT".to_string(),
+		network: Some("polkadot".to_string()),
+	}
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	const NOW: u64 = 1_700_000_000_000;
-	const PROVIDER: &str = "ramp.dot";
-
-	// The host opens a provider page in its own frame, so only an https page
-	// it can show the origin of reaches it, never one carrying credentials
-	// or another scheme, and the return URL is held to the same rule.
-	#[test]
-	fn a_frame_opens_only_plain_https_pages() {
-		let page = |url: &str, return_url: Option<&str>| {
-			checked_frame_target(FundingFrameTarget::Page {
-				url: url.to_string(),
-				return_url: return_url.map(str::to_string),
-			})
-		};
-		let widget = "https://widget.example.com/buy?amount=10&token=a%2Fb";
-
-		assert_eq!(
-			(
-				page(widget, Some("https://onramp.example.com/meld/return?flow=sell")),
-				page("http://widget.example.com/", None),
-				page("https://user:pass@widget.example.com/", None),
-				page("javascript:alert(1)", None),
-				page(widget, Some("polkadotapp://done")),
-				checked_frame_target(FundingFrameTarget::App { route: "/kyc".to_string() }),
-			),
-			(
-				Some(FundingFrameTarget::Page {
-					url: widget.to_string(),
-					return_url: Some(
-						"https://onramp.example.com/meld/return?flow=sell".to_string()
-					),
-				}),
-				None,
-				None,
-				None,
-				None,
-				Some(FundingFrameTarget::App { route: "/kyc".to_string() }),
-			)
-		);
-	}
-
-	#[test]
-	fn an_app_route_stays_inside_the_provider_app() {
-		let route = |route: &str| match checked_frame_target(FundingFrameTarget::App {
-			route: route.to_string(),
-		}) {
-			Some(FundingFrameTarget::App { route }) => Some(route),
-			_ => None,
-		};
-
-		assert_eq!(
-			[
-				route("/kyc"),
-				route("deposit?step=2#top"),
-				route("/a/../kyc"),
-				route("//evil.example/x"),
-				route("https://evil.example/"),
-				route("javascript:alert(1)"),
-				route("\\\\evil.example"),
-				route("/\\evil.example"),
-				// The base the core resolves against is no way in either.
-				route("https://app.invalid/x"),
-				route("//app.invalid/x"),
-				route("https://user:secret@app.invalid/"),
-				route("https://app.invalid:8443/"),
-			],
-			[
-				Some("/kyc".to_string()),
-				Some("/deposit?step=2#top".to_string()),
-				Some("/kyc".to_string()),
-				None,
-				None,
-				None,
-				None,
-				None,
-				None,
-				None,
-				None,
-				None,
-			]
-		);
-	}
-
-	fn session(direction: FundingDirection) -> FundingSession {
-		FundingSession::new(
-			"fs_1".to_string(),
-			Some(ProductId::for_test("wallet.dot")),
-			direction,
-			Some(100),
-			NOW,
-		)
-	}
-
-	fn expired(intent: &str, settled_at_ms: u64) -> FundingSession {
-		FundingSession {
-			intent: intent.to_string(),
-			stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms },
-			..session(FundingDirection::In)
-		}
-	}
-
-	// Each owner keeps its newest recorded sessions in full, so no owner can
-	// crowd out another, and its older ones are compacted rather than dropped.
-	#[test]
-	fn recorded_sessions_keep_the_newest_per_owner_and_compact_the_rest() {
-		let recorded = |intent: String, owner: &str, settled_at_ms: u64| FundingSession {
-			acknowledged: true,
-			owner_product_id: Some(ProductId::for_test(owner)),
-			..expired(&intent, settled_at_ms)
-		};
-		let mut sessions: Vec<FundingSession> = (0..RECORDED_PER_OWNER as u64 + 2)
-			.map(|n| recorded(format!("a_{n}"), "a.dot", NOW + n))
-			.collect();
-		sessions.push(recorded("b_0".to_string(), "b.dot", NOW));
-		sessions.push(session(FundingDirection::In));
-
-		let (kept, compacted) = retained(sessions);
-		let count = |owner: &str| {
-			kept.iter()
-				.filter(|session| session.owner_product_id.as_ref().is_some_and(|id| *id == owner))
-				.count()
-		};
-
-		assert_eq!(
-			(
-				count("a.dot"),
-				count("b.dot"),
-				kept.iter().any(|session| session.intent == "a_0" || session.intent == "a_1"),
-				kept.iter().any(|session| !session.is_terminal()),
-				compacted,
-			),
-			(
-				RECORDED_PER_OWNER,
-				1,
-				false,
-				true,
-				vec![
-					FundingSessionSummary::from(recorded("a_1".to_string(), "a.dot", NOW + 1)),
-					FundingSessionSummary::from(recorded("a_0".to_string(), "a.dot", NOW)),
-				]
-			)
-		);
-	}
-
-	// A product only waits for the outcome; the host draws the steps, so an
-	// open session reads the same whichever way value moves.
-	#[test]
-	fn an_open_session_reads_in_progress_until_its_deadline() {
-		let in_progress = HostFundingStatusSubscribeItem::InProgress {
-			expires_at: Some(NOW + SESSION_WINDOW_MS),
-		};
-		assert_eq!(
-			(session(FundingDirection::In).wire_item(), session(FundingDirection::Out).wire_item(),),
-			(in_progress.clone(), in_progress)
-		);
-	}
-
-	// Nothing else ends a session that hears nothing, so expiry is what
-	// guarantees every subscriber eventually gets a terminal item.
-	#[test]
-	fn a_session_expires_at_its_deadline_and_not_before() {
-		let mut session = session(FundingDirection::In);
-
-		assert!(!session.expire_if_due(NOW + SESSION_WINDOW_MS - 1));
-		assert!(session.expire_if_due(NOW + SESSION_WINDOW_MS));
-		assert_eq!(
-			session.wire_item(),
-			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired }
-		);
-	}
-
-	// A bank transfer can take days, so a provider that keeps reporting holds
-	// the session past the first day; one that went silent for a week loses
-	// it, so it cannot hold the session and its worker for good.
-	#[test]
-	fn an_assigned_session_expires_a_week_after_its_provider_last_reported() {
-		let mut session = served(FundingDirection::In);
-		let heard_at = NOW + SESSION_WINDOW_MS;
-		session
-			.report(
-				PROVIDER,
-				FundingUpdate::In(FundingInboundUpdate::AwaitingPayment),
-				|id| *id,
-				heard_at,
-			)
-			.expect("reported");
-
-		let before = session.expire_if_due(heard_at + PROVIDER_SILENCE_MS - 1);
-		let shown = session.wire_item();
-		let at = session.expire_if_due(heard_at + PROVIDER_SILENCE_MS);
-
-		assert_eq!(
-			(before, shown, at, session.wire_item()),
-			(
-				false,
-				HostFundingStatusSubscribeItem::InProgress {
-					expires_at: Some(heard_at + PROVIDER_SILENCE_MS)
-				},
-				true,
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired },
-			)
-		);
-	}
-
-	// Once the provider holds the user's payment, expiring the session would
-	// write off money still owed to the user, so only its outcome ends it.
-	#[test]
-	fn a_session_whose_provider_holds_the_payment_never_expires() {
-		let mut session = served(FundingDirection::In);
-		session
-			.report(
-				PROVIDER,
-				FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true }),
-				|id| *id,
-				NOW,
-			)
-			.expect("reported");
-
-		let expired = session.expire_if_due(NOW + 10 * PROVIDER_SILENCE_MS);
-
-		assert_eq!(
-			(expired, session.wire_item()),
-			(false, HostFundingStatusSubscribeItem::InProgress { expires_at: None })
-		);
-	}
-
-	#[test]
-	fn an_ended_session_keeps_its_first_outcome() {
-		let mut session = expired("fs_1", NOW);
-
-		assert!(!session.fail(FundingFailure::Cancelled, NOW + 1));
-		assert_eq!(session, expired("fs_1", NOW));
-	}
-
-	// The host owns the history: open sessions come first, then the ones it
-	// has not recorded, newest first and not without bound, then the recorded
-	// ones kept only so their owner can read how they ended. An unrecorded
-	// session past the bound is compacted, not lost.
-	#[test]
-	fn the_core_keeps_open_then_unrecorded_then_recorded_sessions() {
-		let ended = |index: usize, acknowledged| FundingSession {
-			acknowledged,
-			..expired(&format!("fs_s{index}"), NOW + index as u64)
-		};
-		let open = session(FundingDirection::Out);
-		let recorded = (0..3).map(|index| ended(index, true));
-		let unrecorded = (100..101 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
-
-		let (kept, compacted) = retained(recorded.chain(unrecorded).chain([open]));
-		let kept: Vec<String> = kept.into_iter().map(|session| session.intent).collect();
-
-		let newest_unrecorded =
-			(101..101 + UNACKNOWLEDGED_LIMIT).rev().map(|index| format!("fs_s{index}"));
-		let recorded_newest_first = (0..3).rev().map(|index| format!("fs_s{index}"));
-		assert_eq!(
-			(kept, compacted),
-			(
-				std::iter::once("fs_1".to_string())
-					.chain(newest_unrecorded)
-					.chain(recorded_newest_first)
-					.collect::<Vec<_>>(),
-				vec![FundingSessionSummary::from(ended(100, false))],
-			)
-		);
-	}
-
-	fn served(direction: FundingDirection) -> FundingSession {
-		let mut session = session(direction);
-		assert!(session.assign(PROVIDER, NOW));
-		session
-	}
-
-	/// Report `update` from the provider. Ids are compared as given, as the
-	/// session only checks them against what was recorded.
-	fn report(
-		session: &mut FundingSession,
-		update: FundingUpdate,
-	) -> Result<(), HostFundingReportError> {
-		session.report(PROVIDER, update, |id| *id, NOW)
-	}
-
-	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
-		for update in updates {
-			if let Some((id, amount)) = named_funds(update) {
-				taken(session, *id, amount);
-			}
-			report(session, update.clone())
-				.unwrap_or_else(|refusal| panic!("{update:?} refused: {refusal:?}"));
-		}
-	}
-
-	/// Record funds the provider starts, before the host takes them.
-	fn start(session: &mut FundingSession, host_id: [u8; 32], amount: u128) -> StartRecord {
-		session.record_start(host_id, amount, [0; 32], NOW)
-	}
-
-	/// Record funds the provider started and the host took.
-	fn taken(session: &mut FundingSession, host_id: [u8; 32], amount: u128) {
-		start(session, host_id, amount);
-		session.accept_start(&host_id);
-	}
-
-	fn named(host_id: [u8; 32], amount: u128) -> StartedFunds {
-		StartedFunds {
-			host_id,
-			amount,
-			terms: [0; 32],
-			recorded_at_ms: NOW,
-			accepted: true,
-			named_at_ms: Some(NOW),
-		}
-	}
-
-	// With no provider to ask, a cancel ends the session itself; once it
-	// ended, its outcome stands.
-	#[test]
-	fn an_unserved_session_is_cancelled_once() {
-		let mut open = session(FundingDirection::In);
-		let mut ended = expired("fs_2", NOW);
-
-		assert_eq!(
-			(open.cancel(NOW + 1), open.wire_item(), ended.cancel(NOW + 1)),
-			(
-				CancelOutcome::Ended,
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
-				CancelOutcome::Refused
-			)
-		);
-	}
-
-	fn cancelled(session: &mut FundingSession) -> CancelOutcome {
-		session.cancel(NOW)
-	}
-
-	fn offer(fee: u128, refund: u128, expires_at: Option<u64>) -> FundingCancelAnswer {
-		FundingCancelAnswer::Offer { fee, refund, expires_at }
-	}
-
-	fn refused(reason: &str) -> FundingCancelAnswer {
-		FundingCancelAnswer::Refused { reason: reason.into() }
-	}
-
-	fn declined() -> Option<CancelCall> {
-		Some(CancelCall::Settle(FundingCancelDecision::Declined))
-	}
-
-	// Once the user's payment reached the provider, a cancel is a request:
-	// asking again while it is pending changes nothing and never ends the
-	// session, and a refusal leaves it running until the user asks anew.
-	#[test]
-	fn after_money_moved_a_cancel_is_a_request_the_provider_answers() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: false })],
-		);
-
-		let asked = cancelled(&mut session);
-		let again = cancelled(&mut session);
-		session.answer_cancel(refused("card settled"), NOW);
-		let refused = session.cancel.clone();
-		let asked_anew = cancelled(&mut session);
-
-		assert_eq!(
-			(asked, again, refused, asked_anew, session.is_terminal()),
-			(
-				CancelOutcome::Requested,
-				CancelOutcome::Pending,
-				Some(FundingCancel::Refused { reason: "card settled".into() }),
-				CancelOutcome::Requested,
-				false,
-			)
-		);
-	}
-
-	// The user sees the provider's terms and declines them: the session runs
-	// on, and the provider hears the answer, again on each connect until it
-	// confirms it heard it.
-	#[test]
-	fn a_declined_offer_lets_the_session_carry_on() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut session);
-		session.answer_cancel(offer(5, 95, None), NOW);
-		let offered = session.cancel.clone();
-
-		let answer = session.confirm_cancel(None, NOW);
-		let pending = session.pending_cancel_call();
-		let heard = session.cancel_settled(&FundingCancelDecision::Declined);
-
-		assert_eq!(
-			(offered, answer, session.is_terminal(), pending, heard, session.pending_cancel_call()),
-			(
-				Some(FundingCancel::Offered { fee: 5, refund: 95, expires_at: None }),
-				CancelConfirmation::Declined,
-				false,
-				declined(),
-				true,
-				None,
-			)
-		);
-	}
-
-	// A provider that reports its next step after a decline has carried on,
-	// so the decline is not handed to it again on every connect.
-	#[test]
-	fn a_decline_stops_repeating_once_the_provider_carries_on() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut session);
-		session.answer_cancel(offer(5, 95, None), NOW);
-		session.confirm_cancel(None, NOW);
-		let before = session.pending_cancel_call();
-
-		reported(&mut session, &[FundingUpdate::In(FundingInboundUpdate::Converting)]);
-
-		assert_eq!(
-			(before, session.pending_cancel_call(), session.cancel.clone()),
-			(declined(), None, None)
-		);
-	}
-
-	// An accepted offer is the provider's to settle: before any credit it
-	// returns the user's payment and fails the session, which it may do
-	// although it holds the payment.
-	#[test]
-	fn an_accepted_offer_is_settled_by_the_provider() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut session);
-		session.answer_cancel(offer(5, 95, None), NOW);
-
-		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
-		let heard = session.cancel_settled(&FundingCancelDecision::Accepted { fee: 5, refund: 95 });
-		let replayed = session.pending_cancel_call();
-		let settled =
-			report(&mut session, FundingUpdate::Failed { reason: FundingFailure::Cancelled });
-
-		assert_eq!(
-			(answer, heard, replayed, settled, session.wire_item(), session.cancel),
-			(
-				CancelConfirmation::Accepted,
-				false,
-				Some(CancelCall::Settle(FundingCancelDecision::Accepted { fee: 5, refund: 95 })),
-				Ok(()),
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
-				None,
-			)
-		);
-	}
-
-	// An offer the user leaves unanswered lapses on the core's clock, which
-	// keeps time for it although nothing else can expire the session; an
-	// answer after that cannot accept it.
-	#[test]
-	fn an_offer_lapses_at_its_expiry() {
-		let mut lapsing = served(FundingDirection::In);
-		reported(
-			&mut lapsing,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut lapsing);
-		lapsing.answer_cancel(offer(5, 95, Some(NOW + 10)), NOW);
-		let mut late = lapsing.clone();
-
-		let alarm = lapsing.next_alarm_ms();
-		let early = lapsing.lapse_cancel_offer(NOW + 9);
-		let due = lapsing.lapse_cancel_offer(NOW + 10);
-
-		assert_eq!(
-			(
-				alarm,
-				early,
-				due,
-				lapsing.cancel.clone(),
-				lapsing.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 11),
-				late.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 10),
-				late.cancel,
-			),
-			(
-				Some(NOW + 10),
-				false,
-				true,
-				Some(FundingCancel::Declined),
-				CancelConfirmation::NoOffer,
-				CancelConfirmation::Lapsed,
-				Some(FundingCancel::Declined),
-			)
-		);
-	}
-
-	// Once the provider started crediting the user's balance, there is
-	// nothing left to cancel: the host tells the user it is too late, and
-	// the provider is not asked.
-	#[test]
-	fn an_inbound_session_whose_credit_started_is_too_late_to_cancel() {
-		let mut recorded = served(FundingDirection::In);
-		start(&mut recorded, [1; 32], 100);
-		let mut named = served(FundingDirection::In);
-		reported(
-			&mut named,
-			&[FundingUpdate::In(FundingInboundUpdate::Crediting {
-				top_up_id: [1; 32],
-				amount: 100,
-			})],
-		);
-
-		assert_eq!(
-			(cancelled(&mut recorded), recorded.cancel, cancelled(&mut named)),
-			(CancelOutcome::TooLate, None, CancelOutcome::TooLate)
-		);
-	}
-
-	// A worker can stop between starting a payment and naming it. The
-	// payment it recorded locks the session as named funds do: asking twice
-	// does not end it, no deadline does, and the provider cannot fail it, so
-	// a debited user is never told nothing moved.
-	#[test]
-	fn recorded_funds_lock_the_session_before_they_are_named() {
-		let mut session = served(FundingDirection::Out);
-		start(&mut session, [3; 32], 40);
-
-		let first = cancelled(&mut session);
-		let second = cancelled(&mut session);
-		let expired = session.expire_if_due(u64::MAX);
-		let failed =
-			report(&mut session, FundingUpdate::Failed { reason: FundingFailure::Cancelled });
-
-		assert_eq!(
-			(first, second, expired, session.expires_at(), failed, session.is_terminal()),
-			(
-				CancelOutcome::Requested,
-				CancelOutcome::Pending,
-				false,
-				None,
-				Err(HostFundingReportError::OutOfOrder),
-				false,
-			)
-		);
-	}
-
-	// The provider makes one offer per cancel: a second answer to the same
-	// cancel is not taken, and terms other than the offer's accept nothing.
-	#[test]
-	fn an_offer_stands_until_the_user_answers_it() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut session);
-		let first = session.answer_cancel(offer(5, 95, None), NOW);
-		let second = session.answer_cancel(offer(20, 80, None), NOW);
-
-		let other = session.confirm_cancel(Some(CancelTerms { fee: 20, refund: 80 }), NOW);
-		let asked = session.pending_cancel_call();
-		let shown = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
-
-		assert_eq!(
-			(first, second, other, asked, shown, session.cancel),
-			(
-				true,
-				false,
-				CancelConfirmation::NoOffer,
-				None,
-				CancelConfirmation::Accepted,
-				Some(FundingCancel::Accepted { fee: 5, refund: 95 }),
-			)
-		);
-	}
-
-	// Before money moved the provider stops, and the core ends the session as
-	// cancelled; once money moved, stopping is not the provider's answer to
-	// give, so it counts as a refusal and the user can ask again.
-	#[test]
-	fn a_provider_stops_only_before_money_moved() {
-		let mut fresh = served(FundingDirection::In);
-		cancelled(&mut fresh);
-		let mut paid = served(FundingDirection::In);
-		reported(
-			&mut paid,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut paid);
-
-		assert_eq!(
-			(
-				fresh.answer_cancel(FundingCancelAnswer::Stopped, NOW),
-				fresh.wire_item(),
-				paid.answer_cancel(FundingCancelAnswer::Stopped, NOW),
-				paid.cancel.clone(),
-				cancelled(&mut paid),
-				paid.is_terminal(),
-			),
-			(
-				true,
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
-				true,
-				Some(FundingCancel::Refused { reason: String::new() }),
-				CancelOutcome::Requested,
-				false,
-			)
-		);
-	}
-
-	// An inbound offer accepted after the provider started crediting comes
-	// too late: the provider could not honour it, so it is declined.
-	#[test]
-	fn accepting_an_inbound_offer_after_the_credit_started_is_too_late() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut session);
-		session.answer_cancel(offer(5, 95, None), NOW);
-		start(&mut session, [1; 32], 100);
-
-		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
-
-		assert_eq!(
-			(answer, session.cancel.clone(), session.pending_cancel_call()),
-			(CancelConfirmation::TooLate, Some(FundingCancel::Declined), declined())
-		);
-	}
-
-	// An offer cannot hand back more than the session moves, an inbound
-	// session whose credit started cannot be offered, and an outbound offer
-	// waits for the refund path of a released withdrawal. One that does not
-	// fit counts as a refusal, so the cancel does not wait on it for good.
-	#[test]
-	fn an_offer_must_fit_the_session() {
-		let mut over = served(FundingDirection::In);
-		reported(
-			&mut over,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		cancelled(&mut over);
-		let mut crediting = over.clone();
-		start(&mut crediting, [1; 32], 100);
-		let mut outbound = served(FundingDirection::Out);
-		cancelled(&mut outbound);
-
-		assert_eq!(
-			(
-				over.answer_cancel(offer(5, 100, None), NOW),
-				crediting.answer_cancel(offer(5, 95, None), NOW),
-				outbound.answer_cancel(offer(5, 95, None), NOW),
-				over.cancel,
-			),
-			(true, true, true, Some(FundingCancel::Refused { reason: String::new() }))
-		);
-	}
-
-	// A refusal after the payment was named leaves the payment to settle
-	// the session, before and after a restart.
-	#[test]
-	fn a_cancel_answer_after_collecting_does_not_hide_the_settlement() {
-		let mut session = served(FundingDirection::Out);
-		reported(
-			&mut session,
-			&[FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-				payment_id: [3; 32],
-				amount: 40,
-			})],
-		);
-		cancelled(&mut session);
-		session.answer_cancel(refused("paid out"), NOW);
-		let restarted =
-			FundingSession::decode(&mut &session.encode()[..]).expect("stored session decodes");
-
-		let due = |session: &FundingSession| match session.settlement_due() {
-			Some(Settlement::Payment(funds)) => Some(funds.amount),
-			_ => None,
-		};
-		assert_eq!((due(&session), due(&restarted)), (Some(40), Some(40)));
-	}
-
-	// A provider answers only a cancel the user asked for, and an accepted
-	// offer is not taken back: it is the provider's to settle.
-	#[test]
-	fn a_cancel_answer_needs_a_pending_cancel() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true })],
-		);
-		let unasked = session.answer_cancel(offer(5, 95, None), NOW);
-		cancelled(&mut session);
-		session.answer_cancel(offer(2, 98, None), NOW);
-		session.confirm_cancel(Some(CancelTerms { fee: 2, refund: 98 }), NOW);
-
-		assert_eq!(
-			(unasked, session.answer_cancel(refused("late"), NOW), session.cancel),
-			(false, false, Some(FundingCancel::Accepted { fee: 2, refund: 98 }))
-		);
-	}
-
-	// An answer to a cancel is not an update: a restarted worker resumes from
-	// its last step, and the next step still follows.
-	#[test]
-	fn cancel_answers_sit_outside_the_order_of_steps() {
-		let mut session = served(FundingDirection::In);
-		let received = FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true });
-		reported(&mut session, std::slice::from_ref(&received));
-		cancelled(&mut session);
-		session.answer_cancel(refused("no"), NOW);
-
-		assert_eq!(
-			(
-				session.assignment().last_update,
-				report(&mut session, FundingUpdate::In(FundingInboundUpdate::Converting))
-			),
-			(Some(received), Ok(()))
-		);
-	}
-
-	// A provider that never answers the first cancel cannot hold the session:
-	// asking again ends it.
-	#[test]
-	fn a_second_cancel_ends_a_session_its_provider_left_unanswered() {
-		let mut session = served(FundingDirection::Out);
-
-		assert_eq!(
-			(session.cancel(NOW), session.cancel(NOW + 1), session.wire_item()),
-			(
-				CancelOutcome::Requested,
-				CancelOutcome::Ended,
-				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
-			)
-		);
-	}
-
-	#[test]
-	fn a_session_is_assigned_once() {
-		let mut session = served(FundingDirection::In);
-
-		assert!(!session.assign("other.dot", NOW));
-		assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
-	}
-
-	// Reports come only from the assigned provider and only move forward, so
-	// the stored timeline is one the host can draw in order.
-	#[test]
-	fn reports_come_from_the_provider_and_only_move_forward() {
-		let mut session = served(FundingDirection::In);
-		reported(&mut session, &[FundingUpdate::In(FundingInboundUpdate::Converting)]);
-
-		assert_eq!(
-			(
-				session.report(
-					"other.dot",
-					FundingUpdate::In(FundingInboundUpdate::Converting),
-					|id| *id,
-					NOW
-				),
-				report(&mut session, FundingUpdate::In(FundingInboundUpdate::AwaitingPayment)),
-				report(&mut session, FundingUpdate::In(FundingInboundUpdate::Converting)),
-				report(
-					&mut session,
-					FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-						payment_id: [1; 32],
-						amount: 5
-					})
-				),
-				report(&mut session, FundingUpdate::In(FundingInboundUpdate::Delivered)),
-			),
-			(
-				Err(HostFundingReportError::NotFound),
-				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::OutOfOrder),
-			)
-		);
-	}
-
-	// The core settles from what it saw the provider start and the host
-	// take, so a provider cannot claim a top-up it never started for this
-	// session, one the host has not taken, an inflated one, or one twice.
-	#[test]
-	fn a_report_names_only_funds_the_host_took_for_the_session_at_their_amount() {
-		let mut session = served(FundingDirection::In);
-		start(&mut session, [1; 32], 70);
-
-		let never_started = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [9; 32], amount: 70 }),
-		);
-		let not_taken = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [1; 32], amount: 70 }),
-		);
-		session.accept_start(&[1; 32]);
-		let inflated = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [1; 32], amount: 700 }),
-		);
-		let credited = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [1; 32], amount: 70 }),
-		);
-		let twice = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [1; 32], amount: 70 }),
-		);
-
-		assert_eq!(
-			(never_started, not_taken, inflated, credited, twice, session.started),
-			(
-				Err(HostFundingReportError::NotStarted),
-				Err(HostFundingReportError::NotStarted),
-				Err(HostFundingReportError::NotStarted),
-				Ok(()),
-				Err(HostFundingReportError::OutOfOrder),
-				vec![named([1; 32], 70)],
-			)
-		);
-	}
-
-	// A repeat under one id must ask what the first call asked, the host's
-	// refusal drops only funds it never took, and a session holds a bounded
-	// number of started funds.
-	#[test]
-	fn started_funds_are_recorded_once_per_id_and_bounded() {
-		let mut session = served(FundingDirection::In);
-		let first = start(&mut session, [1; 32], 70);
-		let repeat = start(&mut session, [1; 32], 70);
-		let other_amount = start(&mut session, [1; 32], 71);
-		let other_terms = session.record_start([1; 32], 70, [5; 32], NOW);
-		taken(&mut session, [2; 32], 10);
-		start(&mut session, [3; 32], 10);
-		let full = start(&mut session, [4; 32], 10);
-		let forgot_taken = session.forget_start(&[2; 32]);
-		let forgot_pending = session.forget_start(&[3; 32]);
-
-		assert_eq!(
-			(
-				[first, repeat, other_amount, other_terms, full],
-				forgot_taken,
-				forgot_pending,
-				session.pending_starts().map(|funds| funds.host_id).collect::<Vec<_>>(),
-			),
-			(
-				[
-					StartRecord::New,
-					StartRecord::Repeat,
-					StartRecord::Conflict,
-					StartRecord::Conflict,
-					StartRecord::Full,
-				],
-				false,
-				true,
-				vec![[1; 32]],
-			)
-		);
-	}
-
-	// A partial claim is retried with a new top-up, as getcash does in up to
-	// three attempts; the host follows all of them once the provider is done.
-	#[test]
-	fn an_inbound_session_settles_from_every_top_up_it_names() {
-		let mut session = served(FundingDirection::In);
-		reported(
-			&mut session,
-			&[
-				FundingUpdate::In(FundingInboundUpdate::Crediting {
-					top_up_id: [1; 32],
-					amount: 70,
-				}),
-				FundingUpdate::In(FundingInboundUpdate::Crediting {
-					top_up_id: [2; 32],
-					amount: 30,
-				}),
-			],
-		);
-		let repeated = report(
-			&mut session,
-			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [1; 32], amount: 30 }),
-		);
-		let due_before_done = session.settlement_due();
-		reported(&mut session, &[FundingUpdate::In(FundingInboundUpdate::Delivered)]);
-
-		assert_eq!(
-			(repeated, due_before_done, session.settlement_due()),
-			(
-				Err(HostFundingReportError::OutOfOrder),
-				None,
-				Some(Settlement::TopUps(vec![named([1; 32], 70), named([2; 32], 30)]))
-			)
-		);
-	}
-
-	// Once a top-up or payment started, the money is in motion: the provider
-	// cannot fail the session and no deadline ends it.
-	#[test]
-	fn moving_funds_are_settled_by_the_host_not_the_provider_or_the_clock() {
-		let mut session = served(FundingDirection::Out);
-		reported(
-			&mut session,
-			&[FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-				payment_id: [3; 32],
-				amount: 40,
-			})],
-		);
-
-		let failed =
-			report(&mut session, FundingUpdate::Failed { reason: FundingFailure::ProviderTimeout });
-		let expired = session.expire_if_due(u64::MAX);
-
-		assert_eq!(
-			(failed, expired, session.expires_at(), session.settlement_due()),
-			(
-				Err(HostFundingReportError::OutOfOrder),
-				false,
-				None,
-				Some(Settlement::Payment(named([3; 32], 40)))
-			)
-		);
-	}
-
-	#[test]
-	fn settling_records_what_moved_and_nothing_fails_the_session() {
-		let mut credited = served(FundingDirection::In);
-		let mut debited = served(FundingDirection::Out);
-		let mut unclaimed = served(FundingDirection::In);
-
-		credited.settle(90, NOW);
-		debited.settle(40, NOW);
-		unclaimed.settle(0, NOW);
-
-		assert_eq!(
-			(credited.wire_item(), debited.wire_item(), unclaimed.wire_item()),
-			(
-				HostFundingStatusSubscribeItem::Delivered { credited: 90 },
-				HostFundingStatusSubscribeItem::Released { debited: 40 },
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Other {
-						code: "not_claimed".to_string(),
-						message: "Nothing reached your balance".to_string(),
-					},
-				},
-			)
-		);
-	}
-
-	#[test]
-	fn a_provider_failure_ends_the_session_and_is_kept() {
-		let mut session = served(FundingDirection::In);
-		let failure = FundingUpdate::Failed { reason: FundingFailure::VerificationRefused };
-
-		reported(
-			&mut session,
-			&[FundingUpdate::In(FundingInboundUpdate::AwaitingPayment), failure.clone()],
-		);
-
-		assert_eq!(
-			(session.wire_item(), session.last_update()),
-			(
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::VerificationRefused,
-				},
-				Some(&failure)
-			)
-		);
-	}
-
-	// A compacted session answers with the same terminal item it had in full.
-	#[test]
-	fn a_summary_reads_as_the_session_ended() {
-		let delivered = FundingSession {
-			stage: FundingStage::Delivered { credited: 90, settled_at_ms: NOW + 1 },
-			..session(FundingDirection::In)
-		};
-		let summary = FundingSessionSummary::from(delivered.clone());
-
-		assert_eq!(
-			(summary.wire_item(), summary.settled_at_ms()),
-			(delivered.wire_item(), Some(NOW + 1))
-		);
-	}
-}
+mod tests;

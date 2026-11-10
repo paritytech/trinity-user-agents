@@ -34,10 +34,16 @@ struct ProductsSignConfirmModelFactoryTests {
     @Test func signPayloadLegacyFallsBackToRawCall() async throws {
         let method = try Data.randomOrError(of: 12)
         let input = ProductsSignConfirmInput.signPayload(
-            .legacyAccount(HostSignPayloadWithLegacyAccountRequest(
-                signer: "5Fff",
-                payload: Self.makeHostSignPayloadData(method: method)
-            ))
+            .legacyAccount(
+                account: TrUAPIHostProductAccountId(
+                    dotNsIdentifier: try! ProductId("p.dot"),
+                    derivationIndex: .index(0)
+                ),
+                request: HostSignPayloadWithLegacyAccountRequest(
+                    signer: "5Fff",
+                    payload: Self.makeHostSignPayloadData(method: method)
+                )
+            )
         )
 
         let model = try await makeFactory().makeModel(from: input, requester: requester)
@@ -68,7 +74,8 @@ struct ProductsSignConfirmModelFactoryTests {
 
     @Test func createTransactionLegacyFallsBackToRawCall() async throws {
         let input = try ProductsSignConfirmInput.createTransaction(.legacyAccount(
-            LegacyAccountTxPayload(
+            account: .identity,
+            payload: LegacyAccountTxPayload(
                 signer: Data.randomOrError(of: 32),
                 genesisHash: Data.randomOrError(of: 32),
                 callData: Data.randomOrError(of: 10),
@@ -106,6 +113,7 @@ struct ProductsSignConfirmModelFactoryTests {
     @Test func signRawStringPayloadWrapsForDisplay() async throws {
         let input = ProductsSignConfirmInput.signRaw(
             .legacyAccount(
+                account: .identity,
                 request: HostSignRawWithLegacyAccountRequest(signer: "5Fff", payload: .payload(payload: "hello")),
                 watermarked: true
             )
@@ -120,6 +128,7 @@ struct ProductsSignConfirmModelFactoryTests {
     @Test(arguments: [false, true]) func signRawInvalidHexPayloadThrows(watermarked: Bool) async {
         let input = ProductsSignConfirmInput.signRaw(
             .legacyAccount(
+                account: .identity,
                 request: HostSignRawWithLegacyAccountRequest(signer: "5Fff", payload: .payload(payload: "0xZZ")),
                 watermarked: watermarked
             )
@@ -134,6 +143,7 @@ struct ProductsSignConfirmModelFactoryTests {
         let bytes = Data(repeating: 0x11, count: 32)
         let review: SignRawReview = legacy
             ? .legacyAccount(
+                account: .identity,
                 request: HostSignRawWithLegacyAccountRequest(
                     signer: "5Fff",
                     payload: .payload(payload: bytes.toHex(includePrefix: true))
@@ -143,7 +153,10 @@ struct ProductsSignConfirmModelFactoryTests {
             : .product(
                 callingProductId: try! ProductId("test.product.dot"),
                 request: HostSignRawRequest(
-                    account: TrUAPIHostProductAccountId(dotNsIdentifier: try! ProductId("p.dot"), derivationIndex: .index(0)),
+                    account: TrUAPIHostProductAccountId(
+                        dotNsIdentifier: try! ProductId("p.dot"),
+                        derivationIndex: .index(0)
+                    ),
                     payload: .bytes(bytes: bytes)
                 ),
                 watermarked: false

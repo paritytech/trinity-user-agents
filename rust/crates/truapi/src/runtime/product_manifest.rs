@@ -1,10 +1,11 @@
-//! Root manifest resolution over dotNS.
+//! Product manifest resolution over dotNS.
 //!
 //! Resolves a product id to the JSON its base name publishes at the `manifest`
-//! text record, following [RFC — Product Manifest Format][manifest]: derive the
-//! node under the network's own TLD, find the resolver through the registry,
-//! read the record. Parsing that JSON is
-//! [`crate::host_internal::product_manifest`]'s job.
+//! text record, and its worker subname at the `executable` record, following
+//! [RFC — Product Manifest Format][manifest]: derive the node under the
+//! network's own TLD, find the resolver through the registry, read the record.
+//! Parsing that JSON is [`crate::host_internal::product_manifest`]'s and
+//! [`crate::host_logic::worker_manifest`]'s job.
 //!
 //! [manifest]: ../../../../docs/rfcs/product-manifest.md
 
@@ -16,16 +17,20 @@ use tracing::{info, instrument, warn};
 use truapi::v01;
 
 use crate::{
+	chain::EvmContractError,
 	chain_runtime::ChainRuntime,
-	dotns_views::{call_bytes32_string, network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
 		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
 		sso_messages::RingVrfError,
 	},
-	host_logic::dotns_gateway::{
-		DotnsCallError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args,
-		decode_address, decode_string, discover_pop_controller, namehash_under,
+	host_logic::{
+		dotns_gateway::{
+			ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
+			DotnsTransport, discover_pop_controller, namehash_under,
+		},
+		worker_manifest::WorkerManifest,
 	},
 	runtime::{
 		dotns_lookup::{DotnsLookup, DotnsLookupKind},
@@ -36,6 +41,10 @@ use crate::{
 
 /// Text record a base name publishes its root manifest at.
 const MANIFEST_RECORD_KEY: &str = "manifest";
+/// Text record an executable subname publishes its manifest at.
+const EXECUTABLE_RECORD_KEY: &str = "executable";
+/// Subname label a product's Worker executable is published under.
+const WORKER_SUBNAME: &str = "worker";
 
 /// Reads `product_id`'s root manifest JSON.
 ///
@@ -50,46 +59,88 @@ const MANIFEST_RECORD_KEY: &str = "manifest";
 ///
 /// [tlds]: crate::platform::DOTNS_TLDS
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
-pub async fn fetch_root_manifest(
+async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	let mut lookup = DotnsLookup::pinned_to_best_block(
+	fetch_text_record(
 		chain,
 		asset_hub_chain_genesis_hash,
 		DotnsLookupKind::Manifest(product_id),
+		product_id,
+		None,
+		MANIFEST_RECORD_KEY,
 	)
-	.await?;
+	.await
+}
+
+/// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes
+/// at its `executable` record. `Ok(None)` means the product publishes no
+/// Worker, as [`fetch_root_manifest`] reads an absent root manifest.
+#[instrument(skip_all, fields(runtime.method = "product_manifest.fetch_worker"))]
+async fn fetch_worker_manifest(
+	chain: &ChainRuntime,
+	asset_hub_chain_genesis_hash: [u8; 32],
+	product_id: &ProductId,
+) -> Result<Option<String>, DotnsError> {
+	fetch_text_record(
+		chain,
+		asset_hub_chain_genesis_hash,
+		DotnsLookupKind::WorkerManifest(product_id),
+		product_id,
+		Some(WORKER_SUBNAME),
+		EXECUTABLE_RECORD_KEY,
+	)
+	.await
+}
+
+/// The node of `product_id`'s base name under `tld`, or of its `subname`.
+fn record_node(tld: &str, product_id: &ProductId, subname: Option<&str>) -> [u8; 32] {
+	let base = namehash_under(&tld_node(tld), product_id.bare_label());
+	subname.map_or(base, |label| namehash_under(&base, label))
+}
+
+/// Reads text record `key` on `product_id`'s base name, or on its `subname`
+/// when one is given. `kind` names the lookup in its follow id.
+async fn fetch_text_record(
+	chain: &ChainRuntime,
+	asset_hub_chain_genesis_hash: [u8; 32],
+	kind: DotnsLookupKind<'_>,
+	product_id: &ProductId,
+	subname: Option<&str>,
+	key: &str,
+) -> Result<Option<String>, DotnsError> {
+	let mut lookup =
+		DotnsLookup::pinned_to_best_block(chain, asset_hub_chain_genesis_hash, kind).await?;
 
 	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
 		return Ok(None);
 	};
 
 	let tld = network_tld(&mut lookup, &protocol_registry).await?;
-	let node = namehash_under(&tld_node(&tld), product_id.bare_label());
+	let node = record_node(&tld, product_id, subname);
 
 	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
+		read_view(&mut lookup, &registry, DotnsRegistry::resolverCall { node: node.into() })
 			.await
 			.map_err(DotnsError::Resolver)?;
-	if resolver == [0u8; 20] {
+	if resolver.is_zero() {
 		return Ok(None);
 	}
 
 	let manifest = match read_view(
 		&mut lookup,
-		&resolver,
-		call_bytes32_string("text(bytes32,string)", &node, MANIFEST_RECORD_KEY),
-		decode_string,
+		&resolver.into_array(),
+		ContentResolver::textCall { node: node.into(), key: key.to_string() },
 	)
 	.await
 	{
 		Ok(manifest) => manifest,
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
-		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => return Ok(None),
+		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => return Ok(None),
 		Err(error) => return Err(DotnsError::ManifestText(error)),
 	};
 	if manifest.is_empty() {
@@ -117,123 +168,14 @@ async fn protocol_registry<T: DotnsTransport + ?Sized>(
 		);
 		return Ok(None);
 	};
-	read_view(transport, &controller, call_no_args("protocolRegistry()"), decode_address)
+	read_view(transport, &controller, DotnsPopController::protocolRegistryCall {})
 		.await
-		.map(Some)
+		.map(|registry| Some(registry.into_array()))
 		.map_err(DotnsError::ProtocolRegistry)
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// The node a product id resolves to on a network serving `tld`.
-	fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
-		namehash_under(&tld_node(tld), ProductId::for_test(product_id).bare_label())
-	}
-
-	#[test]
-	fn a_node_matches_the_chain_derivation() {
-		// Pinned against paseo-v2, where `ProtocolRegistry.tldNode()` reads
-		// 0x096b43… and the dotNS SDK derives `browse.paseo` as 0x185056….
-		assert_eq!(
-			hex::encode(tld_node(".paseo")),
-			"096b436ee9a398429fe33ad4b359bad4398dd74b412ec1dd043c93dfbf581874"
-		);
-		assert_eq!(
-			hex::encode(node_on(".paseo", "browse.paseo")),
-			"1850561ffded63ac23dac8fd5e793fca1f349729ed6ade91c45f44a9f7b6b781"
-		);
-	}
-
-	#[test]
-	fn the_tld_an_identifier_carries_does_not_change_the_node_it_resolves_to() {
-		// A product id minted on `.dot` has to resolve against a `.paseo`
-		// deployment; the suffix it was written with names no node of its own.
-		let expected = namehash_under(&tld_node(".paseo"), "dim2");
-		assert_eq!(node_on(".paseo", "dim2.dot"), expected);
-		assert_eq!(node_on(".paseo", "dim2.paseo"), expected);
-	}
-
-	#[test]
-	fn one_identifier_resolves_differently_on_two_networks() {
-		// The other half of the same property: the network's TLD is what
-		// separates deployments, so the same id must not collide across them.
-		assert_ne!(node_on(".paseo", "dim2.dot"), node_on(".dot", "dim2.dot"));
-	}
-
-	#[test]
-	fn a_text_call_encodes_the_key_as_a_dynamic_argument() {
-		let call = call_bytes32_string("text(bytes32,string)", &[0x11; 32], "manifest");
-		// selector, node, offset, length, one padded word for an 8-byte key.
-		assert_eq!(call.len(), 4 + 32 * 4);
-		assert_eq!(&call[4..36], &[0x11; 32]);
-		assert_eq!(call[67], 64, "key offset follows the node");
-		assert_eq!(call[99], 8, "key length precedes its bytes");
-		assert_eq!(&call[100..108], b"manifest");
-	}
-
-	/// The source each lookup with nothing cached reports, for a host with no
-	/// Asset Hub, a chain that cannot be reached, and one that never answers.
-	#[test]
-	fn an_uncached_lookup_reports_why_it_read_no_manifest() {
-		let lookup = |platform: crate::test_support::StubPlatform,
-		              asset_hub_chain_genesis_hash: [u8; 32],
-		              ceiling: Duration| {
-			let platform = std::sync::Arc::new(platform);
-			let services = RuntimeServices::new(
-				platform.clone(),
-				crate::platform::HostInfo {
-					name: "Polkadot Mobile".to_string(),
-					icon: None,
-					version: None,
-					platform: truapi::latest::HostPlatform::Unknown,
-				},
-				[0; 32],
-				[0xbb; 32],
-				asset_hub_chain_genesis_hash,
-				crate::test_support::test_spawner(),
-			);
-			futures::executor::block_on(root_manifest_within(
-				ceiling,
-				&services,
-				platform.as_ref(),
-				&ProductId::for_test("peopl.dot"),
-			))
-		};
-		assert_eq!(
-			[
-				lookup(Default::default(), [0; 32], MANIFEST_RESOLUTION_CEILING),
-				lookup(
-					crate::test_support::StubPlatform {
-						chain_connect_error: Some("fixture serves no chain"),
-						..Default::default()
-					},
-					[0xcc; 32],
-					MANIFEST_RESOLUTION_CEILING,
-				),
-				lookup(
-					crate::test_support::StubPlatform {
-						chain_connect_pending: true,
-						..Default::default()
-					},
-					[0xcc; 32],
-					Duration::from_millis(10),
-				),
-			],
-			[
-				(None, ManifestSource::NoAssetHub),
-				(
-					None,
-					ManifestSource::LookupFailed {
-						reason: "Asset Hub follow stopped before initialization".to_string(),
-					},
-				),
-				(None, ManifestSource::TimedOut),
-			]
-		);
-	}
-}
+mod tests;
 
 /// How long a cached root manifest is honoured.
 ///
@@ -246,7 +188,7 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
 /// reads today, so a later consumer needs no cache migration.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
@@ -277,6 +219,9 @@ pub struct CachedManifest {
 /// A development and testing seam. Nothing enforces that a seeded manifest
 /// matches what the product actually publishes, so a host offering this owes
 /// the developer a way to tell the two apart.
+///
+/// A Worker manifest is cached the same way, under
+/// [`worker_manifest_cache_key`].
 pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> Vec<u8> {
 	CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode()
 }
@@ -288,7 +233,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// a user's explicit denial, an unreadable keychain and a manifest that failed
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
@@ -305,7 +250,7 @@ enum RefusedBecause {
 }
 
 impl RefusedBecause {
-	fn as_str(self) -> &'static str {
+	fn as_str(&self) -> &'static str {
 		match self {
 			Self::NotGranted => "not granted",
 			Self::UserDenied => "user denied",
@@ -323,7 +268,7 @@ impl RefusedBecause {
 /// for that long, so two devices can judge one grant differently by where each
 /// got its manifest.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-enum ManifestSource {
+pub enum ManifestSource {
 	/// Read from the cache on this device, written `age_secs` ago.
 	#[display("cache, {age_secs} s old")]
 	Cached { age_secs: u64 },
@@ -717,20 +662,110 @@ async fn key_access(
 /// chain's answer that there is no manifest, which is authoritative for the same
 /// TTL.
 ///
-/// A failed lookup is not cached. It says nothing about the product, only that
-/// the chain could not be read, and holding that for a day would turn one blip
-/// into a day of withdrawn grants.
-///
-/// The cache dedupes misses only once one has finished, and nothing upstream
-/// caps in-flight dispatches, so a product can hold one follow per concurrent
-/// miss for up to `OPERATION_TIMEOUT` each. A single-flight keyed by target or
-/// a dispatch cap belongs with the request pipeline, not here.
+/// Lookups of one product that miss the cache together share one dotNS read,
+/// through [`DotnsReads::root_manifests`](crate::runtime::services::DotnsReads::root_manifests), so
+/// a burst of them holds one Asset Hub follow rather than one each. The read runs to the end
+/// whatever its callers do, so one that gives up on its ceiling does not cut it short for
+/// the rest.
 async fn root_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	let key = CoreStorageKey::product_manifest(target);
+	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
+		let genesis_hash =
+			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
+		let (chain, target) = (services.chain.clone(), target.clone());
+		services
+			.dotns_reads
+			.root_manifests
+			.run(target.bare_label().to_string(), move || async move {
+				fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
+					let reason = error.reason();
+					warn!(%target, %reason, "root manifest lookup failed");
+					ManifestSource::LookupFailed { reason }
+				})
+			})
+			.await
+			.unwrap_or_else(|| {
+				Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
+			})
+	})
+	.await;
+	match read {
+		Ok((json, DotnsRead::Cached { age_secs })) => (json, ManifestSource::Cached { age_secs }),
+		Ok((json, DotnsRead::Fetched)) => (json, ManifestSource::Fetched),
+		Err(source) => (None, source),
+	}
+}
+
+/// Why a shared dotNS read gave no answer: its task ended first.
+const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
+
+/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
+/// `Ok(None)` when it publishes none or what it publishes cannot be used, which
+/// the RFC treats alike; `Err` when the chain could not be read, which says
+/// nothing about the product.
+pub async fn worker_manifest(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	product_id: &ProductId,
+) -> Result<Option<WorkerManifest>, String> {
+	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
+		let genesis_hash = asset_hub(services)?;
+		let (chain, product) = (services.chain.clone(), product_id.clone());
+		services
+			.dotns_reads
+			.worker_manifests
+			.run(product_id.bare_label().to_string(), move || async move {
+				fetch_worker_manifest(&chain, genesis_hash, &product)
+					.await
+					.map_err(|error| error.reason())
+			})
+			.await
+			.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
+	})
+	.await
+	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
+	let Some(json) = json else {
+		return Ok(None);
+	};
+	Ok(WorkerManifest::parse(&json)
+		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest is unusable"))
+		.ok())
+}
+
+/// Cache key for a product's Worker manifest, keyed by bare label as
+/// [`CoreStorageKey::product_manifest`] is.
+pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
+	CoreStorageKey::WorkerManifest { product_label: product_id.bare_label().to_string() }
+}
+
+/// Where [`cached_dotns_json`] read its answer.
+#[derive(Clone)]
+pub enum DotnsRead {
+	/// From the cache on this device, written `age_secs` ago.
+	Cached { age_secs: u64 },
+	/// From dotNS, just now.
+	Fetched,
+}
+
+/// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
+/// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
+/// answers, including that there is nothing published, is cached for that
+/// lifetime.
+///
+/// A failed lookup is not cached. It says nothing about what is published,
+/// only that the chain could not be read, and holding that for a day would
+/// turn one blip into a day of withdrawn grants or missing providers.
+async fn cached_dotns_json<F, E>(
+	platform: &dyn Platform,
+	key: CoreStorageKey,
+	fetch: impl FnOnce() -> F,
+) -> Result<(Option<String>, DotnsRead), E>
+where
+	F: Future<Output = Result<Option<String>, E>>,
+{
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below
@@ -743,25 +778,22 @@ async fn root_manifest(
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
-		return (cached.json, ManifestSource::Cached { age_secs: now - cached.fetched_at_secs });
+		return Ok((cached.json, DotnsRead::Cached { age_secs: now - cached.fetched_at_secs }));
 	}
 
-	let Some(genesis_hash) = services.asset_hub_chain_genesis_hash() else {
-		return (None, ManifestSource::NoAssetHub);
-	};
-	let json = match fetch_root_manifest(&services.chain, genesis_hash, target).await {
-		Ok(json) => json,
-		Err(error) => {
-			let reason = error.reason();
-			warn!(%target, %reason, "root manifest lookup failed");
-			return (None, ManifestSource::LookupFailed { reason });
-		},
-	};
+	let json = fetch().await?;
 	let _ = platform
 		.write_core_storage(
 			key,
 			CachedManifest { fetched_at_secs: now, json: json.clone() }.encode(),
 		)
 		.await;
-	(json, ManifestSource::Fetched)
+	Ok((json, DotnsRead::Fetched))
+}
+
+/// The Asset Hub dotNS is read from, or why there is none.
+fn asset_hub(services: &RuntimeServices) -> Result<[u8; 32], String> {
+	services
+		.asset_hub_chain_genesis_hash()
+		.ok_or_else(|| "the host has no Asset Hub to read dotNS from".to_string())
 }

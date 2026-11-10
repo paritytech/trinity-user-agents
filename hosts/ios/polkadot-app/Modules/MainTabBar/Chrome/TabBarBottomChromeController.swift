@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import DesignSystem
+import Keystore_iOS
 import PolkadotUI
 import SnapKit
 
@@ -9,7 +10,9 @@ final class TabBarBottomChromeController: UIViewController {
     private static let centerPanelTopGap: CGFloat = 12
 
     let chromeSurface = TabBarChromeSurfaceView()
+    let edgeGlowView = TabBarEdgeGlowView(frame: .zero)
     let centerButtonAnchorGuide = UILayoutGuide()
+    let dockletTouchObserver = DockletTouchObserver(target: nil, action: nil)
     let barModel = TabBarBarViewModel()
     lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
     lazy var dimHost = UIHostingController(rootView: TabBarDimView(model: barModel))
@@ -34,23 +37,55 @@ final class TabBarBottomChromeController: UIViewController {
         foldSurface: chromeSurface,
         chromeBounds: { [unowned self] in view.bounds },
         bottomSafeAreaInset: { [unowned self] in view.safeAreaInsets.bottom },
-        grabZoneSink: { [weak self] zone in
-            (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
-        },
-        closePanel: { [weak self] in
-            self?.barModel.setCenterPanelOpen(false)
-            self?.setPanel(nil)
-        },
-        stateSink: { [weak self] state in
-            self?.tipController.setBarShown(state == .shown)
-        }
+        outputs: .init(
+            glow: { [weak self] rect, opacity in
+                self?.edgeGlowView.frame = rect
+                switch opacity {
+                case let .progress(progress):
+                    self?.edgeGlowView.setProgress(progress)
+                case .fadeOut:
+                    self?.edgeGlowView.fadeOut()
+                }
+            },
+            grabZone: { [weak self] zone in
+                (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
+            },
+            closePanel: { [weak self] in
+                self?.barModel.setCenterPanelOpen(false)
+                self?.setPanel(nil)
+            },
+            state: { [weak self] state in
+                self?.tipController.setBarShown(state == .shown)
+                if state != .tucked {
+                    self?.tipController.dockletTuckEnded()
+                }
+                self?.applyAccessibility(for: state)
+            },
+            contentFade: { [weak self] target in
+                // Some targets are emitted inside UIKit's update cycle (layout, transition coordinator). An
+                // @Observable write there can leave the first observer on the old value, and an endpoint write
+                // is not corrected by a later frame. The write waits for the next main turn, and the animation
+                // is applied inside that block.
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyContentFade(target)
+                }
+            },
+            tuckLanded: { [weak self] kind in
+                self?.tipController.dockletTuckLanded(kind)
+            }
+        )
     )
 
-    private lazy var tipController = TabBarTipController(
+    lazy var tipController: TabBarTipController = .init(
         host: self,
         sequence: TabBarTipOrderedSequence(steps: TabBarTips.steps),
         centerButtonAnchor: centerButtonAnchorGuide,
-        statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() }
+        statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() },
+        docklet: .init(
+            edgeGlowAnchor: edgeGlowView,
+            edgeGlowArrowDirection: foldController.edge.popoverArrowDirection,
+            onTipShown: { [weak self] isShown in self?.foldController.setAutoHideBlocked(.tipShown, isShown) }
+        )
     )
 
     lazy var panelController = TabBarPanelController(
@@ -61,6 +96,7 @@ final class TabBarBottomChromeController: UIViewController {
             self?.updateActiveActionIndex()
             self?.applyBarLiveHeight()
             self?.refreshKeyboardLift()
+            self?.foldController.setAutoHideBlocked(.panelOpen, kind != nil)
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
             if kind != nil {
                 self?.tipController.dismissForPanel()
@@ -117,7 +153,7 @@ final class TabBarBottomChromeController: UIViewController {
     /// Height the bar occupies at the bottom edge once it has settled. Folding and panel
     /// animations move the chrome without changing it, so the host can lay out against it.
     var restingBarHeight: CGFloat {
-        guard TabBarVisibilityPolicy.contributesClearance(isTabRoot: foldController.isTabRoot) else {
+        guard foldController.isTabRoot else {
             return view.safeAreaInsets.bottom
         }
         return DSTabBarStyle.restingHeight(bottomSafeAreaInset: view.safeAreaInsets.bottom)
@@ -126,6 +162,12 @@ final class TabBarBottomChromeController: UIViewController {
     /// The part of `restingBarHeight` the safe area does not already cover.
     var restingBottomClearance: CGFloat {
         max(0, restingBarHeight - view.safeAreaInsets.bottom)
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            dockletTouchObserver.view?.removeGestureRecognizer(dockletTouchObserver)
+        }
     }
 
     override func loadView() {
@@ -145,10 +187,14 @@ final class TabBarBottomChromeController: UIViewController {
 
         installDimLayer()
         installChromeSurface()
+        installEdgeGlow()
         installBar()
 
         installOutsideTapRecognizer()
+        installGrabRecognizer()
         installKeyboardObserver()
+        installAccessibilityObservers()
+        installTouchObserver()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -165,6 +211,8 @@ final class TabBarBottomChromeController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+
+        attachTouchObserver()
 
         // Order matters: the centre content height is clamped to the available height the first call writes.
         refreshAvailablePanelHeight()
@@ -200,6 +248,12 @@ final class TabBarBottomChromeController: UIViewController {
         rebuildItems()
     }
 
+    #if !FEATURE_PRODUCTS
+        func setChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+            barModel.chainStatusRows = rows
+        }
+    #endif
+
     func setSettingsAttention(_ isVisible: Bool) {
         barModel.showsSettingsAttention = isVisible
     }
@@ -221,6 +275,14 @@ final class TabBarBottomChromeController: UIViewController {
 
     func setPanel(_ kind: TabBarPanelKind?) {
         panelController.setPanel(kind)
+    }
+
+    /// Opens `kind`, first restoring a tucked Docklet so the panel opens on a shown bar.
+    func openPanelShowingDocklet(_ kind: TabBarPanelKind) {
+        if foldController.isTucked {
+            foldController.setUserOverride(.shown)
+        }
+        setPanel(kind)
     }
 
     /// Fades the bar row out or back in. An open centre panel stays. `playsFeedback` false skips the medium impact.
@@ -398,8 +460,7 @@ extension TabBarBottomChromeController {
     func handleSlotTap(itemIndex: Int) {
         tipController.retireForUserInteraction()
 
-        guard !foldController.isFolded else {
-            foldController.setUserOverride(.shown, velocityX: 0)
+        guard !foldController.isTucked else {
             return
         }
 
@@ -414,17 +475,6 @@ extension TabBarBottomChromeController {
         let isReselection = tabIndex == selectedTabIndex
         setSelectedIndex(tabIndex)
         onSelect?(tabIndex, isReselection)
-    }
-
-    private func handleAction(_ action: TabBarAction) {
-        switch action {
-        case .connectionStatus:
-            onConnectionStatusTapped?()
-        case .spaTabs:
-            panelController.togglePanel(.shelf)
-        case .scan:
-            panelController.togglePanel(.content(.scan))
-        }
     }
 }
 

@@ -3,12 +3,17 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -16,9 +21,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -31,11 +40,10 @@ import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNot
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -59,7 +67,9 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -73,6 +83,7 @@ fun PocketScreen() {
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val shownProduct by viewModel.shownProduct.collectAsStateWithLifecycle()
     val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
+    val collectiblesProduct by viewModel.collectiblesProduct.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
 
@@ -81,12 +92,12 @@ fun PocketScreen() {
         cards = cards,
         shownProduct = shownProduct,
         openingFaceShown = openingFaceShown,
+        collectiblesProduct = collectiblesProduct,
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
-        onSketchbookSelected = viewModel::showCollectiblesSketchbook,
+        onSketchbookSelected = viewModel::openCollectibles,
         onSketchbookDismissed = viewModel::hideCollectiblesSketchbook,
-        onOpenCollectibles = viewModel::openCollectibles,
         onExpandedCardSettled = viewModel::hostExpandedProduct,
         onProductCardRemovalRequested = viewModel::requestRemoval,
         onRemovalConfirmed = viewModel::confirmRemoval,
@@ -100,12 +111,12 @@ private fun PocketScreenInternal(
     cards: ImmutableList<PocketCardUiModel>,
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
+    collectiblesProduct: ShownProduct?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
     onCardDismissed: () -> Unit,
     onSketchbookSelected: () -> Unit,
     onSketchbookDismissed: () -> Unit,
-    onOpenCollectibles: () -> Unit,
     onExpandedCardSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit,
     onRemovalConfirmed: () -> Unit,
@@ -114,6 +125,12 @@ private fun PocketScreenInternal(
     val listState = rememberLazyListState()
     val transition = updateTransition(screenState, label = "pocket_card_selection")
     val cardTilt = rememberCardTilt()
+    val collectiblesColour = remember { Animatable(0f) }
+    val colourScope = rememberCoroutineScope()
+    val onList = screenState is PocketScreenState.List
+    LaunchedEffect(onList) {
+        if (onList) collectiblesColour.snapTo(0f)
+    }
 
     PolkadotSurface {
         SharedTransitionLayout {
@@ -123,7 +140,13 @@ private fun PocketScreenInternal(
                 LocalCardTilt provides cardTilt
             ) {
                 transition.AnimatedContent(
-                    transitionSpec = { pocketFadeIn() togetherWith pocketFadeOut() },
+                    transitionSpec = {
+                        if (targetState is PocketScreenState.Collectibles) {
+                            pocketFadeIn(COLLECTIBLES_POCKET_DIM_DURATION_MS) togetherWith pocketFadeOut(COLLECTIBLES_POCKET_DIM_DURATION_MS)
+                        } else {
+                            pocketFadeIn() togetherWith pocketFadeOut()
+                        }
+                    },
                     contentKey = { it.contentKey }
                 ) { current ->
                     CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
@@ -136,7 +159,16 @@ private fun PocketScreenInternal(
                                     collectiblesAvailable = current.collectiblesAvailable,
                                     bindingsOf = bindingsOf,
                                     onCardSelected = onCardSelected,
-                                    onCollectiblesSelected = onSketchbookSelected,
+                                    sketchbookSaturation = { collectiblesColour.value },
+                                    onCollectiblesSelected = {
+                                        colourScope.launch {
+                                            collectiblesColour.animateTo(1f, tween(COLLECTIBLES_COLOUR_DURATION_MS))
+                                        }
+                                        colourScope.launch {
+                                            delay(CollectiblesLiftRequestDelay)
+                                            onSketchbookSelected()
+                                        }
+                                    },
                                     onProductCardRemovalRequested = onProductCardRemovalRequested
                                 )
 
@@ -163,8 +195,9 @@ private fun PocketScreenInternal(
 
                             is PocketScreenState.Collectibles -> {
                                 PocketCollectibles(
-                                    onBack = onSketchbookDismissed,
-                                    onViewButtonClick = onOpenCollectibles
+                                    product = collectiblesProduct,
+                                    saturation = { collectiblesColour.value },
+                                    onBack = onSketchbookDismissed
                                 )
                             }
                         }
@@ -231,63 +264,68 @@ private fun PocketList(
     collectiblesAvailable: Boolean,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
+    sketchbookSaturation: () -> Float,
     onCollectiblesSelected: () -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit
 ) {
     val anchorIndex = cards.indexOfFirst { it.id == anchorCard?.id }
 
     val navigationBarInsets = LocalAppNavigationBarInsets.current
+    val sketchbookInteraction = remember { MutableInteractionSource() }
+    val sketchbookPressed by sketchbookInteraction.collectIsPressedAsState()
+    val sketchbookScale by animateFloatAsState(
+        targetValue = if (sketchbookPressed) COLLECTIBLES_PRESSED_SCALE else 1f,
+        animationSpec = tween(COLLECTIBLES_PRESS_DURATION_MS),
+        label = "collectibles_press"
+    )
+
+    // Reporting stops as the list starts to leave, so the ID bar comes back with the card rather than after the fade.
+    val leaving = isPocketScreenLeaving()
 
     Box {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                .then(if (leaving) Modifier else Modifier.reportsScrollToStatusBar(listState)),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
+            contentPadding = WindowInsets(
+                top = PolkadotTheme.spacings.mediumIncreased,
+                bottom = PolkadotTheme.spacings.mediumIncreased,
+                left = PolkadotTheme.spacings.mediumIncreased,
+                right = PolkadotTheme.spacings.mediumIncreased
+            ).add(navigationBarInsets)
+                .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                .asPaddingValues()
         ) {
-            PolkadotTopBar(
-                title = stringResource(RCommon.string.pocket_toolbar_title),
-                titleSize = TopBarTitleSize.Large
-            )
+            // Keyed: a product card holds a face subscription and its resolved images, so
+            // positional identity would make every card below an insertion drop and re-subscribe.
+            itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
+                val cardModifier = Modifier.pocketListCardSharedElement(
+                    card = card,
+                    index = index,
+                    anchorCard = anchorCard,
+                    anchorIndex = anchorIndex
+                )
 
-            LazyColumn(
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
-                contentPadding = WindowInsets(
-                    top = PolkadotTheme.spacings.mediumIncreased,
-                    bottom = PolkadotTheme.spacings.mediumIncreased,
-                    left = PolkadotTheme.spacings.mediumIncreased,
-                    right = PolkadotTheme.spacings.mediumIncreased
-                ).add(navigationBarInsets).asPaddingValues()
-            ) {
-                // Keyed: a product card holds a face subscription and its resolved images, so
-                // positional identity would make every card below an insertion drop and re-subscribe.
-                itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
-                    val cardModifier = Modifier.pocketListCardSharedElement(
-                        card = card,
-                        index = index,
-                        anchorCard = anchorCard,
-                        anchorIndex = anchorIndex
-                    )
+                when (card) {
+                    is PocketCardUiModel.DigitalDollar -> {
+                        DigitalDollarCard(
+                            modifier = cardModifier,
+                            card = card,
+                            onSelected = onCardSelected,
+                            isExpanded = false
+                        )
+                    }
 
-                    when (card) {
-                        is PocketCardUiModel.DigitalDollar -> {
-                            DigitalDollarCard(
-                                modifier = cardModifier,
-                                card = card,
-                                onSelected = onCardSelected,
-                                isExpanded = false
-                            )
-                        }
-
-                        is PocketCardUiModel.ProductCard -> {
-                            ProductPocketCard(
-                                modifier = cardModifier,
-                                card = card,
-                                bindings = bindingsOf(card),
-                                onOpen = onCardSelected,
-                                onRemoveRequested = onProductCardRemovalRequested
-                            )
-                        }
+                    is PocketCardUiModel.ProductCard -> {
+                        ProductPocketCard(
+                            modifier = cardModifier,
+                            card = card,
+                            bindings = bindingsOf(card),
+                            onOpen = onCardSelected,
+                            onRemoveRequested = onProductCardRemovalRequested
+                        )
                     }
                 }
             }
@@ -312,9 +350,16 @@ private fun PocketList(
             CollectiblesSketchbook(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onCollectiblesSelected),
-                blackAndWhite = true,
-                onViewButtonClick = {}
+                    .graphicsLayer {
+                        scaleX = sketchbookScale
+                        scaleY = sketchbookScale
+                    }
+                    .clickable(
+                        interactionSource = sketchbookInteraction,
+                        indication = null,
+                        onClick = onCollectiblesSelected
+                    ),
+                saturation = sketchbookSaturation()
             )
         }
     }
@@ -349,6 +394,7 @@ private fun PocketScreenPreview() {
                 ),
                 shownProduct = null,
                 openingFaceShown = null,
+                collectiblesProduct = null,
                 bindingsOf = { card ->
                     ProductFaceBindings(
                         face = MutableStateFlow(JsWidget.Text(text = card.title)),
@@ -361,7 +407,6 @@ private fun PocketScreenPreview() {
                 onCardDismissed = {},
                 onSketchbookSelected = {},
                 onSketchbookDismissed = {},
-                onOpenCollectibles = {},
                 onProductCardRemovalRequested = {},
                 onRemovalConfirmed = {},
                 onRemovalDismissed = {}

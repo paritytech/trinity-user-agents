@@ -26,7 +26,6 @@ use crate::{
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
 	installation::{InstallationId, InstallationIdProvider},
-	platform::async_trait,
 	runtime::AuthorityError,
 	store::Db,
 };
@@ -69,7 +68,7 @@ pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
 /// A transfer policy that leaves every transfer waiting.
 struct NeverBuilds;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl SubmissionPolicy for NeverBuilds {
 	fn id(&self) -> PolicyId {
 		PolicyId::new(TRANSFER_POLICY)
@@ -90,7 +89,7 @@ impl SubmissionPolicy for NeverBuilds {
 /// Always the same installation.
 pub struct FixedInstallation(pub InstallationId);
 
-#[async_trait]
+#[async_trait::async_trait]
 impl InstallationIdProvider for FixedInstallation {
 	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
 		Ok(self.0)

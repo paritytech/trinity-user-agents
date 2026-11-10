@@ -25,6 +25,9 @@ struct ProductOpener: ProductOpening {
         guard tabBar?.mountedProductId != productId else {
             return false
         }
+        if let tabBar, let presented = tabBar.presentedProduct(productId) {
+            return tabBar.uncover(presented)
+        }
         if tabBar?.mountExistingTab(where: { $0.dotDomain == productId }) == true {
             return true
         }
@@ -33,7 +36,7 @@ struct ProductOpener: ProductOpening {
         // and a game product has to open without it.
         if tabBar != nil,
            let host = ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared)
-               .host(rawString: productId.rawValue) {
+           .host(rawString: productId.rawValue) {
             navigator.openProduct(page: ProductPage(host: host))
             return true
         }

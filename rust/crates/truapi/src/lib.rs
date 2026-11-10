@@ -1,7 +1,3 @@
-#![allow(
-	clippy::double_must_use,
-	reason = "async-trait generates must_use futures for async trait methods"
-)]
 // The pairing-flow future nests the chain, SSO and identity futures deeply
 // enough that proving the tree's auto traits exceeds the default limit.
 #![recursion_limit = "256"]
@@ -13,7 +9,7 @@
 //! [`versioned`].
 //! Async API traits use the `async_trait` macro so their concise `async fn` methods
 //! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! blocks with `#[async_trait::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -44,10 +40,9 @@ use std::sync::{Arc, Mutex};
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
-pub use async_trait::async_trait;
-
 pub mod api;
 mod dotns_name;
+pub mod markers;
 mod product_id;
 pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
@@ -102,17 +97,20 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
-		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
+		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
+		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
 		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
 		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
@@ -153,6 +151,9 @@ pub mod latest {
 	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
 	/// Transaction creation failure.
 	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction creation failure for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountError =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountError>;
 	/// Transaction created for a legacy account.
 	pub type HostCreateTransactionWithLegacyAccountResponse =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
@@ -334,6 +335,12 @@ pub mod latest {
 	/// Failure showing a provider screen.
 	pub type HostFundingPresentFrameError =
 		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
+	/// Request to close a provider screen.
+	pub type HostFundingCloseFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameRequest>;
+	/// Failure closing a provider screen.
+	pub type HostFundingCloseFrameError =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -486,6 +493,12 @@ pub mod latest {
 	/// Face visibility change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
+	/// Request to turn the card above the calling Widget to one side.
+	pub type HostExpandedCardSetBackShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
+	/// Card turn failure.
+	pub type HostExpandedCardSetBackShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownError>;
 	/// Push notification scheduling request.
 	pub type HostPushNotificationRequest =
 		LatestOf<versioned::notifications::HostPushNotificationRequest>;
@@ -860,6 +873,7 @@ mod host_rpc_client;
 mod interrupt;
 #[cfg(feature = "runtime")]
 pub mod logging;
+
 #[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
@@ -868,6 +882,8 @@ mod protocol_error;
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
+#[cfg(feature = "runtime")]
+mod spawner;
 #[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
@@ -884,6 +900,8 @@ mod truapi_core;
 mod test_support;
 #[cfg(feature = "runtime")]
 mod unix_time;
+#[cfg(feature = "runtime")]
+mod wake;
 
 // Dispatch must keep serving deprecated APIs while clients migrate.
 #[cfg(feature = "runtime")]
@@ -916,6 +934,9 @@ pub mod durable;
 pub mod encrypted_storage;
 
 #[cfg(feature = "runtime")]
+mod image_loader;
+
+#[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod installation;
 
@@ -928,6 +949,13 @@ mod nft;
 mod nft_purse;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod pocket_cards;
+
+#[cfg(feature = "runtime")]
+pub use spawner::Spawner;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -936,10 +964,9 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::{
-	bulletin::{preimage_cid, preimage_key},
-	extrinsic::Sr25519Signer,
-};
+pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
+#[cfg(feature = "runtime")]
+pub use host_internal::{bulletin::preimage_key, extrinsic::Sr25519Signer};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
@@ -947,9 +974,13 @@ pub use host_logic::session::{
 #[cfg(feature = "runtime")]
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
+pub use host_rpc_client::HostRpcClient;
+#[cfg(feature = "runtime")]
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
+#[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -967,13 +998,13 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;
@@ -991,56 +1022,4 @@ pub use wasm::{
 };
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn mapping_domain_errors_preserves_framework_outcomes() {
-		let errors = [
-			CallError::Domain(7),
-			CallError::Denied,
-			CallError::Unsupported,
-			CallError::MalformedFrame { reason: "invalid payload".into() },
-			CallError::HostFailure { reason: "host disconnected".into() },
-			CallError::Cancelled,
-		];
-		assert_eq!(
-			errors.map(|error| error.map_domain(|domain| domain.to_string())),
-			[
-				CallError::Domain("7".to_string()),
-				CallError::Denied,
-				CallError::Unsupported,
-				CallError::MalformedFrame { reason: "invalid payload".into() },
-				CallError::HostFailure { reason: "host disconnected".into() },
-				CallError::Cancelled,
-			],
-		);
-	}
-
-	#[test]
-	fn call_context_timeout_can_be_set_and_replaced() {
-		let default = Duration::from_secs(180);
-		let explicit = Duration::from_millis(25);
-
-		let mut cx = CallContext::with_request_id("request-1".to_string());
-		assert_eq!(cx.timeout(), None);
-		cx.set_timeout(default);
-		assert_eq!(cx.timeout(), Some(default));
-
-		cx.set_timeout(explicit);
-		assert_eq!(cx.timeout(), Some(explicit));
-	}
-
-	#[test]
-	fn cancellation_token_clones_share_cancellation() {
-		let token = CancellationToken::default();
-		let cloned = token.clone();
-		let wait = cloned.cancelled();
-
-		token.cancel();
-
-		let reason = futures::executor::block_on(wait);
-		assert_eq!(reason, CancellationReason::Cancelled);
-		assert!(cloned.is_cancelled());
-	}
-}
+mod tests;

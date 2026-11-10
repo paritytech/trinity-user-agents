@@ -16,6 +16,7 @@ use crate::{
 		statement_store::StatementField,
 		x25519_seal::{SealedBox, X25519PrivateKey},
 	},
+	nft_purse::{ENVELOPE_VERSION, EnvelopeContents},
 	test_support::{session_info, statement_page_frame, subscribe_ack_frame},
 };
 
@@ -168,7 +169,12 @@ fn inbox_topic() -> v01::StatementTopic {
 /// The statement a sender publishes to put `cheque` in the inbox: the
 /// envelope sealed to the static receive key.
 fn inbox_statement(cheque: &v01::NftPurseCheque) -> Vec<u8> {
-	let plaintext = (0u8, inbox_topic(), cheque).encode();
+	let plaintext = EnvelopeContents {
+		version: ENVELOPE_VERSION,
+		topic: inbox_topic(),
+		cheque: cheque.clone(),
+	}
+	.encode();
 	let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
 	let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
 	vec![StatementField::Data(sealed.to_bytes())].encode()

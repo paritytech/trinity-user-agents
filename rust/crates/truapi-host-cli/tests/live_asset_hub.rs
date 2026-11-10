@@ -10,16 +10,23 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/live.rs"]
+mod live;
+
 use truapi::statement_allowance::{self as alloc, collection::PersonhoodCollection, pgas};
 
-const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
-
 /// `LIVE_ASSET_HUB_WS` points the dotNS checks at another Asset Hub, for
-/// instance previewnet's `wss://previewnet.substrate.dev/asset-hub`.
+/// instance previewnet's.
 fn asset_hub_ws() -> String {
-	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.to_string())
+	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| live::paseo_next_v2_rpc("AssetHub"))
 }
-const PEOPLE_WS: &str = "wss://paseo-people-next-system-rpc.polkadot.io";
+
+/// `LIVE_TLD`, or the bundled paseo-next-v2 stack's `tld`.
+fn live_tld() -> String {
+	std::env::var("LIVE_TLD").unwrap_or_else(|_| bundled::paseo_next_v2().tld)
+}
 
 /// Must stay active so the ignored live tests can resolve its mirrored roots.
 const RING_INDEX: u32 = 1;
@@ -38,7 +45,7 @@ async fn asset_hub() -> (alloc::rpc::RpcClient, alloc::extension::Metadata) {
 #[ignore = "needs network access to a live Asset Hub"]
 async fn live_asset_hub_reports_the_product_context_suffix() {
 	let (rpc, _metadata) = asset_hub().await;
-	let expected = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let expected = live_tld();
 
 	assert_eq!(
 		alloc::slot::read_network_suffix(&rpc)
@@ -77,7 +84,7 @@ async fn live_asset_hub_declares_both_pgas_claim_budgets() {
 #[ignore = "needs network access to a live Asset Hub and People chain"]
 async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 	let (asset_hub_rpc, asset_hub_metadata) = asset_hub().await;
-	let people_rpc = alloc::rpc::RpcClient::connect(PEOPLE_WS)
+	let people_rpc = alloc::rpc::RpcClient::connect(&live::paseo_next_v2_rpc("People"))
 		.await
 		.expect("connect to the People chain");
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.expect("People metadata");
@@ -175,38 +182,45 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // dotNS gateway: the register_name authorization shape and the username reads.
 // ---------------------------------------------------------------------------
 
-use truapi::host_logic::dotns_gateway::{
-	DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
-	decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
-	is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
+use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
+use truapi::{
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{
+		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
+		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
+	},
 };
 
-/// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
-/// per dotns `DEPLOYMENTS.md`. Only used to find an account that holds a
-/// settled name.
-const DOTNS_REGISTRAR: [u8; 20] = [
-	0x4f, 0x06, 0xe8, 0x18, 0xba, 0x3d, 0x98, 0x77, 0x04, 0xfd, 0x91, 0xcf, 0x3d, 0x86, 0x8e, 0x4b,
-	0x01, 0x91, 0x06, 0xab,
-];
+/// The `DotnsRegistrar` (ERC721) from the bundled paseo-next-v2 stack, the same
+/// CREATE3 address on every network per dotns `DEPLOYMENTS.md`. Only used to
+/// find an account that holds a settled name.
+fn dotns_registrar() -> [u8; 20] {
+	let stack = bundled::paseo_next_v2();
+	let address = &stack.dotns.as_ref().expect("bundled stack lacks dotns")["registrar"];
+	let mut bytes = [0u8; 20];
+	hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
+		.expect("invalid registrar address");
+	bytes
+}
 
 /// A label minted through the public registrar on the checked network, whose
 /// owner therefore has a settled `LabelStore`. `LIVE_MINTED_LABEL` overrides
-/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD
-/// (`paseo` by default, `dot` on previewnet).
+/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD.
 fn minted_label() -> String {
 	std::env::var("LIVE_MINTED_LABEL").unwrap_or_else(|_| "e2epoolns01".to_string())
 }
 
 /// `namehash(<minted label>.<tld>)`, the registrar's token id.
 fn minted_node() -> [u8; 32] {
-	let tld = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let tld = live_tld();
 	namehash_under(&namehash_under(&[0u8; 32], &tld), &minted_label())
 }
 
 /// `DotnsTransport` over plain RPC, the same two primitives the CLI uses.
 struct PlainRpc(alloc::rpc::RpcClient);
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for PlainRpc {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		self.0
@@ -215,22 +229,23 @@ impl DotnsTransport for PlainRpc {
 			.map_err(|err| DotnsError::Storage(err.to_string()))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(self, dest, &input).await
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeApiCaller for PlainRpc {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		let output = self
 			.0
-			.call(
-				"state_call",
-				serde_json::json!(["ReviveApi_call", format!("0x{}", hex::encode(args))]),
-			)
+			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
 			.await
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
+			.map_err(subxt::Error::other)?;
 		let output = output
 			.as_str()
-			.ok_or_else(|| DotnsViewError::Failed("state_call output is not a string".into()))?;
-		let bytes = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		view_output(&bytes)
+			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
+		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
 	}
 }
 
@@ -254,14 +269,15 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 
 	// ownerOf(namehash) on the ERC721 registrar. Eth-derived owners map back
 	// to an AccountId32 by `0xEE` padding, which `account_to_h160` truncates.
+	let owner_of = DotnsRegistrar::ownerOfCall { tokenId: U256::from_be_bytes(minted_node()) };
 	let owner_output = transport
-		.view(&DOTNS_REGISTRAR, call_bytes32("ownerOf(uint256)", &minted_node()))
+		.view(&dotns_registrar(), owner_of.abi_encode())
 		.await
 		.expect("registrar ownerOf");
-	let owner = decode_address(&owner_output).expect("owner address");
+	let owner = DotnsRegistrar::ownerOfCall::abi_decode_returns_validate(&owner_output)
+		.expect("owner address");
 	let mut account = [0xEE; 32];
-	account[..20].copy_from_slice(&owner);
-	assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
+	account[..20].copy_from_slice(owner.as_slice());
 
 	let labels = resolve_labels(&mut transport, &controller, &account)
 		.await

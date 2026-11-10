@@ -2,7 +2,9 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Which way value crosses the boundary between the user's Polkadot balance
 /// and everything outside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+///
+/// Parses from the name a Worker manifest's route `directions` use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingDirection {
 	/// Value moves in, credited to the user's balance.
@@ -52,8 +54,15 @@ pub enum FundingFailure {
 	/// release.
 	#[codec(index = 9)]
 	Cancelled,
-	/// Outcome not covered above. A client shows `message`, except for the
-	/// codes the core sets itself, which it may show in its own words.
+	/// The provider returned the user's payment instead of crediting it.
+	#[codec(index = 11)]
+	Refunded,
+	/// The user's bank or card issuer refused the payment.
+	#[codec(index = 12)]
+	Declined,
+	/// Outcome not covered by the other variants. A client shows `message`,
+	/// except for the codes the core sets itself, which it may show in its
+	/// own words.
 	#[codec(index = 10)]
 	Other {
 		/// Stable machine-readable code. The core sets `not_claimed` when
@@ -161,16 +170,4 @@ pub enum HostFundingStatusSubscribeError {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	// Persisted sessions and the wire both carry the direction, so its order
-	// is fixed.
-	#[test]
-	fn direction_discriminants_are_stable() {
-		assert_eq!(
-			(FundingDirection::In.encode(), FundingDirection::Out.encode()),
-			(vec![0], vec![1])
-		);
-	}
-}
+mod tests;

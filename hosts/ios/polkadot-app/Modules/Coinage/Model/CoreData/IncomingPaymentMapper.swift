@@ -28,7 +28,7 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
 
         return try IncomingPayment(
             paymentId: paymentId,
-            productId: try ProductId(productId),
+            productId: ProductId(productId),
             amount: amount,
             createdAt: createdAt,
             outcome: IncomingPaymentOutcomeSerialization.outcome(

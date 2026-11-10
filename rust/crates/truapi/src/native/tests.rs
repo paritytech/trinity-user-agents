@@ -21,97 +21,20 @@ use crate::{
 };
 
 use super::{
-	callbacks::{
-		HostCallbacks, NativeChatCallbacks, NativeGameCallbacks, NativePocketCallbacks,
-		NativePocketRemoval,
-	},
+	callbacks::{HostCallbacks, NativeChatCallbacks, NativeGameCallbacks},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig, native_host_platform,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
-	platform::{
-		CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform, PocketCallbackPlatform,
-	},
+	platform::{CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform},
 	runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime},
 };
-use crate::platform::CreateTransactionReview;
-use futures::FutureExt;
+use crate::platform::{CreateTransactionReview, LegacySigningAccount};
 use truapi::{Bytes32, v01::LegacyAccountTxPayload};
 
 pub type PreimageFixtureEntries = Vec<(Vec<u8>, Option<Vec<u8>>)>;
-
-pub fn pocket_card(card_id: &str, privileged: bool) -> v01::PocketCard {
-	v01::PocketCard { card_id: card_id.to_string(), privileged }
-}
-
-/// Everything a Pocket stream has already queued, so a missing item reads
-/// as pending here rather than hanging the test.
-pub fn drain_pocket(
-	stream: &mut BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>>,
-) -> Vec<Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-	let mut seen = Vec::new();
-	while let Some(Some(item)) = stream.next().now_or_never() {
-		seen.push(item);
-	}
-	seen
-}
-
-/// The snapshot is read while the subscriber mutex is held, so it is the
-/// first item and every later change follows it in order. Delivering a
-/// queued change first would leave the product on the older list, with the
-/// snapshot overwriting it.
-#[test]
-fn a_pocket_subscriber_sees_its_snapshot_before_later_changes() {
-	let bus = NativeEventBus::default();
-	let mut stream = bus.subscribe_pocket_cards(|| {
-		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
-	});
-	bus.notify_pocket_cards_changed(vec![
-		pocket_card("loyalty", false),
-		pocket_card("humanity", true),
-	]);
-
-	assert_eq!(
-		drain_pocket(&mut stream),
-		vec![
-			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
-			Ok(v01::HostPocketListSubscribeItem {
-				cards: vec![pocket_card("loyalty", false), pocket_card("humanity", true)],
-			}),
-		]
-	);
-}
-
-/// A host that cannot say what it holds reaches the product as a failed
-/// stream. Reporting an empty list instead would read as "you own no
-/// cards" and wipe the product's view of its own collection.
-#[test]
-fn a_pocket_host_failure_reaches_the_product_instead_of_an_empty_list() {
-	let bus = NativeEventBus::default();
-	let mut opening = bus.subscribe_pocket_cards(|| {
-		Err(v01::GenericError { reason: "card store unavailable".to_string() })
-	});
-	assert_eq!(
-		drain_pocket(&mut opening),
-		vec![Err(v01::GenericError { reason: "card store unavailable".to_string() })]
-	);
-
-	let mut live = bus.subscribe_pocket_cards(|| {
-		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
-	});
-	bus.notify_pocket_cards_failed(v01::GenericError {
-		reason: "card store went away".to_string(),
-	});
-	assert_eq!(
-		drain_pocket(&mut live),
-		vec![
-			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
-			Err(v01::GenericError { reason: "card store went away".to_string() }),
-		]
-	);
-}
 
 #[test]
 fn an_unexpected_foreign_error_converts_instead_of_panicking() {
@@ -143,6 +66,24 @@ fn an_unexpected_foreign_error_converts_instead_of_panicking() {
 	assert_eq!(navigate, v01::HostNavigateToError::Unknown { reason: reason.to_string() });
 }
 
+#[test]
+fn an_unexpected_foreign_error_keeps_a_bounded_reason() {
+	// The reason travels: later warnings render it and the product is handed
+	// it, so the bound belongs on the value rather than on the one line that
+	// reports the conversion.
+	let thrown = format!("SQLiteFullException\n\tat Foo.bar{}", "e".repeat(400));
+	let rejection = <HostRejection as uniffi::ConvertError<crate::UniFfiTag>>::
+        try_convert_unexpected_callback_error(
+            uniffi::UnexpectedUniFFICallbackError::new(&thrown),
+        )
+        .expect("an unexpected foreign error must convert");
+
+	let HostRejection::Rejected { reason: converted } = rejection;
+	assert!(!converted.chars().any(char::is_control), "{converted}");
+	assert!(converted.chars().count() < thrown.chars().count(), "{converted}");
+	assert!(converted.starts_with("SQLiteFullException"), "{converted}");
+}
+
 pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 	v01::HostChatActionSubscribeItem {
 		room_id: "room".to_string(),
@@ -164,8 +105,6 @@ pub struct EventCallbacks {
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
 	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
-	pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
-	pub pocket_removed: Mutex<Vec<String>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -218,8 +157,6 @@ impl EventCallbacks {
 			chat_post_rejection: Mutex::new(None),
 			chat_room_footers: Mutex::new(Vec::new()),
 			chat_posted: Mutex::new(Vec::new()),
-			pocket_cards: Mutex::new(Vec::new()),
-			pocket_removed: Mutex::new(Vec::new()),
 			theme: Mutex::new(v01::HostThemeSubscribeItem {
 				name: v01::ThemeName::Default,
 				variant: v01::ThemeVariant::Light,
@@ -261,6 +198,8 @@ impl HostCallbacks for EventCallbacks {
 			.expect("worker demand mutex poisoned")
 			.push((product_id, transition));
 	}
+
+	fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.paired_devices.lock().expect("paired device mutex poisoned").push(device);
@@ -464,28 +403,6 @@ impl HostCallbacks for EventCallbacks {
 }
 
 #[async_trait::async_trait]
-impl NativePocketCallbacks for EventCallbacks {
-	fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection> {
-		Ok(self.pocket_cards.lock().expect("pocket cards mutex poisoned").clone())
-	}
-
-	async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection> {
-		let mut cards = self.pocket_cards.lock().expect("pocket cards mutex poisoned");
-		let outcome = match cards.iter().find(|card| card.card_id == card_id) {
-			None => NativePocketRemoval::Absent,
-			Some(card) if card.privileged => NativePocketRemoval::Privileged,
-			Some(_) => {
-				cards.retain(|card| card.card_id != card_id);
-				NativePocketRemoval::Removed
-			},
-		};
-		drop(cards);
-		self.pocket_removed.lock().expect("pocket removed mutex poisoned").push(card_id);
-		Ok(outcome)
-	}
-}
-
-#[async_trait::async_trait]
 impl NativeChatCallbacks for EventCallbacks {
 	async fn create_room(
 		&self,
@@ -615,6 +532,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
+		pinned_pocket_cards: Vec::new(),
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
 	}
@@ -638,7 +556,6 @@ pub fn native_product_execution(
 		.expect("host runtime config should be valid");
 	host.open_product_execution(
 		callbacks,
-		None,
 		None,
 		None,
 		native_execution_config(product_id, ExecutableKind::App),
@@ -854,96 +771,6 @@ fn process_runtime_counts_worker_references_per_product() {
 	);
 }
 
-/// A host removes a card through its own storage, which can take a while,
-/// so the core waits for the answer without holding the thread that asked.
-#[test]
-fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
-	struct DeferredRemoval {
-		outcome: Mutex<Option<futures::channel::oneshot::Receiver<NativePocketRemoval>>>,
-	}
-
-	#[async_trait::async_trait]
-	impl NativePocketCallbacks for DeferredRemoval {
-		fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection> {
-			Ok(Vec::new())
-		}
-
-		async fn remove_card(
-			&self,
-			_card_id: String,
-		) -> Result<NativePocketRemoval, HostRejection> {
-			let outcome = self.outcome.lock().unwrap().take().expect("one removal");
-			Ok(outcome.await.expect("the host answers"))
-		}
-	}
-
-	let (answer, outcome) = futures::channel::oneshot::channel();
-	let platform = PocketCallbackPlatform {
-		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
-		events: Arc::new(NativeEventBus::default()),
-	};
-	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
-	let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
-		&platform,
-		&product,
-		v01::HostPocketRemoveCardRequest { card_id: "humanity".to_string() },
-	);
-
-	let waker = futures::task::noop_waker();
-	let mut context = core::task::Context::from_waker(&waker);
-	assert!(removal.poll_unpin(&mut context).is_pending());
-
-	answer.send(NativePocketRemoval::Privileged).unwrap();
-	assert!(matches!(
-		futures::executor::block_on(removal),
-		Err(v01::HostPocketRemoveCardError::Privileged)
-	));
-}
-
-#[test]
-fn native_pocket_removal_outcomes_are_decided_by_the_host() {
-	let pocket_host = Arc::new(EventCallbacks::new());
-	*pocket_host.pocket_cards.lock().expect("pocket cards mutex poisoned") =
-		vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
-	let events = Arc::new(NativeEventBus::default());
-	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
-	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
-	let remove = |card_id: &str| {
-		futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
-			&platform,
-			&product,
-			v01::HostPocketRemoveCardRequest { card_id: card_id.to_string() },
-		))
-	};
-	let mut cards = crate::platform::PocketPlatform::subscribe_pocket_cards(&platform, &product);
-	let first = futures::executor::block_on(cards.next())
-		.expect("the current list arrives on subscribe")
-		.expect("no stream error");
-	assert_eq!(first.cards, vec![pocket_card("loyalty", false), pocket_card("humanity", true)]);
-
-	assert!(matches!(remove("humanity"), Err(v01::HostPocketRemoveCardError::Privileged)));
-	assert!(remove("absent").is_ok(), "an absent card is already removed");
-	assert!(remove("loyalty").is_ok());
-	assert_eq!(
-		pocket_host
-			.pocket_removed
-			.lock()
-			.expect("pocket removed mutex poisoned")
-			.as_slice(),
-		["humanity", "absent", "loyalty"],
-		"the host decides every removal, so every request reaches it"
-	);
-
-	let republished = futures::executor::block_on(cards.next())
-		.expect("a removal republishes the list")
-		.expect("no stream error");
-	assert_eq!(
-		republished.cards,
-		vec![pocket_card("humanity", true)],
-		"the pinned card stays and the removed one is gone"
-	);
-}
-
 #[derive(Default)]
 struct RecordingGameCallbacks {
 	calls: Mutex<Vec<Option<u64>>>,
@@ -990,7 +817,6 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let execution = host
 		.open_product_execution(
 			Arc::new(EventCallbacks::new()),
-			None,
 			None,
 			None,
 			native_execution_config("chat-product.dot", ExecutableKind::Worker),
@@ -1047,7 +873,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 	platform.auth_state_changed(crate::platform::AuthState::Pairing {
 		deeplink: "polkadotapp://pair?handshake=00".to_string(),
 	});
-	platform.auth_state_changed(crate::platform::AuthState::Connected(
+	platform.auth_state_changed(crate::platform::AuthState::Connected(Box::new(
 		crate::platform::SessionUiInfo {
 			public_key: [7; 32],
 			identity_account_id: None,
@@ -1058,14 +884,14 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
-	));
+	)));
 	platform.auth_state_changed(crate::platform::AuthState::Disconnected);
 
 	assert_eq!(
 		callbacks.auth_states.lock().expect("auth state mutex poisoned").as_slice(),
 		&[
 			AuthState::Pairing { deeplink: "polkadotapp://pair?handshake=00".to_string() },
-			AuthState::Connected(crate::platform::SessionUiInfo {
+			AuthState::Connected(Box::new(crate::platform::SessionUiInfo {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
@@ -1074,7 +900,7 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				device_statement_account_id: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
-			}),
+			})),
 			AuthState::Disconnected,
 		]
 	);
@@ -1881,7 +1707,9 @@ fn native_chain_provider_rejects_an_early_close_and_allows_a_later_retry() {
 	let closed = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32]));
 	assert_eq!(
 		closed.map(|_| ()),
-		Err(ProviderError::Host { reason: "chain connection closed during setup".to_string() })
+		Err(ProviderError::Transport {
+			reason: "chain connection closed during setup".to_string()
+		})
 	);
 	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
 
@@ -2108,6 +1936,8 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
+
+		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
@@ -2298,6 +2128,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
+
+		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
@@ -2580,7 +2412,6 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 			callbacks,
 			None,
 			None,
-			None,
 			native_execution_config("first.dot", ExecutableKind::App),
 		)
 		.expect("open execution");
@@ -2694,7 +2525,6 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 			callbacks[index].clone(),
 			None,
 			None,
-			None,
 			native_execution_config(product_id, ExecutableKind::App),
 		)
 		.expect("open execution")
@@ -2768,7 +2598,6 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 			Arc::new(EventCallbacks::new()),
 			None,
 			None,
-			None,
 			native_execution_config("shared.dot", ExecutableKind::App),
 		)
 		.expect("App execution should open");
@@ -2777,7 +2606,6 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 		.open_product_execution(
 			chat_host.clone(),
 			Some(chat_host),
-			None,
 			None,
 			native_execution_config("shared.dot", ExecutableKind::Worker),
 		)
@@ -2916,15 +2744,17 @@ fn bytes32_lift_rejects_wrong_length() {
 
 #[test]
 fn bytes32_fields_survive_the_ffi_roundtrip() {
-	let review = UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount(
-		LegacyAccountTxPayload {
-			signer: [13; 32],
-			genesis_hash: [14; 32],
-			call_data: vec![15],
-			extensions: vec![],
-			tx_ext_version: 0,
-		},
-	));
+	let review =
+		UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			payload: LegacyAccountTxPayload {
+				signer: [13; 32],
+				genesis_hash: [14; 32],
+				call_data: vec![15],
+				extensions: vec![],
+				tx_ext_version: 0,
+			},
+		});
 
 	let mut buf = Vec::new();
 	<UserConfirmationReview as uniffi::Lower<crate::UniFfiTag>>::write(review.clone(), &mut buf);
@@ -2951,7 +2781,6 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 		let execution = host
 			.open_product_execution(
 				callbacks.clone(),
-				None,
 				None,
 				None,
 				native_execution_config("fetch.dot", ExecutableKind::Worker),
@@ -3022,7 +2851,6 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 				callbacks.clone(),
 				None,
 				None,
-				None,
 				native_execution_config(product_id, ExecutableKind::App),
 			)
 			.unwrap()
@@ -3072,7 +2900,6 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 				callbacks.clone(),
 				None,
 				None,
-				None,
 				native_execution_config("fetch.dot", ExecutableKind::App),
 			)
 			.unwrap();
@@ -3117,7 +2944,6 @@ fn a_native_status_read_follows_the_os_gate() {
 			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
 			None,
 			None,
-			None,
 			native_execution_config("gated.dot", ExecutableKind::App),
 		)
 		.expect("execution should open");
@@ -3139,22 +2965,6 @@ fn a_native_status_read_follows_the_os_gate() {
 	);
 }
 
-/// A face kept and read back is the same face, so a card draws at a cold
-/// start exactly as its product last drew it.
-#[test]
-fn a_kept_face_reads_back_as_itself() {
-	let json = std::fs::read_to_string(format!(
-		"{}/tests/fixtures/pocket_faces/devicehood.json",
-		env!("CARGO_MANIFEST_DIR")
-	))
-	.expect("fixture");
-	let face = parse_renderer_node_json(json).expect("fixture reads");
-
-	let kept = encode_renderer_node(face.clone());
-
-	assert_eq!(decode_renderer_node(kept).expect("reads back"), face);
-}
-
 /// A face a real product ships, kept here as well as in the iOS host so the
 /// reader is measured against the protocol shape rather than against what
 /// this code happens to accept. One is enough for that, and the hosts keep
@@ -3170,6 +2980,30 @@ fn reads_the_card_faces_the_hosts_conform_to() {
 	let node = parse_renderer_node_json(json).expect("devicehood must read as a renderer tree");
 
 	assert!(matches!(node, latest::RendererNode::Column { .. }));
+}
+
+/// Face files spell an inline image's bytes as the generated client does, a
+/// `0x` hex string, so a face written by hand and one written by the SDK read alike.
+#[test]
+fn reads_an_inline_image_from_hex() {
+	let image = |value: &str| {
+		format!(
+			r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{value}"}}}}}}}}"#
+		)
+	};
+
+	assert_eq!(
+		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				fit: None,
+			},
+		}
+	);
+	assert!(parse_renderer_node_json(image("not hex")).is_err());
+	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
 /// `depth` boxes around an empty node, three brackets per box.
@@ -3229,17 +3063,6 @@ fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
 	));
 }
 
-/// A kept face is read back only if it is exactly what was kept: bytes past
-/// the tree mean the row is not a face this host wrote, and drawing its
-/// prefix would show a card nobody drew.
-#[test]
-fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
-	let mut kept = encode_renderer_node(latest::RendererNode::Nil);
-	kept.push(0);
-
-	assert!(matches!(decode_renderer_node(kept), Err(NativeRendererError::Malformed { .. })));
-}
-
 /// A title is drawn and an id is addressed, so they cannot share one rule:
 /// the emoji below carries a variation selector, which an id may not.
 #[test]
@@ -3275,4 +3098,159 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 fn screening_normalizes_and_trims() {
 	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
+}
+
+/// A session change as the core pushed it: the intent, the session and its
+/// progress.
+type PushedChange = (
+	String,
+	Option<crate::host_logic::funding::FundingSession>,
+	Option<crate::host_logic::funding::FundingProgress>,
+);
+
+/// A native funding overlay the user starts at once, recording what the
+/// core hands it.
+#[derive(Default)]
+struct RecordingNativeFunding {
+	changes: Mutex<Vec<PushedChange>>,
+	/// The intents whose options the overlay held when it was shown.
+	options_before_shown: Mutex<Vec<String>>,
+	options: Mutex<Vec<String>>,
+	in_progress: Mutex<Vec<bool>>,
+}
+
+#[async_trait::async_trait]
+impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
+	async fn present_funding(
+		&self,
+		_product_id: Option<ProductId>,
+		_intent: String,
+		_direction: v01::FundingDirection,
+		_amount: Option<u128>,
+	) -> Result<crate::platform::FundingPresentOutcome, HostRejection> {
+		let options = self.options.lock().expect("options mutex poisoned").clone();
+		*self.options_before_shown.lock().expect("options mutex poisoned") = options;
+		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider_id: ProductId,
+		_intent: String,
+		_target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection> {
+		Ok(v01::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
+
+	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
+		true
+	}
+
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		_status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.changes
+			.lock()
+			.expect("changes mutex poisoned")
+			.push((intent, session, progress));
+	}
+
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
+	}
+
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		_options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+		self.options.lock().expect("options mutex poisoned").push(intent);
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		None
+	}
+
+	fn funding_quotes_changed(&self, _intent: String, _quotes: crate::platform::FundingQuoteList) {}
+}
+
+// The host draws a session only from what the core pushes: the overlay's
+// options arrive before it is shown, and each change carries the session
+// and its progress as the core holds them, followed by whether a provider
+// works on any session.
+#[test]
+fn the_core_pushes_what_the_host_draws() {
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+
+	let intent =
+		futures::executor::block_on(host.open_funding(v01::FundingDirection::In, Some(1_000)))
+			.expect("opened")
+			.expect("started");
+
+	let changes = funding.changes.lock().expect("changes mutex poisoned").clone();
+	let (announced, session, progress) = changes.last().cloned().expect("a change");
+	let session = session.expect("session kept");
+	assert_eq!(
+		(
+			announced,
+			session.intent.clone(),
+			progress,
+			funding.options_before_shown.lock().expect("options mutex poisoned").clone(),
+			funding.in_progress.lock().expect("in-progress mutex poisoned").last().copied(),
+		),
+		(
+			intent.clone(),
+			intent.clone(),
+			Some(session.progress(crate::unix_time::current_unix_millis())),
+			vec![intent],
+			Some(false),
+		)
+	);
+}
+
+/// The bridge hands its markers to a host without passing through the tracing
+/// layer, so the table check and the detail cap are applied on that path too.
+mod bridge_lines {
+	use super::*;
+	use crate::{logging::HOST_SINK_DETAIL_MAX_CHARS, native::runtime::forward_bridge_line};
+
+	fn recorded(marker: &str, detail: &str) -> Vec<(String, String)> {
+		let callbacks = EventCallbacks::new();
+		forward_bridge_line(&callbacks, marker, detail);
+		callbacks.logs.lock().expect("logs mutex poisoned").clone()
+	}
+
+	#[test]
+	fn a_listed_marker_reaches_the_host() {
+		let logs = recorded("truapi.ws_bridge.started", "port=1 runtime_id=2");
+		assert_eq!(
+			logs,
+			vec![("truapi.ws_bridge.started".to_string(), "port=1 runtime_id=2".to_string())]
+		);
+	}
+
+	#[test]
+	fn an_unlisted_marker_is_dropped() {
+		assert!(recorded("truapi.ws_bridge.invented", "anything").is_empty());
+	}
+
+	#[test]
+	fn a_long_detail_is_capped_on_this_path_too() {
+		let detail = "x".repeat(HOST_SINK_DETAIL_MAX_CHARS * 3);
+		let logs = recorded("truapi.ws_bridge.read_error", &detail);
+		assert_eq!(logs.len(), 1);
+		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
+	}
 }

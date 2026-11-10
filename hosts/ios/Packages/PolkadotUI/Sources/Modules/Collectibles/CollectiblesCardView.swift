@@ -2,34 +2,25 @@ import SwiftUI
 import DesignSystem
 
 public struct CollectiblesCardView: View {
-    let isExpanded: Bool
-    let onViewCollectibles: () -> Void
+    let isColoured: Bool
 
-    public init(isExpanded: Bool = false, onViewCollectibles: @escaping () -> Void = {}) {
-        self.isExpanded = isExpanded
-        self.onViewCollectibles = onViewCollectibles
+    public init(isColoured: Bool = false) {
+        self.isColoured = isColoured
     }
 
     public var body: some View {
-        ZStack {
-            Image(.imageCollectibles)
-                .saturation(isExpanded ? 1 : 0)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: isExpanded ? .center : .top)
-                .clipped()
-                .motionShine(.collectibles(isExpanded: isExpanded))
-
-            if isExpanded {
-                DSButton(String(localized: .collectiblesCardActionView), action: onViewCollectibles)
-                    .transition(.asymmetric(insertion: .opacity, removal: .identity))
-            }
-        }
+        Image(.imageCollectibles)
+            .saturation(isColoured ? 1 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
+            .motionShine(.collectibles(isExpanded: false))
     }
 }
 
 #Preview {
     VStack {
         CollectiblesCardView()
-        CollectiblesCardView(isExpanded: true)
+        CollectiblesCardView(isColoured: true)
     }
     .padding()
 }
