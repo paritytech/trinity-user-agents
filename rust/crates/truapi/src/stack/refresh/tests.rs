@@ -7,22 +7,15 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	stack::{StackChains, StackRefreshOutcome},
-	test_support::{sign_test_descriptor, test_descriptor},
+	stack::{
+		StackRefreshOutcome,
+		fixtures::{PEOPLE, WIPED_PEOPLE},
+	},
+	test_support::{published_test_descriptor, sign_test_descriptor},
 	time::ManualTimer,
 };
 
-const PEOPLE: [u8; 32] = [0xa1; 32];
-const WIPED_PEOPLE: [u8; 32] = [0xa2; 32];
-const BULLETIN: [u8; 32] = [0xb2; 32];
 const ANSWER_WAIT: Duration = Duration::from_secs(10);
-
-fn descriptor(sequence: u32, generation: &str, people: [u8; 32]) -> serde_json::Value {
-	let mut descriptor = test_descriptor("paseo", people, BULLETIN, None);
-	descriptor["sequence"] = sequence.into();
-	descriptor["generation"] = generation.into();
-	descriptor
-}
 
 fn published(descriptor: &serde_json::Value) -> StackFetchResponse {
 	StackFetchResponse::Document { bytes: sign_test_descriptor(descriptor).1, etag: None }
@@ -91,7 +84,7 @@ impl Started {
 }
 
 fn load(records: Arc<MemoryRecords>, timer: Arc<ManualTimer>) -> StackRefresh {
-	let (link, bundled) = sign_test_descriptor(&descriptor(1, "first", PEOPLE));
+	let (link, bundled) = sign_test_descriptor(&published_test_descriptor(1, "first", PEOPLE));
 	StackRefresh::load(&link, &bundled, false, records, timer).expect("bundled copy is valid")
 }
 
@@ -105,11 +98,6 @@ fn start(records: Arc<MemoryRecords>, responses: Vec<StackFetchResponse>) -> Sta
 	Started { refresh, timer, statuses }
 }
 
-fn people(refresh: &StackRefresh) -> [u8; 32] {
-	let StackChains { people, .. } = *refresh.stack().chains();
-	people
-}
-
 /// A host that is offline at launch still runs: the stack comes from the
 /// bundled copy, and the failed fetch is only reported.
 #[test]
@@ -120,7 +108,7 @@ fn an_offline_host_starts_from_the_bundled_copy() {
 	let after_fetch = started.next_status();
 
 	assert_eq!(
-		(people(&started.refresh), at_start.last_refresh, after_fetch.last_refresh),
+		(started.refresh.stack().chains().people, at_start.last_refresh, after_fetch.last_refresh),
 		(PEOPLE, None, Some(StackRefreshOutcome::Unreachable))
 	);
 }
@@ -131,17 +119,20 @@ fn an_offline_host_starts_from_the_bundled_copy() {
 #[test]
 fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 	let records = Arc::<MemoryRecords>::default();
-	let started = start(records.clone(), vec![published(&descriptor(2, "second", WIPED_PEOPLE))]);
+	let started = start(
+		records.clone(),
+		vec![published(&published_test_descriptor(2, "second", WIPED_PEOPLE))],
+	);
 
 	let _at_start = started.next_status();
 	let after_fetch = started.next_status();
 
 	assert_eq!(
 		(
-			people(&started.refresh),
+			started.refresh.stack().chains().people,
 			after_fetch.restart_required,
 			after_fetch.new_generation,
-			people(&load(records, Arc::default())),
+			load(records, Arc::default()).stack().chains().people,
 		),
 		(PEOPLE, true, true, WIPED_PEOPLE)
 	);
@@ -153,7 +144,7 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 fn a_server_that_comes_back_is_followed() {
 	let started = start(
 		Arc::default(),
-		vec![unreachable(), published(&descriptor(2, "second", WIPED_PEOPLE))],
+		vec![unreachable(), published(&published_test_descriptor(2, "second", WIPED_PEOPLE))],
 	);
 	let _at_start = started.next_status();
 	let while_down = started.next_status();

@@ -282,4 +282,6 @@ fn refuse_reserved_genesis(
 }
 
 #[cfg(test)]
+mod fixtures;
+#[cfg(test)]
 mod tests;
