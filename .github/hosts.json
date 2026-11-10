@@ -13,6 +13,7 @@
     "nightly-toolchain",
     "Makefile",
     "scripts/",
+    "stacks/",
     "package.json",
     "package-lock.json",
     ".github/actions/rust-nightly/",
@@ -32,6 +33,7 @@
         "Makefile",
         "nightly-toolchain",
         "scripts/",
+        "stacks/",
         "package.json",
         "package-lock.json",
         ".github/actions/rust-nightly/"
@@ -76,6 +78,7 @@
       "rust/crates/truapi-verifiable/",
       "rust/crates/uniffi-bindgen-cli/",
       "scripts/codegen.sh",
+      "stacks/",
       "nightly-toolchain",
       "Makefile",
       "Cargo.toml",
