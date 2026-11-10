@@ -517,18 +517,19 @@ fn a_wrong_spec_added_after_the_build_is_refused() {
 		.add_light_spec(relay, PEOPLE_SPEC.as_bytes())
 		.expect_err("People's spec is not the relay's");
 
-	assert!(
-		matches!(&error, crate::ProviderError::LightSpec { role, genesis, .. }
-			if role == "Relay" && *genesis == relay),
-		"{error}"
+	assert_eq!(
+		error,
+		crate::ProviderError::LightSpec {
+			role: "Relay".to_owned(),
+			genesis: relay,
+			source: trinity_stack::Error::SpecDigest,
+		}
 	);
-	assert!(
-		matches!(
-			EmbeddedChainProvider::builder()
-				.build()
-				.add_light_spec(relay, RELAY_SPEC.as_bytes()),
-			Err(crate::ProviderError::NoStack)
-		),
+	assert_eq!(
+		EmbeddedChainProvider::builder()
+			.build()
+			.add_light_spec(relay, RELAY_SPEC.as_bytes()),
+		Err(crate::ProviderError::NoStack),
 		"a provider without a stack has no descriptor to check a spec against"
 	);
 }

@@ -66,12 +66,13 @@ fn a_spec_with_another_sha256_is_refused_and_names_the_chain() {
 		.add_light_spec(people, format!("{PEOPLE_SPEC} ").as_bytes())
 		.expect_err("the bytes differ from the descriptor's sha256");
 
+	assert!(std::error::Error::source(&error).is_some(), "the cause is reachable from the error");
 	assert_eq!(
 		error,
 		ProviderError::LightSpec {
 			role: "People".to_owned(),
 			genesis: people,
-			error: Error::SpecDigest,
+			source: Error::SpecDigest,
 		}
 	);
 	assert!(!stack.has_light_spec(people), "a refused spec is not kept");
@@ -99,7 +100,7 @@ fn a_spec_of_another_chain_is_refused() {
 		ProviderError::LightSpec {
 			role: "People".to_owned(),
 			genesis: people,
-			error: Error::SpecGenesis(implied),
+			source: Error::SpecGenesis(implied),
 		}
 	);
 }
@@ -136,7 +137,7 @@ fn a_keyed_link_refuses_an_unsigned_descriptor() {
 
 	assert_eq!(
 		LightStack::open(&link, &descriptor).map(|_| ()),
-		Err(ProviderError::Stack { error: Error::Unsigned })
+		Err(ProviderError::Stack { source: Error::Unsigned })
 	);
 }
 
@@ -145,14 +146,24 @@ fn a_keyed_link_refuses_an_unsigned_descriptor() {
 #[test]
 fn a_descriptor_that_skipped_validation_is_refused() {
 	let valid = Descriptor::from_json(descriptor_json("one")).expect("valid descriptor");
+	let people = valid.chains[1].genesis_hash.clone();
 	let mut bad_hash = valid.clone();
 	bad_hash.chains[1].genesis_hash = "0x1234".to_owned();
 	let mut shared_hash = valid.clone();
-	shared_hash.chains[2].genesis_hash = shared_hash.chains[1].genesis_hash.clone();
+	shared_hash.chains[2].genesis_hash = people.clone();
 	let mut no_relay = valid;
 	no_relay.chains.remove(0);
 
-	for descriptor in [bad_hash, shared_hash, no_relay] {
-		assert!(matches!(LightStack::new(STACK_ID, &descriptor), Err(ProviderError::Stack { .. })));
-	}
+	let refusals = [bad_hash, shared_hash, no_relay]
+		.map(|descriptor| LightStack::new(STACK_ID, &descriptor).map(|_| ()).unwrap_err());
+
+	let malformed = |reason: String| ProviderError::Stack { source: Error::Malformed(reason) };
+	assert_eq!(
+		refusals,
+		[
+			malformed("genesisHash 0x1234".to_owned()),
+			malformed(format!("genesisHash {people} appears on more than one chain")),
+			ProviderError::Stack { source: Error::RelayCount(0) },
+		]
+	);
 }
