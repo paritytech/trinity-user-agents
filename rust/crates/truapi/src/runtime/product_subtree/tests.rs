@@ -1,14 +1,14 @@
 use super::*;
-use crate::test_support::sso_session_info;
+use crate::test_support::{MemoryCoreStorage, sso_session_info, test_storage, test_storage_key};
 
 #[test]
 fn each_product_keeps_its_own_slot() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("one.dot"),
 			[1; 32],
@@ -16,7 +16,7 @@ fn each_product_keeps_its_own_slot() {
 		.await
 		.unwrap();
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("two.dot"),
 			[2; 32],
@@ -24,7 +24,7 @@ fn each_product_keeps_its_own_slot() {
 		.await
 		.unwrap();
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("one.dot"),
 			[3; 32],
@@ -34,7 +34,7 @@ fn each_product_keeps_its_own_slot() {
 
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("one.dot")
 			)
@@ -44,7 +44,7 @@ fn each_product_keeps_its_own_slot() {
 		);
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("two.dot")
 			)
@@ -54,7 +54,7 @@ fn each_product_keeps_its_own_slot() {
 		);
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("absent.dot")
 			)
@@ -67,12 +67,12 @@ fn each_product_keeps_its_own_slot() {
 
 #[test]
 fn the_value_is_the_bare_key_a_host_can_read() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("one.dot"),
 			[7; 32],
@@ -83,7 +83,7 @@ fn the_value_is_the_bare_key_a_host_can_read() {
 		// Hosts derive addresses straight from this slot, so the value must
 		// stay 32 unframed bytes rather than anything this module encodes.
 		let raw = storage
-			.read_core_storage(crate::test_support::test_storage_key(
+			.read_core_storage(test_storage_key(
 				product_subtree_key(&session, &ProductId::for_test("one.dot")).unwrap(),
 			))
 			.await
@@ -94,12 +94,12 @@ fn the_value_is_the_bare_key_a_host_can_read() {
 
 #[test]
 fn removing_one_product_leaves_the_others() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("one.dot"),
 			[1; 32],
@@ -107,7 +107,7 @@ fn removing_one_product_leaves_the_others() {
 		.await
 		.unwrap();
 		write_product_subtree(
-			&crate::test_support::test_storage(&storage),
+			&test_storage(&storage),
 			&session,
 			&ProductId::for_test("two.dot"),
 			[2; 32],
@@ -116,17 +116,13 @@ fn removing_one_product_leaves_the_others() {
 		.unwrap();
 
 		// Backs the rollback in `persist_product_subtree_if_current`.
-		remove_product_subtree(
-			&crate::test_support::test_storage(&storage),
-			&session,
-			&ProductId::for_test("one.dot"),
-		)
-		.await
-		.unwrap();
+		remove_product_subtree(&test_storage(&storage), &session, &ProductId::for_test("one.dot"))
+			.await
+			.unwrap();
 
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("one.dot")
 			)
@@ -136,7 +132,7 @@ fn removing_one_product_leaves_the_others() {
 		);
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("two.dot")
 			)
@@ -149,13 +145,13 @@ fn removing_one_product_leaves_the_others() {
 
 #[test]
 fn a_wrong_length_slot_reads_as_empty() {
-	let storage = crate::test_support::MemoryCoreStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 
 	futures::executor::block_on(async {
 		storage
 			.write_core_storage(
-				crate::test_support::test_storage_key(
+				test_storage_key(
 					product_subtree_key(&session, &ProductId::for_test("one.dot")).unwrap(),
 				),
 				vec![0xff; 31],
@@ -165,7 +161,7 @@ fn a_wrong_length_slot_reads_as_empty() {
 
 		assert_eq!(
 			read_product_subtree(
-				&crate::test_support::test_storage(&storage),
+				&test_storage(&storage),
 				&session,
 				&ProductId::for_test("one.dot")
 			)

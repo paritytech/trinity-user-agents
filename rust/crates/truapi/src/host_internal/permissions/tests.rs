@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::{test_storage, test_storage_key};
 use futures::lock::Mutex;
 use std::{
 	collections::HashMap,
@@ -87,18 +88,10 @@ fn concurrent_remote_operations_recheck_the_first_decision() {
 				let prompt =
 					ScriptedPrompt::decisions(vec![], vec![PermissionDecision::Deny, decision]);
 				let grants = Arc::default();
-				let sdk = PermissionsService::new(
-					crate::test_support::test_storage(&storage),
-					&prompt,
-					&PRODUCT,
-				)
-				.with_temporary_permissions(Arc::clone(&grants));
-				let native = PermissionsService::new(
-					crate::test_support::test_storage(&storage),
-					&prompt,
-					&PRODUCT,
-				)
-				.with_temporary_permissions(grants);
+				let sdk = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+					.with_temporary_permissions(Arc::clone(&grants));
+				let native = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+					.with_temporary_permissions(grants);
 				let pending_answer = prompt.remote_answers.lock().await;
 				let mut first = Box::pin(sdk.authorize_remote(request.clone()));
 				let mut second = Box::pin(native.authorize_remote(request.clone()));
@@ -130,11 +123,7 @@ fn concurrent_device_operations_reuse_a_persisted_decision() {
 			let storage = MemStorage::default();
 			let prompt =
 				ScriptedPrompt::decisions(vec![PermissionDecision::Deny, decision], vec![]);
-			let service = PermissionsService::new(
-				crate::test_support::test_storage(&storage),
-				&prompt,
-				&PRODUCT,
-			);
+			let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 			let pending_answer = prompt.device_answers.lock().await;
 			let mut first = Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
 			let mut second =
@@ -161,8 +150,7 @@ fn cancelling_a_prompt_releases_waiting_operations_without_blocking_other_produc
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
 		let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		let request = remote_domains(&["cdn.example.com"]);
 		let pending_answer = prompt.remote_answers.lock().await;
 		let mut cancelled = Box::pin(service.authorize_remote(request.clone()));
@@ -171,11 +159,7 @@ fn cancelling_a_prompt_releases_waiting_operations_without_blocking_other_produc
 		assert!(futures::poll!(&mut waiting).is_pending());
 
 		let other_prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-		let other = PermissionsService::new(
-			crate::test_support::test_storage(&storage),
-			&other_prompt,
-			&OTHER_PRODUCT,
-		);
+		let other = PermissionsService::new(test_storage(&storage), &other_prompt, &OTHER_PRODUCT);
 		let mut independent = Box::pin(other.authorize_remote(request));
 		assert_eq!(
 			futures::poll!(&mut independent),
@@ -200,20 +184,14 @@ fn an_upfront_one_use_grant_is_shared_with_one_operation_but_never_persisted() {
 			vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
 		);
 		let grants = Arc::default();
-		let sdk =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-				.with_temporary_permissions(Arc::clone(&grants));
-		let operation =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-				.with_temporary_permissions(Arc::clone(&grants));
-		let other_product = PermissionsService::new(
-			crate::test_support::test_storage(&storage),
-			&prompt,
-			&OTHER_PRODUCT,
-		)
-		.with_temporary_permissions(grants);
-		let other_execution =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let sdk = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+			.with_temporary_permissions(Arc::clone(&grants));
+		let operation = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+			.with_temporary_permissions(Arc::clone(&grants));
+		let other_product =
+			PermissionsService::new(test_storage(&storage), &prompt, &OTHER_PRODUCT)
+				.with_temporary_permissions(grants);
+		let other_execution = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		let request = remote_domains(&["api.example.com"]);
 		let requested = sdk.check_or_prompt_remote(request.clone()).await.unwrap();
 		assert_eq!(
@@ -250,11 +228,7 @@ fn a_denied_bundle_preserves_one_use_grants_for_a_later_operation() {
 				vec![],
 				vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
 			);
-			let service = PermissionsService::new(
-				crate::test_support::test_storage(&storage),
-				&prompt,
-				&PRODUCT,
-			);
+			let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 			let granted = remote_domains(&["api.example.com"]);
 			service.check_or_prompt_remote(granted.clone()).await.unwrap();
 			if !prompt_denial {
@@ -294,8 +268,7 @@ fn concurrent_operations_cannot_share_a_one_use_wildcard_grant() {
 			vec![],
 			vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
 		);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		service
 			.check_or_prompt_remote(remote_domains(&["*.example.com"]))
 			.await
@@ -319,8 +292,7 @@ fn a_one_use_answer_to_an_operation_is_consumed_by_that_operation() {
 			vec![PermissionDecision::AllowOnce],
 			vec![PermissionDecision::AllowOnce],
 		);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		let remote = remote_domains(&["api.example.com"]);
 		let device = HostDevicePermissionRequest::Camera;
 		assert_eq!(
@@ -347,8 +319,7 @@ fn blessed_domains_need_no_prompt_but_explicit_denials_still_apply() {
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		for domain in BLESSED_REMOTE_DOMAINS {
 			let request = remote_domains(&[domain]);
 			let granted = service.authorize_remote(request.clone()).await.unwrap();
@@ -373,8 +344,7 @@ fn blessed_domains_do_not_consume_a_one_use_grant_for_other_hosts() {
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
 		let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		let wildcard = remote_domains(&["*"]);
 		service.check_or_prompt_remote(wildcard.clone()).await.unwrap();
 		let blessed = service
@@ -400,8 +370,7 @@ fn a_one_use_exception_to_a_denial_is_consumed_even_for_a_blessed_domain() {
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
 		let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		service
 			.check_or_prompt_remote(remote_domains(&["*.googleapis.com"]))
 			.await
@@ -430,8 +399,7 @@ fn resetting_a_permission_removes_its_temporary_grant() {
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
 		let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 		let request = remote_domains(&["api.example.com"]);
 		service.check_or_prompt_remote(request.clone()).await.unwrap();
 		service
@@ -575,8 +543,7 @@ impl PermissionStatusHost for ScriptedStatus {
 /// successful request does, with no OS status source involved.
 fn grant_stored(storage: &MemStorage, capability: HostDevicePermissionRequest) {
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(storage), &prompt, &PRODUCT);
 	assert_eq!(
 		futures::executor::block_on(service.check_or_prompt_device(capability)).unwrap(),
 		PermissionAuthorizationStatus::Authorized,
@@ -595,8 +562,7 @@ fn remote_domains(domains: &[&str]) -> RemotePermissionRequest {
 fn check_or_prompt_device_caches_grant() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let first = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -616,8 +582,7 @@ fn check_or_prompt_device_caches_grant() {
 fn check_or_prompt_remote_caches_denial() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![false]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let request = RemotePermissionRequest { permission: RemotePermission::ChainSubmit };
 	let first =
@@ -637,8 +602,7 @@ fn check_or_prompt_remote_caches_denial() {
 fn a_bundle_grant_is_visible_to_a_single_domain_lookup() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let granted = futures::executor::block_on(
 		service.check_or_prompt_remote(remote_domains(&["a.example.com", "b.example.com"])),
@@ -669,8 +633,7 @@ fn a_bundle_grant_is_visible_to_a_single_domain_lookup() {
 fn a_wildcard_grant_covers_descendants_but_not_its_root() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["*.example.com"])))
 		.unwrap();
@@ -696,8 +659,7 @@ fn a_wildcard_grant_covers_descendants_but_not_its_root() {
 fn the_most_specific_stored_decision_wins() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	// Deny the whole wildcard, then allow one host under it explicitly.
 	futures::executor::block_on(service.set_authorization_status(
@@ -748,8 +710,7 @@ fn a_prompt_covers_only_undetermined_domains_and_never_revokes_a_grant() {
 	let storage = MemStorage::default();
 	// Answers pop from the end: grant first, then deny.
 	let prompt = ScriptedPrompt::new(vec![], vec![false, true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
 		.unwrap();
@@ -780,8 +741,7 @@ fn a_multi_domain_denial_leaves_the_narrower_question_askable() {
 	let storage = MemStorage::default();
 	// Answers pop from the end: deny the pair, then grant the single domain.
 	let prompt = ScriptedPrompt::new(vec![], vec![true, false]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let pair = remote_domains(&["api.coingecko.com", "analytics.vendor.com"]);
 	assert_eq!(
@@ -827,8 +787,7 @@ fn a_multi_domain_denial_leaves_the_narrower_question_askable() {
 fn unsupported_wildcards_are_rejected_without_prompting_or_storing() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	for domain in ["*.com", "*.dot", "*.127.0.0.1", "*.[::1]"] {
 		assert_eq!(
@@ -850,8 +809,7 @@ fn unsupported_wildcards_are_rejected_without_prompting_or_storing() {
 fn a_grant_covers_every_spelling_of_the_granted_host() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	futures::executor::block_on(
 		service.check_or_prompt_remote(remote_domains(&["Bücher.example"])),
@@ -874,8 +832,7 @@ fn a_grant_covers_every_spelling_of_the_granted_host() {
 fn a_denied_domain_short_circuits_the_bundle_without_prompting() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![false]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
 		.unwrap();
@@ -892,8 +849,7 @@ fn a_denied_domain_short_circuits_the_bundle_without_prompting() {
 fn an_empty_domain_bundle_is_denied_without_prompting() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	assert_eq!(
 		futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&[]))).unwrap(),
@@ -910,8 +866,7 @@ fn an_empty_domain_bundle_is_denied_without_prompting() {
 fn clearing_a_bundle_clears_each_domain_it_names() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	futures::executor::block_on(
 		service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
@@ -936,8 +891,7 @@ fn clearing_a_bundle_clears_each_domain_it_names() {
 fn resetting_a_bundle_clears_a_recorded_denial() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![false]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	let pair = remote_domains(&["a.com", "b.com"]);
 
 	futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap();
@@ -958,16 +912,11 @@ fn resetting_a_bundle_clears_a_recorded_denial() {
 fn remote_domain_grants_are_scoped_to_one_product() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
 		.unwrap();
 
-	let other = PermissionsService::new(
-		crate::test_support::test_storage(&storage),
-		&prompt,
-		&OTHER_PRODUCT,
-	);
+	let other = PermissionsService::new(test_storage(&storage), &prompt, &OTHER_PRODUCT);
 	assert_eq!(
 		futures::executor::block_on(other.peek_remote(&remote_domains(&["a.com"]))).unwrap(),
 		PermissionAuthorizationStatus::NotDetermined
@@ -980,7 +929,7 @@ fn trusted_service<'a>(
 	storage: &'a MemStorage,
 	prompt: &'a ScriptedPrompt,
 ) -> PermissionsService<'a, MemStorage, ScriptedPrompt> {
-	PermissionsService::new(crate::test_support::test_storage(storage), prompt, &PEOPL)
+	PermissionsService::new(test_storage(storage), prompt, &PEOPL)
 }
 
 fn remote(permission: RemotePermission) -> RemotePermissionRequest {
@@ -1061,12 +1010,12 @@ fn a_trusted_product_grant_is_not_persisted() {
 	futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
 
 	assert_eq!(
-		futures::executor::block_on(storage.read_core_storage(
-			crate::test_support::test_storage_key(CoreStorageKey::remote_permission_authorization(
+		futures::executor::block_on(storage.read_core_storage(test_storage_key(
+			CoreStorageKey::remote_permission_authorization(
 				&ProductId::for_test("peopl.dot"),
 				&request
-			))
-		))
+			)
+		)))
 		.unwrap(),
 		None,
 		"trusted authorization must not create a permission record"
@@ -1126,8 +1075,7 @@ fn a_trusted_label_on_every_product_network_is_trusted() {
 
 	for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
 		let product = ProductContext::new(ProductId::for_test(product_id));
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &product);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &product);
 		assert_eq!(
 			futures::executor::block_on(
 				service.peek_remote(&remote(RemotePermission::ChainSubmit))
@@ -1143,8 +1091,7 @@ fn a_trusted_label_on_every_product_network_is_trusted() {
 fn a_subdomain_of_a_trusted_label_is_not_trusted() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PEOPL_APP);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PEOPL_APP);
 	let request = remote(RemotePermission::ChainSubmit);
 
 	assert_eq!(
@@ -1165,8 +1112,7 @@ fn a_localhost_product_is_not_trusted() {
 
 	for product_id in ["localhost", "localhost:3000"] {
 		let product = ProductContext::new(ProductId::for_test(product_id));
-		let service =
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &product);
+		let service = PermissionsService::new(test_storage(&storage), &prompt, &product);
 		let request = remote(RemotePermission::ChainSubmit);
 		assert_eq!(
 			futures::executor::block_on(service.peek_remote(&request)).unwrap(),
@@ -1183,8 +1129,7 @@ fn an_untrusted_product_still_prompts_for_every_remote_permission() {
 	let storage = MemStorage::default();
 	let permissions = every_remote_permission();
 	let prompt = ScriptedPrompt::new(vec![], vec![true; permissions.len()]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	for permission in permissions.iter().cloned() {
 		futures::executor::block_on(service.check_or_prompt_remote(remote(permission))).unwrap();
@@ -1247,8 +1192,7 @@ fn a_trusted_product_is_denied_a_device_capability_the_os_refuses() {
 fn a_trusted_product_reads_no_permission_storage() {
 	let storage = FailingStorage;
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PEOPL);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PEOPL);
 	let status = |request| futures::executor::block_on(service.authorization_status(&request));
 	assert_eq!(
 		[
@@ -1296,8 +1240,7 @@ fn device_and_remote_caches_are_independent() {
 	// Device denies, remote grants. If the caches collided we'd see the
 	// same answer on the second call.
 	let prompt = ScriptedPrompt::new(vec![false], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let device = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -1319,8 +1262,7 @@ fn device_and_remote_caches_are_independent() {
 fn device_prompt_does_not_invoke_remote_callback() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let _ = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -1334,8 +1276,7 @@ fn device_prompt_does_not_invoke_remote_callback() {
 fn remote_prompt_does_not_invoke_device_callback() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let _ =
 		futures::executor::block_on(service.check_or_prompt_remote(RemotePermissionRequest {
@@ -1350,8 +1291,7 @@ fn remote_prompt_does_not_invoke_device_callback() {
 fn peek_returns_not_determined_until_authorized() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let before =
 		futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
@@ -1373,8 +1313,7 @@ fn peek_returns_not_determined_until_authorized() {
 fn set_authorization_status_writes_and_clears() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
 
 	futures::executor::block_on(
@@ -1400,8 +1339,7 @@ fn set_authorization_status_writes_and_clears() {
 fn identity_disclosure_authorization_round_trips() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	let request = PermissionAuthorizationRequest::IdentityDisclosure;
 
 	assert_eq!(
@@ -1418,11 +1356,8 @@ fn identity_disclosure_authorization_round_trips() {
 		PermissionAuthorizationStatus::Authorized
 	);
 
-	let other_product_service = PermissionsService::new(
-		crate::test_support::test_storage(&storage),
-		&prompt,
-		&OTHER_PRODUCT,
-	);
+	let other_product_service =
+		PermissionsService::new(test_storage(&storage), &prompt, &OTHER_PRODUCT);
 	assert_eq!(
 		futures::executor::block_on(other_product_service.authorization_status(&request)).unwrap(),
 		PermissionAuthorizationStatus::NotDetermined
@@ -1433,8 +1368,7 @@ fn identity_disclosure_authorization_round_trips() {
 fn account_access_authorization_is_scoped_by_requester_and_target() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	let request = PermissionAuthorizationRequest::AccountAccess {
 		target_product_id: ProductId::for_test("target.dot"),
 	};
@@ -1457,11 +1391,8 @@ fn account_access_authorization_is_scoped_by_requester_and_target() {
 		PermissionAuthorizationStatus::NotDetermined
 	);
 
-	let other_product_service = PermissionsService::new(
-		crate::test_support::test_storage(&storage),
-		&prompt,
-		&OTHER_PRODUCT,
-	);
+	let other_product_service =
+		PermissionsService::new(test_storage(&storage), &prompt, &OTHER_PRODUCT);
 	assert_eq!(
 		futures::executor::block_on(other_product_service.authorization_status(&request)).unwrap(),
 		PermissionAuthorizationStatus::NotDetermined
@@ -1495,8 +1426,7 @@ impl Permissions for FailingPrompt {
 fn prompt_failure_stays_not_determined_without_persisting() {
 	let storage = MemStorage::default();
 	let prompt = FailingPrompt;
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let device_decision = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -1536,7 +1466,7 @@ fn corrupt_cache_entry_returns_none() {
 	let storage = MemStorage::default();
 	// Write garbage bytes under the canonical key.
 	futures::executor::block_on(storage.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::device_permission_authorization(
+		test_storage_key(CoreStorageKey::device_permission_authorization(
 			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
 		)),
@@ -1545,8 +1475,7 @@ fn corrupt_cache_entry_returns_none() {
 	.unwrap();
 
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let peeked =
 		futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
@@ -1590,8 +1519,7 @@ impl CoreStorage for FailingStorage {
 fn storage_read_error_propagates() {
 	let storage = FailingStorage;
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 
 	let err = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -1610,9 +1538,8 @@ fn an_os_denial_overrides_a_stored_grant() {
 	// the user can be asked about.
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1631,13 +1558,9 @@ fn an_os_denial_leaves_the_stored_grant_intact() {
 	let denied_prompt = ScriptedPrompt::new(vec![], vec![]);
 	let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
 	futures::executor::block_on(
-		PermissionsService::new(
-			crate::test_support::test_storage(&storage),
-			&denied_prompt,
-			&PRODUCT,
-		)
-		.with_status_host(Some(&denied))
-		.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		PermissionsService::new(test_storage(&storage), &denied_prompt, &PRODUCT)
+			.with_status_host(Some(&denied))
+			.check_or_prompt_device(HostDevicePermissionRequest::Camera),
 	)
 	.unwrap();
 
@@ -1645,9 +1568,8 @@ fn an_os_denial_leaves_the_stored_grant_intact() {
 	// never theirs to lose, so this resolves without asking them again.
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&restored));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&restored));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1670,9 +1592,8 @@ fn an_os_reset_never_reprompts_a_stored_grant() {
 	// scripted: reaching the prompt at all would panic.
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	// Repeated, because a condition a prompt cannot clear re-fires forever.
 	for _ in 0..3 {
@@ -1699,7 +1620,7 @@ fn an_os_reset_cannot_turn_a_stored_grant_into_a_permanent_denial() {
 	let declining = ScriptedPrompt::new(vec![false], vec![]);
 	let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
 	futures::executor::block_on(
-		PermissionsService::new(crate::test_support::test_storage(&storage), &declining, &PRODUCT)
+		PermissionsService::new(test_storage(&storage), &declining, &PRODUCT)
 			.with_status_host(Some(&reset))
 			.check_or_prompt_device(HostDevicePermissionRequest::Camera),
 	)
@@ -1707,9 +1628,8 @@ fn an_os_reset_cannot_turn_a_stored_grant_into_a_permanent_denial() {
 
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
-	let after =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&restored));
+	let after = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&restored));
 	assert_eq!(
 		futures::executor::block_on(
 			after.check_or_prompt_device(HostDevicePermissionRequest::Camera)
@@ -1729,9 +1649,8 @@ fn a_prompt_failure_cannot_mask_a_stored_grant() {
 	// holds must never be reached through that path.
 	let failing = FailingPrompt;
 	let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &failing, &PRODUCT)
-			.with_status_host(Some(&reset));
+	let service = PermissionsService::new(test_storage(&storage), &failing, &PRODUCT)
+		.with_status_host(Some(&reset));
 	assert_eq!(
 		futures::executor::block_on(
 			service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
@@ -1748,9 +1667,8 @@ fn a_first_request_still_prompts_while_the_os_is_undetermined() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
 	let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1767,7 +1685,7 @@ fn an_os_reset_does_not_reprompt_a_stored_denial() {
 	let storage = MemStorage::default();
 	let seed = ScriptedPrompt::new(vec![false], vec![]);
 	futures::executor::block_on(
-		PermissionsService::new(crate::test_support::test_storage(&storage), &seed, &PRODUCT)
+		PermissionsService::new(test_storage(&storage), &seed, &PRODUCT)
 			.check_or_prompt_device(HostDevicePermissionRequest::Camera),
 	)
 	.unwrap();
@@ -1776,9 +1694,8 @@ fn an_os_reset_does_not_reprompt_a_stored_denial() {
 	// its own state is not a reason to put the question again.
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1799,9 +1716,8 @@ fn a_failed_status_query_falls_back_to_the_stored_grant() {
 	// channel revoke a capability the OS still allows.
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let status = ScriptedStatus::failing();
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1818,9 +1734,8 @@ fn an_os_denial_denies_before_any_prompt_and_persists_nothing() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&denied));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&denied));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1833,8 +1748,7 @@ fn an_os_denial_denies_before_any_prompt_and_persists_nothing() {
 	// Nothing was written, so the product question is still open: once the
 	// OS allows it, the user gets asked rather than inheriting a denial
 	// they never gave.
-	let peek =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT);
+	let peek = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT);
 	assert_eq!(
 		futures::executor::block_on(peek.peek_device(&HostDevicePermissionRequest::Camera))
 			.unwrap(),
@@ -1855,9 +1769,8 @@ fn os_status_is_read_for_the_capability_being_checked() {
 		vec![(HostDevicePermissionRequest::Camera, DevicePermissionStatus::Denied)],
 		DevicePermissionStatus::Granted,
 	);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1884,8 +1797,7 @@ fn a_host_without_the_capability_resolves_from_stored_state_alone() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![true], vec![]);
 	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(None);
+		PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT).with_status_host(None);
 
 	let first = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -1909,9 +1821,8 @@ fn os_device_status_does_not_reach_remote_permissions() {
 	// TrUAPI-level decision with no OS gate behind it, so it must resolve
 	// untouched.
 	let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&status));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&status));
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1932,9 +1843,8 @@ fn a_peeked_grant_the_os_refuses_reads_as_denied() {
 	grant_stored(&storage, HostDevicePermissionRequest::Camera);
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&refusing));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&refusing));
 
 	assert_eq!(
 		futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
@@ -1950,7 +1860,7 @@ fn a_peek_under_an_os_refusal_leaves_the_stored_grant_intact() {
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
 	futures::executor::block_on(
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
+		PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
 			.with_status_host(Some(&refusing))
 			.peek_device(&HostDevicePermissionRequest::Camera),
 	)
@@ -1961,7 +1871,7 @@ fn a_peek_under_an_os_refusal_leaves_the_stored_grant_intact() {
 	let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
 	assert_eq!(
 		futures::executor::block_on(
-			PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
+			PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
 				.with_status_host(Some(&restored))
 				.peek_device(&HostDevicePermissionRequest::Camera),
 		)
@@ -1981,13 +1891,9 @@ fn a_peeked_grant_survives_an_os_reset_and_a_failed_query() {
 	{
 		assert_eq!(
 			futures::executor::block_on(
-				PermissionsService::new(
-					crate::test_support::test_storage(&storage),
-					&prompt,
-					&PRODUCT
-				)
-				.with_status_host(Some(&status))
-				.peek_device(&HostDevicePermissionRequest::Camera),
+				PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+					.with_status_host(Some(&status))
+					.peek_device(&HostDevicePermissionRequest::Camera),
 			)
 			.unwrap(),
 			PermissionAuthorizationStatus::Authorized,
@@ -2001,9 +1907,8 @@ fn a_status_read_of_a_remote_permission_never_reaches_the_os() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![true]);
 	let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&refusing));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&refusing));
 	futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["example.com"])))
 		.unwrap();
 
@@ -2023,9 +1928,8 @@ fn a_device_request_and_a_status_read_agree_once_the_os_refuses() {
 	grant_stored(&storage, HostDevicePermissionRequest::Camera);
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_status_host(Some(&refusing));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_status_host(Some(&refusing));
 
 	let requested = futures::executor::block_on(
 		service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
@@ -2049,9 +1953,8 @@ fn a_signature_approval_is_administered_in_memory_only() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let grants = Arc::new(TemporaryPermissions::default());
-	let service =
-		PermissionsService::new(crate::test_support::test_storage(&storage), &prompt, &PRODUCT)
-			.with_temporary_permissions(Arc::clone(&grants));
+	let service = PermissionsService::new(test_storage(&storage), &prompt, &PRODUCT)
+		.with_temporary_permissions(Arc::clone(&grants));
 	let request = PermissionAuthorizationRequest::CrossProductSignature {
 		target_product_id: ProductId::for_test("dim2.dot"),
 		kind: CrossProductSignatureKind::Payload,

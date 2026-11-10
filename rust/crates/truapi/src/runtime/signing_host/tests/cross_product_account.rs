@@ -6,6 +6,7 @@
 //! which door the request got through.
 
 use super::*;
+use crate::test_support::test_storage_key;
 
 use crate::{
 	platform::{CoreStorage, CoreStorageKey},
@@ -28,9 +29,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
 	futures::executor::block_on(platform.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-			&ProductId::for_test(owner),
-		)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");

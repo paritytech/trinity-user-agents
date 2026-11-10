@@ -1,5 +1,8 @@
 use super::*;
-use crate::{host_logic::product_account::derive_sr25519_hard_path, test_support::StubPlatform};
+use crate::{
+	host_logic::product_account::derive_sr25519_hard_path,
+	test_support::{StubPlatform, test_storage, test_storage_key},
+};
 use std::{
 	collections::HashMap,
 	sync::{Arc, Mutex},
@@ -248,9 +251,7 @@ fn a_foreign_target_is_dropped_from_the_ledger() {
 		assert_eq!(pruned, vec!["device".to_string()]);
 		// Dropped, not merely skipped, so the cost is paid once.
 		assert_eq!(
-			read_entries(&crate::test_support::test_storage(storage.as_ref()))
-				.await
-				.unwrap(),
+			read_entries(&test_storage(storage.as_ref())).await.unwrap(),
 			vec![TrackedStatementRenewalTarget::new(product("a.dot"), owner)]
 		);
 	});
@@ -271,12 +272,7 @@ fn an_all_foreign_ledger_prunes_to_nothing() {
 			wallet.owned_targets(&wallet.current_session().unwrap()).await.unwrap(),
 			(Vec::new(), vec!["device".to_string()])
 		);
-		assert_eq!(
-			read_entries(&crate::test_support::test_storage(storage.as_ref()))
-				.await
-				.unwrap(),
-			Vec::new()
-		);
+		assert_eq!(read_entries(&test_storage(storage.as_ref())).await.unwrap(), Vec::new());
 	});
 }
 
@@ -303,7 +299,7 @@ async fn read_targets(
 	storage: &(impl CoreStorage + ?Sized),
 	owner: [u8; 32],
 ) -> Result<Vec<StatementRenewalTarget>, StatementRenewalError> {
-	Ok(read_entries(&crate::test_support::test_storage(storage))
+	Ok(read_entries(&test_storage(storage))
 		.await?
 		.into_iter()
 		.filter(|entry| entry.is_owned_by(owner))
@@ -454,7 +450,7 @@ fn an_undecodable_ledger_lists_as_empty() {
 	futures::executor::block_on(async {
 		storage
 			.write_core_storage(
-				crate::test_support::test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
 				vec![0xff; 8],
 			)
 			.await
@@ -480,7 +476,7 @@ fn an_undecodable_ledger_reads_as_empty() {
 	futures::executor::block_on(async {
 		storage
 			.write_core_storage(
-				crate::test_support::test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
 				vec![0xff, 0xff, 0xff],
 			)
 			.await
@@ -499,7 +495,7 @@ fn tracking_over_an_undecodable_ledger_starts_a_fresh_one() {
 	futures::executor::block_on(async {
 		storage
 			.write_core_storage(
-				crate::test_support::test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
 				vec![0xff; 3],
 			)
 			.await

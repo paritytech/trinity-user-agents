@@ -12,6 +12,7 @@ use crate::{
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
 		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
 	},
+	test_support::test_storage_key,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -414,9 +415,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		json: Some(json),
 	};
 	futures::executor::block_on(platform.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-			&ProductId::for_test(owner),
-		)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -430,9 +429,7 @@ fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<Strin
 		json,
 	};
 	futures::executor::block_on(platform.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-			&ProductId::for_test(owner),
-		)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -4701,7 +4698,7 @@ fn get_account_allow_once_answers_later_disclosures_without_saving() {
 			disclosed.push(response.account.public_key);
 		}
 		let saved = platform
-			.read_core_storage(crate::test_support::test_storage_key(
+			.read_core_storage(test_storage_key(
 				CoreStorageKey::product_account_access_authorization(
 					&ProductId::for_test("myapp.dot"),
 					&ProductId::for_test("other.dot"),
@@ -9524,7 +9521,7 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 	// the saved records only once, so both have to be stored before it.
 	for _ in 0..200 {
 		let stored = futures::executor::block_on(
-			storage.read_core_storage(crate::test_support::test_storage_key(CoreStorageKey::FundingSupport)),
+			storage.read_core_storage(test_storage_key(CoreStorageKey::FundingSupport)),
 		)
 		.ok()
 		.flatten()
@@ -9580,7 +9577,7 @@ fn learning_before_the_stored_records_load_keeps_them() {
 		learned_at_ms: crate::unix_time::current_unix_millis(),
 	};
 	futures::executor::block_on(storage.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::FundingSupport),
+		test_storage_key(CoreStorageKey::FundingSupport),
 		parity_scale_codec::Encode::encode(&vec![support("earlier.dot")]),
 	))
 	.expect("stored");
@@ -9590,9 +9587,9 @@ fn learning_before_the_stored_records_load_keeps_them() {
 
 	let mut stored = Vec::new();
 	for _ in 0..200 {
-		stored = futures::executor::block_on(storage.read_core_storage(
-			crate::test_support::test_storage_key(CoreStorageKey::FundingSupport),
-		))
+		stored = futures::executor::block_on(
+			storage.read_core_storage(test_storage_key(CoreStorageKey::FundingSupport)),
+		)
 		.ok()
 		.flatten()
 		.and_then(|bytes| {

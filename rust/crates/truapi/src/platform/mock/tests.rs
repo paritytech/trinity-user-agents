@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::test_storage_key;
 use futures::{FutureExt, executor::block_on};
 
 /// Decode a lowercase hex string into bytes.
@@ -38,27 +39,14 @@ fn product_storage_round_trips() {
 #[test]
 fn core_storage_round_trips() {
 	let p = MockPlatform::new();
-	block_on(p.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::AuthSession),
-		vec![7],
-	))
-	.unwrap();
+	block_on(p.write_core_storage(test_storage_key(CoreStorageKey::AuthSession), vec![7])).unwrap();
 	assert_eq!(
-		block_on(
-			p.read_core_storage(crate::test_support::test_storage_key(CoreStorageKey::AuthSession))
-		)
-		.unwrap(),
+		block_on(p.read_core_storage(test_storage_key(CoreStorageKey::AuthSession))).unwrap(),
 		Some(vec![7])
 	);
-	block_on(
-		p.clear_core_storage(crate::test_support::test_storage_key(CoreStorageKey::AuthSession)),
-	)
-	.unwrap();
+	block_on(p.clear_core_storage(test_storage_key(CoreStorageKey::AuthSession))).unwrap();
 	assert_eq!(
-		block_on(
-			p.read_core_storage(crate::test_support::test_storage_key(CoreStorageKey::AuthSession))
-		)
-		.unwrap(),
+		block_on(p.read_core_storage(test_storage_key(CoreStorageKey::AuthSession))).unwrap(),
 		None
 	);
 }
@@ -66,21 +54,15 @@ fn core_storage_round_trips() {
 #[test]
 fn core_and_product_keys_do_not_collide() {
 	let p = MockPlatform::new();
-	block_on(p.write_core_storage(
-		crate::test_support::test_storage_key(CoreStorageKey::AuthSession),
-		vec![1],
-	))
-	.unwrap();
+	block_on(p.write_core_storage(test_storage_key(CoreStorageKey::AuthSession), vec![1])).unwrap();
 	// Reading the same logical name as a product key must miss the core slot.
 	assert_eq!(block_on(p.read("auth-session".into())).unwrap(), None);
 	assert_eq!(block_on(p.read("core:auth-session".into())).unwrap(), None);
 	// ...and a product key must not be visible through core storage.
 	block_on(p.write("x".into(), vec![2])).unwrap();
 	assert_eq!(
-		block_on(p.read_core_storage(crate::test_support::test_storage_key(
-			CoreStorageKey::PairingDeviceIdentity
-		)))
-		.unwrap(),
+		block_on(p.read_core_storage(test_storage_key(CoreStorageKey::PairingDeviceIdentity)))
+			.unwrap(),
 		None
 	);
 }
@@ -276,12 +258,7 @@ fn storage_error_injected() {
 		..Default::default()
 	});
 	assert!(block_on(p.read("k".into())).is_err());
-	assert!(
-		block_on(
-			p.read_core_storage(crate::test_support::test_storage_key(CoreStorageKey::AuthSession))
-		)
-		.is_err()
-	);
+	assert!(block_on(p.read_core_storage(test_storage_key(CoreStorageKey::AuthSession))).is_err());
 }
 
 #[test]

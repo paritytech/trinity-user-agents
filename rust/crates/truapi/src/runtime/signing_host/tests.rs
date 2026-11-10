@@ -38,7 +38,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	test_support::StubPlatform,
+	test_support::{StubPlatform, test_storage, test_storage_key},
 };
 use truapi::{
 	CallContext, CallError,
@@ -279,9 +279,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted_products: &str) {
 	futures::executor::block_on(
 		<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 			platform,
-			crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-				&ProductId::for_test(owner),
-			)),
+			test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 			parity_scale_codec::Encode::encode(&entry),
 		),
 	)
@@ -294,7 +292,7 @@ fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
 		// Bare-labelled on both sides, as `ProductConsent::account_access`
 		// writes it in production.
 		crate::host_internal::permissions::set_authorization_status(
-			&crate::test_support::test_storage(platform),
+			&test_storage(platform),
 			CoreStorageKey::product_account_access_authorization(
 				&ProductId::for_test(caller),
 				&ProductId::for_test(target),
@@ -565,9 +563,9 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 			futures::executor::block_on(
 				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 					platform,
-					crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-						&ProductId::for_test("peopl.dot"),
-					)),
+					test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(
+						"peopl.dot",
+					))),
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						json.as_deref(),
 						fetched_at_secs,
@@ -790,9 +788,9 @@ fn third_product_context(
 		None => futures::executor::block_on(
 			<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 				&platform,
-				crate::test_support::test_storage_key(CoreStorageKey::product_manifest(
-					&ProductId::for_test("dim2.dot"),
-				)),
+				test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(
+					"dim2.dot",
+				))),
 				crate::runtime::product_manifest::encode_cached_root_manifest(
 					None,
 					crate::unix_time::current_unix_secs(),
@@ -1109,7 +1107,7 @@ fn a_refusal_recorded_before_this_release_still_overrides_a_grant() {
 	cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 	// Written exactly as the previous release wrote it: full ids, both sides.
 	futures::executor::block_on(crate::host_internal::permissions::set_authorization_status(
-		&crate::test_support::test_storage(platform.as_ref()),
+		&test_storage(platform.as_ref()),
 		CoreStorageKey::account_access_authorization(
 			&ProductId::for_test("ordinary.dot"),
 			&ProductId::for_test("peopl.dot"),
