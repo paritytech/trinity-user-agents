@@ -19,7 +19,7 @@ use crate::{ChainSource, ProviderError, config::ResolvedChain};
 const RELAY_ROLE: &str = "Relay";
 
 /// Where a chain's light spec is published.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct LightSpecSource {
 	/// The chain's genesis hash.
 	pub genesis_hash: [u8; 32],
@@ -56,8 +56,8 @@ impl core::fmt::Debug for LightStack {
 	}
 }
 
-fn refused(error: Error) -> ProviderError {
-	ProviderError::Stack { error }
+fn refused(source: Error) -> ProviderError {
+	ProviderError::Stack { source }
 }
 
 impl LightStack {
@@ -140,10 +140,10 @@ impl LightStack {
 		let chain = self
 			.chain(genesis_hash)
 			.ok_or(ProviderError::UnknownGenesis { genesis: genesis_hash })?;
-		let refused = |error| ProviderError::LightSpec {
+		let refused = |source| ProviderError::LightSpec {
 			role: chain.role.clone(),
 			genesis: genesis_hash,
-			error,
+			source,
 		};
 		chain.check_light_spec(specification).map_err(refused)?;
 		let specification = core::str::from_utf8(specification)
