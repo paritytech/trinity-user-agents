@@ -145,11 +145,13 @@ async fn the_host_client_is_called_with_the_genesis_hash() {
 /// side of `build`.
 #[wasm_bindgen_test]
 async fn a_stack_provider_names_its_stack_to_the_client() {
-	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, descriptor_json, genesis};
+	use crate::test_stack::{
+		PEOPLE_SPEC, RELAY_SPEC, STACK_ID, STACK_LINK, descriptor_bytes, genesis,
+	};
 
 	let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
-	let link = "polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json";
+	let descriptor = descriptor_bytes("one");
+	let link = STACK_LINK;
 	let (relay, people) = (hex0x(&genesis(RELAY_SPEC)), hex0x(&genesis(PEOPLE_SPEC)));
 
 	let mut builder = ChainProviderBuilder::new();

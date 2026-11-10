@@ -632,10 +632,10 @@ fn a_catalog_chain_answers_on_the_listener_and_closes() {
 /// the provider the host already holds.
 #[test]
 fn a_stack_provider_checks_its_specs_and_takes_one_later() {
-	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, descriptor_json, genesis};
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_LINK, descriptor_bytes, genesis};
 
-	let link = "polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json".to_owned();
-	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
+	let link = STACK_LINK.to_owned();
+	let descriptor = descriptor_bytes("one");
 	let (relay, people) = (genesis(RELAY_SPEC).to_vec(), genesis(PEOPLE_SPEC).to_vec());
 	let spec = |genesis_hash: &Vec<u8>, spec: &str| LightSpec {
 		genesis_hash: genesis_hash.clone(),

@@ -29,6 +29,12 @@ pub enum ChainSource {
 	},
 }
 
+/// The genesis hash `hex` writes, with or without a `0x` prefix. `None` when
+/// it is not 32 bytes of hex.
+pub fn genesis_from_hex(hex: &str) -> Option<[u8; 32]> {
+	hex::decode(hex.trim_start_matches("0x")).ok()?.try_into().ok()
+}
+
 /// What a connect to one chain needs: the chain's own source and, for a
 /// light-client parachain, its relay's genesis hash and source.
 pub struct ResolvedChain {
