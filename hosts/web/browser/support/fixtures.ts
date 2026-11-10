@@ -94,12 +94,19 @@ export interface RunningHost {
   close(): Promise<void>;
 }
 
-export async function startHost(): Promise<RunningHost> {
+/**
+ * Start the host. `cacheDir` gives this server its own dependency cache, so it
+ * cannot disturb a dev server that shares the default one.
+ */
+export async function startHost(
+  options: { cacheDir?: string } = {},
+): Promise<RunningHost> {
   const port = await freePort();
   const vite: ViteDevServer = await createViteServer({
     root: hostRoot,
     logLevel: "error",
     server: { host: "127.0.0.1", port, strictPort: true },
+    ...(options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir }),
   });
   await vite.listen();
   return { origin: `http://localhost:${port}`, close: () => vite.close() };

@@ -96,6 +96,14 @@ export interface NavigationDeps {
    */
   autoOpens: boolean;
   tap(runtime: Runtime, productId: ProductId): FrameTap;
+  /** Optional web-only field prototype, attached only to a loaded product's own port. */
+  fieldDemoPort?(
+    runtime: Runtime,
+    url: URL,
+    productId: ProductId,
+    port: MessagePort,
+    frame: () => Window | null,
+  ): () => void;
   /** Show `text` in the address bar. */
   showAddress(text: string): void;
   /** Empty the address bar, which names no product over a host screen. */
@@ -763,6 +771,21 @@ export class ProductNavigation {
           mounted: target.via === "name",
           executionKind,
           tap: this.deps.tap(runtime, productId),
+          ...(this.deps.fieldDemoPort === undefined
+            ? {}
+            : {
+                onFieldDemoPort: (
+                  port: MessagePort,
+                  frame: () => Window | null,
+                ) =>
+                  this.deps.fieldDemoPort!(
+                    runtime,
+                    target.url,
+                    productId,
+                    port,
+                    frame,
+                  ),
+              }),
           onFrameLoad: (count) => {
             if (count < documentsBeforeProduct(target.via)) return;
             this.deps.loading.finish(op);

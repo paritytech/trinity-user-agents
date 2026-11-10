@@ -132,6 +132,11 @@ export interface OpenProductOptions {
     connect(port: MessagePort): void;
   };
   /**
+   * Attach the noncanonical web-only field demo to the document that just
+   * loaded. Returns its cleanup, which runs on the next load or on close.
+   */
+  onFieldDemoPort?(port: MessagePort, frame: () => Window | null): () => void;
+  /**
    * Called with each console line the frame's worker shell forwards
    * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
    * this frame's and no other's.
@@ -176,6 +181,7 @@ export async function openProduct(
     executionKind = "App",
     onChatV2Port,
     requestPorts,
+    onFieldDemoPort,
     onConsole,
     onDiagnostics,
   } = options;
@@ -209,8 +215,28 @@ export async function openProduct(
     },
   });
   let loads = 0;
+  let closeFields = () => {};
+  // Each loaded document gets its own field-demo bridge, offered by the host
+  // after the load, so a bridge never outlives the document it was made for.
+  const offerFields = (): void => {
+    closeFields();
+    closeFields = () => {};
+    const target = frame.iframe.contentWindow;
+    if (onFieldDemoPort === undefined || target === null) return;
+    const channel = new MessageChannel();
+    closeFields = onFieldDemoPort(
+      channel.port1,
+      () => frame.iframe.contentWindow,
+    );
+    target.postMessage(
+      { type: "web-field-demo-offer", protocol: "web-field-demo/1" },
+      url.origin,
+      [channel.port2],
+    );
+  };
   const onLoad = (): void => {
     loads += 1;
+    offerFields();
     onFrameLoad?.(loads);
   };
   frame.iframe.addEventListener("load", onLoad);
@@ -291,6 +317,7 @@ export async function openProduct(
     dispose() {
       if (!closed) onClose?.();
       closed = true;
+      closeFields();
       window.removeEventListener("message", onWindowMessage);
       frame.iframe.removeEventListener("load", onLoad);
       unsubscribe();

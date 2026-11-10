@@ -1,0 +1,95 @@
+/*
+ * DEV ONLY. The host-origin view a product embeds where a private field
+ * goes. Its colors are the two surfaces the demo market draws it on, so the
+ * frame reads as part of the product's layout; the fonts are the host's own
+ * bundled copies.
+ */
+@font-face {
+  font-family: "Inter";
+  font-weight: 100 900;
+  font-display: block;
+  src: url("../../src/assets/fonts/inter-variable-latin.woff2") format("woff2");
+}
+
+:root {
+  --ink: #16171b;
+  --muted: #6b6d75;
+  --bg: #fbfaf6;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --ink: #f4f4f5;
+  --muted: #8c8f98;
+  --bg: #17181c;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.view {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 1px 0;
+}
+
+.lines {
+  margin: 0;
+  font-size: var(--size, 15px);
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  font-style: normal;
+}
+
+.lines span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.lines span:first-child {
+  font-weight: 600;
+}
+
+.note,
+.seal {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+.seal {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.seal svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+@media print {
+  .seal {
+    display: none;
+  }
+}

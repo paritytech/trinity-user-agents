@@ -22,6 +22,7 @@
     "fixtures",
     "tests",
     "browser",
-    "vite.config.ts"
+    "vite.config.ts",
+    "field-products.config.ts"
   ]
 }

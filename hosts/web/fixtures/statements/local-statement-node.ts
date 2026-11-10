@@ -238,16 +238,29 @@ export class LocalStatementNode {
           case "statement_subscribeStatement": {
             const subscription = `local-statements-${this.nextSubscription++}`;
             const filter = params[0] as Filter;
+            // A node sends notifications as later frames. A microtask would
+            // reach a StatementStore client before it registers the id, so
+            // the replay and anything arriving before it wait one task.
+            let waiting: string[][] | null = [];
             this.subscribers.set(subscription, {
               filter,
-              push: (statements) => notify(subscription, statements),
+              push: (statements) =>
+                waiting === null
+                  ? notify(subscription, statements)
+                  : waiting.push(statements),
             });
             own.add(subscription);
             answer(id, subscription);
             const stored = this.live()
               .map(({ kept }) => kept.encoded)
               .filter((encoded) => LocalStatementNode.matches(filter, encoded));
-            if (stored.length > 0) notify(subscription, stored);
+            setTimeout(() => {
+              const held = waiting ?? [];
+              waiting = null;
+              if (!this.subscribers.has(subscription)) return;
+              for (const statements of [stored, ...held])
+                if (statements.length > 0) notify(subscription, statements);
+            }, 0);
             return;
           }
           case "statement_unsubscribeStatement":

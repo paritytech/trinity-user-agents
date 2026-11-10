@@ -6,6 +6,9 @@
   "description": "Standalone browser TrUAPI host that holds a development wallet and signs locally, with no companion app or QR pairing",
   "scripts": {
     "dev": "vite",
+    "dev:field-provider": "vite --config field-products.config.ts --port 5182",
+    "dev:field-provider-2": "VITE_FIELD_PROVIDER_NAME='Travel notebook' vite --config field-products.config.ts --port 5185",
+    "dev:field-market": "vite --config field-products.config.ts --port 5183",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

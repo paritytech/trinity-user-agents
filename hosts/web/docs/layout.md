@@ -58,6 +58,7 @@ Three owners, which [`tests/unit/boundaries.test.ts`](../tests/unit/boundaries.t
 - `backup/`: the wallet's backup on the network: `host-backup.ts` (keeping and restoring), `snapshot.ts` (what is
   copied), `sealing.ts` (keys and envelopes), `pointer.ts`. See [Backup](backup.md).
 - `assets/`: fonts and Pocket artwork, with licence notices.
+- `fields/`: the host side of the field demo, dev server only: `host.ts`, `transport.ts`.
 
 ## `bridges/`
 
@@ -68,6 +69,7 @@ What the host and its products both read. The contracts are drafts, not TrUAPI.
 - `host-requests/`: the request service's contract, `contract.ts`, and the product's end, `product.ts`.
 - `nova-chat/`: `nova-chat/1` between the host and Nova Chat's worker, `contract.ts`, and the Nova apps' wire,
   `wire.ts`.
+- `fields/protocol.ts`: `web-field-demo/1`.
 - `diagnostics.ts`: what a product worker reports about its conversations to the developer tools.
 - `worker-probe.ts`: a chat worker's status on its console, and the test probe a dev server tab may ask for.
 - `primitives/`: `bytes.ts` (hex, UTF-8, randomness), `codec.ts` and `scale-reader.ts` (SCALE), `crypto.ts` (hashes,
@@ -85,6 +87,9 @@ The products the host runs, each loaded through the ordinary loader.
   [Kettle Chat](contact-chat.md#kettle-chat-dev-server-prototype).
 - `nova-chat/`: the Nova Chat prototype, wherever Kettle Chat is: `worker.ts`, `session.ts`, `transport.ts`, `route.ts`.
   See [Nova Chat](nova-chat.md).
+- `field-demo/`: the provider app (`provider.html`, run as Field notebook and as Travel notebook) and Small Market
+  (`market.html`), dev only, served on their own origins by `field-products.config.ts`. Only the origins in `FIELD_APPS`
+  (`tools/demos/field-demo.ts`) get the field bridge.
 - `shared/product-storage.ts`: a chat product's storage over its TrUAPI `localStorage`.
 
 ## `tools/`
@@ -102,7 +107,7 @@ The developer tools, in every build.
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
   network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
   deliveries), `demo-session.ts` (the tab as a demo user), `worker-probes.ts` (which chat workers start with their test
-  probe).
+  probe), `field-demo.ts`, `field-view.*` and `field-label.ts` (the field demo's wiring, host-drawn view and label).
 
 ## Other
 

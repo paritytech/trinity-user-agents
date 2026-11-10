@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Field notebook</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <span class="logo" data-tone="emerald" aria-hidden="true">
+            <svg viewBox="0 0 20 20">
+              <path
+                fill="currentColor"
+                d="M5.5 2h8A2.5 2.5 0 0 1 16 4.5v11a2.5 2.5 0 0 1-2.5 2.5h-8A1.5 1.5 0 0 1 4 16.5v-13A1.5 1.5 0 0 1 5.5 2Zm1.5 4v1.5h6V6H7Zm0 3v1.5h4.5V9H7Z"
+              />
+            </svg>
+          </span>
+          <div class="brand-text">
+            <span class="brand-name" id="brand-name">Field notebook</span>
+            <span class="sub">Your details, shared on your terms</span>
+          </div>
+        </div>
+      </header>
+
+      <p class="demo-note">
+        <span data-icon="tag"></span>
+        <span
+          >Demo. Use made-up details. Your host keeps them in memory until you
+          sign out or reload.</span
+        >
+      </p>
+
+      <form id="values" class="panel compose">
+        <h1 class="panel-title">My details</h1>
+        <label class="field"
+          >Shipping address
+          <textarea
+            id="address"
+            maxlength="160"
+            required
+            rows="3"
+            placeholder="Ada Example&#10;24 Sample Lane&#10;Example City 01234"
+          ></textarea>
+        </label>
+        <label class="field"
+          >Phone
+          <input
+            id="phone"
+            maxlength="160"
+            required
+            inputmode="tel"
+            autocomplete="off"
+            placeholder="+1 555 010 0123"
+          />
+        </label>
+        <button id="save" class="primary block" disabled>
+          Save to my Polkadot host
+        </button>
+      </form>
+
+      <section id="saved" class="panel saved" hidden>
+        <div class="saved-head">
+          <span class="status-icon" data-icon="check"></span>
+          <span class="saved-text"
+            ><strong>Saved in your Polkadot host</strong
+            ><span>Apps ask your host. Your host asks you.</span></span
+          >
+          <button id="edit" class="secondary small" type="button">Edit</button>
+        </div>
+        <dl class="saved-values">
+          <dt>Shipping address</dt>
+          <dd><address id="saved-address"></address></dd>
+          <dt>Phone</dt>
+          <dd id="saved-phone"></dd>
+        </dl>
+      </section>
+
+      <div class="section-head">
+        <h2 class="section-title">Who can use them</h2>
+      </div>
+      <div class="list">
+        <div class="row">
+          <span class="row-icon" data-icon="truck"></span>
+          <span class="row-main"
+            ><span class="row-title">Shipping address</span
+            ><span class="row-sub">Shops can ask to ship to you</span></span
+          ><span id="state-address" class="chip">Not set</span>
+        </div>
+        <div class="row">
+          <span class="row-icon" data-icon="lock"></span>
+          <span class="row-main"
+            ><span class="row-title">Phone</span
+            ><span class="row-sub">Only if you approve a request</span></span
+          ><span id="state-phone" class="chip">Not set</span>
+        </div>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/provider.ts"></script>
+  </body>
+</html>

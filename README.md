@@ -18,6 +18,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
 - [Development web host](hosts/web/README.md), including guarded best-ready chat allowances, restart-safe request and acceptance confirmation, and bounded retries
+- [Two-product field demo](hosts/web/README.md#two-product-field-demo-dev-server-only), with provider declarations, consent and a host-owned protected address view
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 

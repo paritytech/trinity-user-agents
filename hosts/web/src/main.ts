@@ -830,6 +830,21 @@ const walletInfo = new WalletPublicInfoStore(localStorage);
 const storage = new HostStorage(localStorage, localStorageChanges);
 
 let runtime: WorkerPairingHostRuntime | null = null;
+const fieldDemo =
+  import.meta.env.DEV && devTools
+    ? (await import("../tools/demos/field-demo.js")).createFieldDemo({
+        runtime: coreRuntime,
+        network: activeNetwork.displayName,
+        usable: usableAllowance,
+        store: async () => {
+          const access = chainAccess;
+          if (access === null) throw new Error("The chains are not connected.");
+          return new StatementStore(
+            await access.chain.connect(hexToBytes(access.genesis.people)),
+          );
+        },
+      })
+    : null;
 /** The product in front, the ones held behind it, and how each is opened. */
 const navigation: ProductNavigation = new ProductNavigation({
   network: activeNetwork,
@@ -846,6 +861,17 @@ const navigation: ProductNavigation = new ProductNavigation({
     : defaultAddresses(activeNetwork.id),
   autoOpens: tabSession.autoOpens,
   tap: (current, productId) => tools.tap(productId, current.coreWireSchemaHash),
+  ...(fieldDemo === null
+    ? {}
+    : {
+        fieldDemoPort: (
+          _current: WorkerPairingHostRuntime,
+          url: URL,
+          productId: string,
+          port: MessagePort,
+          frame: () => Window | null,
+        ) => fieldDemo.connect(url, productId, port, frame),
+      }),
   showAddress: (text) => {
     addressInput.value = text;
   },
@@ -1473,6 +1499,9 @@ document.addEventListener(
 /** Give the Chat screen and everything else of the session the tab's session, or none. */
 function syncChatSession(): void {
   const signedIn = lastAuthState.tag === "Connected";
+  fieldDemo?.setScope(
+    signedIn ? `${activeNetwork.id}:${tabSession.activeId()}` : null,
+  );
   // The label goes into copied evidence: it names no wallet.
   const { id, who } = tabSession.evidence();
   tools.statementsSession(

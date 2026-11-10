@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Small Market</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">
+            <svg viewBox="0 0 20 20">
+              <path
+                fill="currentColor"
+                d="M6 7V6a4 4 0 0 1 8 0v1h2.2l-1 10.4A1.8 1.8 0 0 1 13.4 19H6.6a1.8 1.8 0 0 1-1.8-1.6L3.8 7H6Zm1.7 0h4.6V6a2.3 2.3 0 0 0-4.6 0v1Z"
+              />
+            </svg>
+          </span>
+          <div class="brand-text">
+            <span class="brand-name">Small Market</span>
+            <span id="net" class="net">Connecting…</span>
+          </div>
+        </div>
+        <span
+          id="me"
+          class="avatar"
+          role="img"
+          aria-label="Your account"
+        ></span>
+      </header>
+
+      <nav class="tabs" role="tablist" aria-label="Small Market">
+        <button
+          class="tab"
+          role="tab"
+          id="tab-shop"
+          aria-controls="shop"
+          aria-selected="true"
+        >
+          Shop
+        </button>
+        <button
+          class="tab"
+          role="tab"
+          id="tab-sell"
+          aria-controls="sell"
+          aria-selected="false"
+        >
+          Sell
+        </button>
+        <button
+          class="tab"
+          role="tab"
+          id="tab-orders"
+          aria-controls="orders"
+          aria-selected="false"
+        >
+          Orders<span id="orders-badge" class="badge" hidden></span>
+        </button>
+      </nav>
+
+      <section id="shop" role="tabpanel" aria-labelledby="tab-shop">
+        <label class="search">
+          <span class="search-icon" data-icon="search"></span>
+          <input
+            id="search"
+            type="search"
+            placeholder="Search Small Market"
+            aria-label="Search items"
+            autocomplete="off"
+          />
+        </label>
+        <div class="section-head">
+          <h2 class="section-title">Fresh listings</h2>
+          <span id="shop-count" class="count"></span>
+        </div>
+        <div id="board" class="grid" aria-live="polite"></div>
+      </section>
+
+      <section id="sell" role="tabpanel" aria-labelledby="tab-sell" hidden>
+        <form id="listing" class="panel compose">
+          <div class="preview" aria-hidden="true">
+            <div id="preview-tile" class="tile small"></div>
+            <div class="preview-text">
+              <span id="preview-title" class="preview-title">Your item</span>
+              <span class="price">Free</span>
+            </div>
+          </div>
+          <label class="field"
+            >What are you selling?
+            <input
+              id="item"
+              maxlength="80"
+              autocomplete="off"
+              placeholder="A blue desk lamp"
+              required
+            />
+          </label>
+          <button id="list" class="primary block" disabled>List item</button>
+          <p class="fine">
+            You never see a buyer's address in Small Market. When someone
+            orders, your Polkadot host shows it on the packing slip.
+          </p>
+        </form>
+        <div class="section-head">
+          <h2 class="section-title">Your listings</h2>
+        </div>
+        <div id="mine"></div>
+      </section>
+
+      <section id="orders" role="tabpanel" aria-labelledby="tab-orders" hidden>
+        <div class="section-head">
+          <h2 class="section-title">To ship</h2>
+        </div>
+        <div id="to-ship"></div>
+        <div class="section-head">
+          <h2 class="section-title">Purchases</h2>
+        </div>
+        <div id="bought"></div>
+      </section>
+    </div>
+
+    <div
+      id="item-screen"
+      class="screen"
+      role="dialog"
+      aria-labelledby="item-title"
+      hidden
+    >
+      <div class="screen-bar">
+        <button id="item-back" class="back" aria-label="Back">
+          <span data-icon="back"></span>
+        </button>
+      </div>
+      <div class="screen-body">
+        <div id="item-tile" class="tile hero"></div>
+        <div class="item-head">
+          <h2 id="item-title" class="item-title"></h2>
+          <p class="item-price">Free</p>
+        </div>
+        <ul class="facts">
+          <li>
+            <span class="fact-icon" data-icon="truck"></span>
+            <span
+              ><strong>Delivered to you</strong
+              ><span
+                >When you buy, you choose an address from your details
+                app.</span
+              ></span
+            >
+          </li>
+          <li>
+            <span class="fact-icon" data-icon="lock"></span>
+            <span
+              ><strong>Your address stays private</strong
+              ><span
+                >Only the seller sees it, on their packing slip. Small Market
+                never does.</span
+              ></span
+            >
+          </li>
+        </ul>
+        <button id="buy" class="primary block">Buy now</button>
+        <p id="own-note" class="note-card" hidden>
+          This is your listing. New orders show in Orders.
+        </p>
+      </div>
+    </div>
+
+    <div
+      id="order-screen"
+      class="screen"
+      role="dialog"
+      aria-labelledby="order-title"
+      hidden
+    >
+      <div class="screen-bar">
+        <button id="back" class="back" aria-label="Back">
+          <span data-icon="back"></span>
+        </button>
+        <h2 id="order-title">Order</h2>
+      </div>
+      <div class="screen-body">
+        <div id="order-status" class="status">
+          <span id="status-icon" class="status-icon"></span>
+          <span
+            ><strong id="status-title"></strong><span id="status-text"></span
+          ></span>
+        </div>
+        <article class="slip" aria-labelledby="slip-kind">
+          <div class="slip-head">
+            <span class="mark">Small Market</span>
+            <span id="slip-kind" class="kind">Packing slip</span>
+          </div>
+          <dl class="meta">
+            <dt>Order</dt>
+            <dd id="slip-code"></dd>
+            <dt>Placed</dt>
+            <dd id="slip-date"></dd>
+          </dl>
+          <div class="line-item">
+            <div id="slip-thumb" class="tile small"></div>
+            <div class="grow">
+              <strong id="slip-item"></strong
+              ><span class="qty">Qty 1 · Free</span>
+            </div>
+          </div>
+          <div class="shipto">
+            <p class="k" id="slip-to-label">Ship to</p>
+            <div id="slip-address"></div>
+          </div>
+          <p id="slip-foot" class="slip-foot">Thank you for shopping small.</p>
+        </article>
+        <div class="actions">
+          <button id="print" class="primary block">
+            <span data-icon="printer"></span>Print shipping label
+          </button>
+        </div>
+        <p class="trust">
+          <span data-icon="lock"></span>
+          <span id="trust-text"
+            >Your Polkadot host shows the address. Small Market can't read
+            it.</span
+          >
+        </p>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/market.ts"></script>
+  </body>
+</html>

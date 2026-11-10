@@ -4,6 +4,7 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import { encodeSigned } from "../../../bridges/primitives/statement.js";
 import { MemoryWorld } from "../../../fixtures/invitations/shared-store.js";
 import { LocalStatementNode } from "../../../fixtures/statements/local-statement-node.js";
+import { StatementStore } from "../../../src/platform/statement-store.js";
 
 const NOW = 1_800_000_000_000;
 const secret = sr25519.secretFromSeed(new Uint8Array(32).fill(3));
@@ -87,6 +88,33 @@ describe("the simulated Statement Store", () => {
     writer.submit(statement({ topics: [3], priority: 3 }));
     await Bun.sleep(0);
     expect(notified).toEqual([[stored], [arriving]]);
+  });
+
+  // A reader that subscribes after another tab posted must still get the post.
+  test("a StatementStore client gets the stored replay of its new subscription", async () => {
+    const world = new MemoryWorld();
+    const writer = new LocalStatementNode({
+      store: world.store(),
+      network: "test",
+      now: () => NOW,
+    });
+    const stored = statement({ topics: [1], priority: 1 });
+    writer.submit(stored);
+    const reader = new LocalStatementNode({
+      store: world.store(),
+      network: "test",
+      now: () => NOW,
+    });
+    const client = new StatementStore(
+      reader.connect(() => Promise.reject(new Error("no real node here"))),
+    );
+    const received: string[] = [];
+    await client.subscribe({ matchAll: [topic(1)] }, (statements) =>
+      received.push(...statements.map(bytesToHex)),
+    );
+    await Bun.sleep(5);
+    client.close();
+    expect(received).toEqual([stored]);
   });
 
   test("keeps one statement per channel of an account, the higher expiry winning", () => {
