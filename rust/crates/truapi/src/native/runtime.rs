@@ -370,6 +370,19 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_options(&intent)
 	}
 
+	/// Why `amount` (balance units) cannot go ahead in funding session
+	/// `intent`, if it cannot: more than `spendable` on a withdrawal, then
+	/// what every provider's refusal of this same amount said, then the
+	/// amount limits the session's options show.
+	pub fn funding_amount_issue(
+		&self,
+		intent: String,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		self.runtime.funding_amount_issue(&intent, amount, spendable)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -377,7 +390,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// The funding sessions the host has heard of that the core holds in
 	/// full, with their progress now, newest opened first.
-	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+	pub fn funding_entries(&self) -> Vec<crate::host_logic::funding::FundingBookEntry> {
 		self.runtime.funding_entries()
 	}
 
@@ -397,8 +410,9 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_history()
 	}
 
-	/// Ended funding session `intent`'s summary, as `funding_history` lists
-	/// it.
+	/// Ended funding session `intent`'s summary, held in full or compacted,
+	/// including a cancel that moved no money, which `funding_history`
+	/// leaves out.
 	pub fn funding_summary(
 		&self,
 		intent: String,

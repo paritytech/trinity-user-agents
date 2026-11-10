@@ -11,7 +11,7 @@ use truapi::latest::{
 use crate::{
 	host_logic::{
 		funding::{FundingSessionSummary, FundingStage, FundingStatus, FundingStep},
-		funding_providers::{FundingAmountLimits, FundingCandidate},
+		funding_providers::{FundingAmountLimits, FundingCandidate, FundingSelection},
 	},
 	platform::{FundingAmountIssue, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
 };
@@ -41,6 +41,23 @@ pub fn routed_rails(candidates: &[FundingCandidate]) -> Vec<FundingRail> {
 		.into_iter()
 		.filter(|rail| candidates.iter().any(|candidate| routes_rail(candidate, *rail)))
 		.collect()
+}
+
+/// The asset `selection` works in: the one the user picked, else for card and
+/// bank the fiat asset the core resolves from `candidates`.
+pub fn selected_asset(
+	candidates: &[FundingCandidate],
+	selection: &FundingSelection,
+) -> Option<String> {
+	match selection.rail {
+		FundingRail::Crypto => selection.asset.clone(),
+		rail => Some(
+			selection
+				.asset
+				.clone()
+				.unwrap_or_else(|| fiat_asset(candidates, rail, selection.currency.as_deref())),
+		),
+	}
 }
 
 /// The fiat asset a card or bank ask names: the user's currency when a

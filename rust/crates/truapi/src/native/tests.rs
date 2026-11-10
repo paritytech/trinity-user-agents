@@ -3159,7 +3159,6 @@ fn the_host_reads_back_what_the_core_says_changed() {
 		(
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Options)),
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Session)),
-			changes.contains(&(None, FundingChangeKind::InProgress)),
 			*funding.options_when_shown.lock().expect("options mutex poisoned"),
 			host.funding_options(intent.clone()).is_some(),
 			session.intent.clone(),
@@ -3172,7 +3171,6 @@ fn the_host_reads_back_what_the_core_says_changed() {
 			super::funding_resume_pending(database_directory),
 		),
 		(
-			true,
 			true,
 			true,
 			Some(true),

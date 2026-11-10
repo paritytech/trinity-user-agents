@@ -52,7 +52,7 @@ fn quote(send: u128, receive: u128, provider_fee: u128, network_fee: u128) -> Fu
 	}
 }
 
-// Divergence "Rails shown": only routed rails, while a provider that
+// Only routed rails, while a provider that
 // declares no routes may serve any.
 #[test]
 fn only_routed_rails_are_offered() {
@@ -72,7 +72,7 @@ fn only_routed_rails_are_offered() {
 	}
 }
 
-// Divergence "Who is asked for a quote": a provider is asked only for a
+// A provider is asked only for a
 // rail it routes, or when it declares no routes.
 #[test]
 fn only_providers_routing_the_rail_are_asked() {
@@ -151,7 +151,7 @@ fn a_shared_reason_for_no_quote_is_given_once() {
 	}
 }
 
-// Divergence "Amount issue": the issue includes every provider refusing
+// The issue includes every provider refusing
 // this exact amount, after the balance and before the limits.
 #[test]
 fn the_amount_issue_includes_every_provider_refusing_the_amount() {
@@ -196,7 +196,7 @@ fn the_amount_issue_includes_every_provider_refusing_the_amount() {
 	assert_eq!(quotes_issue(&[row("a.dot", FundingQuoteState::Pending)]), None);
 }
 
-// Divergence "Cancel anyway": a repeat cancel only while no money moved.
+// A repeat cancel only while no money moved.
 #[test]
 fn a_repeat_cancel_only_before_money_moved() {
 	let cases = [
@@ -256,7 +256,7 @@ fn summary(
 	}
 }
 
-// Divergence "Failure dot on ended timeline": the first milestone not
+// The first milestone not
 // reached, not always the middle one.
 #[test]
 fn an_ended_session_fails_at_its_first_unreached_milestone() {
@@ -365,8 +365,7 @@ fn networks_read_by_name() {
 	}
 }
 
-// Divergence "Sent funds button": the fact behind it holds on a bank top-up
-// only.
+// Only a bank top-up waits on a transfer the user makes outside the frame.
 #[test]
 fn only_a_bank_top_up_awaits_the_users_transfer() {
 	let cases = [

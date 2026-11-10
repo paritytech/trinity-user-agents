@@ -162,10 +162,9 @@ fn a_route_of_the_wrong_shape_fails_the_document() {
 	assert!(manifest.is_err());
 }
 
-// Divergence "worker manifest rules": iOS refused a Worker serving no surface
-// and Android read it as serving none; both now refuse it, along with one
-// without an entrypoint or an `appVersion`, and read a `null` as the key
-// being absent.
+// A Worker serving no surface is refused, along with one without an
+// entrypoint or an `appVersion`, and a `null` reads as the key being
+// absent.
 #[test]
 fn a_worker_needs_an_entrypoint_a_version_and_a_surface() {
 	let parse = |json: &str| WorkerManifest::parse(json).map(|manifest| manifest.funding.is_some());

@@ -268,7 +268,7 @@ fn amount_limits_span_every_provider() {
 	);
 }
 
-// Divergence "Remote provider config": the host applies every refresh; the
+// The host applies every refresh; the
 // list puts the configured providers first, each once, then the bundled ones
 // the configuration does not name, and leaves out names that are no product.
 #[test]

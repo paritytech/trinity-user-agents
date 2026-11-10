@@ -992,9 +992,8 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, FundingBookEntry, FundingFeed,
-	MAX_PAIRING_METADATA_CHARS, PairedSsoPeer, PairingProposal, PairingProposalMetadata,
-	ResponderExit, ResumePairingError,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

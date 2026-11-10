@@ -116,7 +116,7 @@ fn brand(fields: &str) -> Result<ProductBrand, ManifestParseError> {
 	ProductBrand::parse(&format!(r#"{{"$v":1,{fields}}}"#))
 }
 
-// Divergence "root manifest rules": a brand needs a non-blank name, a
+// A brand needs a non-blank name, a
 // description and an icon with a CID and format; an icon the core cannot
 // load costs only the icon.
 #[test]

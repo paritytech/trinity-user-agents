@@ -15,6 +15,8 @@ Breaking for native hosts:
 - `NativePaymentCallbacks::payment_status`, `NativeTopUpCallbacks::top_up_status` and `NativeBalanceCallbacks::balance`
   become `follow_payment`, `follow_top_up` and `follow_balance`; `notify_balance` takes no purse.
 - `FundingProviderEntry` gains `root_manifest`, and `has_app` becomes `app: FundingProviderApp`.
+- Native hosts list providers with `set_funding_provider_config` only; `set_funding_providers` stays on the Rust
+  runtime.
 
 The rest:
 
@@ -22,8 +24,8 @@ The rest:
   each `FundingCandidate` its `brand`. `FundingQuoteList` carries the `amount` it prices, the shared `refusal`, the
   amount `issue` and whether it is `complete`; `funding_quotes` answers only the current request's list.
 - `FundingProgress` carries `cancel` and `awaits_user_transfer`; `FundingSessionSummary.ended` holds how a session
-  ended, its steps and where a pending payout waits. `funding_amount_issue`, `funding_status_in_flight` and
-  `funding_network_name` share the rules. A cancel that moved no money is left out of `funding_history`.
+  ended, its steps and where a pending payout waits. `funding_amount_issue(intent, amount, spendable)` reads the
+  session's limits and quotes itself; `funding_status_in_flight` and `funding_network_name` share the rules. A cancel that moved no money is left out of `funding_history`.
 - `start_funding_when_quoted` starts on the best quote once every provider answered; `funding_available` says whether
   any provider is offered.
 - The core follows payment, top-up and balance streams: pending after 250 ms, the last 512 final statuses kept, an

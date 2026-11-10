@@ -911,8 +911,8 @@ impl FundingSession {
 			.find(|update| update.rank().is_some())
 	}
 
-	/// The session's progress for its direction and rail at `now_ms`.
-	pub fn progress(&self, now_ms: u64) -> FundingProgress {
+	/// The session's steps, each with when it was reached, if it was.
+	fn steps_reached(&self) -> Vec<FundingProgressStep> {
 		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates
@@ -947,11 +947,16 @@ impl FundingSession {
 				times[index] = times[index + 1];
 			}
 		}
-		let steps: Vec<FundingProgressStep> = steps
+		steps
 			.iter()
 			.zip(times)
 			.map(|(step, reached_at_ms)| FundingProgressStep { step: *step, reached_at_ms })
-			.collect();
+			.collect()
+	}
+
+	/// The session's progress for its direction and rail at `now_ms`.
+	pub fn progress(&self, now_ms: u64) -> FundingProgress {
+		let steps = self.steps_reached();
 		let band = self.band(now_ms);
 		let status = self.status(now_ms);
 		let money_moved = self.money_moved();
@@ -1628,12 +1633,11 @@ impl FundingSession {
 	/// Whether the provider's part in front of the user is done, so a frame
 	/// it shows for the session can close: the session ended, or it reached a
 	/// milestone past Started.
-	pub fn payment_moved(&self) -> bool {
+	pub fn frame_done(&self) -> bool {
 		if !matches!(self.stage, FundingStage::Open) {
 			return true;
 		}
-		self.progress(self.opened_at_ms)
-			.steps
+		self.steps_reached()
 			.iter()
 			.any(|step| step.step != FundingStep::Started && step.reached_at_ms.is_some())
 	}

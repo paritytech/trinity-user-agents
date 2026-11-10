@@ -355,6 +355,31 @@ impl RuntimeServices {
 		}
 	}
 
+	/// Why `amount` (balance units) cannot go ahead in session `intent`, if
+	/// it cannot: more than `spendable` on a withdrawal, then what every
+	/// provider's refusal of this same amount in its quote list said, then
+	/// the amount limits its options show. `None` for a session the core
+	/// does not hold.
+	pub fn funding_amount_issue(
+		self: &Arc<Self>,
+		intent: &str,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		let session = self.funding().get(intent)?;
+		let limits = self
+			.funding_options(intent)
+			.map_or(FundingAmountLimits::ANY, |options| options.limits);
+		let quotes = self.funding_quotes().list(intent);
+		funding_view::amount_issue(
+			session.direction,
+			&limits,
+			quotes.as_ref().map(|quotes| (quotes.amount, quotes.issue.as_ref())),
+			amount,
+			spendable,
+		)
+	}
+
 	/// Tell the host what session `intent`'s overlay offers changed, for a
 	/// session the core holds.
 	pub fn send_funding_options(self: &Arc<Self>, intent: &str) {
@@ -385,7 +410,9 @@ impl RuntimeServices {
 		// The asset the overlay works in: the one the user picked, else the
 		// one the core resolves for the rail, so a selection without an asset
 		// already gets that asset's countries and limits.
-		let asset = selection.as_ref().and_then(|selection| selected_asset(&candidates, selection));
+		let asset = selection
+			.as_ref()
+			.and_then(|selection| funding_view::selected_asset(&candidates, selection));
 		let (countries, limits, networks) = match &selection {
 			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
@@ -642,20 +669,6 @@ fn declared_networks(
 	}
 	networks.retain(|(_, assets)| !assets.is_empty());
 	networks
-}
-
-/// The asset `selection` works in: the one the user picked, else for card and
-/// bank the fiat asset the core resolves from `candidates`.
-pub(super) fn selected_asset(
-	candidates: &[FundingCandidate],
-	selection: &FundingSelection,
-) -> Option<String> {
-	match selection.rail {
-		FundingRail::Crypto => selection.asset.clone(),
-		rail => Some(selection.asset.clone().unwrap_or_else(|| {
-			funding_view::fiat_asset(candidates, rail, selection.currency.as_deref())
-		})),
-	}
 }
 
 #[cfg(test)]

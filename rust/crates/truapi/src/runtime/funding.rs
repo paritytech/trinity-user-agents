@@ -71,8 +71,6 @@ use truapi::latest::{
 	HostPaymentTopUpStatusSubscribeItem,
 };
 
-pub use crate::host_logic::funding::FundingBookEntry;
-
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
 	host_logic::{
@@ -457,11 +455,14 @@ impl FundingRegistry {
 
 	/// Every session the host has heard of that the registry holds in full,
 	/// with its progress at `now_ms`, newest opened first.
-	pub fn entries(&self, now_ms: u64) -> Vec<FundingBookEntry> {
-		let mut entries: Vec<FundingBookEntry> = self
+	pub fn entries(&self, now_ms: u64) -> Vec<crate::host_logic::funding::FundingBookEntry> {
+		let mut entries: Vec<crate::host_logic::funding::FundingBookEntry> = self
 			.announced()
 			.into_iter()
-			.map(|session| FundingBookEntry { progress: session.progress(now_ms), session })
+			.map(|session| crate::host_logic::funding::FundingBookEntry {
+				progress: session.progress(now_ms),
+				session,
+			})
 			.collect();
 		entries.sort_by_key(|entry| core::cmp::Reverse(entry.session.opened_at_ms));
 		entries
@@ -772,10 +773,10 @@ impl FundingRegistry {
 	/// Whether session `intent`'s payment moved, so its provider's frame is
 	/// done: it ended, held in full or compacted, or reached a milestone past
 	/// Started. `false` for a session the core does not hold.
-	pub fn payment_moved(&self, intent: &str) -> bool {
+	pub fn frame_done(&self, intent: &str) -> bool {
 		let held = self.lock_held();
 		match held.sessions.get(intent) {
-			Some(session) => session.payment_moved(),
+			Some(session) => session.frame_done(),
 			None => held.pack.contains_key(intent),
 		}
 	}
@@ -792,7 +793,7 @@ impl FundingRegistry {
 	/// Close session `intent`'s provider frame through `platform` if one is
 	/// open and its payment moved, once.
 	fn close_moved_frame(&self, platform: &dyn FundingPlatform, intent: &str) {
-		if !self.payment_moved(intent) {
+		if !self.frame_done(intent) {
 			return;
 		}
 		let Some((_, provider)) = lock(&self.frames).remove(intent) else {

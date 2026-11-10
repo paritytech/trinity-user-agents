@@ -808,7 +808,21 @@ impl SigningHostRuntime {
 		self.services.funding().history()
 	}
 
-	/// Ended funding session `intent`'s summary, held in full or compacted.
+	/// Why `amount` cannot go ahead in funding session `intent`, if it
+	/// cannot, given what the user can spend; see the native
+	/// `funding_amount_issue`.
+	pub fn funding_amount_issue(
+		&self,
+		intent: &str,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		self.services.funding_amount_issue(intent, amount, spendable)
+	}
+
+	/// Ended funding session `intent`'s summary, held in full or compacted,
+	/// including a cancel that moved no money, which `funding_history`
+	/// leaves out.
 	pub fn funding_summary(
 		&self,
 		intent: &str,
@@ -856,7 +870,7 @@ impl SigningHostRuntime {
 
 	/// The funding sessions the host has heard of that the core holds in
 	/// full, with their progress now, newest opened first.
-	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+	pub fn funding_entries(&self) -> Vec<crate::host_logic::funding::FundingBookEntry> {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 

@@ -816,7 +816,6 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
 		write_resume_marker(&self.database_directory, in_progress);
-		self.funding.funding_changed(None, FundingChangeKind::InProgress);
 	}
 
 	fn funding_options_changed(&self, intent: String) {

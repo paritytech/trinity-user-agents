@@ -498,13 +498,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
   reports something the user did or the host owns. The core tells the host
   what changed with `funding_changed(intent, kind)` (`Session`, `Options`,
-  `Quotes`, `InProgress` or `Providers`), and the host reads it back:
+  `Quotes` or `Providers`), and the host reads it back:
   `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`,
   `funding_entries`, `funding_summary` and `funding_history`. A Rust host
   installs a `FundingFeed` with `set_funding_feed` before its funding
-  platform and gets the same notices. `InProgress` comes once each time
-  funding resumes and again whenever it changes, and the native runtime keeps
-  a launch marker that `funding_resume_pending` reads at the next launch. Amounts
+  platform and gets the same notices. Whenever whether a provider still works
+  on a session changes, and once each time funding resumes, the native
+  runtime writes a launch marker that `funding_resume_pending` reads at the
+  next launch. Amounts
   cross the FFI as decimal strings.
   Sessions are stored in the core database, one row each; a row the core
   cannot read is skipped and left in place.
@@ -539,7 +540,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_providers`, each with the
+  The host lists its providers with `set_funding_provider_config` (Rust hosts
+  with `set_funding_providers`), each with the
   Worker manifest it ships for it. Before the overlay shows, the core
   announces the session's options, which `funding_options(intent)` works out
   as it is read: `candidates` are the
@@ -555,8 +557,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
   price; asking what the running request prices keeps it. It asks every
-  funding provider, whatever its manifest says it serves,
-  since a provider can serve more or less than it last published: the core
+  funding provider whose routes carry the rail, or that declares none (a
+  route its answers confirmed does not narrow one that declares none): the core
   calls each provider's worker with `quote`, holding the worker while it
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it

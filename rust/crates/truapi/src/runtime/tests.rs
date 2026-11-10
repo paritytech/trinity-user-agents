@@ -8701,7 +8701,7 @@ fn a_provider_frame_opens_only_https_pages() {
 	);
 }
 
-// Divergence "Frame auto-close with no session": a provider's frame closes
+// A provider's frame closes
 // once the session's payment moved, and stays open for a session the core
 // does not hold.
 #[test]
@@ -8753,7 +8753,7 @@ fn a_provider_frame_closes_once_the_payment_moved() {
 		(
 			before,
 			eventually(5, || closed() == vec![intent.clone()]),
-			services.funding().payment_moved("fs_unknown")
+			services.funding().frame_done("fs_unknown")
 		),
 		(Vec::<String>::new(), true, false)
 	);
@@ -9468,6 +9468,22 @@ fn a_selection_on_another_route_withdraws_the_quotes() {
 	assert_eq!(
 		(select(v01::FundingRail::Card, "EUR"), select(v01::FundingRail::Crypto, "USDC")),
 		((true, true, vec![]), (false, false, vec![intent.clone()]))
+	);
+}
+
+// The host asks why an amount cannot go ahead by session alone: the core
+// reads the direction, the limits and the quote list it holds itself.
+#[test]
+fn an_amount_issue_is_read_by_session() {
+	let (services, _, intent) = auto_start_session();
+	let floor = crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT;
+	assert_eq!(
+		(
+			services.funding_amount_issue(&intent, floor - 1, None),
+			services.funding_amount_issue(&intent, floor, None),
+			services.funding_amount_issue("fs_unknown", 1, None),
+		),
+		(Some(crate::platform::FundingAmountIssue::BelowMinimum { min: floor }), None, None)
 	);
 }
 

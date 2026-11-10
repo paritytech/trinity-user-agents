@@ -1,9 +1,9 @@
 //! Live quotes for a funding session, asked of each candidate's worker.
 //!
-//! The host asks once per amount, rail and asset; the core sends the ask to
-//! every funding provider's worker as a `quote` request, whatever its manifest
-//! says it serves, since a provider can serve more or less than it last
-//! published. The worker prices it from its own API and answers. Each
+//! The host asks once per amount; the core builds the ask from the user's
+//! selection and sends it as a `quote` request to the worker of every funding
+//! provider whose routes carry the rail, or that declares none. The worker
+//! prices it from its own API and answers. Each
 //! provider's row resolves on its own: a provider that does not answer in time
 //! is unavailable, so a slow one never holds the list. What an answer shows
 //! about what the provider serves is kept for twelve hours and folded into the
@@ -38,7 +38,6 @@ use truapi::latest::{
 
 use super::{
 	funding::{lock, within},
-	funding_providers::selected_asset,
 	services::RuntimeServices,
 };
 use crate::{
@@ -163,7 +162,7 @@ impl FundingQuotes {
 	/// Disarm the start of `list`'s request once every row of it answered,
 	/// and say whether it was armed.
 	fn take_armed(&self, intent: &str, list: &FundingQuoteList) -> bool {
-		if list.rows.iter().any(|row| row.state == FundingQuoteState::Pending) {
+		if !list.complete {
 			return false;
 		}
 		lock(&self.watches)
@@ -500,7 +499,7 @@ impl RuntimeServices {
 		Some(FundingQuoteAsk {
 			direction,
 			rail: selection.rail,
-			asset: selected_asset(&candidates, selection)?,
+			asset: funding_view::selected_asset(&candidates, selection)?,
 			network: selection.network.clone().filter(|_| selection.rail == FundingRail::Crypto),
 			amount,
 			country: selection.country.clone(),

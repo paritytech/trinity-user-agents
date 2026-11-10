@@ -1067,3 +1067,19 @@ fn a_replaced_frame_leaves_its_successor_tracked() {
 	drop(second);
 	assert_eq!((tracked, lock(&registry.frames).contains_key("fs_1")), (true, false));
 }
+
+// A cancel that moved no money is left out of history, yet its summary still
+// answers for the session's own ending screen.
+#[test]
+fn an_unmoved_cancel_leaves_history_but_keeps_its_summary() {
+	let registry = registry_on(&open_memory_core_db());
+	insert(
+		&registry,
+		FundingSession {
+			stage: FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: NOW },
+			..session("fs_1", NOW)
+		},
+	);
+	block_on(registry.sweep(NOW + 1)).expect("swept");
+	assert_eq!((registry.history().len(), registry.summary("fs_1").is_some()), (0, true));
+}
