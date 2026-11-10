@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -109,6 +110,10 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
     private val viewModel by viewModels<RootViewModel>()
 
+    private val dockletEdgeTouchGate by lazy(LazyThreadSafetyMode.NONE) {
+        DockletEdgeTouchGate(ViewConfiguration.get(this).scaledTouchSlop.toFloat())
+    }
+
     private val navHostFragment: NavHostFragment by lazy(LazyThreadSafetyMode.NONE) {
         supportFragmentManager.findFragmentById(R.id.rootNavHost) as NavHostFragment
     }
@@ -152,8 +157,24 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) dockletInputEvents.report(DockletInput.Touch(ev.x, ev.y))
+        val touch = when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> dockletEdgeTouchGate.onDown(DockletInput.Touch(ev.x, ev.y), onBackGestureEdge = isOnBackGestureEdge(ev.x))
+            MotionEvent.ACTION_MOVE -> dockletEdgeTouchGate.onMove(ev.x, ev.y)
+            MotionEvent.ACTION_UP -> dockletEdgeTouchGate.onUp()
+            MotionEvent.ACTION_CANCEL -> {
+                dockletEdgeTouchGate.onCancel()
+                null
+            }
+            else -> null
+        }
+        touch?.let(dockletInputEvents::report)
         return super.dispatchTouchEvent(ev)
+    }
+
+    private fun isOnBackGestureEdge(x: Float): Boolean {
+        val decorView = window.decorView
+        val edges = ViewCompat.getRootWindowInsets(decorView)?.getInsets(WindowInsetsCompat.Type.systemGestures()) ?: return false
+        return x < edges.left || x >= decorView.width - edges.right
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

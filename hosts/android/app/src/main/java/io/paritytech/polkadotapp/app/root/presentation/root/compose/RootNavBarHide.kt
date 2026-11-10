@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.app.root.presentation.root.compose
 
-import android.os.Build
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityManager
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.foundation.layout.Box
@@ -38,15 +38,11 @@ import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarTuckedPin
 import io.paritytech.polkadotapp.design.components.docklet.DockletAutoHide
 import io.paritytech.polkadotapp.design.components.docklet.DockletAutoHideBlockers
-import io.paritytech.polkadotapp.design.components.docklet.DockletBackAction
 import io.paritytech.polkadotapp.design.components.docklet.DockletEdgeGlow
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlowMasks
 import io.paritytech.polkadotapp.design.components.docklet.DockletHideState
-import io.paritytech.polkadotapp.design.components.docklet.dockletBackAction
-import io.paritytech.polkadotapp.design.components.docklet.dockletBackEdge
 import io.paritytech.polkadotapp.design.components.docklet.dockletPoint
-import io.paritytech.polkadotapp.design.components.docklet.dockletPressBackAction
 import io.paritytech.polkadotapp.design.components.docklet.dockletTouch
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import kotlinx.coroutines.flow.Flow
@@ -104,21 +100,22 @@ fun RootNavBarHide(
         }
     }
 
-    var plainBackRequested by remember { mutableStateOf(false) }
-    if (hideState.countsAsHidden && !searchOpen && !plainBackRequested) {
+    var unclaimedBack by remember { mutableStateOf(false) }
+    if (hideState.countsAsHidden && !searchOpen && !unclaimedBack) {
         // A screen's own Back callback registers when it starts; re-registering on each tucked screen keeps this one on top.
         key(tuckedPin) {
-            HiddenDockBack(hideState = hideState, restoresOnBack = tuckedPin == null, onPlainBack = { plainBackRequested = true })
+            HiddenDockBack(hideState = hideState, onUnclaimedBack = { unclaimedBack = true })
         }
     }
     val dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-    LaunchedEffect(plainBackRequested) {
-        if (plainBackRequested) {
-            // The handler above must leave composition before the re-dispatch, or it would receive this Back again.
+    val restoresOnBack = tuckedPin == null
+    LaunchedEffect(unclaimedBack) {
+        if (unclaimedBack) {
+            // The handler above must leave composition first, so only the callbacks behind it are left.
             withFrameNanos { }
             withFrameNanos { }
-            dispatcher?.onBackPressed()
-            plainBackRequested = false
+            if (restoresOnBack && dispatcher?.hasEnabledCallbacks() != true) hideState.restore() else dispatcher?.onBackPressed()
+            unclaimedBack = false
         }
     }
 
@@ -133,34 +130,32 @@ fun RootNavBarHide(
 }
 
 @Composable
-private fun HiddenDockBack(hideState: DockletHideState, restoresOnBack: Boolean, onPlainBack: () -> Unit) {
+private fun HiddenDockBack(hideState: DockletHideState, onUnclaimedBack: () -> Unit) {
     val density = LocalDensity.current
-    val currentOnPlainBack by rememberUpdatedState(onPlainBack)
+    val currentOnUnclaimedBack by rememberUpdatedState(onUnclaimedBack)
 
     PredictiveBackHandler { events ->
-        var action: DockletBackAction? = null
+        var route: HiddenDockBackRoute? = null
         try {
             events.collect { event ->
                 val point = density.dockletPoint(Offset(event.touchX, event.touchY))
-                if (action == null) {
+                if (route == null) {
                     val band = hideState.drawbridge?.backBand() ?: return@collect
-                    val edge = dockletBackEdge(event.swipeEdge, Build.VERSION.SDK_INT)
-                    action = dockletBackAction(edge, point.y, band, restoresOnBack = restoresOnBack)
-                    if (action == DockletBackAction.Claim) hideState.startRestore(point, SystemClock.uptimeMillis().milliseconds)
+                    val pulls = event.swipeEdge == BackEventCompat.EDGE_RIGHT && point.y in band
+                    route = if (pulls) HiddenDockBackRoute.PullsDock else HiddenDockBackRoute.PassesOn
+                    if (pulls) hideState.startRestore(point, SystemClock.uptimeMillis().milliseconds)
                 }
-                if (action == DockletBackAction.Claim) hideState.moveRestore(point, SystemClock.uptimeMillis().milliseconds)
+                if (route == HiddenDockBackRoute.PullsDock) hideState.moveRestore(point, SystemClock.uptimeMillis().milliseconds)
             }
-            when (action ?: dockletPressBackAction(restoresOnBack)) {
-                DockletBackAction.Claim -> hideState.cancelDrag()
-                DockletBackAction.Restore -> hideState.restore()
-                DockletBackAction.PlainBack -> currentOnPlainBack()
-            }
+            if (route == HiddenDockBackRoute.PullsDock) hideState.cancelDrag() else currentOnUnclaimedBack()
         } catch (cancelled: CancellationException) {
-            if (action == DockletBackAction.Claim) hideState.cancelDrag()
+            if (route == HiddenDockBackRoute.PullsDock) hideState.cancelDrag()
             throw cancelled
         }
     }
 }
+
+private enum class HiddenDockBackRoute { PullsDock, PassesOn }
 
 @Composable
 private fun rememberTouchExplorationEnabled(): Boolean {

@@ -136,15 +136,17 @@ fun DockletEdgeGlow(
                             drawImage(bandMasks.boost, topLeft = bandOrigin, alpha = boost.value * BoostCopyOpacity, colorFilter = tint)
                             if (shimmer.value > 0f) {
                                 drawContext.canvas.saveLayer(band, shimmerLayer)
+                                // Mask first: a DstIn mask drawn last leaves the rainbow's antialiased inner edge column unmasked.
+                                drawImage(bandMasks.shimmer, topLeft = bandOrigin)
                                 translate(top = phase.value * size.height) {
                                     drawRect(
                                         brush = rainbow,
                                         topLeft = Offset(bandLeft, -size.height),
                                         size = Size(bandWidth, size.height * 2),
                                         alpha = shimmer.value * ShimmerOpacity,
+                                        blendMode = BlendMode.SrcIn,
                                     )
                                 }
-                                drawImage(bandMasks.shimmer, topLeft = bandOrigin, blendMode = BlendMode.DstIn)
                                 drawContext.canvas.restore()
                             }
                         }
