@@ -302,7 +302,7 @@ impl RuntimeServices {
 		&self.stack
 	}
 
-	/// The stack's slots in the host's storage.
+	/// Core storage for the stack the host runs.
 	pub fn storage(&self) -> StackStorage<'_, dyn Platform> {
 		self.stack.storage(self.platform.as_ref())
 	}
