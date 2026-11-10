@@ -4,5 +4,5 @@
 
 //! Runtime-independent delays, including browser hosts.
 pub(crate) async fn sleep(duration: std::time::Duration) {
-    futures_timer::Delay::new(duration).await;
+	futures_timer::Delay::new(duration).await;
 }

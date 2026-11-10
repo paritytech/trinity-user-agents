@@ -14,17 +14,23 @@
 //! tokens, signatures).
 
 use core::fmt::{self, Write as _};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+	OnceLock,
+	atomic::{AtomicBool, Ordering},
+};
 
-use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Record};
-use tracing::{Event, Id, Level, Subscriber};
-use tracing_subscriber::Registry;
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::reload;
+use tracing::{
+	Event, Id, Level, Subscriber,
+	field::{Field, Visit},
+	span::{Attributes, Record},
+};
+use tracing_subscriber::{
+	Registry,
+	filter::LevelFilter,
+	layer::{Context, Layer, SubscriberExt as _},
+	registry::LookupSpan,
+	reload,
+};
 
 static RELOAD_HANDLE: OnceLock<reload::Handle<LevelFilter, Registry>> = OnceLock::new();
 static TRACE_SPANS: AtomicBool = AtomicBool::new(false);
@@ -32,24 +38,24 @@ static TRACE_SPANS: AtomicBool = AtomicBool::new(false);
 /// Install the global subscriber. Idempotent: the first call wins, later
 /// calls (and a foreign subscriber already being set) are no-ops.
 pub fn init() {
-    if RELOAD_HANDLE.get().is_some() {
-        return;
-    }
-    let (filter, handle) = reload::Layer::<LevelFilter, Registry>::new(LevelFilter::OFF);
-    let subscriber = Registry::default().with(ConsoleLayer.with_filter(filter));
-    if tracing::subscriber::set_global_default(subscriber).is_ok() {
-        let _ = RELOAD_HANDLE.set(handle);
-    }
+	if RELOAD_HANDLE.get().is_some() {
+		return;
+	}
+	let (filter, handle) = reload::Layer::<LevelFilter, Registry>::new(LevelFilter::OFF);
+	let subscriber = Registry::default().with(ConsoleLayer.with_filter(filter));
+	if tracing::subscriber::set_global_default(subscriber).is_ok() {
+		let _ = RELOAD_HANDLE.set(handle);
+	}
 }
 
 /// Set the live verbosity threshold. No-op until [`init`] has run. The reload
 /// updates tracing's global max level, which the smoldot platform reads to gate
 /// its own lines, so the provider and smoldot share one threshold.
 pub fn set_level(level: LevelFilter) {
-    TRACE_SPANS.store(level == LevelFilter::TRACE, Ordering::Relaxed);
-    if let Some(handle) = RELOAD_HANDLE.get() {
-        let _ = handle.reload(level);
-    }
+	TRACE_SPANS.store(level == LevelFilter::TRACE, Ordering::Relaxed);
+	if let Some(handle) = RELOAD_HANDLE.get() {
+		let _ = handle.reload(level);
+	}
 }
 
 /// Apply a host-supplied level string, installing the subscriber first so the
@@ -58,21 +64,21 @@ pub fn set_level(level: LevelFilter) {
 /// is logged at `INFO` (mapping to `console.info`, visible without DevTools
 /// "Verbose") rather than at the level just set.
 pub fn set_level_from_str(level: &str) {
-    init();
-    set_level(parse_level(level));
-    tracing::info!(level, "log level set");
+	init();
+	set_level(parse_level(level));
+	tracing::info!(level, "log level set");
 }
 
 /// Parse a host-supplied level string. Unknown values disable logging.
 pub fn parse_level(level: &str) -> LevelFilter {
-    match level.to_ascii_lowercase().as_str() {
-        "error" => LevelFilter::ERROR,
-        "warn" | "warning" => LevelFilter::WARN,
-        "info" => LevelFilter::INFO,
-        "debug" => LevelFilter::DEBUG,
-        "trace" => LevelFilter::TRACE,
-        _ => LevelFilter::OFF,
-    }
+	match level.to_ascii_lowercase().as_str() {
+		"error" => LevelFilter::ERROR,
+		"warn" | "warning" => LevelFilter::WARN,
+		"info" => LevelFilter::INFO,
+		"debug" => LevelFilter::DEBUG,
+		"trace" => LevelFilter::TRACE,
+		_ => LevelFilter::OFF,
+	}
 }
 
 /// Routes each event to the console method matching its level.
@@ -80,126 +86,122 @@ struct ConsoleLayer;
 
 impl<S> Layer<S> for ConsoleLayer
 where
-    S: Subscriber,
-    S: for<'a> LookupSpan<'a>,
+	S: Subscriber,
+	S: for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let Some(span) = ctx.span(id) else {
-            return;
-        };
-        let mut visitor = EventVisitor::default();
-        attrs.record(&mut visitor);
-        span.extensions_mut().insert(SpanFields {
-            fields: visitor.fields,
-        });
-        if trace_spans_enabled() {
-            emit_span("new", &span);
-        }
-    }
+	fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+		let Some(span) = ctx.span(id) else {
+			return;
+		};
+		let mut visitor = EventVisitor::default();
+		attrs.record(&mut visitor);
+		span.extensions_mut().insert(SpanFields { fields: visitor.fields });
+		if trace_spans_enabled() {
+			emit_span("new", &span);
+		}
+	}
 
-    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
-        let Some(span) = ctx.span(id) else {
-            return;
-        };
-        let mut visitor = EventVisitor::default();
-        values.record(&mut visitor);
-        if visitor.fields.is_empty() {
-            return;
-        }
-        let mut extensions = span.extensions_mut();
-        if let Some(fields) = extensions.get_mut::<SpanFields>() {
-            if !fields.fields.is_empty() {
-                fields.fields.push_str(", ");
-            }
-            fields.fields.push_str(&visitor.fields);
-        } else {
-            extensions.insert(SpanFields {
-                fields: visitor.fields,
-            });
-        }
-    }
+	fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+		let Some(span) = ctx.span(id) else {
+			return;
+		};
+		let mut visitor = EventVisitor::default();
+		values.record(&mut visitor);
+		if visitor.fields.is_empty() {
+			return;
+		}
+		let mut extensions = span.extensions_mut();
+		if let Some(fields) = extensions.get_mut::<SpanFields>() {
+			if !fields.fields.is_empty() {
+				fields.fields.push_str(", ");
+			}
+			fields.fields.push_str(&visitor.fields);
+		} else {
+			extensions.insert(SpanFields { fields: visitor.fields });
+		}
+	}
 
-    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        if !trace_spans_enabled() {
-            return;
-        }
-        let Some(span) = ctx.span(&id) else {
-            return;
-        };
-        emit_span("close", &span);
-    }
+	fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+		if !trace_spans_enabled() {
+			return;
+		}
+		let Some(span) = ctx.span(&id) else {
+			return;
+		};
+		emit_span("close", &span);
+	}
 
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let meta = event.metadata();
-        let mut visitor = EventVisitor::default();
-        event.record(&mut visitor);
+	fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+		let meta = event.metadata();
+		let mut visitor = EventVisitor::default();
+		event.record(&mut visitor);
 
-        let mut line = format!("[truapi-provider] {} {}", meta.level(), meta.target());
-        if !visitor.message.is_empty() {
-            let _ = write!(line, ": {}", visitor.message);
-        }
-        if !visitor.fields.is_empty() {
-            let _ = write!(line, " {{{}}}", visitor.fields);
-        }
-        emit(*meta.level(), &line);
-    }
+		let mut line = format!("[truapi-provider] {} {}", meta.level(), meta.target());
+		if !visitor.message.is_empty() {
+			let _ = write!(line, ": {}", visitor.message);
+		}
+		if !visitor.fields.is_empty() {
+			let _ = write!(line, " {{{}}}", visitor.fields);
+		}
+		emit(*meta.level(), &line);
+	}
 }
 
 #[derive(Default)]
 struct SpanFields {
-    fields: String,
+	fields: String,
 }
 
 fn trace_spans_enabled() -> bool {
-    TRACE_SPANS.load(Ordering::Relaxed)
+	TRACE_SPANS.load(Ordering::Relaxed)
 }
 
 fn emit_span<S>(kind: &str, span: &tracing_subscriber::registry::SpanRef<'_, S>)
 where
-    S: Subscriber,
-    S: for<'a> LookupSpan<'a>,
+	S: Subscriber,
+	S: for<'a> LookupSpan<'a>,
 {
-    let meta = span.metadata();
-    let mut line = format!("[truapi-provider] TRACE {}: span {}", meta.target(), kind);
-    let extensions = span.extensions();
-    let fields = extensions.get::<SpanFields>();
-    let _ = write!(line, " {{span={:?}", meta.name());
-    if let Some(fields) = fields
-        && !fields.fields.is_empty()
-    {
-        let _ = write!(line, ", {}", fields.fields);
-    }
-    line.push('}');
-    emit(Level::TRACE, &line);
+	let meta = span.metadata();
+	let mut line = format!("[truapi-provider] TRACE {}: span {}", meta.target(), kind);
+	let extensions = span.extensions();
+	let fields = extensions.get::<SpanFields>();
+	let _ = write!(line, " {{span={:?}", meta.name());
+	if let Some(fields) = fields &&
+		!fields.fields.is_empty()
+	{
+		let _ = write!(line, ", {}", fields.fields);
+	}
+	line.push('}');
+	emit(Level::TRACE, &line);
 }
 
 /// Collects the implicit `message` field separately from explicit key-values.
 #[derive(Default)]
 struct EventVisitor {
-    message: String,
-    fields: String,
+	message: String,
+	fields: String,
 }
 
 impl Visit for EventVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        if field.name() == "message" {
-            let _ = write!(self.message, "{value:?}");
-        } else {
-            if !self.fields.is_empty() {
-                self.fields.push_str(", ");
-            }
-            let _ = write!(self.fields, "{}={value:?}", field.name());
-        }
-    }
+	fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+		if field.name() == "message" {
+			let _ = write!(self.message, "{value:?}");
+		} else {
+			if !self.fields.is_empty() {
+				self.fields.push_str(", ");
+			}
+			let _ = write!(self.fields, "{}={value:?}", field.name());
+		}
+	}
 }
 
 /// Routes a formatted line to the `console` method matching its level.
 fn emit(level: Level, line: &str) {
-    let js = wasm_bindgen::JsValue::from_str(line);
-    match level {
-        Level::ERROR => web_sys::console::error_1(&js),
-        Level::WARN => web_sys::console::warn_1(&js),
-        Level::INFO => web_sys::console::info_1(&js),
-        Level::DEBUG | Level::TRACE => web_sys::console::debug_1(&js),
-    }
+	let js = wasm_bindgen::JsValue::from_str(line);
+	match level {
+		Level::ERROR => web_sys::console::error_1(&js),
+		Level::WARN => web_sys::console::warn_1(&js),
+		Level::INFO => web_sys::console::info_1(&js),
+		Level::DEBUG | Level::TRACE => web_sys::console::debug_1(&js),
+	}
 }

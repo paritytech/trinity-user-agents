@@ -32,18 +32,18 @@ pub const SEND_VERIFY_BLOCK_TIMEOUT: u32 = 100;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[test]
-    fn protocol_constants_are_pinned() {
-        assert_eq!(COIN_MAX_AGE, 16);
-        assert_eq!(RECYCLE_AT_AGE, 14);
-        assert_eq!(COIN_MAX_AGE - 2, RECYCLE_AT_AGE);
-        assert_eq!(MINIMUM_RING_SIZE, 10);
-        assert_eq!(WAL_MORTALITY_BLOCKS, 300);
-        assert_eq!(MAX_VOUCHER_WAIT_TIME, Duration::from_secs(21_600));
-        assert_eq!(SEND_VERIFY_BLOCK_TIMEOUT, 100);
-        assert_eq!(CASH_ASSET_PRECISION, 6);
-        assert_eq!(CASH_PLANKS_PER_CENT, 10_000);
-    }
+	#[test]
+	fn protocol_constants_are_pinned() {
+		assert_eq!(COIN_MAX_AGE, 16);
+		assert_eq!(RECYCLE_AT_AGE, 14);
+		assert_eq!(COIN_MAX_AGE - 2, RECYCLE_AT_AGE);
+		assert_eq!(MINIMUM_RING_SIZE, 10);
+		assert_eq!(WAL_MORTALITY_BLOCKS, 300);
+		assert_eq!(MAX_VOUCHER_WAIT_TIME, Duration::from_secs(21_600));
+		assert_eq!(SEND_VERIFY_BLOCK_TIMEOUT, 100);
+		assert_eq!(CASH_ASSET_PRECISION, 6);
+		assert_eq!(CASH_PLANKS_PER_CENT, 10_000);
+	}
 }

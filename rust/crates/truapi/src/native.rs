@@ -26,24 +26,25 @@ mod renderer;
 mod runtime;
 mod ws_bridge;
 
-pub use crate::host_internal::sso_messages::SsoRequestOutcome;
-pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
+pub use crate::{
+	host_internal::sso_messages::SsoRequestOutcome,
+	host_logic::dotns::{NavigateDecision, PocketDeeplinkAction},
+};
 pub use callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbackResult, NativeCoinageCallbacks,
-    NativeContactsCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativePocketRemoval,
+	HostCallbacks, NativeChatCallbacks, NativeCoinageCallbackResult, NativeCoinageCallbacks,
+	NativeContactsCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativePocketRemoval,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::HostRejection;
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-    NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
-use crate::PairingProposal;
-use crate::host_logic::dotns;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
+use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with
@@ -51,32 +52,29 @@ use crate::SigningHostRuntime;
 /// webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
-    dotns::parse_navigate(&input)
+	dotns::parse_navigate(&input)
 }
 
 /// Strictly decoded storage metadata for host-private namespace routing.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct NativeCoreStorageKeyDescription {
-    /// Stable core storage slot kind.
-    pub kind: String,
-    /// Product owning this slot, absent for wallet-owned state.
-    pub product_id: Option<String>,
+	/// Stable core storage slot kind.
+	pub kind: String,
+	/// Product owning this slot, absent for wallet-owned state.
+	pub product_id: Option<String>,
 }
 
 /// Describe exactly one encoded storage key without duplicating SCALE in hosts.
 #[uniffi::export]
 pub fn native_describe_core_storage_key(
-    encoded: Vec<u8>,
+	encoded: Vec<u8>,
 ) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
-    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
-        HostRejection::Rejected {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(NativeCoreStorageKeyDescription {
-        kind: description.kind.to_owned(),
-        product_id: description.product_id,
-    })
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
+	Ok(NativeCoreStorageKeyDescription {
+		kind: description.kind.to_owned(),
+		product_id: description.product_id,
+	})
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
@@ -86,7 +84,7 @@ pub fn native_describe_core_storage_key(
 /// lockdown container, which reads the endpoint this publishes.
 #[uniffi::export]
 pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
-    crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
+	crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
 }
 
 /// Read what a pairing deeplink offers: the peer it advertises, and how that
@@ -109,17 +107,17 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 /// deeplink this rejects is one no pairing call would have accepted either.
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
-    PairingProposal::from_deeplink(&deeplink)
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(&deeplink)
+		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
 /// hears [`NativePairingError::UndecodableDeeplink`] rather than the
 /// [`NativePairingError::Rejected`] every later failure shares.
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
-    PairingProposal::from_deeplink(deeplink)
-        .map(|_| ())
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(deeplink)
+		.map(|_| ())
+		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
 }
 
 /// Whether `product_id` is a first-party product the host grants every
@@ -132,7 +130,7 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 /// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
 pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-    crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for
@@ -141,7 +139,7 @@ pub fn has_trusted_remote_permissions(product_id: String) -> bool {
 /// this controls the cross-platform `tracing` events shared with wasm.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
-    crate::logging::set_level_from_str(&level);
+	crate::logging::set_level_from_str(&level);
 }
 
 #[cfg(test)]

@@ -8,26 +8,26 @@
 
 /// Milliseconds since the unix epoch.
 pub trait Clock: Send + Sync {
-    fn now_ms(&self) -> i64;
+	fn now_ms(&self) -> i64;
 }
 
 /// Production clock.
 pub struct SystemClock;
 
 impl Clock for SystemClock {
-    fn now_ms(&self) -> i64 {
-        web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0)
-    }
+	fn now_ms(&self) -> i64 {
+		web_time::SystemTime::now()
+			.duration_since(web_time::UNIX_EPOCH)
+			.map(|d| d.as_millis() as i64)
+			.unwrap_or(0)
+	}
 }
 
 /// Fixed clock for tests.
 pub struct FixedClock(pub i64);
 
 impl Clock for FixedClock {
-    fn now_ms(&self) -> i64 {
-        self.0
-    }
+	fn now_ms(&self) -> i64 {
+		self.0
+	}
 }

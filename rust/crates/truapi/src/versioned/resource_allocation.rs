@@ -3,7 +3,7 @@
 use crate::v01;
 
 truapi_macros::versioned_type! {
-    pub enum HostRequestResourceAllocationRequest { V1 => v01::HostRequestResourceAllocationRequest }
-    pub enum HostRequestResourceAllocationResponse { V1 => v01::HostRequestResourceAllocationResponse }
-    pub enum HostRequestResourceAllocationError { V1 => v01::ResourceAllocationError }
+	pub enum HostRequestResourceAllocationRequest { V1 => v01::HostRequestResourceAllocationRequest }
+	pub enum HostRequestResourceAllocationResponse { V1 => v01::HostRequestResourceAllocationResponse }
+	pub enum HostRequestResourceAllocationError { V1 => v01::ResourceAllocationError }
 }
