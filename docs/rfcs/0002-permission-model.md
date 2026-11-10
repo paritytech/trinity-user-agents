@@ -17,6 +17,9 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
+> Products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
@@ -67,7 +70,7 @@ That means that fetch requests, WebSockets, WebRTC, and device permissions shoul
 `#[wire(internal)]` hides the consuming authorization methods from the product
 SDK; it does not authenticate callers. Rust still accepts those calls and
 checks permissions for the calling product execution. A direct product call
-can consume that execution's one-use grant. `ProductExecutionKind` describes
+can consume that execution's one-use grant. `ExecutableKind` describes
 App, Widget or Worker entrypoints, not whether the caller is the container.
 
 The shared container authorizes operations through generated internal SDK

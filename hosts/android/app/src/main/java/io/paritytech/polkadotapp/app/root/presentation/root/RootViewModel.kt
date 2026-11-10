@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.RootInteractor
+import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
@@ -18,14 +19,15 @@ import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.common.utils.stateInBackground
+import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
-import io.paritytech.polkadotapp.feature_fund_api.domain.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
@@ -62,6 +64,8 @@ class RootViewModel @Inject constructor(
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    navigationHolder: NavigationHolder,
+    appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
     featureOverlays: Set<@JvmSuppressWildcards ChatOverlay>,
@@ -74,7 +78,9 @@ class RootViewModel @Inject constructor(
     override val chatOverlays = chatEngine.observeActiveOverlays().map { featureOverlays.toList() + it }
     override val isOnboarded = observeAccountOnboardingStatus().map { it.isOnboarded }
     override val bottomNavHeight = bottomNavHeightProvider.heightDp
+    val appTheme = appThemeSelector.selectedTheme
     override val chainsHealth = chainHealthMixinFactory.create(this).model
+    override val currentTab = navigationHolder.currentTab
 
     private val networkStatusTooltipDismissed = MutableStateFlow(!rootInteractor.shouldShowNetworkStatusTooltip())
     private val chainRingsOnScreen = chainsHealth.map { it.rows.isNotEmpty() }
@@ -85,6 +91,17 @@ class RootViewModel @Inject constructor(
         chainRingsOnScreen,
     ) { dismissed, onboarded, ringsOnScreen ->
         !dismissed && onboarded && ringsOnScreen
+    }.stateInBackground(initialValue = false)
+
+    private val paymentsSetupNoticeDismissed = MutableStateFlow(false)
+
+    // Registration starts only after onboarding, so a wait before it is not a delayed backup.
+    override val isPaymentsSetupNoticeVisible = combine(
+        rootInteractor.observePaymentsSetupPending(),
+        isOnboarded,
+        paymentsSetupNoticeDismissed,
+    ) { pending, onboarded, dismissed ->
+        pending && onboarded && !dismissed
     }.stateInBackground(initialValue = false)
 
     private val servicesScope = ComputationalScope(viewModelScope + coroutineDispatchers.computation)
@@ -143,6 +160,10 @@ class RootViewModel @Inject constructor(
         if (networkStatusTooltipDismissed.value) return
         networkStatusTooltipDismissed.value = true
         rootInteractor.markNetworkStatusTooltipShown()
+    }
+
+    override fun dismissPaymentsSetupNotice() {
+        paymentsSetupNoticeDismissed.value = true
     }
 
     private suspend fun checkDevReset() {

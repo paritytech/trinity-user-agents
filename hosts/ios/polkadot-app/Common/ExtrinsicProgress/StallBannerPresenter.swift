@@ -11,7 +11,7 @@
         private let viewModelFactory: StallBannerViewModelFactoryProtocol
         private let windowScene: UIWindowScene
 
-        private var window: StallBannerWindow?
+        private var window: TopNoticeWindow?
         private var subscriptionTask: Task<Void, Never>?
 
         init(
@@ -52,12 +52,12 @@
             }
 
             if window == nil {
-                window = StallBannerWindow(windowScene: windowScene)
+                window = TopNoticeWindow(windowScene: windowScene)
             }
 
-            window?.show(viewModel: viewModel, onDismiss: { [board] id in
+            window?.show(StallBannerView(viewModel: viewModel, onDismiss: { [board] id in
                 Task { await board.dismiss(id: id) }
-            })
+            }))
         }
     }
 #endif

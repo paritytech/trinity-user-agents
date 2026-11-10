@@ -13,6 +13,3 @@ sealed interface CoinageAccountBackupStatus {
 
     data object Completed : CoinageAccountBackupStatus
 }
-
-val CoinageAccountBackupStatus.needsAttention: Boolean
-    get() = this is CoinageAccountBackupStatus.Delayed

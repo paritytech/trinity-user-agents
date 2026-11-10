@@ -10,6 +10,7 @@
                 resetService: AppFactoryResetService(
                     tldProvider: DotNsTldProviderFacade.shared,
                     remoteConfig: FirebaseFacade.shared,
+                    initializer: AppSharedInitializer.shared,
                     mnemonicBackupHelper: MnemonicBackupHelper(),
                     logger: Logger.shared
                 )

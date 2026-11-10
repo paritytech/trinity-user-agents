@@ -31,7 +31,10 @@ public final class StatementStoreSlotAllocator: AllowanceSlotAllocating {
                 guard let self else { throw AllowanceSlotAssignmentError.noSlotsAvailable }
 
                 let slot = try await markStallRegion("Reading chain state") {
-                    try await self.slotInfoProvider.freeSlot(excluding: accountId, callerPriority: priority)
+                    try await self.slotInfoProvider.freeSlot(
+                        excluding: accountId,
+                        callerPriority: priority
+                    )
                 }
 
                 let callData = ResourcesPallet.SetStatementStoreAccountCall(

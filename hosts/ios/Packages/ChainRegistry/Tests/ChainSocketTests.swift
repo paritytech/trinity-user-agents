@@ -180,6 +180,78 @@ struct ChainSocketTests {
         #expect(fixture.delegate.closeReasons.isEmpty)
     }
 
+    @Test func lostPathClosesTheSocketWhenItDoesNotReturnInTime() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        #expect(fixture.connection.pingCount == 0)
+        #expect(fixture.delegate.closeReasons.isEmpty)
+
+        fixture.scheduler.fire(after: Timing.viabilityTimeout)
+
+        #expect(fixture.delegate.closeReasons.count == 1)
+        #expect(fixture.delegate.closeReasons.first?.isPathLost == true)
+    }
+
+    @Test func pathBackInTimeKeepsTheSocketOpen() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.socket.handle(.viabilityChanged(true))
+        fixture.scheduler.fire(after: Timing.viabilityTimeout)
+
+        #expect(fixture.delegate.closeReasons.isEmpty)
+        #expect(fixture.scheduler.pendingDelays == [Timing.pingInterval])
+    }
+
+    @Test func repeatedLostPathKeepsOneDeadline() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.socket.handle(.viabilityChanged(false))
+
+        #expect(fixture.scheduler.pendingDelays == [Timing.pingInterval, Timing.viabilityTimeout])
+    }
+
+    @Test func pathLostAgainAfterReturningClosesTheSocket() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.socket.handle(.viabilityChanged(true))
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.scheduler.fire(after: Timing.viabilityTimeout)
+
+        #expect(fixture.delegate.closeReasons.count == 1)
+        #expect(fixture.delegate.closeReasons.first?.isPathLost == true)
+    }
+
+    @Test func lostPathWhileConnectingIsLeftToTheConnectTimeout() throws {
+        let fixture = try makeSocket()
+        fixture.socket.open()
+
+        fixture.socket.handle(.viabilityChanged(false))
+
+        #expect(fixture.scheduler.pendingDelays == [Timing.connectionTimeout])
+    }
+
+    @Test func regainedViabilityLeavesTheSocketAlone() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(true))
+
+        #expect(fixture.connection.pingCount == 0)
+        #expect(fixture.delegate.closeReasons.isEmpty)
+    }
+
+    @Test func closeDropsThePendingPathDeadline() throws {
+        let fixture = try makeOpenSocket()
+        fixture.socket.handle(.viabilityChanged(false))
+
+        fixture.socket.close()
+
+        #expect(fixture.scheduler.pendingDelays.isEmpty)
+    }
+
     @Test func probeIgnoredOnceClosed() throws {
         let fixture = try makeOpenSocket()
         fixture.socket.close()
@@ -215,6 +287,7 @@ private extension ChainSocketTests {
         static let connectionTimeout: TimeInterval = 10
         static let pingInterval: TimeInterval = 30
         static let pongTimeout: TimeInterval = 15
+        static let viabilityTimeout: TimeInterval = 2
         static let probeTimeout: TimeInterval = 5
     }
 
@@ -234,7 +307,8 @@ private extension ChainSocketTests {
             configuration: .init(
                 connectionTimeout: Timing.connectionTimeout,
                 pingInterval: Timing.pingInterval,
-                pongTimeout: Timing.pongTimeout
+                pongTimeout: Timing.pongTimeout,
+                viabilityTimeout: Timing.viabilityTimeout
             ),
             scheduler: scheduler,
             logger: SilentLogger()

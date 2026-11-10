@@ -25,6 +25,18 @@
         }
       }
     },
+    "NSAlarmKitUsageDescription" : {
+      "comment" : "Privacy - Alarm Kit Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Polkadot uses alarms to notify you when a scheduled event is about to start."
+          }
+        }
+      }
+    },
     "NSCalendarsFullAccessUsageDescription" : {
       "comment" : "Privacy - Calendars Full Access Usage Description",
       "extractionState" : "manual",
@@ -56,7 +68,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Please allow camera access to interact with features in the Polkadot app"
+            "value" : "Polkadot uses your camera for video calls and to scan a contact's QR code, so you can start a chat by scanning the code from their phone."
           }
         }
       }
@@ -68,7 +80,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Face ID is used to authorize in Polkadot App"
+            "value" : "Polkadot uses Face ID to confirm it's you before showing your account backup or restoring your account."
           }
         }
       }
@@ -80,7 +92,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Polkadot uses your local network for peer-to-peer calls and linked devices."
+            "value" : "Polkadot uses your local network to connect calls directly when you call a contact on the same Wi‑Fi network."
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "comment" : "Privacy - Location When In Use Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please allow location access to interact with features in the Polkadot app"
           }
         }
       }
@@ -92,7 +116,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Please allow microphone to be able to talk in the chat"
+            "value" : "Polkadot uses your microphone so contacts can hear you during voice and video calls."
           }
         }
       }
@@ -104,7 +128,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "App needs access to save chat attachments to your photo library."
+            "value" : "Polkadot saves a photo or video from a chat to your library when you tap Save Image."
           }
         }
       }

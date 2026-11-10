@@ -13,11 +13,14 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+alloy-primitives = { version = "1.7", default-features = false }
+alloy-sol-types = { version = "1.7", default-features = false }
 anyhow = "1"
 async-sqlite = { version = "0.6", default-features = false }
 arboard = { version = "3.6.1", default-features = false }
 async-trait = "0.1"
 base64 = "0.22"
+binary-merkle-tree = { version = "16.1.2", default-features = false }
 bip39 = "2"
 blake2b_simd = { version = "1", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
@@ -35,9 +38,11 @@ futures = "0.3"
 futures-timer = "3"
 futures-util = "0.3"
 getrandom = "0.2"
+hash-db = { version = "0.16", default-features = false }
 hex = "0.4"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
+imagesize = { version = "0.15", default-features = false }
 indoc = "2"
 itertools = "0.14"
 js-sys = "0.3"
@@ -62,7 +67,6 @@ rqrr = { version = "0.10.1", default-features = false }
 rusqlite = "0.40"
 rusqlite_migration = "2.6"
 rustix = "1"
-rustls = { version = "0.23", default-features = false }
 scale-decode = "0.16"
 scale-info = { version = "2.11", default-features = false }
 schnorrkel = { version = "0.11.5", default-features = false }

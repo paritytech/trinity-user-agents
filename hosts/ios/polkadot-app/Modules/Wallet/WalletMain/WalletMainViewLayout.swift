@@ -1,9 +1,9 @@
 import SwiftUI
 import PolkadotUI
+import Products
 
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
-    @State private var viewHeight: CGFloat = 0
     private let collectiblesPeekHeight: CGFloat = 90
     @State private var scrollAtTop: Bool = true
     @Namespace private var cardNamespace
@@ -11,53 +11,25 @@ struct WalletView: View {
     /// Every card in the Pocket sits one peek below the one before it, host-placed
     /// and product-backed alike, so the collection reads as a single stack.
     private var cardOverlap: CGFloat { PocketCardSize.height - peekHeight }
-    private let scrollTopAnchor = "walletScrollTop"
-    @State private var overscroll: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .top) {
-            ScrollViewReader { scrollProxy in
-                ScrollView {
-                    VStack(spacing: -cardOverlap) {
-                        // Builds with product cards show humanity as the
-                        // Humanity card the Pocket pins, so only the others
-                        // draw the ID card.
-                        #if FEATURE_PRODUCTS
-                            assetCard
-                        #else
-                            ZStack(alignment: .top) {
-                                assetCard
-                                identityCard
-                            }
-                            // The identity card is drawn offset down by the peek, which
-                            // the stack's own height does not account for, so without
-                            // this the product cards would start a peek too high.
-                            .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
-                        #endif
-                        pocketCards
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                    .onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height + proxy.safeAreaInsets.bottom
-                    } action: {
-                        viewHeight = $0
-                    }
-                    .id(scrollTopAnchor)
+            ScrollView {
+                VStack(spacing: -cardOverlap) {
+                    assetCard
+                        .pocketMotion(motion(ofPosition: 0))
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .global)
+                        } action: {
+                            viewModel.balanceCardFrame = $0
+                        }
+                    pocketCards
                 }
-                .safeAreaInset(edge: .bottom) {
-                    if viewModel.expandedSection == .assetDetails {
-                        AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
-                    }
-                }
-                .modifier(OverscrollReader(overscroll: $overscroll))
-                .onChange(of: viewModel.expandedSection) { _, newValue in
-                    guard newValue == .none else { return }
-                    withAnimation(.spring(duration: 0.45, bounce: 0.15)) {
-                        scrollProxy.scrollTo(scrollTopAnchor, anchor: .top)
-                    }
-                }
+                .padding(.horizontal, PocketCardSize.sideMargin)
+                .padding(.top, 16)
             }
+            .scrollClipDisabled(isCardOpen)
+            .modifier(TopScrollEdgeEffectHidden(hidden: isCardOpen))
         }
         .modifier(
             ConditionalOverlayModifier(
@@ -65,255 +37,127 @@ struct WalletView: View {
                 overlay: { collectiblesCard }
             )
         )
-        .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
     }
 
-    /// Product-backed cards follow the host's own, and are hidden while a
-    /// native card is expanded so they do not sit under it. The Pocket is a
-    /// product surface, so it ships with the rest of them.
+    /// Product-backed cards follow the host's own.
     @ViewBuilder
     private var pocketCards: some View {
-        #if FEATURE_PRODUCTS
-            if viewModel.expandedSection == .none {
-                ForEach(viewModel.pocketCards) { card in
-                    // A press takes the user into the product the card belongs
-                    // to, at the page the card names. The shape is named so the
-                    // peek a card shows is all of it that takes a press, the
-                    // rest is under the card above.
-                    PocketCollectionCardView(card: card)
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .global)
-                        } action: {
-                            viewModel.pocketCardFrames[card.key] = $0
-                        }
-                        // Its screen draws the card while it is open.
-                        .opacity(viewModel.openPocketCard == card.key ? 0 : 1)
-                        .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
-                        .onTapGesture { viewModel.onOpenPocketCard?(card) }
-                        // A host-placed card is removable by nobody, so a long
-                        // press offers it nothing rather than a prompt that
-                        // refuses.
-                        .onLongPressGesture {
-                            guard !card.privileged else { return }
-
-                            viewModel.onRemovePocketCard?(card)
-                        }
+        ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
+            // A press takes the user into the product the card belongs
+            // to, at the page the card names. The shape is named so the
+            // peek a card shows is all of it that takes a press, the
+            // rest is under the card above.
+            PocketCollectionCardView(card: card)
+                .pocketMotion(motion(ofPosition: index + 1))
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .global)
+                } action: {
+                    viewModel.pocketCardFrames[card.key] = $0
                 }
-            }
-        #endif
-    }
+                .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
+                .onTapGesture { viewModel.onOpenPocketCard?(card) }
+                // A host-placed card is removable by nobody, so a long
+                // press offers it nothing rather than a prompt that
+                // refuses.
+                .onLongPressGesture {
+                    guard !card.privileged else { return }
 
-    @ViewBuilder
-    private var identityCard: some View {
-        IdentityDetailsViewLayout(
-            viewModel: viewModel.identityDetailsViewModel,
-            isExpanded: viewModel.expandedSection == .identityDetails,
-            onCardTapped: { viewModel.onUsername?() },
-            overscroll: overscroll,
-            onCollapse: { viewModel.onCollapse?() }
-        )
-        .matchedGeometryEffect(id: "identity", in: cardNamespace)
-        .scaleEffect(identityScale)
-        .opacity(identityOpacity)
-        .offset(y: identityOffsetY)
-        .zIndex(identityZIndex)
-        .allowsHitTesting(identityHitTest)
+                    viewModel.onRemovePocketCard?(card)
+                }
+        }
     }
 
     @ViewBuilder
     private var assetCard: some View {
         AssetDetailsView(
             viewModel: viewModel.assetDetailsViewModel,
-            isExpanded: viewModel.expandedSection == .assetDetails,
             onCardTapped: {
                 viewModel.onBalance?()
             },
-            overscroll: overscroll,
-            onCollapse: { viewModel.onCollapse?() }
+            // The open flight clears the Pocket on its first frame, so the face switches as the card lifts.
+            // The close flight restores the Pocket as it starts, so the card turns back before it flies home.
+            showsOpenedFace: viewModel.openItem == .balance && viewModel.isPocketCleared
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
-        .scaleEffect(assetScale)
-        .opacity(assetOpacity)
-        .offset(y: assetOffsetY)
-        .zIndex(assetZIndex)
-        .allowsHitTesting(assetHitTest)
-    }
-
-    private var offScreenOffset: CGFloat {
-        max(viewHeight, 1_000)
-    }
-
-    private var identityScale: CGFloat {
-        1.0
-    }
-
-    private var identityOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            1
-        case .assetDetails,
-             .collectiblesDetails:
-            0
-        }
-    }
-
-    private var identityOffsetY: CGFloat {
-        switch viewModel.expandedSection {
-        case .none:
-            peekHeight
-        case .identityDetails:
-            0
-        case .assetDetails:
-            offScreenOffset
-        case .collectiblesDetails:
-            -offScreenOffset
-        }
-    }
-
-    private var identityZIndex: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            1
-        case .assetDetails,
-             .collectiblesDetails:
-            0
-        }
-    }
-
-    private var identityHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            true
-        case .assetDetails,
-             .collectiblesDetails:
-            false
-        }
-    }
-
-    private var assetScale: CGFloat {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            1.0
-        case .identityDetails,
-             .collectiblesDetails:
-            0.95
-        }
-    }
-
-    private var assetOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            1
-        case .identityDetails,
-             .collectiblesDetails:
-            0
-        }
-    }
-
-    private var assetOffsetY: CGFloat {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails,
-             .identityDetails:
-            0
-        case .collectiblesDetails:
-            -offScreenOffset
-        }
-    }
-
-    private var assetZIndex: Double {
-        switch viewModel.expandedSection {
-        case .none:
-            0
-        case .assetDetails:
-            2
-        case .identityDetails,
-             .collectiblesDetails:
-            0
-        }
-    }
-
-    private var assetHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails:
-            true
-        case .identityDetails,
-             .collectiblesDetails:
-            false
-        }
     }
 }
 
 private extension WalletView {
+    var isCardOpen: Bool {
+        switch viewModel.openItem {
+        case .balance,
+             .card:
+            true
+        case .collectibles,
+             nil:
+            false
+        }
+    }
+
+    /// The position of the open item in the stack: the Balance card is first, and each Pocket card follows it.
+    var openPosition: Int? {
+        switch viewModel.openItem {
+        case .balance:
+            0
+        case let .card(key):
+            viewModel.pocketCards.firstIndex { $0.key == key }.map { $0 + 1 }
+        case .collectibles,
+             nil:
+            nil
+        }
+    }
+
+    func motion(ofPosition position: Int) -> PocketCardMotion {
+        PocketCardMotion.of(
+            cardAt: position,
+            openAt: openPosition,
+            openOffset: viewModel.openPocketCardOffset,
+            cleared: viewModel.isPocketCleared
+        )
+    }
+
     @ViewBuilder
     var collectiblesCard: some View {
-        CollectiblesCardView(
-            isExpanded: viewModel.expandedSection == .collectiblesDetails,
-            onViewCollectibles: { viewModel.onViewCollectibles?() }
-        )
-        .padding(.horizontal, 24)
-        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
+        Button {
+            viewModel.onCollectibles?()
+        } label: {
+            CollectiblesCardView(isColoured: viewModel.collectiblesPeek != .resting)
+        }
+        .buttonStyle(CollectiblesPressStyle())
+        .accessibilityLabel(String(localized: .Products.collectibles))
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: {
+            viewModel.collectiblesFrame = $0
+        }
+        .padding(.horizontal, PocketCardSize.sideMargin)
         .alignmentGuide(.bottom) { dimensions in
-            switch viewModel.expandedSection {
-            case .none:
-                dimensions[.top] + collectiblesPeekHeight
-            case .collectiblesDetails:
-                dimensions[.bottom]
-            case .assetDetails,
-                 .identityDetails:
-                dimensions[.top] - offScreenOffset
-            }
+            dimensions[.top] + collectiblesPeekHeight
         }
-        .opacity(collectiblesOpacity)
-        .onTapGesture { viewModel.onCollectibles?() }
-        .allowsHitTesting(collectiblesHitTest)
+        .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : 1)
     }
+}
 
-    private var collectiblesOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            1
-        case .assetDetails,
-             .identityDetails:
-            0
-        }
-    }
+/// A card lifted out of the Pocket can sit under the title bar, where iOS 26
+/// would darken it with the scroll view's top edge effect.
+private struct TopScrollEdgeEffectHidden: ViewModifier {
+    let hidden: Bool
 
-    private var collectiblesHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            true
-        case .assetDetails,
-             .identityDetails:
-            false
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.scrollEdgeEffectHidden(hidden, for: .top)
+        } else {
+            content
         }
     }
 }
 
-/// The host scroll view's rubber-band distance past the top. Scroll geometry is an iOS 18 API; on
-/// iOS 17 the value stays 0, so an expanded header stretches with its details on a pull.
-private struct OverscrollReader: ViewModifier {
-    @Binding var overscroll: CGFloat
-
-    func body(content: Content) -> some View {
-        if #available(iOS 18, *) {
-            content
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    max(0, -(geometry.contentOffset.y + geometry.contentInsets.top))
-                } action: { _, newValue in
-                    overscroll = newValue
-                }
-        } else {
-            content
-        }
+private extension View {
+    /// Applied inside any geometry reader, so a card's slot stays where layout puts it.
+    func pocketMotion(_ motion: PocketCardMotion) -> some View {
+        offset(motion.offset)
+            .scaleEffect(motion.scale)
+            .opacity(motion.opacity)
     }
 }
 
@@ -330,5 +174,14 @@ private struct ConditionalOverlayModifier<V: View>: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// The Collectibles peek shrinks a little while it is pressed, as Android's does.
+private struct CollectiblesPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? CollectiblesBookTiming.pressedScale : 1)
+            .animation(.easeOut(duration: CollectiblesBookTiming.pressDuration), value: configuration.isPressed)
     }
 }

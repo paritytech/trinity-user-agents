@@ -1,5 +1,5 @@
+import struct TrUAPIHost.ProductId
 import Foundation
-import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
@@ -17,7 +17,7 @@ struct PocketAddCardViewModelTests {
         let picture = try writeTestPicture(size: CGSize(width: 3, height: 2))
         defer { try? FileManager.default.removeItem(at: picture) }
         let viewModel = PocketAddCardViewModel(
-            productId: "game.paseo",
+            productId: try! ProductId("game.paseo"),
             cardId: PocketCardId(value: "loyalty"),
             interactor: makeAddCardInteractor(published: [loyalty]),
             images: { productId in
@@ -35,7 +35,7 @@ struct PocketAddCardViewModelTests {
 
         let resolved = await viewModel.resolveImage?(.archive(path: picture.lastPathComponent))
 
-        #expect(asked.products == ["game.paseo"])
+        #expect(asked.products == [try! ProductId("game.paseo")])
         #expect(resolved?.size == CGSize(width: 3, height: 2))
     }
 
@@ -64,7 +64,7 @@ struct PocketAddCardViewModelTests {
 @MainActor
 private func makeViewModel(store: any PocketCardStore) -> PocketAddCardViewModel {
     PocketAddCardViewModel(
-        productId: "game.paseo",
+        productId: try! ProductId("game.paseo"),
         cardId: PocketCardId(value: "loyalty"),
         interactor: makeAddCardInteractor(published: [loyalty], store: store),
         images: { _ in nil }
@@ -101,11 +101,6 @@ private struct StubArchiveRoot: DotNsResolverProtocol {
 
     func resolveToLocalURL(dotNsName _: String) async throws -> URL {
         root
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

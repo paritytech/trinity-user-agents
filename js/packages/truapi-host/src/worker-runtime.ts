@@ -4,6 +4,7 @@
 // state that needs DOM access (localStorage, prompts) while the core dispatcher
 // runs here off the page main thread.
 
+import type { ProductId } from "@parity/truapi";
 import { isLoopbackWsUrl } from "./worker-protocol.js";
 import type {
   MainToWorker,
@@ -187,7 +188,10 @@ function buildRawCallbacks(capabilities: OptionalCapabilities) {
      * `acquireWorker`/`releaseWorker` or the core took the reference itself
      * for an open render.
      */
-    workerDemandChanged(productId: string, transition: WorkerTransition): void {
+    requestWorkerTransition(
+      productId: ProductId,
+      transition: WorkerTransition,
+    ): void {
       postToMain({
         kind: "workerDemandChanged",
         productId,
@@ -724,6 +728,24 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "getDeviceEncryptionKey":
       void handleGetDeviceEncryptionKey(msg.requestId);
       break;
+    case "parseProductId":
+      try {
+        if (!wasm) throw new Error("runtime is not ready");
+        postToMain({
+          kind: "parseProductIdResponse",
+          requestId: msg.requestId,
+          ok: true,
+          value: wasm.parseProductId(msg.value),
+        });
+      } catch (error) {
+        postToMain({
+          kind: "parseProductIdResponse",
+          requestId: msg.requestId,
+          ok: false,
+          error: errorMessage(error),
+        });
+      }
+      break;
     case "getProductSubtreePublicKey":
       void handleGetProductSubtreePublicKey(
         msg.requestId,
@@ -1146,7 +1168,7 @@ function handleGetDeviceStatementKey(requestId: number): void {
 
 async function handleGetProductSubtreePublicKey(
   requestId: number,
-  productId: string,
+  productId: ProductId,
   timeoutMs: number | undefined,
 ): Promise<void> {
   if (!host) {

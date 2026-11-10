@@ -5,23 +5,49 @@ import UIKitExt
 final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
     private let moduleNavigator: ModuleNavigating
     private let flowState: SPAFlowState
+    private let assetDetailsScene: AssetDetailsScene
 
     init(
         flowState: SPAFlowState,
+        assetDetailsScene: AssetDetailsScene,
         moduleNavigator: ModuleNavigating = ModuleNavigator()
     ) {
         self.flowState = flowState
+        self.assetDetailsScene = assetDetailsScene
         self.moduleNavigator = moduleNavigator
     }
 
-    func showProduct(page: ProductPage) {
-        moduleNavigator.openProduct(page: page)
+    func showBalanceCard() {
+        let viewModel = assetDetailsScene.viewModel
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = AssetDetailsScreenViewController(viewModel: viewModel, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
+        }
     }
 
-    func showPocketCard(_ card: PocketCardViewModel, from view: WalletMainViewProtocol?) {
+    func showCollectibles(page: ProductPage) {
+        let configuration = SPAConfiguration(
+            title: String(localized: .Products.collectibles),
+            isRootScreen: false,
+            showMoreButton: false,
+            page: page
+        )
+        guard let product = SPAViewFactory.createView(configuration: configuration, flowState: flowState) else {
+            return
+        }
+
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = CollectiblesViewController(product: product, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
+        }
+    }
+
+    func showPocketCard(_ card: PocketCardViewModel) {
         guard let pocket = ProductPocketService.current else { return }
 
-        PocketCardOpening.open(card, origin: view, flowState: flowState, navigator: moduleNavigator, pocket: pocket)
+        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket).open(card)
     }
 
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm: @escaping () -> Void) {

@@ -21,10 +21,10 @@ extension TabBarSlot {
         return item
     }
 
-    func makeBarItem(badge: DSTabBarItem.Badge?, spaTabCount: Int, showsLabel: Bool) -> DSTabBarItem {
+    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> TabBarBarItem {
         switch self {
         case let .tab(item):
-            item.makeBarItem(badge: badge, showsLabel: showsLabel)
+            item.makeBarItem(showsLabel: showsLabel)
         case let .action(action):
             action.makeBarItem(spaTabCount: spaTabCount, showsLabel: showsLabel)
         }
@@ -32,34 +32,25 @@ extension TabBarSlot {
 }
 
 extension TabBarAction {
-    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> DSTabBarItem {
-        DSTabBarItem(
+    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> TabBarBarItem {
+        TabBarBarItem(
             content: content(spaTabCount: spaTabCount),
             title: showsLabel ? title : nil,
-            role: .action,
-            accessibilityLabel: accessibilityLabel(spaTabCount: spaTabCount),
-            showsGlassBackground: showsGlassBackground
+            accessibilityLabel: accessibilityLabel(spaTabCount: spaTabCount)
         )
     }
 }
 
 private extension TabBarAction {
-    var title: String? {
+    var title: LocalizedStringResource? {
         switch self {
         case .scan: nil
-        case .spaTabs: String(localized: .tabApps)
-        case .connectionStatus: String(localized: .tabNetwork)
+        case .spaTabs: .tabApps
+        case .connectionStatus: .tabNetwork
         }
     }
 
-    var showsGlassBackground: Bool {
-        switch self {
-        case .scan: true
-        default: false
-        }
-    }
-
-    func content(spaTabCount: Int) -> DSTabBarItem.Content {
+    func content(spaTabCount: Int) -> TabBarBarItem.Content {
         switch self {
         case .scan:
             .icon(UIImage.tabScan.withRenderingMode(.alwaysTemplate))
@@ -70,14 +61,14 @@ private extension TabBarAction {
         }
     }
 
-    func accessibilityLabel(spaTabCount: Int) -> String {
+    func accessibilityLabel(spaTabCount: Int) -> LocalizedStringResource {
         switch self {
         case .scan:
-            String(localized: .Products.productTabsAccessibilityScanner)
+            .Products.productTabsAccessibilityScanner
         case .spaTabs:
-            String(localized: .Products.productTabsAccessibilityOpenApps(spaTabCount))
+            .Products.productTabsAccessibilityOpenApps(spaTabCount)
         case .connectionStatus:
-            String(localized: .Common.connectionStatusAccessibilityLabel)
+            .Common.connectionStatusAccessibilityLabel
         }
     }
 }

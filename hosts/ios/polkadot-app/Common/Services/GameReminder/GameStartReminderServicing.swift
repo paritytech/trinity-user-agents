@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Individuality
 import Products
@@ -19,7 +20,8 @@ struct GameReminderStorageKeys {
     }
 }
 
+/// Rings or notifies at the game's start.
 protocol GameStartReminderServicing {
-    func scheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int)
+    func scheduleReminder(gameDate: Date, productId: ProductId)
     func cancelReminder()
 }

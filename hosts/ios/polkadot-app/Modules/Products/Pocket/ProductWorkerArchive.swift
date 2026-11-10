@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 @preconcurrency import Products
 
@@ -59,6 +60,6 @@ struct ProductWorkerArchive: PocketArchiveReading, Sendable {
     private func root(of contentId: ProductId) async -> URL? {
         if case .onDisk = content, let cached = cachedRoot(contentId) { return cached }
 
-        return try? await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        return try? await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
     }
 }

@@ -5,11 +5,245 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## [0.30.0] - 2026-11-09
+
+### Added
+
+- emit the core marker table for the web hosts (#1971)
+- report product notification shown and tapped to Sentry (#1874)
+- report product notification shown and tapped to Sentry (#1875)
+- say what each follow holding a slot is doing when a connection fills (#1961)
+- name accounts and host text through types (#1938)
+- publish the crate to crates.io (#1943)
+- let the test host approve a product's login request (#1956)
+- swipe down to close Pocket product cards (#1832)
+- move product and tab title with menu into the status (#1744)
+- inject and read a statement's channel, expiry and key (#1935)
+- pass deep links from the test host page to the product (#1932)
+- load products from the app bundle; funding-only workers; headless worker prompts (#1865)
+- read the core's marker table instead of a prefix list (#1907)
+- let one test decline a confirmation (#1926)
+- Docklet R2 implementation (#1883)
+- load verified Bulletin images in the core for native hosts (#1906)
+- open Pocket Collectibles inside a turning book (#1886)
+- one table decides which markers leave a device (#1797)
+- live preimage lookups, product storage seeding and networks on the test server (#1431)
+- remove a product chat room from its chat menu (#1562)
+
+### Changed
+
+- one WalletAccountHolder owns the signing host's wallet (#1952)
+- send game reminder events through the host capture (#1975)
+- run every network from its stack descriptor (#1944)
+- crypto networks, learned limits, retrying, payout and refunds for the funding screens (#1344)
+- name the signing account in legacy-account reviews (#1888)
+- remove Browse tab (#1951)
+- one HostGrantStore for kept grants (#1688)
+- show network status instead of browse in the docklet on every build (#1942)
+- carry createTransaction through a chain halt and report ChainUnavailable (#1807)
+- apply Rust guidance across the workspace (#1929)
+- keep RPC providers off the catalog and light-client chains running (#1793)
+- take every test network from its Trinity stack descriptor (#1885)
+- prepare and execute EVM contract calls (#1873)
+- funding discovery, quotes, progress and deposit instructions (#1318)
 
 ### Fixed
 
-- Allow `polkadotapp://` links through `system.navigateTo`, subject to `OpenUrl` permission. Reject external `polkadot:` and `dot:` links.
+- tuck the Docklet at once on a touch outside it (#1962)
+- wait out a lost connection for the current block (#1939)
+- open a Pocket card from its app when the product publishes no widget (#1955)
+- expand the Collectibles page only once the SPA is visible (#1920)
+- find contacts renamed to a full username (#1743)
+- give Sentry traces sample-rate a float value (#1823)
+- reconnect a product that navigates its whole document (#1895)
+- take a product's latest room name and icon when it registers again (#1717)
+
+## [0.29.0] - 2026-11-04
+
+### Added
+
+- open Pocket Collectibles with one tap on its card (#1859)
+- open collectibles with one tap on its card (#1855)
+- fade the pocket in place when collectibles open (#1834)
+- connect through truapi-provider, with a light-client backend (#1664)
+- reload spa and worker on archive changes (#1817)
+- load products from cache first (#1756)
+
+### Changed
+
+- @parity/truapi 0.29.0, @parity/truapi-host 0.29.0, @parity/truapi-provider 0.3.2 (#1879)
+- keep the Pocket collection in the core database (#1757)
+- encode dotNS contract calls with alloy sol! (#1845)
+- funding provider trait, reports and settlement (#1317)
+- typed ProductId across hosts (#1721)
+
+### Fixed
+
+- name a follow that has ended, and stop serving spent ids (#1665)
+- ask for cleanup when the core database cannot be opened (#1860)
+- Pocket card serves as app (#1858)
+- push an opened Pocket card onto the Wallet tab so the tab bar stays (#1617)
+- open Stash full screen from the Pocket Collectibles card (#1801)
+- present the pairing sheet over settings (#1835)
+- show the expanded pocket collectibles card in color (#1784)
+
+## [0.28.0] - 2026-10-31
+
+### Added
+
+- keep stacks as build copies and refresh them by policy (#1799)
+- listen for NFT payments over the statement store (#1791)
+- add web-gateway and evm-explorer service kinds (#1719)
+- state dotNS addresses in the descriptor (#1803)
+- revoke and refund NFT cheques (#1769)
+- deposit NFT cheques and serve the static receive key (#1710)
+- move the new chat button to the bottom right of Chats (#1775)
+- open a Pocket card's page with its link's page params (#1789)
+- create NFT receive keys and cheques (#1700)
+- host encrypted storage (#1780)
+- open a Pocket card's page with its link's page params (#1772)
+- report game reminder lifecycle to Sentry (#1678)
+- forward a Pocket link's other params to the card's page (#1771)
+- move the new chat button from the chats bar to a floating bottom right (#1746)
+- send device CPU, memory, storage, thermal and battery readings to Sentry (#1494)
+- send truapi chain and core logs to Sentry on Android and iOS (#1492)
+- let products scan codes with the app's scanner (#1383)
+- report the follows and the product connections a host is holding (#1690)
+- add async host-initiated calls (#1722)
+
+### Changed
+
+- @parity/truapi 0.28.0, @parity/truapi-host 0.28.0, @parity/trinity-stack 0.2.0 (#1829)
+- serve NFT purse rebalance_purse, transfer_item and operation status (#1696)
+- run the retry loops through one retry function (#1702)
+
+### Fixed
+
+- refuse a URL that is not ASCII (#1824)
+- keep the Pocket card face still on drags the page handles itself (#1792)
+- refuse a backslash in a URL (#1798)
+- stop issue-areas redeclaring github-script's glob (#1813)
+- let a player leave a product screen (#1706)
+- share a product link on correct network (#1786)
+- alarm localization (#1790)
+- widget resoluton fallback (#1773)
+- add the app version, build and device model to the iOS product UA (#1427)
+- restore chat action subscription (#1694)
+- resolve a bare product name passed to navigateTo (#1363)
+
+## [0.27.0] - 2026-10-28
+
+### Added
+
+- sign lite registration in the personhood signing context (#1478)
+- capture host process start telemetry (#1574)
+- refuse a request in a version the host does not know (#1650)
+- report game reminder lifecycle to Sentry (#1677)
+- expose native host telemetry to products (#1571)
+- show product icons and manifest descriptions in chats (#1497)
+- expose native host telemetry bootstrap (#1572)
+- one ProductConsent for account access (#1591)
+- add the polkadot mainnet network preset (#1456)
+- watch storage entries at best or finalized heads (#1597)
+
+### Changed
+
+- @parity/truapi 0.27.0, @parity/truapi-host 0.27.0 (#1742)
+- report the embedded truapi version in system.info (#1467)
+- introduce general-purpose extrinsic construction service (#1669)
+- name worker lifecycle requests (#1693)
+- serve NFT purse create_items and query_purse (#1656)
+- simplify error propagation (#1468)
+- create and list NFT purses (#1558)
+
+### Fixed
+
+- find dead chain sockets sooner and send calls waiting on a lost host connection (#1683)
+- keep the chat on its opening scroll target while product cards grow (#1704)
+- draw Pocket faces and chat widgets the same on iOS and Android (#1447)
+- retry native preimage lookups after a miss (#1673)
+- request location authorization from iOS when a product asks for it (#1679)
+- reload worker script if killed by OS (#1692)
+- daylight-saving related tests (#1689)
+- let animations run at 120 Hz on ProMotion iPhones (#1663)
+- move the open Pocket card instead of hiding it (#1614)
+- show a placeholder Humanity card on first launch (#1563)
+
+## [0.26.0] - 2026-10-21
+
+### Added
+
+- build scheduled durable transactions through submission policies (#1470)
+- fork endpoint overrides and an attest command for e2e suites (#1454)
+- let trusted products sign watermarked bytes with the user's account without a prompt (#1548)
+- serve top-ups, payments and balance to the core (#1337)
+- serve top-ups, payments and balance to the core (#1338)
+- resolve local-session usernames from dotNS (#1536)
+- funding sessions, host overlay, native bridge and test host (#1315)
+- add truapi-host stack commands (#1463)
+- add @parity/trinity-stack (#1461)
+- draw images in the Pocket face preview (#1445)
+- add the stack descriptor crate (#1455)
+- host-place Jollity in the chat list (#1417)
+- give each product runtime its own chain connection (#1418)
+- let a Pocket card's page hide or show the face above it (#1347)
+- Hot Reload, open a product from a dev server on the Mac (#1361)
+- username dotns lookup (#1289)
+- opt-in navigation transcript (TRUAPI_NAVIGATIONS_LOG) (#1162)
+
+### Changed
+
+- @parity/truapi 0.26.0, @parity/truapi-host 0.26.0, @parity/trinity-stack 0.1.0, @parity/ios-host 0.26.0, @parity/android-host 0.26.0 (#1583)
+- centralize runtime version conversion (#1421)
+- use a ProductId newtype for product identifiers (#1448)
+- SSO session and responder services (#1515)
+- give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
+- recheck balance access on each pushed balance and keep payment errors append-only (#1464)
+- account fixes  (#1488)
+- split ProductRuntimeHost into ProductConnection and HostSession (#1440)
+- sign personhood through PersonhoodSigner (#1435)
+- add a Motion device permission (#1002)
+- payments by id and balance through host platforms (#1314)
+- remove the raw proof context escape hatch (#554)
+- normalize runtime API versioned handlers (#1403)
+- remove dead-code suppressions (#1401)
+- let a granted PreimageSubmit cover each upload without a second prompt (#1093)
+- resolve usernames from DotNS on Asset Hub (#1390)
+
+### Fixed
+
+- ring the game reminder at the game's start (#1613)
+- clear the two build warnings in ProductBotProvider (#1615)
+- keep a Pocket card under the cards below it while it opens and closes (#1554)
+- leave the same 16 pt card margin as Android in the Pocket (#1483)
+- let trusted products use device permissions without a prompt (#1556)
+- report why a chain-head call or follow failed (#1590)
+- draw renderer images in chat cards (#1496)
+- list a product's chat rooms before its bot is built (#1420)
+- open a Pocket card without the host spinner (#1443)
+- scope chain follow intents and transaction operations per product (#1482)
+- chat requests resolution (#1539)
+- let product chat cards and their buttons fill the available width, as on iOS (#1480)
+- reuse the pooled People-chain connection for statement submits (#1408)
+- stop dropping dotNS pending claims after reservationDuration (#1419)
+- run examples that use optional chaining or nullish coalescing (#1489)
+- retry failed Pocket and dotNS lookups, stop blocking on unknown card removals (#1047)
+- build Bulletin submissions at or after the finalized anchor (#1442)
+- bring back the Pocket collectibles card, opening stash (#1377)
+- clear the nonminimal_bool clippy lint in the wake signal test (#1412)
+- draw Pocket card faces in Berlin Night (#1376)
+- bring back the Pocket collectibles card (#1362)
+- move a Pocket card to the top of its screen instead of sliding up a copy (#1423)
+- unblock the iOS unit tests and prefer the full entry's chat key (#1457)
+- drop contact search results whose username does not match the chain (#1436)
+- stop an execution's chain close invalidating shared connects (#1422)
+- allow polkadotapp navigation (#1416)
+- confirm cross-product signatures once per kind and owning product (#1286)
+- check username search results against DotNS (#1405)
+- anchor Bulletin preimage mortality to finalized blocks (#1397)
+- admit a proof context its own product's manifest grants the caller (#1354)
+- report the build number in the host version products see (#1173)
+- send the host theme to products on the iOS truapi runtime (#1279)
 
 ## [0.25.0] - 2026-10-13
 
@@ -25,6 +259,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.25.0, @parity/truapi-host 0.25.0, @parity/ios-host 0.25.0, @parity/android-host 0.25.0 (#1387)
+- backport 4 commits into hosts/android (#1367)
 - port generic durability service to rust (#1301)
 - describe chat messages with alt, and show product icons in iOS chats (#1340)
 - let a product set what a chat room shows below its messages (#1341)

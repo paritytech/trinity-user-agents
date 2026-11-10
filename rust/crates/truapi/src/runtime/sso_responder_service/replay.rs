@@ -12,7 +12,7 @@ use crate::runtime::sso_remote::DEFAULT_SSO_STATEMENT_EXPIRY_SECS;
 
 pub const MAX_REQUEST_LEDGER_ENTRIES: usize = 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SsoReplayScope {
 	pub root_public_key: [u8; 32],
 	pub peer_statement_account_id: [u8; 32],
@@ -27,6 +27,16 @@ impl SsoReplayScope {
 			peer_encryption_public_key: self.peer_encryption_public_key,
 		}
 	}
+}
+
+/// The request a ledger entry records.
+#[derive(Clone, Copy)]
+pub struct ReplayRequest<'a> {
+	/// Statement request id, unique per peer.
+	pub id: &'a str,
+	/// When the request statement expires, which bounds how long its entry
+	/// is kept.
+	pub expires_at_unix_secs: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -112,7 +122,7 @@ struct RequestLedgerEntry {
 	state: RequestLedgerState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 enum RequestLedgerState {
 	#[codec(index = 0)]
 	Started,
@@ -120,19 +130,25 @@ enum RequestLedgerState {
 	Completed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 enum VersionedRequestLedger {
 	#[codec(index = 0)]
 	V1(RequestLedger),
 }
 
+/// Run `execute` for a request at most once across redeliveries.
+///
+/// The request is acknowledged after the ledger accepts it and before it is
+/// marked as started. A refused request is never acknowledged, and one whose
+/// acknowledgement failed runs when it is delivered again. A duplicate is
+/// acknowledged but not run.
 pub async fn execute_once<T, F, Fut>(
 	storage: &(impl CoreStorage + ?Sized),
 	locks: &SsoReplayLocks,
 	scope: SsoReplayScope,
-	request_id: &str,
-	expires_at_unix_secs: Option<u64>,
+	request: ReplayRequest<'_>,
 	now_unix_secs: u64,
+	acknowledge: impl Future<Output = Result<(), String>>,
 	execute: F,
 ) -> Result<ReplayExecution<T>, String>
 where
@@ -143,19 +159,21 @@ where
 	let _guard = request_lock.lock().await;
 	let mut ledger = read_ledger(storage, scope).await?;
 	let previous_len = ledger.entries.len();
-	if ledger.contains(request_id, now_unix_secs) {
+	if ledger.contains(request.id, now_unix_secs) {
 		if ledger.entries.len() != previous_len {
 			write_ledger(storage, scope, &ledger).await?;
 		}
+		acknowledge.await?;
 		return Ok(ReplayExecution::Duplicate);
 	}
 
-	ledger.start(request_id.to_string(), expires_at_unix_secs, now_unix_secs)?;
+	ledger.start(request.id.to_string(), request.expires_at_unix_secs, now_unix_secs)?;
+	acknowledge.await?;
 	write_ledger(storage, scope, &ledger).await?;
 	// This durable marker prevents a crash from replaying arbitrary side effects.
 	// A crash after this write can drop the request or its response.
 	let output = execute().await?;
-	ledger.complete(request_id);
+	ledger.complete(request.id);
 	write_ledger(storage, scope, &ledger).await?;
 	Ok(ReplayExecution::Executed(output))
 }
@@ -195,324 +213,4 @@ async fn write_ledger(
 }
 
 #[cfg(test)]
-mod tests {
-	use std::sync::{
-		Arc,
-		atomic::{AtomicUsize, Ordering},
-	};
-
-	use super::*;
-	use crate::test_support::StubPlatform;
-
-	fn scope(root: u8, peer: u8, encryption: u8) -> SsoReplayScope {
-		SsoReplayScope {
-			root_public_key: [root; 32],
-			peer_statement_account_id: [peer; 32],
-			peer_encryption_public_key: [encryption; 32],
-		}
-	}
-
-	#[test]
-	fn ledger_prunes_expired_entries() {
-		let mut ledger = RequestLedger::default();
-		ledger.start("expired".to_string(), Some(99), 50).unwrap();
-		ledger.start("live".to_string(), Some(100), 50).unwrap();
-		ledger.start("unbounded".to_string(), None, 50).unwrap();
-
-		ledger.prune(100);
-
-		assert_eq!(
-			ledger,
-			RequestLedger {
-				entries: vec![
-					RequestLedgerEntry {
-						request_id: "live".to_string(),
-						expires_at_unix_secs: Some(100),
-						state: RequestLedgerState::Started,
-					},
-					RequestLedgerEntry {
-						request_id: "unbounded".to_string(),
-						expires_at_unix_secs: Some(50 + DEFAULT_SSO_STATEMENT_EXPIRY_SECS),
-						state: RequestLedgerState::Started,
-					},
-				],
-			}
-		);
-	}
-
-	#[test]
-	fn ledger_bounds_missing_and_distant_expiry() {
-		let mut ledger = RequestLedger::default();
-		ledger.start("missing".to_string(), None, 100).unwrap();
-		ledger.start("distant".to_string(), Some(u64::MAX), 100).unwrap();
-		ledger.start("near".to_string(), Some(200), 100).unwrap();
-
-		assert_eq!(
-			ledger,
-			RequestLedger {
-				entries: vec![
-					RequestLedgerEntry {
-						request_id: "missing".to_string(),
-						expires_at_unix_secs: Some(100 + DEFAULT_SSO_STATEMENT_EXPIRY_SECS),
-						state: RequestLedgerState::Started,
-					},
-					RequestLedgerEntry {
-						request_id: "distant".to_string(),
-						expires_at_unix_secs: Some(100 + DEFAULT_SSO_STATEMENT_EXPIRY_SECS),
-						state: RequestLedgerState::Started,
-					},
-					RequestLedgerEntry {
-						request_id: "near".to_string(),
-						expires_at_unix_secs: Some(200),
-						state: RequestLedgerState::Started,
-					},
-				],
-			}
-		);
-	}
-
-	#[test]
-	fn legacy_unbounded_entries_do_not_block_new_requests() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let request_scope = scope(1, 2, 3);
-			let ledger = RequestLedger {
-				entries: (0..MAX_REQUEST_LEDGER_ENTRIES)
-					.map(|index| RequestLedgerEntry {
-						request_id: format!("legacy-{index}"),
-						expires_at_unix_secs: None,
-						state: RequestLedgerState::Completed,
-					})
-					.collect(),
-			};
-			write_ledger(&platform, request_scope, &ledger).await.unwrap();
-
-			let result = execute_once(
-				&platform,
-				&SsoReplayLocks::default(),
-				request_scope,
-				"fresh",
-				Some(200),
-				100,
-				|| async { Ok::<_, String>("executed") },
-			)
-			.await
-			.unwrap();
-
-			assert_eq!(result, ReplayExecution::Executed("executed"));
-			assert_eq!(
-				read_ledger(&platform, request_scope).await.unwrap(),
-				RequestLedger {
-					entries: vec![RequestLedgerEntry {
-						request_id: "fresh".to_string(),
-						expires_at_unix_secs: Some(200),
-						state: RequestLedgerState::Completed,
-					}],
-				}
-			);
-		});
-	}
-
-	#[test]
-	fn ledger_rejects_a_new_entry_at_its_bound_without_eviction() {
-		let mut ledger = RequestLedger::default();
-		for index in 0..MAX_REQUEST_LEDGER_ENTRIES {
-			ledger.start(format!("request-{index}"), None, 0).unwrap();
-		}
-		let error = ledger.start("overflow".to_string(), None, 0).unwrap_err();
-
-		assert_eq!(ledger.entries.len(), MAX_REQUEST_LEDGER_ENTRIES);
-		assert!(ledger.contains("request-0", 0));
-		assert!(ledger.contains(&format!("request-{}", MAX_REQUEST_LEDGER_ENTRIES - 1), 0));
-		assert_eq!(error, "SSO replay ledger is full with 1024 unexpired requests");
-	}
-
-	#[test]
-	fn full_ledger_rejects_before_executing_the_request() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let request_scope = scope(1, 2, 3);
-			let mut ledger = RequestLedger::default();
-			for index in 0..MAX_REQUEST_LEDGER_ENTRIES {
-				ledger.start(format!("request-{index}"), None, 0).unwrap();
-			}
-			write_ledger(&platform, request_scope, &ledger).await.unwrap();
-			let executions = Arc::new(AtomicUsize::new(0));
-			let request_executions = executions.clone();
-
-			let error = execute_once(
-				&platform,
-				&SsoReplayLocks::default(),
-				request_scope,
-				"overflow",
-				None,
-				0,
-				move || async move {
-					request_executions.fetch_add(1, Ordering::SeqCst);
-					Ok::<_, String>(())
-				},
-			)
-			.await
-			.unwrap_err();
-
-			assert_eq!(error, "SSO replay ledger is full with 1024 unexpired requests");
-			assert_eq!(executions.load(Ordering::SeqCst), 0);
-		});
-	}
-
-	#[test]
-	fn completed_request_survives_store_reconstruction() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let locks = SsoReplayLocks::default();
-			let request_scope = scope(1, 2, 3);
-			let first = execute_once(
-				&platform,
-				&locks,
-				request_scope,
-				"request-1",
-				Some(200),
-				100,
-				|| async { Ok::<_, String>("executed") },
-			)
-			.await
-			.unwrap();
-			assert_eq!(first, ReplayExecution::Executed("executed"));
-			assert_eq!(
-				read_ledger(&platform, request_scope).await.unwrap(),
-				RequestLedger {
-					entries: vec![RequestLedgerEntry {
-						request_id: "request-1".to_string(),
-						expires_at_unix_secs: Some(200),
-						state: RequestLedgerState::Completed,
-					}],
-				}
-			);
-
-			let reconstructed_locks = SsoReplayLocks::default();
-			let replay = execute_once(
-				&platform,
-				&reconstructed_locks,
-				request_scope,
-				"request-1",
-				Some(200),
-				101,
-				|| async { Ok::<_, String>("executed twice") },
-			)
-			.await
-			.unwrap();
-
-			assert_eq!(replay, ReplayExecution::Duplicate);
-		});
-	}
-
-	#[test]
-	fn started_request_is_not_executed_after_store_reconstruction() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let request_scope = scope(1, 2, 3);
-			let failure = execute_once(
-				&platform,
-				&SsoReplayLocks::default(),
-				request_scope,
-				"request-1",
-				Some(200),
-				100,
-				|| async { Err::<(), _>("simulated process failure".to_string()) },
-			)
-			.await
-			.unwrap_err();
-			assert_eq!(failure, "simulated process failure");
-			assert_eq!(
-				read_ledger(&platform, request_scope).await.unwrap(),
-				RequestLedger {
-					entries: vec![RequestLedgerEntry {
-						request_id: "request-1".to_string(),
-						expires_at_unix_secs: Some(200),
-						state: RequestLedgerState::Started,
-					}],
-				}
-			);
-
-			let executions = Arc::new(AtomicUsize::new(0));
-			let replay_executions = executions.clone();
-			let replay = execute_once(
-				&platform,
-				&SsoReplayLocks::default(),
-				request_scope,
-				"request-1",
-				Some(200),
-				101,
-				move || async move {
-					replay_executions.fetch_add(1, Ordering::SeqCst);
-					Ok::<_, String>(())
-				},
-			)
-			.await
-			.unwrap();
-
-			assert_eq!(replay, ReplayExecution::Duplicate);
-			assert_eq!(executions.load(Ordering::SeqCst), 0);
-		});
-	}
-
-	#[test]
-	fn request_ids_are_isolated_by_root_and_peer() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let locks = SsoReplayLocks::default();
-			let executions = Arc::new(AtomicUsize::new(0));
-
-			for request_scope in [scope(1, 2, 3), scope(2, 2, 3), scope(1, 4, 3), scope(1, 2, 4)] {
-				let executions = executions.clone();
-				let outcome = execute_once(
-					&platform,
-					&locks,
-					request_scope,
-					"same-request-id",
-					Some(200),
-					100,
-					move || async move {
-						executions.fetch_add(1, Ordering::SeqCst);
-						Ok::<_, String>(())
-					},
-				)
-				.await
-				.unwrap();
-				assert_eq!(outcome, ReplayExecution::Executed(()));
-			}
-
-			assert_eq!(executions.load(Ordering::SeqCst), 4);
-		});
-	}
-
-	#[test]
-	fn duplicate_request_does_not_execute_side_effect_twice() {
-		futures::executor::block_on(async {
-			let platform = StubPlatform::default();
-			let locks = SsoReplayLocks::default();
-			let executions = Arc::new(AtomicUsize::new(0));
-
-			for expected in [ReplayExecution::Executed(()), ReplayExecution::Duplicate] {
-				let executions = executions.clone();
-				let actual = execute_once(
-					&platform,
-					&locks,
-					scope(1, 2, 3),
-					"request-1",
-					Some(200),
-					100,
-					move || async move {
-						executions.fetch_add(1, Ordering::SeqCst);
-						Ok::<_, String>(())
-					},
-				)
-				.await
-				.unwrap();
-				assert_eq!(actual, expected);
-			}
-
-			assert_eq!(executions.load(Ordering::SeqCst), 1);
-		});
-	}
-}
+mod tests;

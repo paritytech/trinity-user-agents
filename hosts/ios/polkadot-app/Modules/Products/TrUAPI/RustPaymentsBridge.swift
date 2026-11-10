@@ -43,8 +43,12 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                 if case .notFound = error as? IncomingPaymentError { return true }
                 return false
             },
-            notify: { [target] key, status in
-                target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
+            notify: { [target, logger] key, status in
+                do {
+                    try target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
+                } catch {
+                    logger.error("[truapi] top-up status could not be reported: \(error)")
+                }
             },
             pending: .detecting,
             abandoned: .notClaimed,
@@ -57,8 +61,12 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                     .eraseToAnyAsyncSequence()
             },
             isNotFound: { ($0 as? ExternalPaymentError) == .notFound },
-            notify: { [target] key, status in
-                target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
+            notify: { [target, logger] key, status in
+                do {
+                    try target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
+                } catch {
+                    logger.error("[truapi] payment status could not be reported: \(error)")
+                }
             },
             pending: .processing,
             abandoned: .failed(reason: Self.paymentDidNotComplete),
@@ -82,7 +90,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
 
     // MARK: - TopUpHostBridge
 
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws {
         guard request.into == nil else {
             throw TrUAPIHostPaymentTopUpError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -103,13 +111,13 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         topUps.follow(EngineStatusKey(productId: productId, id: request.id))
     }
 
-    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem? {
         try topUps.current(EngineStatusKey(productId: productId, id: id))
     }
 
     // MARK: - PaymentHostBridge
 
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws {
         guard request.from == nil else {
             throw HostPaymentError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -146,13 +154,13 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         paymentStatuses.follow(EngineStatusKey(productId: productId, id: request.id))
     }
 
-    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem? {
+    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem? {
         try paymentStatuses.current(EngineStatusKey(productId: productId, id: id))
     }
 
     // MARK: - BalanceHostBridge
 
-    func balance(productId _: String, purse: UInt32?) async throws -> U128 {
+    func balance(productId _: ProductId, purse: UInt32?) async throws -> U128 {
         guard purse == nil else {
             throw HostPaymentBalanceSubscribeError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -232,7 +240,7 @@ private final class RuntimeTarget: @unchecked Sendable {
 // MARK: - Engine status followers
 
 struct EngineStatusKey: Hashable, Sendable {
-    let productId: String
+    let productId: ProductId
     let id: Data
 }
 

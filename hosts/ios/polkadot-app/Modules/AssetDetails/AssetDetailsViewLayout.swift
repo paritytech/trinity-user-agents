@@ -7,35 +7,44 @@ struct AssetDetailsView: View {
     @State var viewModel: AssetDetailsViewModelProtocol
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
-    var overscroll: CGFloat = 0
-    var onCollapse: (() -> Void)?
+    var overscroll: DSOverscroll?
+    var isCardHidden: Bool = false
+    var showsOpenedFace: Bool = false
+    var onCardFrame: (CGRect) -> Void = { _ in }
 
     #if DEBUG
         /// Which holdings the coins draw, for reviewing the depiction. Debug builds only.
         @State private var testDataMode = CoinageTestDataMode.live
         /// Plain or varied coins, while the two are being compared. Debug builds only.
         @State private var coinSet = CoinageScene.CoinSet.shipped
+        /// The light and the coins held still by the dials, for looking at the depiction from a
+        /// chosen angle. Debug builds only.
+        @State private var fixedLight: CoinageTilt.Turn?
+        @State private var fixedLean: CoinageTilt.Turn?
     #endif
 
     init(
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
-        overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        overscroll: DSOverscroll? = nil,
+        isCardHidden: Bool = false,
+        showsOpenedFace: Bool = false,
+        onCardFrame: @escaping (CGRect) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
-        self.onCollapse = onCollapse
+        self.isCardHidden = isCardHidden
+        self.showsOpenedFace = showsOpenedFace
+        self.onCardFrame = onCardFrame
     }
 
     var body: some View {
         DSExpandableCardLayout(
             isExpanded: isExpanded,
             overscroll: overscroll,
-            onCollapse: onCollapse,
             card: { headerCard },
             details: { expandedBody }
         )
@@ -46,15 +55,14 @@ struct AssetDetailsView: View {
         if let balanceCardModel = viewModel.balanceCardModel {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
+                .opacity(isCardHidden ? 0 : 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onCardFrame($0) }
         }
     }
 
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsAccountBackupPending {
-                AccountBackupPendingView()
-            }
             if viewModel.showsBackupNotification {
                 backupCard()
             } else {
@@ -66,7 +74,9 @@ struct AssetDetailsView: View {
                 if viewModel.balanceCardModel != nil {
                     CoinageBalanceBreakdownView(
                         breakdown: testDataMode.applied(to: viewModel.coinageBreakdown ?? .testDataPlaceholder),
-                        coinSet: coinSet
+                        coinSet: coinSet,
+                        fixedLight: fixedLight,
+                        fixedLean: fixedLean
                     )
                 }
             #else
@@ -90,6 +100,8 @@ struct AssetDetailsView: View {
                 CoinageTestDataSwitch(mode: $testDataMode)
 
                 CoinageCoinSetSwitch(set: $coinSet)
+
+                CoinageLightPad(turn: $fixedLight, lean: $fixedLean)
             #endif
 
             #if TESTNET_FEATURE
@@ -104,7 +116,7 @@ struct AssetDetailsView: View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded || showsOpenedFace
         )
     }
 
@@ -211,23 +223,4 @@ struct AssetDetailsView: View {
             .disabled(viewModel.isTestnetTopUpInProgress)
         }
     #endif
-}
-
-/// Funding progress banner. Pinned by the wallet host while the asset card is expanded.
-struct AssetDetailsFundingBar: View {
-    @Bindable var viewModel: AssetDetailsViewModel
-
-    var body: some View {
-        if !viewModel.fundingStates.isEmpty {
-            AssetFundingStatusView(
-                states: $viewModel.fundingStates,
-                isExpanded: $viewModel.isFundingExpanded,
-                configuration: .fundingDigitalDollarConfiguration(
-                    onCompletedAction: viewModel.onFundingCompleted,
-                    onFailedAction: viewModel.onFundingFailed
-                )
-            )
-            .frame(maxWidth: .infinity)
-        }
-    }
 }

@@ -26,28 +26,28 @@ extension ChatRequest {
 
     struct AcceptOutgoing {
         let requestId: String
-        let messageExchangeMode: MessageExchangeMode
         let incomingRequest: ChatRequest.ValidatedRemoteModel?
+        /// Our device, advertised when two requests cross.
         let acceptorDevice: Chat.PeerDevice?
+        /// The acceptor's `DeviceChatAccepted`, stored in the same transaction as the acceptance.
+        let peerAcceptance: PeerAcceptance?
+    }
+
+    struct PeerAcceptance {
+        let device: Chat.PeerDevice
+        /// `nil` when the caller stores the message itself.
+        let message: Chat.RemoteMessage?
     }
 
     enum AcceptIncoming {
-        case existing(
-            requestId: String,
-            messageExchangeMode: MessageExchangeMode,
-            acceptorDevice: Chat.PeerDevice?
-        )
-        case new(
-            ChatRequest.ValidatedRemoteModel,
-            messageExchangeMode: MessageExchangeMode,
-            acceptorDevice: Chat.PeerDevice?
-        )
+        case existing(requestId: String, acceptorDevice: Chat.PeerDevice)
+        case new(ChatRequest.ValidatedRemoteModel, acceptorDevice: Chat.PeerDevice)
 
         var requestId: String {
             switch self {
-            case let .existing(requestId, _, _):
+            case let .existing(requestId, _):
                 requestId
-            case let .new(validatedRemoteModel, _, _):
+            case let .new(validatedRemoteModel, _):
                 validatedRemoteModel.requestId
             }
         }

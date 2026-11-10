@@ -11,8 +11,7 @@ final class IncomingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
 
     private let workQueue: DispatchQueue
     private let routeContexts: PeerSessionRoute.Contexts
-    private let submitter: StatementStoreSubmitting
-    private let signer: StatementStoreSigning
+    private let submitter: PeerSessionStatementSubmitting
     private let priorityProvider: PeerSessionPriorityProviding
     private let statementDataCoder: StatementDataCoding
     private let operationQueue: OperationQueue
@@ -23,8 +22,7 @@ final class IncomingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
     init(
         workQueue: DispatchQueue,
         routeContexts: PeerSessionRoute.Contexts,
-        submitter: StatementStoreSubmitting,
-        signer: StatementStoreSigning,
+        submitter: PeerSessionStatementSubmitting,
         priorityProvider: PeerSessionPriorityProviding,
         statementDataCoder: StatementDataCoding,
         operationQueue: OperationQueue,
@@ -33,7 +31,6 @@ final class IncomingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
         self.workQueue = workQueue
         self.routeContexts = routeContexts
         self.submitter = submitter
-        self.signer = signer
         self.priorityProvider = priorityProvider
         self.statementDataCoder = statementDataCoder
         self.operationQueue = operationQueue
@@ -63,14 +60,11 @@ extension IncomingMessageChannel: IncomingMessageChanneling {
         let expiry = priorityProvider.incrementedExpiry()
         let routeContext = routeContexts.context(for: route)
 
-        let builder = StatementSubmitParametersBuilder(
-            signer: signer,
-            logger: logger
-        )
-        .addTopic1(routeContext.sessionId.own)
-        .addChannel(routeContext.responseChannelId)
-        .addExpiry(expiry)
-        .addScaleEncodedPayload(scaleEncodedPayload)
+        let statement = UnsignedStatement()
+            .addTopic1(routeContext.sessionId.own)
+            .addChannel(routeContext.responseChannelId)
+            .addExpiry(expiry)
+            .addScaleEncodedPayload(scaleEncodedPayload)
 
         logger?.debug("Going to send \(responseCode) for request \(requestId) with priority \(expiry)")
 
@@ -79,7 +73,7 @@ extension IncomingMessageChannel: IncomingMessageChanneling {
         submissionTasks[route]?.cancel()
         submissionTasks[route] = Task { [weak self] in
             do {
-                try await self?.submitter.submitStatement(with: builder)
+                try await self?.submitter.submit(statement)
                 self?.logger?.debug("\(responseCode) sent for request \(requestId)")
             } catch {
                 guard !Task.isCancelled else { return }

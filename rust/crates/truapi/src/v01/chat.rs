@@ -29,11 +29,12 @@ pub struct HostChatCreateRoomResponse {
 }
 
 /// Chat room registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatCreateRoomError {
 	/// Not allowed.
 	PermissionDenied,
 	/// Catch-all.
+	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
@@ -41,7 +42,7 @@ pub enum HostChatCreateRoomError {
 }
 
 /// What a room shows below its messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The text field the user types messages into.
@@ -100,11 +101,12 @@ pub struct HostChatRegisterBotResponse {
 }
 
 /// Chat bot registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatRegisterBotError {
 	/// Not allowed.
 	PermissionDenied,
 	/// Catch-all.
+	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
@@ -112,7 +114,7 @@ pub enum HostChatRegisterBotError {
 }
 
 /// How the product participates in a chat room.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Copy)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomParticipation {
 	/// The product owns and hosts the room.
@@ -142,7 +144,7 @@ pub struct ChatAction {
 }
 
 /// Layout for action buttons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatActionLayout {
 	/// Buttons stacked vertically.
@@ -260,11 +262,12 @@ pub struct HostChatPostMessageResponse {
 }
 
 /// Chat message posting error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatPostMessageError {
 	/// Message exceeded size limit.
 	MessageTooLarge,
 	/// Catch-all.
+	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,

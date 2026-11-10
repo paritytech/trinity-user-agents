@@ -41,8 +41,9 @@ fun List<JsModifier>.toComposeModifier(): Modifier =
  * keeps an opaque background and a blended one never blends the surface it paints.
  *
  * The rest follows the frame: margin outside, then the surface, then the content's padding and size.
+ * A shaped background also clips the content to its shape, after the border so the border stays whole.
  */
-internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = sortedWith(
+internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (this + backgroundClips()).sortedWith(
     compareBy {
         when (it) {
             is JsModifier.Margin -> 0
@@ -58,6 +59,9 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = sortedWith
         }
     }
 )
+
+private fun List<JsModifier>.backgroundClips(): List<JsModifier> =
+    filterIsInstance<JsModifier.Background>().mapNotNull { it.shape }.map { JsModifier.Clip(it) }
 
 @Composable
 fun JsModifier.toComposeModifier(): Modifier = when (this) {

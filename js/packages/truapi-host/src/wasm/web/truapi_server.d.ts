@@ -19,3 +19,4 @@ export const setLogLevel: (level: string) => void;
 export const deriveProductAccountPublicKey: WasmModuleShape["deriveProductAccountPublicKey"];
 export const productAccountAddress: WasmModuleShape["productAccountAddress"];
 export const wireSchemaHash: () => string;
+export const parseProductId: WasmModuleShape["parseProductId"];

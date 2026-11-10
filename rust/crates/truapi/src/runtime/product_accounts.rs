@@ -19,13 +19,16 @@ use truapi::{
 use crate::host_logic::session::SessionInfo;
 use crate::{
 	host_internal::sso_messages::{ProductRequest, RingVrfError},
-	platform::ProductContext,
+	platform::{ProductContext, ProductId},
 };
 
-use super::authority::{
-	AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-	CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-	SignRawAuthorityRequest, StatementStoreAllowanceKey,
+use super::{
+	authority::{
+		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+	},
+	product_consent::ProductConsent,
 };
 
 /// The host's account authority as one product connection sees it: every call
@@ -51,7 +54,7 @@ impl ProductAccounts {
 	pub fn cache_product_subtree_for_test(
 		&self,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
 		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
@@ -62,16 +65,21 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.authority.product_subtree_public_key(cx, session, product_id).await
+	}
+
+	/// The host's account-access decisions and review prompts.
+	pub fn consent(&self) -> &ProductConsent {
+		self.authority.consent()
 	}
 
 	/// Whether resolving `product_id`'s subtree needs SSO and host consent.
 	pub async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> bool {
 		self.authority
 			.subtree_resolution_reaches_account_holder(session, product_id)
@@ -96,9 +104,7 @@ impl ProductAccounts {
 		cx: &CallContext,
 		request: HostAccountSignVrfRequest,
 	) -> Result<VrfSignature, AuthorityError> {
-		self.authority
-			.sign_vrf(cx, session, self.product.product_id.clone(), request)
-			.await
+		self.authority.sign_vrf(cx, session, &self.product.product_id, request).await
 	}
 
 	/// Sign a SCALE transaction payload for a product account.
@@ -188,15 +194,26 @@ impl ProductAccounts {
 		self.authority.ring_vrf_sign(cx, session, self.request(request)).await
 	}
 
+	/// Revision of the kept grants.
+	///
+	/// Read it before a review whose result must not outlive a reset.
+	pub fn grant_revision(&self) -> u64 {
+		self.authority.grant_revision()
+	}
+
 	/// Allocate resources for this product.
+	///
+	/// The grants are kept only while this host's grants are still at
+	/// `grant_revision`.
 	pub async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError> {
 		self.authority
-			.allocate_resources(cx, session, self.product.product_id.clone(), request)
+			.allocate_resources(cx, session, grant_revision, &self.product.product_id, request)
 			.await
 	}
 
@@ -207,7 +224,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		self.authority
-			.statement_store_allowance_key(cx, session, self.product.product_id.clone())
+			.statement_store_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 
@@ -230,7 +247,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.authority
-			.bulletin_allowance_key(cx, session, self.product.product_id.clone())
+			.bulletin_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 
@@ -241,7 +258,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.authority
-			.refresh_bulletin_allowance_key(cx, session, self.product.product_id.clone())
+			.refresh_bulletin_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 

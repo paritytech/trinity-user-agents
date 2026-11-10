@@ -17,12 +17,15 @@ final class AllowanceRecordMapper: CoreDataMapperProtocol {
             throw CoreDataMapperError.missingRequiredData(keyPath: #keyPath(CDAllowanceRecord.allocatedAt))
         }
         let kind = entity.kind == -1 ? nil : AllowanceRecord.Kind(persistenceCode: entity.kind)
+        // An unknown code comes from a newer build; product is never released by automatic cleanup.
+        let domain = AllowanceRecord.Domain(persistenceCode: entity.domain) ?? .product
         let priority = AllowanceRecord.Priority(rawValue: Int(entity.priorityLevel)) ?? .normal
         let latestRenewedPeriod = entity.latestRenewedPeriod == -1 ? nil : UInt32(entity.latestRenewedPeriod)
         return AllowanceRecord(
             accountId: accountId,
             allocatedAt: allocatedAt,
             kind: kind,
+            domain: domain,
             priority: priority,
             latestRenewedPeriod: latestRenewedPeriod
         )
@@ -37,6 +40,7 @@ final class AllowanceRecordMapper: CoreDataMapperProtocol {
         entity.accountId = model.accountId
         entity.allocatedAt = model.allocatedAt
         entity.kind = model.kind?.persistenceCode ?? -1
+        entity.domain = model.domain.persistenceCode
         entity.priorityLevel = Int16(model.priority.rawValue)
         entity.latestRenewedPeriod = model.latestRenewedPeriod.map { Int64($0) } ?? -1
     }

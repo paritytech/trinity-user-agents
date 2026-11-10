@@ -2,9 +2,11 @@
 //! incoming frames to the host trait implementation.
 //!
 //! For each method the emitter produces an `on_request` (or
-//! `on_subscription`) registration that:
-//! 1. SCALE-decodes the versioned request wrapper directly from the wire bytes (the wrapper's own
-//!    variant tag carries its version — there is no outer envelope).
+//! `on_subscription`) registration whose handler:
+//! 1. Receives the versioned request wrapper, which the framework has decoded from the wire bytes
+//!    (the wrapper's own variant tag carries its version, and there is no outer envelope). The
+//!    framework refuses a version newer than the wrapper's `Versioned::LATEST`, and answers bytes
+//!    that do not decode with `MalformedFrame`, before the handler runs.
 //! 2. Calls the host trait method (which receives the wrapper directly and matches `_::V1(inner)`
 //!    internally).
 //! 3. SCALE-encodes the versioned response wrapper back onto the wire.
@@ -134,12 +136,7 @@ fn build_module(api: &ApiDefinition, trait_def: &TraitDef) -> Result<String> {
 	Ok(code)
 }
 
-/// Emit the free functions that start a host-initiated subscription (a
-/// method the host calls into the product, e.g.
-/// `renderer_render`). Its `Start` payload is the request wrapper's own
-/// encoding, sent immediately rather than registered against the dispatcher;
-/// the product's `Receive`/`Interrupt` replies are routed back by
-/// `HostInitiatedSubscriptionManager`.
+/// Emit typed callers for methods the host invokes on the product.
 fn write_host_initiated_callers(
 	out: &mut String,
 	api: &ApiDefinition,
@@ -161,33 +158,48 @@ fn write_host_initiated_callers(
 				&request.type_ref,
 				&wrappers,
 			)?;
-			let ReturnType::Subscription { item, interrupt } = &method.return_type else {
-				bail!(
-					"Host-initiated method `{}` must return Subscription<Item, Interrupt>",
-					method.name
-				);
-			};
-			let item_name =
-				versioned_wrapper_root(&method.name, "host-initiated item", item, &wrappers)?;
-			let interrupt_path = error_type_path(
-				&module,
-				&versioned_error_wrapper(&method.name, interrupt, &wrappers)?,
-			);
+			let (response, error) = method.return_type.response_types();
+			let response_name = versioned_wrapper_root(
+				&method.name,
+				"host-initiated response",
+				response,
+				&wrappers,
+			)?;
+			let error_path =
+				error_type_path(&module, &versioned_error_wrapper(&method.name, error, &wrappers)?);
 			let wire_name = wire_method_name(&trait_def.name, &method.name);
 			let ids = const_name(&wire_name);
 			let request_path = format!("versioned::{module}::{request_name}");
-			let item_path = format!("versioned::{module}::{item_name}");
+			let response_path = format!("versioned::{module}::{response_name}");
+			match method.kind {
+				MethodKind::Request => writedoc!(
+					out,
+					r#"
 
-			writedoc!(
-				out,
-				r#"
+                /// Call the product's `{wire_name}` handler and await its response.
+                pub async fn {wire_name}(
+                    subscriptions: &HostInitiatedSubscriptionManager,
+                    transport: Arc<dyn Transport>,
+                    request: {request_path},
+                ) -> Result<{response_path}, truapi::CallError<{error_path}>> {{
+                    subscriptions.request(
+                        wire_table::{ids},
+                        parity_scale_codec::Encode::encode(&request),
+                        transport,
+                    ).await
+                }}
+                "#
+				),
+				MethodKind::Subscription => writedoc!(
+					out,
+					r#"
 
                 /// Start the host-initiated `{wire_name}` subscription.
                 pub fn {wire_name}(
                     subscriptions: &HostInitiatedSubscriptionManager,
                     transport: Arc<dyn Transport>,
                     request: {request_path},
-                ) -> truapi::Subscription<{item_path}, truapi::CallError<{interrupt_path}>> {{
+                ) -> truapi::Subscription<{response_path}, truapi::CallError<{error_path}>> {{
                     subscriptions.start(
                         wire_table::{ids},
                         parity_scale_codec::Encode::encode(&request),
@@ -195,7 +207,8 @@ fn write_host_initiated_callers(
                     )
                 }}
                 "#
-			)
+				),
+			}
 			.unwrap();
 		}
 	}
@@ -213,6 +226,7 @@ struct MethodEmission {
 	/// The versioned wrapper naming this method's request payload.
 	request_payload: String,
 	response_wrapper: Option<String>,
+	response_has_unit_payload: bool,
 	error_payload: String,
 	item_wrapper: Option<String>,
 	required_execution: Option<String>,
@@ -294,6 +308,9 @@ impl MethodEmission {
 			module: module.to_string(),
 			kind: method.kind,
 			request_payload,
+			response_has_unit_payload: response_wrapper
+				.as_deref()
+				.is_some_and(|wrapper| is_unit_payload_wrapper(api, wrapper)),
 			response_wrapper,
 			error_payload,
 			item_wrapper,
@@ -335,7 +352,7 @@ impl MethodEmission {
 			&formatdoc! {
 				r#"
                 let host = {host_expr};
-                dispatcher.on_request(wire_table::{ids}, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {{
+                dispatcher.on_request(wire_table::{ids}, move |request_id: String, request: {request_path}, cancel: truapi::CancellationToken| {{
                     let host = host.clone();
                     Box::pin(async move {{
                 "#
@@ -347,15 +364,6 @@ impl MethodEmission {
 			16,
 			&formatdoc! {
 				r#"
-                let request: {request_path} = match DecodeAll::decode_all(&mut &bytes[..]) {{
-                    Ok(request) => request,
-                    Err(err) => {{
-                        let error: truapi::CallError<{error_path}> =
-                            truapi::CallError::MalformedFrame {{ reason: err.to_string() }};
-                        let result: Result<{response_ty}, truapi::CallError<{error_path}>> = Err(error);
-                        return result.encode();
-                    }}
-                }};
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 "#
@@ -380,10 +388,21 @@ impl MethodEmission {
 
 		match &response_path {
 			Some(response_path) => {
-				write_indented(
-					out,
-					16,
-					&formatdoc! {
+				let reply = match self.response_has_unit_payload {
+					true => formatdoc! {
+						r#"
+                        let result: Result<{response_path}, truapi::CallError<{error_path}>> =
+                            match host.{method}(&cx, request).await {{
+                                Ok(_) => Ok(<{response_path} as truapi::versioned::FromLatest>::from_latest(
+                                    (),
+                                    target_version,
+                                )),
+                                Err(err) => Err(downgrade_call_error(err, target_version)),
+                            }};
+                        result.encode()
+                        "#
+					},
+					false => formatdoc! {
 						r#"
                         let result: Result<{response_path}, truapi::CallError<{error_path}>> =
                             match host.{method}(&cx, request).await {{
@@ -396,7 +415,8 @@ impl MethodEmission {
                         result.encode()
                         "#
 					},
-				);
+				};
+				write_indented(out, 16, &reply);
 			},
 			None => {
 				write_indented(
@@ -463,26 +483,9 @@ impl MethodEmission {
 			&formatdoc! {
 				r#"
                 let host = {host_expr};
-                dispatcher.on_subscription(wire_table::{ids}, move |request_id: String, bytes: Vec<u8>| {{
+                dispatcher.on_subscription(wire_table::{ids}, move |request_id: String, request: {start_ty}| {{
                     let host = host.clone();
                     Box::pin(async move {{
-                "#
-			},
-		);
-
-		write_indented(
-			out,
-			16,
-			&formatdoc! {
-				r#"
-                let request: {start_ty} = match DecodeAll::decode_all(&mut &bytes[..]) {{
-                    Ok(request) => request,
-                    Err(err) => {{
-                        let error: truapi::CallError<{error_ty}> =
-                            truapi::CallError::MalformedFrame {{ reason: err.to_string() }};
-                        return Err(subscription_interrupt(error));
-                    }}
-                }};
                 "#
 			},
 		);
@@ -552,7 +555,7 @@ impl MethodEmission {
 		if let Some(required) = self.required_execution.as_ref() {
 			writeln!(
 				out,
-				"        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::{required});"
+				"        let execution_allowed = dispatcher.allows_execution(ExecutableKind::{required});"
 			)
 			.unwrap();
 		}
@@ -568,6 +571,13 @@ fn versioned_error_wrapper(
 ) -> Result<String> {
 	let inner = call_error_inner(ty).unwrap_or(ty);
 	versioned_wrapper_root(method, "error", inner, versioned_wrappers).map(ToString::to_string)
+}
+
+/// Whether every version of a wrapper carries no payload, so its latest payload is unit.
+fn is_unit_payload_wrapper(api: &ApiDefinition, wrapper: &str) -> bool {
+	let Some(ty) = api.types.iter().find(|ty| ty.name == wrapper) else { return false };
+	let TypeDefKind::Enum(variants) = &ty.kind else { return false };
+	variants.iter().all(|variant| matches!(variant.fields, VariantFields::Unit))
 }
 
 fn versioned_wrapper_root<'a>(
@@ -633,11 +643,6 @@ fn write_header(out: &mut String) {
         //!
         //! Auto-generated by truapi-codegen. Do not edit.
 
-        // Responses are downgraded to the caller's version uniformly, including
-        // the methods whose payload is unit and for which the conversion is a
-        // no-op.
-        #![allow(clippy::unit_arg)]
-
         "#
 	)
 	.unwrap();
@@ -654,7 +659,7 @@ fn write_imports(out: &mut String, traits: &[&TraitDef]) {
 		r#"
         use std::sync::Arc;
 
-        use parity_scale_codec::{{DecodeAll, Encode}};
+        use parity_scale_codec::Encode;
 
         use truapi::CallContext;
         use truapi::api::{{
@@ -669,7 +674,7 @@ fn write_imports(out: &mut String, traits: &[&TraitDef]) {
 		r#"
         }};
         use truapi::versioned::{{self, Versioned}};
-        use crate::platform::ProductExecutionKind;
+        use crate::platform::ExecutableKind;
 
         use crate::dispatcher::Dispatcher;
         use crate::frame::downgrade_call_error;

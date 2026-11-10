@@ -123,6 +123,7 @@ dependencies {
     implementation(libs.coil.kt)
 
     implementation(project(":common"))
+    implementation(libs.sentry)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
@@ -130,7 +131,6 @@ dependencies {
     // Region features
     implementation(project(":feature:backup:impl"))
     implementation(project(":feature:xcm:impl"))
-    implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
     implementation(project(":feature:device-sync:impl"))
@@ -190,9 +190,13 @@ dependencies {
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
     testImplementation(libs.squareup.okhttp3.mockwebserver)
     testImplementation(libs.squareup.okhttp3.tls)
 
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
@@ -217,4 +221,18 @@ sentry {
     // Sentry only runs on debug/nightly; skip release so the plugin
     // doesn't try to process a variant that has no DSN/auth token
     ignoredBuildTypes.set(setOf("release"))
+
+    // The logcat rewrite would add every Log.w and Log.e in the app.
+    tracingInstrumentation {
+        logcat {
+            enabled.set(false)
+        }
+    }
 }
+
+// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+configurations.configureEach {
+    exclude(group = "io.sentry", module = "sentry-android-timber")
+}
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

@@ -17,21 +17,29 @@ class ChatDisplayGenerator @Inject constructor(
         username: String?,
         avatarUrl: String?,
     ): ChatDisplay {
-        val username = username ?: fallbackUsernameGenerator.generateFromAccountId(accountId)
+        val displayName = username ?: fallbackUsernameGenerator.generateFromAccountId(accountId)
 
-        val avatar = if (avatarUrl != null) {
-            ChatAvatar.Url(avatarUrl)
-        } else {
-            ChatAvatar.Account(username, themeSeed = accountId.value)
+        val avatar = when {
+            avatarUrl != null -> ChatAvatar.Url(avatarUrl)
+            username != null -> ChatAvatar.publicProfile(username, themeSeed = accountId.value)
+            else -> ChatAvatar.Account(displayName, themeSeed = accountId.value)
         }
 
-        return ChatDisplay(username, avatar)
+        return ChatDisplay(displayName, avatar)
     }
 
+    /** A room icon is drawn over the default letter, which stays if the icon cannot be loaded. */
     fun applyRoomMetadata(roomMetadata: RoomMetadata, defaultDisplay: ChatDisplay): ChatDisplay {
         val name = roomMetadata.name ?: defaultDisplay.name
-        val avatar = roomMetadata.icon?.let(ChatAvatar::Url) ?: defaultDisplay.avatar
+        val avatar = roomMetadata.icon
+            ?.let { ChatAvatar.Url(it, placeholder = defaultDisplay.avatar.letter()) }
+            ?: defaultDisplay.avatar
 
         return ChatDisplay(name, avatar)
+    }
+
+    private fun ChatAvatar.letter(): ChatAvatar.Account? = when (this) {
+        is ChatAvatar.Account -> this
+        is ChatAvatar.Url -> placeholder
     }
 }

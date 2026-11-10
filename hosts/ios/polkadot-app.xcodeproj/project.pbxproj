@@ -25,6 +25,7 @@
 		0CA60CC22FB20D4D008817A9 /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA60CC12FB20D4D008817A9 /* BulletinChain */; };
 		0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0CEC59AB2F08EBFC0009CC37 /* FoundationExt */; };
 		2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */ = {isa = PBXBuildFile; productRef = 2D0A51D62FFE94810095ECAE /* BackgroundExecution */; };
+		5DE11A012FF0000000000001 /* StatementDelivery in Frameworks */ = {isa = PBXBuildFile; productRef = 5DE11A022FF0000000000002 /* StatementDelivery */; };
 		A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */ = {isa = PBXBuildFile; productRef = A526CB2F2EBBA06D00D2987B /* PolkadotUI */; };
 		A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF652F45ECB70066D722 /* StructuredConcurrency */; };
 		A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF672F45ED940066D722 /* StructuredConcurrency */; };
@@ -363,6 +364,7 @@
 				CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */,
 				CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */,
 				2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */,
+				5DE11A012FF0000000000001 /* StatementDelivery in Frameworks */,
 				B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -518,6 +520,7 @@
 				CC0CC0202FBA000100CCAA02 /* ChainRegistry */,
 				CC0CC0602FBA000100CCAA06 /* EventCenter */,
 				2D0A51D62FFE94810095ECAE /* BackgroundExecution */,
+				5DE11A022FF0000000000002 /* StatementDelivery */,
 				B1A2C3D42F8A000000000002 /* BlurHash */,
 				A5F553C23066BB820077443B /* IssueMonitoring */,
 			);
@@ -1851,6 +1854,10 @@
 		2D0A51D62FFE94810095ECAE /* BackgroundExecution */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BackgroundExecution;
+		};
+		5DE11A022FF0000000000002 /* StatementDelivery */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StatementDelivery;
 		};
 		A526CB2F2EBBA06D00D2987B /* PolkadotUI */ = {
 			isa = XCSwiftPackageProductDependency;

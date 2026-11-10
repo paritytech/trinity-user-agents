@@ -48,7 +48,7 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionAccountTitle),
                 String(
                     localized: .Products.permissionBodyAccountAccess(
-                        targetProductId: targetProductId
+                        targetProductId: targetProductId.rawValue
                     )
                 )
             )
@@ -81,6 +81,11 @@ private extension AppPermissionsViewModelFactory {
             (
                 String(localized: .Products.appPermissionUserIdentityTitle),
                 String(localized: .Products.permissionBodyUserIdentityAccess)
+            )
+        case let .nftPurseRead(ownerProductId):
+            (
+                String(localized: .Products.appPermissionNftPursesTitle),
+                NftPurseReadCopy.description(ownerProductId: ownerProductId)
             )
         }
     }

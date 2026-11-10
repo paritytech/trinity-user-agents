@@ -4,7 +4,9 @@
 // the server can bundle once and serve every test: the fixture varies the
 // query string, not the bundle.
 
+import { asProductId } from "@parity/truapi";
 import { startTestHost } from "./host-page.js";
+import { productUrlFor } from "./host-page-url.js";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 import type { DevAccount, DevAccountName } from "./dev-accounts.js";
 
@@ -40,15 +42,18 @@ const accounts = params
     };
   });
 const login = params.get("login");
-const productId = params.get("productId") ?? undefined;
+const rawProductId = params.get("productId");
+const productId = rawProductId === null ? undefined : asProductId(rawProductId);
 const rawRuntimeConfig = params.get("runtimeConfig");
 const topology = params.get("topology");
 const allowances = params.get("allowances");
 const withheld = params.get("withheld");
 const logLevel = params.get("logLevel") ?? undefined;
+const rawStorage = params.get("storage");
 
 void startTestHost({
-  productUrl,
+  // A deep link on the host page reaches the product, as on a real host.
+  productUrl: productUrlFor(productUrl, window.location),
   container,
   mock: rawMock ? (JSON.parse(rawMock) as MockHostConfig) : undefined,
   runtimeConfig: {
@@ -63,6 +68,9 @@ void startTestHost({
   allowances: allowances === "chain" ? "chain" : "granted",
   withheldResources: withheld ? withheld.split(",").filter(Boolean) : undefined,
   logLevel,
+  productStorage: rawStorage
+    ? (JSON.parse(rawStorage) as Record<string, string>)
+    : undefined,
 }).catch((error: unknown) => {
   // Surface boot failures in the page rather than only the console: a fixture
   // that times out waiting for the control surface should be able to read why.

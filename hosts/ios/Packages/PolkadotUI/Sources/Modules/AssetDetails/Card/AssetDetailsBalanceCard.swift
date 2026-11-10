@@ -37,25 +37,22 @@ public struct AssetDetailsBalanceCard: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 5) {
-                    if let logo = viewModel.logo {
-                        Image(uiImage: logo)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: Constants.logoHeight)
-                    } else {
-                        Image(.iconCashLogo)
-                    }
+                    Image(uiImage: viewModel.logo ?? .cashLogo)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: Constants.logoHeight)
 
                     Spacer()
 
-                    if !isExpanded, let balance = viewModel.balance {
+                    if let balance = viewModel.balance {
                         DSAmount(amount: balance, symbol: viewModel.symbol, typography: .titleLarge)
                             .foregroundStyle(Color.fgStaticWhite)
-                            .transition(.opacity)
+                            .opacity(isExpanded ? 0 : 1)
+                            .animation(.easeInOut, value: isExpanded)
+                            .accessibilityHidden(isExpanded)
                             .accessibilityId(AccessibilityID.Wallet.cashCardBalance)
                     }
                 }
-                .animation(.easeInOut, value: isExpanded)
                 Spacer()
 
                 if isUpdating {
@@ -90,7 +87,7 @@ public struct AssetDetailsBalanceCard: View {
                 }
             }
             .foregroundStyle(Color.white)
-            .padding(.top, 18)
+            .padding(.top, DSSpacings.mediumIncreased)
             .padding(.bottom, DSSpacings.mediumIncreased)
             .padding(.leading, DSSpacings.large)
             .padding(.trailing, 22)
@@ -116,7 +113,7 @@ public extension AssetDetailsBalanceCard {
 
 private extension AssetDetailsBalanceCard {
     enum Constants {
-        static let logoHeight: CGFloat = 35
+        static let logoHeight: CGFloat = 32
         static let wallet = WalletLeatherImage.cashWallet
     }
 }

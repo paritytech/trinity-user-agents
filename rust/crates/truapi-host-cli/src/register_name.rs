@@ -1,7 +1,7 @@
 //! Full-person username registration through `DotnsGateway.register_name`.
 //!
 //! Builds and submits the v5 general transaction on Asset Hub. The signer's
-//! RFC-0022 `uid.<suffix>` account is the call's `who`. The full-person
+//! RFC-0028 `peopl.<suffix>` account 0 is the call's `who`. The full-person
 //! bandersnatch key proves People-ring membership bound to the dotNS gateway
 //! context. A fresh
 //! sr25519 signature over the inherited-implication digest travels in the
@@ -13,31 +13,36 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use subxt::{tx::Signer, utils::H256};
 use tracing::debug;
 use truapi::{
+	Sr25519Signer,
+	chain::EvmContractCaller,
 	host_logic::{
 		dotns_gateway::{
-			DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN,
-			build_register_proof_message, encode_register_full_name_extra,
-			encode_register_name_call, is_dotted_lite_username, is_registrable_full_label,
+			AsDotnsGatewayExtension, ClaimBlocker, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,
+			MIN_PERSON_LABEL_LEN, RegisterNameCallArgs, account_to_h160,
+			build_register_proof_message, expire_reservation_call, is_dotted_lite_username,
+			is_registrable_full_label,
 		},
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-		},
+		product_account::{derive_full_person_ring_vrf_entropy, derive_identity_keypair},
 	},
 	statement_allowance::{
-		self as alloc, CollectionCandidate, FixedPersonhoodSigner, PersonhoodSigner,
-		collection::PersonhoodCollection, extension, extension::AS_DOTNS_GATEWAY, extrinsic, ring,
+		self as alloc, CollectionCandidate, ExtrinsicTarget, FixedPersonhoodSigner,
+		PersonhoodSigner, collection::PersonhoodCollection, extension::Metadata, ring,
 		rpc::RpcClient,
 	},
 };
 
-use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
+use crate::{
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::Stack,
+};
 
 /// Inputs for one full-person registration run.
 pub struct RegisterNameConfig {
 	/// Network preset providing the People and Asset Hub endpoints.
-	pub network: NetworkConfig,
+	pub network: Stack,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Base label to register: lowercase ASCII letters only (`is_person_label`
@@ -67,16 +72,19 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	{
 		bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
 	}
-	let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+	let who = derive_identity_keypair(&config.entropy, config.network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
-	let mut reader = AssetHubReader::connect(config.network.asset_hub_ws).await?;
-	// Registered names (any flow) fail only at submission otherwise; a pending
-	// reservation of `label` is not a mint and stays claimable.
+	let mut reader = AssetHubReader::connect(&config.network).await?;
+	// Registered names (any flow) fail only at submission otherwise.
 	if !reader.label_available(label).await? {
 		bail!("label {label:?} is already registered on dotNS and cannot be registered again");
 	}
+	// A claim the reservation queue refuses reverts in the gateway call, and the
+	// alias wait below would only time out, so a name another account holds
+	// fails here, before the proof is built.
+	dead_reservations_to_clear(&mut reader, label, &who_public).await?;
 	// The gateway rejects a second registration for the account and a lite
 	// link the account does not own; both are storage reads, so ask first.
 	if reader.account_alias(&who_public).await?.is_some() {
@@ -104,13 +112,17 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
-	let people_rpc = RpcClient::connect(config.network.people_ws)
-		.await
-		.context("connect People RPC")?;
+	let chains = CliChainProvider::new(&config.network);
+	let people_location = chains.location(config.network.genesis().people);
+	let people_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().people)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
-	let full_entropy =
-		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix);
+	let full_entropy = derive_full_person_ring_vrf_entropy(&config.entropy, config.network.tld());
 	let candidates =
 		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
 	let signer = FixedPersonhoodSigner::new(&candidates).await?;
@@ -148,54 +160,35 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	.await?;
 	debug!(ring_index, revision, members = members.len(), "full-person ring resolved");
 
-	// Reading Asset Hub metadata, which asserts the RegisterFullName shape.
-	// Then the chain state and the exponent the subscriber verifies proofs
-	// against.
-	let ah_rpc = RpcClient::connect(config.network.asset_hub_ws)
-		.await
-		.context("connect Asset Hub RPC")?;
+	// Reading Asset Hub metadata and the exponent the subscriber verifies
+	// proofs against.
+	let asset_hub_location = chains.location(config.network.genesis().asset_hub);
+	let ah_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.genesis().asset_hub)
+			.await
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
+	);
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
-	let chain_state = extension::ChainState {
-		// A restricted-origin general transaction. RestrictOrigins carries true.
-		restrict_origins: true,
-		..alloc::fetch_chain_state(&ah_rpc).await?
-	};
-	let info_variant = ah_metadata.dotns_register_full_name_variant()?;
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)
 			.await?;
 
-	let call_indices = ah_metadata.call_indices("DotnsGateway", "register_name")?;
-	let call = encode_register_name_call(call_indices, &who_public, config.label.as_bytes(), &link);
-
-	// Signing the inherited-implication digest with sr25519. The signature is
-	// carried in the AsDotnsGateway extension.
-	let digest = extension::build_proof_message_after_extension(
-		&ah_metadata,
-		&call,
-		&chain_state,
-		AS_DOTNS_GATEWAY,
-	)?;
-	let signature =
-		who.secret.sign_simple(SR25519_SIGNING_CONTEXT, &digest, &who.public).to_bytes();
-
 	// Building the ring-VRF membership proof. It is bound to the gateway context
-	// and the registration intent.
+	// and the registration intent, not to the extrinsic, so it is built once.
 	let proof_message = build_register_proof_message(&who_public, config.label.as_bytes(), &link);
-	let ring_proof = signer.prove(
-		&ring::RingParams {
-			collection: PersonhoodCollection::People,
-			members,
-			exponent,
-			ring_index,
-			block_hash: at,
-		},
-		&DOTNS_GATEWAY_CONTEXT,
-		&proof_message,
-	)?;
+	let ring_params = ring::RingParams {
+		collection: PersonhoodCollection::People,
+		members,
+		exponent,
+		ring_index,
+		block_hash: at,
+	};
+	let ring_proof = signer.prove(&ring_params, &DOTNS_GATEWAY_CONTEXT, &proof_message)?;
 
 	// Asset Hub only verifies proofs against root revisions it has imported
-	// from People; wait for this one before submitting.
+	// from People; wait for this one before building, so the extrinsic is born
+	// after the wait.
 	alloc::pgas::await_ring_revision(
 		&ah_rpc,
 		&ah_metadata,
@@ -206,22 +199,47 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	.await
 	.context("wait for Asset Hub to import the People ring root revision")?;
 
-	let extra = encode_register_full_name_extra(
-		info_variant,
-		&ring_proof,
-		ring_index,
-		revision,
-		&signature,
-	);
-	let extrinsic = extrinsic::build_unsigned_extrinsic_with_extra(
-		&ah_metadata,
-		&chain_state,
-		&call,
-		AS_DOTNS_GATEWAY,
-		&extra,
-	)?;
+	let extrinsics = crate::extrinsic_service(&config.network);
+	let asset_hub = ExtrinsicTarget {
+		extrinsics: &extrinsics,
+		genesis: H256(config.network.genesis().asset_hub),
+	};
+	let who_signer = Sr25519Signer::from_keypair(&who);
+	// Reservations in front of the claim can expire during the proof and the
+	// revision wait, so the queue is read again right before the claim. Too many
+	// expired or emptied ones are cleared first.
+	if let Some(dead) = dead_reservations_to_clear(&mut reader, label, &who_public).await? {
+		println!("REGISTER_QUEUE_BLOCKED label={label} dead={dead}");
+		clear_reservation_queue(QueueClear {
+			reader: &mut reader,
+			label,
+			who: &who_signer,
+			contracts: &crate::asset_hub_contracts(&config.network),
+			asset_hub_rpc: &ah_rpc,
+			asset_hub_metadata: &ah_metadata,
+			asset_hub,
+			people_rpc: &people_rpc,
+			people_metadata: &people_metadata,
+			signer: &signer,
+			ring: &ring_params,
+		})
+		.await?;
+	}
 
-	let block = ah_rpc.submit_and_watch(&extrinsic).await?;
+	// The account signs the implication with sr25519; the signature travels
+	// next to the ring proof in the AsDotnsGateway value.
+	let authorizer = AsDotnsGatewayExtension { ring_proof, ring_index, revision, who: &who_signer };
+	let call =
+		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
+	let extrinsic = extrinsics
+		.build_mortal_extrinsic(H256(config.network.genesis().asset_hub))
+		.with_call_args("DotnsGateway", "register_name", call)
+		.with_extension(authorizer)
+		.with_restrict_origins(true)
+		.build()
+		.await?;
+
+	let block = ah_rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await?;
 	println!("REGISTER_SUBMITTED label={} block={block}", config.label);
 
 	wait_for_alias(&reader, &who_public).await?;
@@ -235,6 +253,131 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 			.unwrap_or("<pending>")
 	);
 	Ok(())
+}
+
+/// What clearing a name's reservation queue before the claim needs.
+struct QueueClear<'a> {
+	reader: &'a mut AssetHubReader,
+	label: &'a str,
+	/// The claiming account, which signs the clearing call and pays its fee.
+	who: &'a Sr25519Signer,
+	/// Simulates and sends the clearing call on Asset Hub.
+	contracts: &'a EvmContractCaller,
+	asset_hub_rpc: &'a RpcClient,
+	asset_hub_metadata: &'a Metadata,
+	asset_hub: ExtrinsicTarget<'a>,
+	people_rpc: &'a RpcClient,
+	people_metadata: &'a Metadata,
+	signer: &'a dyn PersonhoodSigner,
+	/// The account's People ring, which a PGAS claim proves membership of.
+	ring: &'a ring::RingParams,
+}
+
+/// Clears the expired and emptied reservations in front of the claim with a
+/// `DotnsPopController.expireReservation(label)` signed by the claiming account.
+///
+/// A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` of them and a
+/// reverted claim keeps none of that, so a longer run has to be cleared first.
+/// The fee and the storage deposit are paid in PGAS. The account claims PGAS
+/// first when it holds less than one claim's worth, or when the dry-run fails
+/// because the account cannot fund the storage deposit.
+async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
+	let QueueClear {
+		reader,
+		label,
+		who,
+		contracts,
+		asset_hub_rpc,
+		asset_hub_metadata,
+		asset_hub,
+		people_rpc,
+		people_metadata,
+		signer,
+		ring,
+	} = clear;
+	let who_public = who.account_id().0;
+	let controller = reader.pop_controller();
+	let input = expire_reservation_call(label);
+	let call_name = format!("DotnsPopController.expireReservation({label:?})");
+
+	let unfunded_deposit =
+		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?;
+	let dry_run = contracts.dry_run(who, &controller, &input).await;
+	// A balance below one claim may not cover the fee, and a failed call would
+	// leave the next run in the same place, so only a full claim's worth skips it.
+	let needs_pgas = match &dry_run {
+		Ok(_) => {
+			!alloc::pgas::holds_a_full_claim(asset_hub_rpc, asset_hub_metadata, &who_public).await?
+		},
+		Err(error) if error.is_module_error(unfunded_deposit) => true,
+		Err(error) => bail!("{call_name} fails in a dry-run: {error}"),
+	};
+	let prepared = if needs_pgas {
+		let network_suffix = alloc::slot::read_network_suffix(asset_hub_rpc).await?;
+		let claimed = alloc::pgas::claim_pgas(alloc::pgas::PgasClaim {
+			asset_hub_rpc,
+			asset_hub_metadata,
+			asset_hub_target: asset_hub,
+			people_rpc,
+			people_metadata,
+			signer,
+			network_suffix: &network_suffix,
+			target: &who_public,
+			ring,
+		})
+		.await
+		.context("claim PGAS for the reservation queue clearing")?;
+		println!("REGISTER_PGAS_CLAIMED block={}", claimed.block_hash);
+		// The claim took blocks, so the limits come from a dry-run of the funded account.
+		contracts
+			.dry_run(who, &controller, &input)
+			.await
+			.with_context(|| format!("{call_name} fails in a dry-run"))?
+	} else {
+		dry_run.with_context(|| format!("{call_name} fails in a dry-run"))?
+	};
+	prepared
+		.execute_until_finalized()
+		.await
+		.with_context(|| format!("send {call_name}"))?;
+
+	// The call can succeed and still leave a run longer than a claim clears, if
+	// new reservations expired meanwhile, so read the queue again.
+	match reader.claim_blocker(label, &account_to_h160(&who_public)).await? {
+		None => {
+			println!("REGISTER_QUEUE_CLEARED label={label}");
+			Ok(())
+		},
+		Some(ClaimBlocker::HeldBy(holder)) => Err(held_by_other(label, &holder)),
+		Some(ClaimBlocker::ClearFirst { dead }) => bail!(
+			"{call_name} went through but {dead} expired or emptied reservations are still in \
+			 front of this claim"
+		),
+	}
+}
+
+/// The expired or emptied reservations to clear before `who` can claim `label`,
+/// or `None` when the claim clears them itself. Fails when another account's
+/// reservation holds the name.
+async fn dead_reservations_to_clear(
+	reader: &mut AssetHubReader,
+	label: &str,
+	who: &[u8; 32],
+) -> Result<Option<u64>> {
+	match reader.claim_blocker(label, &account_to_h160(who)).await? {
+		None => Ok(None),
+		Some(ClaimBlocker::HeldBy(holder)) => Err(held_by_other(label, &holder)),
+		Some(ClaimBlocker::ClearFirst { dead }) => Ok(Some(dead)),
+	}
+}
+
+/// The refusal for a name whose first active reservation is another account's.
+fn held_by_other(label: &str, holder: &[u8; 20]) -> anyhow::Error {
+	anyhow::anyhow!(
+		"label {label:?} is reserved for 0x{} in its reservation queue; only that account can \
+		 claim it",
+		hex::encode(holder)
+	)
 }
 
 /// Resolves the `Link` argument. An explicit chat key wins, then an explicit

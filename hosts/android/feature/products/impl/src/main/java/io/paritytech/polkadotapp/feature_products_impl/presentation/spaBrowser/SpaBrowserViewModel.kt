@@ -1,36 +1,42 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
 import android.webkit.WebView
-import androidx.core.net.toUri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -43,44 +49,49 @@ class SpaBrowserViewModel @Inject constructor(
     private val productSessionController: ProductSessionController,
     private val interactor: SpaBrowserInteractor,
     private val router: ProductsRouter,
-    private val dotNsTldProvider: DotNsTldProvider,
     savedStateHandle: SavedStateHandle,
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
+    private val openedFor = savedStateHandle.get<SpaBrowserPayload>(SpaBrowserPayload::class.java.name)
+
+    private val closeAppRequested = MutableStateFlow(false)
+
+    private var openChatJob: Job? = null
+
+    // activeTab still names the previous product until the controller opens this payload's tab.
+    private val activeTab: Flow<BrowserSessionInfo?> = productSessionController.activeTab
+        .dropWhile { tab -> !isOpenedTab(tab) }
+
     // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
     // into this stream, so progress and page state are views of it rather than separate truths.
-    private val pageLoad: Flow<PageLoad> = productSessionController.activeTab
-        .map { tab ->
-            // Waits rather than guesses: a tab classified before the TLD lands would stick as
-            // "not a product" for its whole lifetime.
-            tab?.url?.toUri()?.let { ProductId.fromUrl(it, dotNsTldProvider.getTldRetrying()).getOrNull() }
-        }
+    private val pageLoad: Flow<PageLoad> = activeTab
+        .map { tab -> productIdOf(tab?.url) }
         .distinctUntilChanged()
         .flatMapLatest { productId ->
             if (productId == null) {
                 flowOf<PageLoad>(PageLoad.NotAProduct)
             } else {
                 flow {
-                    emit(PageLoad.Resolving)
+                    emit(PageLoad.Resolving(productId))
 
                     interactor.resolveProduct(productId).fold(
                         onSuccess = { resolved ->
-                            emitAll(productSessionController.loadProgress.map { PageLoad.Serving(resolved, it) })
+                            emitAll(productSessionController.loadProgress.map { PageLoad.Serving(productId, resolved, it) })
                         },
-                        onFailure = { emit(PageLoad.Failed(it.toProductResolutionError())) },
+                        onFailure = { emit(PageLoad.Failed(productId, it.toProductResolutionError())) },
                     )
                 }
             }
         }
+        .onStart { emit(PageLoad.NotAProduct) }
 
     override val state: StateFlow<SpaBrowserUiState> = combine(
-        productSessionController.activeTab,
+        activeTab,
         pageLoad,
     ) { info, load ->
         SpaBrowserUiState(
-            title = info?.title,
-            subtitle = info?.host,
+            statusBar = ProductStatusBarUiState(title = info?.title.orEmpty(), menu = load.toMenu()),
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
@@ -90,13 +101,13 @@ class SpaBrowserViewModel @Inject constructor(
     init {
         // With no payload (opened from the tab bar) the active tab is already selected — just make
         // sure its WebView is live.
-        when (val payload = savedStateHandle.get<SpaBrowserPayload>(SpaBrowserPayload::class.java.name)) {
-            is SpaBrowserPayload.ByProductId -> productSessionController.openProduct(ProductId.fromStoredValue(payload.productId))
+        when (val payload = openedFor) {
+            is SpaBrowserPayload.ByProductId -> productSessionController.openProduct(payload.productId)
             is SpaBrowserPayload.ByUrl -> productSessionController.openUrl(payload.url)
             null -> productSessionController.ensureActiveLive()
         }
 
-        quitOnLastTabClosed()
+        leaveOnceClosed()
     }
 
     // The visit history spans one stay in the browser: however the screen was left, the next tab
@@ -122,41 +133,82 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
-    private fun quitOnLastTabClosed() {
+    override fun onProceedInChatClick() {
+        val product = state.value.statusBar?.menu as? ProductMenu.Product ?: return
+        if (!product.servesChat || openChatJob?.isActive == true) return
+
+        openChatJob = launch {
+            interactor.installChatAndAwaitRoomCreated(product.id)
+                .onSuccess(router::openChat)
+                .logFailure("Failed to open the product chat")
+        }
+    }
+
+    override fun onShareClick() {
+        val product = state.value.statusBar?.menu as? ProductMenu.Product ?: return
+        interactor.share(product.id)
+    }
+
+    override fun onCloseAppClick() {
+        productSessionController.closeActiveTab()
+        closeAppRequested.value = true
+    }
+
+    private fun leaveOnceClosed() {
         launch {
-            productSessionController.openTabs
+            merge(
                 // Wait until at least one tab is there to account for potential races during first tab opening
-                .dropWhile { it.isEmpty() }
-                .first { it.isEmpty() }
+                productSessionController.openTabs.dropWhile { it.isEmpty() }.filter { it.isEmpty() },
+                closeAppRequested.filter { it },
+            ).first()
 
             router.leaveBrowser()
         }
     }
+
+    private suspend fun isOpenedTab(tab: BrowserSessionInfo?): Boolean {
+        val openedProduct = when (val payload = openedFor) {
+            is SpaBrowserPayload.ByProductId -> payload.productId
+            is SpaBrowserPayload.ByUrl -> productIdOf(payload.url)
+            null -> null
+        } ?: return true
+
+        return productIdOf(tab?.url) == openedProduct
+    }
+
+    private suspend fun productIdOf(url: String?): ProductId? = url?.let { interactor.productIdOrNull(it) }
 }
 
 private sealed interface PageLoad {
     /** The tab is on an ordinary web page: nothing to resolve, and no archive to fetch. */
     data object NotAProduct : PageLoad
-    data object Resolving : PageLoad
-    data class Serving(val resolved: ResolvedProduct, val progress: DotNsLoadProgress) : PageLoad
-    data class Failed(val error: ProductResolutionError) : PageLoad
+    data class Resolving(val productId: ProductId) : PageLoad
+    data class Serving(val productId: ProductId, val resolved: ResolvedProduct, val progress: DotNsLoadProgress) : PageLoad
+    data class Failed(val productId: ProductId, val error: ProductResolutionError) : PageLoad
 }
 
 private fun PageLoad.toProgress(): DotNsLoadProgress = when (this) {
     PageLoad.NotAProduct -> DotNsLoadProgress.Idle
-    PageLoad.Resolving -> DotNsLoadProgress.Resolving
+    is PageLoad.Resolving -> DotNsLoadProgress.Resolving
     is PageLoad.Serving -> progress
     is PageLoad.Failed -> DotNsLoadProgress.Failed(error)
 }
 
 private fun PageLoad.toPageState(): SpaBrowserPageState = when (this) {
     // Nothing to show yet is still the product's own page — the progress bar carries the wait.
-    PageLoad.NotAProduct, PageLoad.Resolving -> SpaBrowserPageState.Content
+    PageLoad.NotAProduct, is PageLoad.Resolving -> SpaBrowserPageState.Content
     is PageLoad.Serving -> {
         if (resolved.executables.app != null) SpaBrowserPageState.Content else SpaBrowserPageState.NoAppSurface
     }
 
     is PageLoad.Failed -> SpaBrowserPageState.Failed(error)
+}
+
+private fun PageLoad.toMenu(): ProductMenu = when (this) {
+    PageLoad.NotAProduct -> ProductMenu.WebPage
+    is PageLoad.Resolving -> ProductMenu.Product(productId, servesChat = false)
+    is PageLoad.Serving -> ProductMenu.Product(productId, servesChat = resolved.executables.worker?.includesChat == true)
+    is PageLoad.Failed -> ProductMenu.Product(productId, servesChat = false)
 }
 
 private fun Throwable.toProductResolutionError(): ProductResolutionError =

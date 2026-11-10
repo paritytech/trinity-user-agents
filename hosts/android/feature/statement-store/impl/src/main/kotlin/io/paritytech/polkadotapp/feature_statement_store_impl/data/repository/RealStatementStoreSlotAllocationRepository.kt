@@ -5,10 +5,12 @@ package io.paritytech.polkadotapp.feature_statement_store_impl.data.repository
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.database.dao.StatementStoreSlotAllocationDao
 import io.paritytech.polkadotapp.database.model.StatementStoreSlotAllocationLocal
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -24,6 +26,7 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
         latestRenewedPeriod: UInt,
         since: Instant,
         priority: SlotPriority,
+        tag: StatementStoreSlotTag?,
     ): Long {
         val row = StatementStoreSlotAllocationLocal(
             id = 0,
@@ -34,6 +37,7 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
             latestRenewedPeriod = latestRenewedPeriod.toLong(),
             sinceMillis = since.toEpochMilliseconds(),
             priorityLevel = priority.level,
+            tag = tag?.value,
         )
         return dao.insert(row)
     }
@@ -63,12 +67,23 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
             .map { it.toRecord() }
     }
 
-    override suspend fun hasStaleFor(
+    override suspend fun hasAnyStale(
+        chainId: ChainId,
+        currentPeriod: UInt,
+    ): Boolean {
+        return dao.hasAnyStale(chainId, currentPeriod.toLong())
+    }
+
+    override suspend fun hasRenewedFor(
         chainId: ChainId,
         accountId: AccountId,
         currentPeriod: UInt,
     ): Boolean {
-        return dao.hasStaleFor(chainId, accountId.value, currentPeriod.toLong())
+        return dao.hasRenewedFor(chainId, accountId.value, currentPeriod.toLong())
+    }
+
+    override suspend fun accountsWithTag(chainId: ChainId, tag: StatementStoreSlotTag): Set<AccountId> {
+        return dao.accountsWithTag(chainId, tag.value).mapToSet { it.toDataByteArray() }
     }
 
     override suspend fun maxPriorityLevelsFor(

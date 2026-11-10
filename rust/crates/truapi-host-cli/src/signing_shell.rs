@@ -5,22 +5,22 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use truapi::platform::normalize_product_identifier;
+use truapi::platform::{ProductId, ProductIdError};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::{LogLevel, sessions};
+use crate::{InvalidLogLevel, LogLevel, sessions};
 
 /// Operation selected through `/product`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
 	/// Switch to the validated, normalized product id.
-	Switch(String),
+	Switch(ProductId),
 }
 
 /// Operation selected through `/devices`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeviceCommand {
 	/// List paired devices for the active managed session.
 	List,
@@ -29,7 +29,7 @@ pub enum DeviceCommand {
 }
 
 /// Operation selected through `/approval`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ApprovalCommand {
 	/// Print the current approval mode.
 	Current,
@@ -40,7 +40,7 @@ pub enum ApprovalCommand {
 }
 
 /// Operation selected through `/session`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SessionCommand {
 	/// Print the current session.
 	Current,
@@ -55,7 +55,7 @@ pub enum SessionCommand {
 }
 
 /// Pairing input selected through `/pair`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PairCommand {
 	/// Acquire a pairing deeplink from a copied QR image.
 	Scan,
@@ -67,7 +67,7 @@ pub enum PairCommand {
 
 /// A mnemonic accepted by the command parser without exposing it through
 /// derived debug output or retaining it after the command is dropped.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop, derive_more::Debug)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop, derive_more::Debug, PartialEq)]
 #[debug("<redacted>")]
 pub struct SecretMnemonic(String);
 
@@ -121,7 +121,7 @@ pub fn mask_mnemonic(command: &str) -> Option<String> {
 }
 
 /// Select, edit, or run a product script.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ScriptCommand {
 	/// Edit the remembered script, creating a project if needed, then run it.
 	Edit,
@@ -146,7 +146,7 @@ impl ScriptCommand {
 }
 
 /// A command accepted by the signing-host command bar or `exec` mode.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ShellCommand {
 	/// Scan or answer a Polkadot Mobile pairing request.
 	Pair(PairCommand),
@@ -179,14 +179,35 @@ pub enum ShellCommand {
 	Quit,
 }
 
+/// Rejection of a command or one of its validated arguments.
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug, PartialEq)]
+pub enum CommandParseError {
+	/// Command syntax does not match its usage.
+	#[display("{reason}")]
+	#[from(String, &'static str)]
+	Usage {
+		/// Usage text shown at the command boundary.
+		reason: String,
+	},
+	/// The selected session is not a valid user profile.
+	#[from]
+	Session(sessions::SessionNameError),
+	/// The log filter names an unsupported level.
+	#[from]
+	LogLevel(InvalidLogLevel),
+	/// The product cannot be used as a protocol identifier.
+	#[from]
+	Product(ProductIdError),
+}
+
 /// Parse one slash command without invoking a shell.
-pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
+pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 	let input = input.trim();
 	if input.is_empty() {
-		return Err("enter a command starting with `/`".to_string());
+		return Err("enter a command starting with `/`".into());
 	}
 	if !input.starts_with('/') {
-		return Err("commands start with `/`; use /help to list them".to_string());
+		return Err("commands start with `/`; use /help to list them".into());
 	}
 
 	let (name, argument) = input
@@ -200,10 +221,9 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.starts_with("polkadotapp://pair?") {
 				return Ok(ShellCommand::Pair(PairCommand::Deeplink(argument.to_string())));
 			}
-			let arguments = shlex::split(argument)
-				.ok_or_else(|| "invalid /pair image path quoting".to_string())?;
+			let arguments = shlex::split(argument).ok_or("invalid /pair image path quoting")?;
 			if arguments.len() != 1 || argument.contains("://") {
-				return Err("usage: /pair [<image-path> | <polkadotapp://pair?...>]".to_string());
+				return Err("usage: /pair [<image-path> | <polkadotapp://pair?...>]".into());
 			}
 			Ok(ShellCommand::Pair(PairCommand::Image(PathBuf::from(&arguments[0]))))
 		},
@@ -211,8 +231,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() || argument == "--list" {
 				return Ok(ShellCommand::Devices(DeviceCommand::List));
 			}
-			let arguments =
-				shlex::split(argument).ok_or_else(|| "invalid /devices quoting".to_string())?;
+			let arguments = shlex::split(argument).ok_or("invalid /devices quoting")?;
 			if arguments.first().is_some_and(|value| value == "--remove") {
 				let (statement_account_id, force) = match arguments.as_slice() {
 					[_, statement_account_id] => (statement_account_id, false),
@@ -221,7 +240,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 					},
 					_ => {
 						return Err(
-							"usage: /devices --remove <statement-account-id> [--force]".to_string()
+							"usage: /devices --remove <statement-account-id> [--force]".into()
 						);
 					},
 				};
@@ -230,13 +249,13 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 					force,
 				}));
 			}
-			Err("usage: /devices [--list | --remove <statement-account-id> [--force]]".to_string())
+			Err("usage: /devices [--list | --remove <statement-account-id> [--force]]".into())
 		},
 		"/approval" => match argument {
 			"" => Ok(ShellCommand::Approval(ApprovalCommand::Current)),
 			"manual" => Ok(ShellCommand::Approval(ApprovalCommand::Manual)),
 			"automatic" => Ok(ShellCommand::Approval(ApprovalCommand::Automatic)),
-			_ => Err("usage: /approval [manual|automatic]".to_string()),
+			_ => Err("usage: /approval [manual|automatic]".into()),
 		},
 		"/script" => {
 			let command = match argument {
@@ -244,7 +263,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 				"--run" => ScriptCommand::Run(None),
 				"--edit" => ScriptCommand::EditOnly,
 				"--new" => ScriptCommand::New(None),
-				"--" => return Err("usage: /script -- <path>".to_string()),
+				"--" => return Err("usage: /script -- <path>".into()),
 				_ => match argument.split_once(char::is_whitespace) {
 					Some(("--new", directory)) => {
 						ScriptCommand::New(Some(PathBuf::from(directory.trim())))
@@ -262,7 +281,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 		"/logout" => no_argument(name, argument, ShellCommand::Logout),
 		"/log" => {
 			if argument.is_empty() {
-				return Err("usage: /log <error|warn|info|debug|trace>".to_string());
+				return Err("usage: /log <error|warn|info|debug|trace>".into());
 			}
 			Ok(ShellCommand::Log(argument.parse::<LogLevel>()?))
 		},
@@ -270,8 +289,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id =
-				normalize_product_identifier(argument).map_err(|error| error.to_string())?;
+			let product_id = argument.parse::<ProductId>()?;
 			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
@@ -279,18 +297,16 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 				return Ok(ShellCommand::Session(SessionCommand::Current));
 			}
 			let arguments = shlex::split(argument)
-				.ok_or_else(|| "invalid /session quoting; close the mnemonic quote".to_string())?;
+				.ok_or("invalid /session quoting; close the mnemonic quote")?;
 			let first = arguments.first().expect("non-empty session argument");
 			match first.as_str() {
 				"--list" if arguments.len() == 1 => {
 					return Ok(ShellCommand::Session(SessionCommand::List));
 				},
 				"--clear" => {
-					let Some(name) = arguments.get(1) else {
-						return Err("usage: /session --clear <name>".to_string());
-					};
+					let name = arguments.get(1).ok_or("usage: /session --clear <name>")?;
 					if arguments.len() != 2 {
-						return Err("usage: /session --clear <name>".to_string());
+						return Err("usage: /session --clear <name>".into());
 					}
 					sessions::validate_selectable_name(name)?;
 					return Ok(ShellCommand::Session(SessionCommand::Clear(
@@ -304,7 +320,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 				},
 				"--mnemonic" => {
 					if arguments.len() < 2 {
-						return Err("usage: /session --mnemonic \"<BIP-39 phrase>\"".to_string());
+						return Err("usage: /session --mnemonic \"<BIP-39 phrase>\"".into());
 					}
 					return Ok(ShellCommand::Session(SessionCommand::ImportMnemonic(
 						SecretMnemonic::new(arguments[1..].join(" ")),
@@ -313,10 +329,11 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 				option if option.starts_with("--") => {
 					return Err(format!(
 						"unknown /session option `{option}`; use /help to list options"
-					));
+					)
+					.into());
 				},
 				_ if arguments.len() != 1 => {
-					return Err("usage: /session <name>".to_string());
+					return Err("usage: /session <name>".into());
 				},
 				_ => {},
 			}
@@ -325,25 +342,34 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 		},
 		"/renew" => no_argument(name, argument, ShellCommand::Renew),
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
-		_ => Err(format!("unknown command `{name}`; use /help to list commands")),
+		_ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
 	}
 }
 
-fn parse_statement_account_id(value: &str) -> Result<[u8; 32], String> {
+fn parse_statement_account_id(value: &str) -> Result<[u8; 32], CommandParseError> {
 	let value = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
-	let bytes = hex::decode(value)
-		.map_err(|_| "statement account ID must be 32 bytes of hexadecimal".to_string())?;
-	bytes
-		.try_into()
-		.map_err(|_| "statement account ID must be 32 bytes of hexadecimal".to_string())
+	let bytes = hex::decode(value).map_err(|_| {
+		CommandParseError::from("statement account ID must be 32 bytes of hexadecimal")
+	})?;
+	bytes.try_into().map_err(|_| {
+		CommandParseError::from("statement account ID must be 32 bytes of hexadecimal")
+	})
 }
 
-fn no_argument(name: &str, argument: &str, command: ShellCommand) -> Result<ShellCommand, String> {
-	if argument.is_empty() { Ok(command) } else { Err(format!("{name} does not accept arguments")) }
+fn no_argument(
+	name: &str,
+	argument: &str,
+	command: ShellCommand,
+) -> Result<ShellCommand, CommandParseError> {
+	if argument.is_empty() {
+		Ok(command)
+	} else {
+		Err(format!("{name} does not accept arguments").into())
+	}
 }
 
 /// One selectable completion shown above the command bar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Completion {
 	/// Complete input inserted into the command bar.
 	pub value: String,
@@ -391,7 +417,7 @@ const APPROVAL_ARGUMENTS: &[(&str, &str)] = &[
 	("automatic", "approve confirmations automatically"),
 ];
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Copy)]
 enum CommandScope {
 	PairingHost,
 	#[default]
@@ -861,388 +887,4 @@ Keys: Up/Down completion or history, Tab complete, Ctrl-U/Ctrl-D scroll,
 Esc close completion, Ctrl-C clear/cancel/quit";
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-	const DEVICE_ID: &str = "0101010101010101010101010101010101010101010101010101010101010101";
-
-	#[test]
-	fn script_actions_preserve_paths_with_spaces_and_option_like_filenames() {
-		let inputs = [
-			"/script",
-			"/script --edit",
-			"/script --run",
-			"/script --new",
-			"/script --new projects/my example",
-			"/script projects/my example/script.ts",
-			"/script -- --run",
-			"/script --other",
-			"/script --new-example.ts",
-		];
-
-		assert_eq!(
-			inputs.map(parse_command),
-			[
-				ScriptCommand::Edit,
-				ScriptCommand::EditOnly,
-				ScriptCommand::Run(None),
-				ScriptCommand::New(None),
-				ScriptCommand::New(Some(PathBuf::from("projects/my example"))),
-				ScriptCommand::Run(Some(PathBuf::from("projects/my example/script.ts"))),
-				ScriptCommand::Run(Some(PathBuf::from("--run"))),
-				ScriptCommand::Run(Some(PathBuf::from("--other"))),
-				ScriptCommand::Run(Some(PathBuf::from("--new-example.ts"))),
-			]
-			.map(|command| Ok(ShellCommand::Script(command)))
-		);
-	}
-
-	#[test]
-	fn parses_all_operational_commands() {
-		assert_eq!(parse_command("/pair"), Ok(ShellCommand::Pair(PairCommand::Scan)));
-		assert_eq!(
-			parse_command("/pair polkadotapp://pair?handshake=01"),
-			Ok(ShellCommand::Pair(PairCommand::Deeplink(
-				"polkadotapp://pair?handshake=01".to_string()
-			)))
-		);
-		assert_eq!(
-			parse_command(r#"/pair "/tmp/pairing QR.png""#),
-			Ok(ShellCommand::Pair(PairCommand::Image(PathBuf::from("/tmp/pairing QR.png"))))
-		);
-		assert_eq!(
-			parse_command("/script scripts/my smoke.ts"),
-			Ok(ShellCommand::Script(ScriptCommand::Run(Some(PathBuf::from(
-				"scripts/my smoke.ts"
-			)))))
-		);
-		assert_eq!(parse_command("/script"), Ok(ShellCommand::Script(ScriptCommand::Edit)));
-		assert_eq!(parse_command("/login"), Ok(ShellCommand::Login));
-		assert_eq!(parse_command("/logout"), Ok(ShellCommand::Logout));
-		assert_eq!(parse_command("/log trace"), Ok(ShellCommand::Log(LogLevel::Trace)));
-		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
-		assert_eq!(
-			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch("dotli.dot".to_string())))
-		);
-		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
-		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
-		assert_eq!(parse_command("/devices"), Ok(ShellCommand::Devices(DeviceCommand::List)));
-		assert_eq!(
-			parse_command(&format!("/devices --remove 0x{DEVICE_ID}")),
-			Ok(ShellCommand::Devices(DeviceCommand::Remove {
-				statement_account_id: [1; 32],
-				force: false,
-			}))
-		);
-		assert_eq!(
-			parse_command(&format!("/devices --remove 0X{DEVICE_ID}")),
-			Ok(ShellCommand::Devices(DeviceCommand::Remove {
-				statement_account_id: [1; 32],
-				force: false,
-			}))
-		);
-		assert_eq!(
-			parse_command(&format!("/devices --remove 0x{DEVICE_ID} --force")),
-			Ok(ShellCommand::Devices(DeviceCommand::Remove {
-				statement_account_id: [1; 32],
-				force: true,
-			}))
-		);
-		assert_eq!(parse_command("/session"), Ok(ShellCommand::Session(SessionCommand::Current)));
-		assert_eq!(
-			parse_command("/session alice"),
-			Ok(ShellCommand::Session(SessionCommand::Switch("alice".to_string())))
-		);
-		assert_eq!(
-			parse_command("/session --clear alice"),
-			Ok(ShellCommand::Session(SessionCommand::Clear(sessions::SessionClearTarget::Named(
-				"alice".to_string()
-			))))
-		);
-		assert_eq!(
-			parse_command("/session --clear-all"),
-			Ok(ShellCommand::Session(SessionCommand::Clear(sessions::SessionClearTarget::All)))
-		);
-		let imported = parse_command(&format!("/session --mnemonic \"{MNEMONIC}\""))
-			.expect("mnemonic command parses");
-		let ShellCommand::Session(SessionCommand::ImportMnemonic(mnemonic)) = imported else {
-			panic!("unexpected mnemonic command")
-		};
-		assert_eq!(mnemonic.expose_secret(), MNEMONIC);
-	}
-
-	#[test]
-	fn parses_runtime_approval_commands() {
-		assert_eq!(
-			parse_command("/approval"),
-			Ok(ShellCommand::Approval(ApprovalCommand::Current))
-		);
-		assert_eq!(
-			parse_command("/approval manual"),
-			Ok(ShellCommand::Approval(ApprovalCommand::Manual))
-		);
-		assert_eq!(
-			parse_command("/approval automatic"),
-			Ok(ShellCommand::Approval(ApprovalCommand::Automatic))
-		);
-		assert_eq!(
-			parse_command("/approval sometimes").unwrap_err(),
-			"usage: /approval [manual|automatic]"
-		);
-	}
-
-	#[test]
-	fn rejects_bare_and_malformed_commands() {
-		assert!(parse_command("whoami").unwrap_err().contains("start with `/`"));
-		assert!(parse_command("/whoami").is_err());
-		assert!(parse_command("/copy now").is_err());
-		assert!(parse_command("/login now").is_err());
-		assert!(parse_command("/logout now").is_err());
-		assert!(parse_command("/pair https://example.com").is_err());
-		assert!(parse_command("/deeplink polkadotapp://pair?handshake=01").is_err());
-		assert!(parse_command("/renew now").is_err());
-		assert!(parse_command("/devices --remove").is_err());
-		assert!(parse_command("/devices --remove not-an-account").is_err());
-		assert!(parse_command(&format!("/devices --remove {DEVICE_ID} extra")).is_err());
-		assert!(parse_command(&format!("/devices --remove --force {DEVICE_ID}")).is_err());
-		assert!(parse_command(&format!("/devices --remove {DEVICE_ID} --force --force")).is_err());
-		assert!(parse_command("/devices --force").is_err());
-		assert!(parse_command("/devices --unknown").is_err());
-		assert!(parse_command("/log noisy").is_err());
-		assert!(parse_command("/product example.com").is_err());
-		assert!(parse_command("/session ../escape").is_err());
-		assert_eq!(
-			parse_command("/session --clear").unwrap_err(),
-			"usage: /session --clear <name>"
-		);
-		assert!(parse_command("/session --clear alice bob").is_err());
-		assert!(parse_command("/session --clear-all now").is_err());
-		assert!(parse_command("/session --unknown").is_err());
-		assert!(parse_command("/session --mnemonic").is_err());
-		assert!(parse_command("/session --mnemonic \"not closed").is_err());
-		assert!(
-			parse_command("/session default")
-				.unwrap_err()
-				.contains("reserved for bootstrap state")
-		);
-	}
-
-	#[test]
-	fn completion_selection_and_history_have_distinct_arrow_behavior() {
-		let mut editor = CommandEditor::default();
-		editor.set_text("/");
-		let first = editor.completions()[0].value.clone();
-		editor.down();
-		assert_ne!(editor.completions()[editor.completion_index()].value, first);
-
-		editor.dismiss_completions();
-		editor.set_text("/help");
-		editor.submit();
-		editor.set_text("draft");
-		editor.dismiss_completions();
-		editor.up();
-		assert_eq!(editor.text(), "/help");
-		editor.down();
-		assert_eq!(editor.text(), "draft");
-	}
-
-	#[test]
-	fn mnemonic_commands_are_redacted_and_never_enter_history() {
-		let command = format!("/session --mnemonic \"{MNEMONIC}\"");
-		let parsed = parse_command(&command).expect("mnemonic command parses");
-		let rendered = format!("{parsed:?}");
-		assert!(!rendered.contains("abandon"), "mnemonic leaked: {rendered}");
-		assert!(rendered.contains("<redacted>"));
-
-		let masked = mask_mnemonic(&command).expect("mnemonic is masked");
-		assert!(masked.starts_with("/session --mnemonic "));
-		assert!(!masked.contains("abandon"));
-		assert_eq!(masked.chars().count(), command.chars().count());
-		let irregular = format!("  /session\t --mnemonic\t{MNEMONIC}");
-		assert!(contains_mnemonic(&irregular));
-		assert!(
-			!mask_mnemonic(&irregular)
-				.expect("irregular whitespace is still masked")
-				.contains("abandon")
-		);
-
-		let mut editor = CommandEditor::default();
-		editor.set_text(command.clone());
-		let rendered = format!("{editor:?}");
-		assert!(!rendered.contains("abandon"), "editor leaked: {rendered}");
-		assert_eq!(editor.submit(), command);
-		assert!(editor.history.is_empty());
-	}
-
-	#[test]
-	fn editor_handles_unicode_at_character_boundaries() {
-		let mut editor = CommandEditor::default();
-		editor.set_text("/script café.ts");
-		editor.left();
-		editor.left();
-		editor.left();
-		editor.backspace();
-		assert_eq!(editor.text(), "/script caf.ts");
-	}
-
-	#[test]
-	fn approval_parser_is_trimmed_and_case_insensitive() {
-		assert_eq!(parse_approval(" YES "), Some(true));
-		assert_eq!(parse_approval("n"), Some(false));
-		assert_eq!(parse_approval("sure"), None);
-	}
-
-	#[test]
-	fn pair_command_advertises_image_paste_file_and_deeplink_inputs() {
-		assert_eq!(
-			completions_for_scope("/pair", &[], CommandScope::SigningHost),
-			vec![Completion {
-				value: "/pair".to_string(),
-				description: "paste a pairing QR image or provide a file or URL",
-			}]
-		);
-		assert!(HELP_TEXT.starts_with(
-			"/pair                   paste or drop a pairing QR image\n\
-             /pair <image-path>      read a pairing QR image file\n\
-             /pair <url>             answer a Polkadot Mobile pairing URL"
-		));
-	}
-
-	#[test]
-	fn script_completion_lists_matching_filesystem_paths() {
-		let command = completions_for_scope("/script", &[], CommandScope::SigningHost);
-		assert_eq!(command.len(), 1);
-		assert_eq!(command[0].value, "/script");
-
-		let prefix = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("signing_s");
-		let matches = completions_for_scope(
-			&format!("/script {}", prefix.display()),
-			&[],
-			CommandScope::SigningHost,
-		);
-
-		assert!(matches.iter().any(|completion| completion.value.ends_with("signing_shell.rs")));
-	}
-
-	#[test]
-	fn session_completion_lists_existing_names() {
-		let matches = completions_for_scope(
-			"/session a",
-			&["alice".to_string(), "bob".to_string()],
-			CommandScope::SigningHost,
-		);
-
-		assert_eq!(matches.len(), 1);
-		assert_eq!(matches[0].value, "/session alice");
-	}
-
-	#[test]
-	fn device_completion_offers_list_and_remove_operations() {
-		assert_eq!(
-			completions_for_scope("/devices --", &[], CommandScope::SigningHost),
-			vec![
-				Completion {
-					value: "/devices --list".to_string(),
-					description: "list paired devices",
-				},
-				Completion {
-					value: "/devices --remove".to_string(),
-					description: "remove one paired device",
-				},
-			]
-		);
-		assert_eq!(
-			completions_for_scope(
-				&format!("/devices --remove {DEVICE_ID} --f"),
-				&[],
-				CommandScope::SigningHost
-			),
-			vec![Completion {
-				value: format!("/devices --remove {DEVICE_ID} --force"),
-				description: "remove locally if notification fails",
-			}]
-		);
-		assert!(completions_for_scope("/devices", &[], CommandScope::PairingHost).is_empty());
-	}
-
-	#[test]
-	fn approval_completion_is_signing_host_only() {
-		assert_eq!(
-			completions_for_scope("/approval ", &[], CommandScope::SigningHost),
-			vec![
-				Completion {
-					value: "/approval manual".to_string(),
-					description: "prompt for every confirmation",
-				},
-				Completion {
-					value: "/approval automatic".to_string(),
-					description: "approve confirmations automatically",
-				},
-			]
-		);
-		assert!(completions_for_scope("/appro", &[], CommandScope::PairingHost).is_empty());
-	}
-
-	#[test]
-	fn session_completion_offers_clear_operations_and_existing_names() {
-		let operations = completions_for_scope(
-			"/session --c",
-			&["alice".to_string(), "bob".to_string()],
-			CommandScope::SigningHost,
-		);
-		assert!(operations.iter().any(|completion| completion.value == "/session --clear"));
-		assert!(operations.iter().any(|completion| completion.value == "/session --clear-all"));
-		let import = completions_for_scope(
-			"/session --m",
-			&["alice".to_string()],
-			CommandScope::SigningHost,
-		);
-		assert_eq!(import.len(), 1);
-		assert_eq!(import[0].value, "/session --mnemonic");
-
-		let names = completions_for_scope(
-			"/session --clear b",
-			&["alice".to_string(), "bob".to_string()],
-			CommandScope::SigningHost,
-		);
-		assert_eq!(names.len(), 1);
-		assert_eq!(names[0].value, "/session --clear bob");
-	}
-
-	#[test]
-	fn pairing_host_completions_only_offer_shared_commands() {
-		let matches = completions_for_scope("/", &[], CommandScope::PairingHost);
-		let commands = matches.into_iter().map(|completion| completion.value).collect::<Vec<_>>();
-
-		assert!(commands.contains(&"/script".to_string()));
-		assert!(commands.contains(&"/login".to_string()));
-		assert!(commands.contains(&"/logout".to_string()));
-		assert!(commands.contains(&"/product".to_string()));
-		assert!(commands.contains(&"/copy".to_string()));
-		assert!(!commands.iter().any(|command| command.starts_with("/pair")));
-		assert!(!commands.iter().any(|command| command.starts_with("/session")));
-	}
-
-	#[test]
-	fn log_completion_offers_levels_after_command_for_both_hosts() {
-		for scope in [CommandScope::SigningHost, CommandScope::PairingHost] {
-			let root_matches = completions_for_scope("/log", &[], scope);
-			assert_eq!(
-				root_matches.iter().filter(|completion| completion.value == "/log").count(),
-				1
-			);
-			assert!(!root_matches.iter().any(|completion| completion.value.starts_with("/log ")));
-
-			let argument_matches = completions_for_scope("/log ", &[], scope);
-			assert_eq!(
-				argument_matches
-					.into_iter()
-					.map(|completion| completion.value)
-					.collect::<Vec<_>>(),
-				["/log error", "/log warn", "/log info", "/log debug", "/log trace",]
-			);
-		}
-	}
-}
+mod tests;
