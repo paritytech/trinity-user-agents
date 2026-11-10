@@ -274,7 +274,7 @@ else {
 // descriptor with People routed elsewhere, as a local file.
 const bundled = JSON.parse(
   readFileSync(
-    resolve(root, "rust/crates/truapi-host-cli/stacks/paseo-next-v2.json"),
+    resolve(root, "stacks/paseo-next-v2.json"),
     "utf8",
   ),
 );
