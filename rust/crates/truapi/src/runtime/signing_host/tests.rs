@@ -1,4 +1,3 @@
-use crate::test_support::test_storage;
 mod activation;
 mod allowance_keys;
 mod auto_signing;
@@ -39,7 +38,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	test_support::StubPlatform,
+	test_support::{StubPlatform, test_storage},
 };
 use truapi::{
 	CallContext, CallError,
