@@ -1,7 +1,7 @@
 //! Full-person username registration through `DotnsGateway.register_name`.
 //!
 //! Builds and submits the v5 general transaction on Asset Hub. The signer's
-//! RFC-0022 `uid.<suffix>` account is the call's `who`. The full-person
+//! RFC-0028 `peopl.<suffix>` account 0 is the call's `who`. The full-person
 //! bandersnatch key proves People-ring membership bound to the dotNS gateway
 //! context. A fresh
 //! sr25519 signature over the inherited-implication digest travels in the
