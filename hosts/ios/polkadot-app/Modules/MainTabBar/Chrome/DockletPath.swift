@@ -81,7 +81,6 @@ enum DockletPath {
     func transform(
         progress: CGFloat,
         unwindShare: CGFloat,
-        nudgeInset: CGFloat,
         geometry: DockletGeometry,
         anchor: CGPoint
     ) -> CGAffineTransform {
@@ -90,7 +89,6 @@ enum DockletPath {
             state.transform(
                 progress: progress,
                 unwindShare: unwindShare,
-                nudgeInset: nudgeInset,
                 geometry: geometry,
                 anchor: anchor
             )

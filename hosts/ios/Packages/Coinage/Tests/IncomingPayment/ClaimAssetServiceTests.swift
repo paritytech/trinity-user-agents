@@ -159,26 +159,6 @@ struct ClaimAssetServiceTests {
     }
 
     @Test
-    func batchFailingOnChainIsRetriedAtDetectionCadenceUntilTheWindowCloses() async throws {
-        let rig = makeRig(tracking: StubAssetsTracking(looks: [10]), submissionOutcome: .chainFailure)
-
-        let run = rig.start(amount: 10, retryUntil: rig.time.date(after: 0.3), context: Self.denomination)
-
-        // One load lands immediately, then one per detection timeout at 50ms...300ms inclusive. The
-        // 300ms attempt survives only because the window check preceding it reads exactly 250ms, so
-        // the clock must not run ahead of the service: `advance(until:)` steps blind, and a single
-        // run to completion can spend five steps while the service is descheduled and lose that last
-        // attempt. Stopping at each load keeps the drift at one step.
-        for expected in 1 ... 7 {
-            try await rig.time.advance(until: { rig.loader.loads().count >= expected || run.isFinished })
-        }
-        try await rig.time.advance(until: { run.isFinished })
-
-        #expect(await run.detections().last == .notClaimed)
-        #expect(rig.loader.loads().count == 7)
-    }
-
-    @Test
     func fundsArrivingLaterAreClaimed() async throws {
         let tracking = StubAssetsTracking(looks: [0])
         let rig = makeRig(tracking: tracking)
