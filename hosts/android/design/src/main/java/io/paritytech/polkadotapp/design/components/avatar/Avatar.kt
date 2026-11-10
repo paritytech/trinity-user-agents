@@ -45,7 +45,7 @@ sealed class AvatarUiModel {
     companion object;
 
     /** [refresh] rereads profile metadata; immutable image bytes remain cached. */
-    data class Image(val url: String, val placeholder: Name? = null, val refresh: Boolean = false) : AvatarUiModel()
+    data class Image(val url: String, val placeholder: Name? = null, val refresh: Boolean) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
