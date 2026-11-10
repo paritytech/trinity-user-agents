@@ -5,6 +5,8 @@
 //! and [`StackSource`] decides which copy the core runs and what the host is
 //! told.
 
+use core::time::Duration;
+
 use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified,
 };
@@ -223,6 +225,15 @@ impl StackSource {
 		self.first_fetch
 			.take()
 			.or_else(|| self.reader.get(&self.pointer, now_unix_seconds).fetch)
+	}
+
+	/// How long until [`Self::due_fetch`] has a fetch to make, or `None` while
+	/// one is out.
+	pub fn next_fetch_in(&self, now_unix_seconds: i64) -> Option<Duration> {
+		match self.first_fetch {
+			Some(_) => Some(Duration::ZERO),
+			None => self.reader.due_in(&self.pointer, now_unix_seconds).map(Duration::from_secs),
+		}
 	}
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer

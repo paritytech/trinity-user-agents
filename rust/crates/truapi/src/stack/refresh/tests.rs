@@ -233,6 +233,22 @@ fn a_document_past_the_size_cap_is_not_read() {
 	assert_eq!(started.next_status().last_refresh, Some(StackRefreshOutcome::Unreachable));
 }
 
+/// A core that woke every minute to ask whether a fetch is due would keep a
+/// phone's process busy for nothing, so the loop sleeps until the hour is up.
+#[test]
+fn the_loop_sleeps_until_the_next_fetch_is_due() {
+	let started = start(Arc::default(), vec![unreachable()]);
+	let _at_start = started.next_status();
+	let _after_fetch = started.next_status();
+	started.wait_for_sleeps(2);
+
+	let until_due = *started.timer.remaining().last().expect("the loop is sleeping");
+	assert!(
+		(Duration::from_secs(3598)..=Duration::from_secs(3600)).contains(&until_due),
+		"{until_due:?}"
+	);
+}
+
 /// Two refresh loops would fetch twice and report every change twice.
 #[test]
 fn the_refresh_starts_once() {

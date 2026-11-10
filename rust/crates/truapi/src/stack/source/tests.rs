@@ -201,6 +201,27 @@ fn a_fetch_is_due_an_hour_after_the_last_one() {
 	assert!(source.due_fetch(START + 3599 + 3600).is_some());
 }
 
+/// The refresh loop sleeps for as long as this says. An answer that came
+/// early would make it spin, and one that came late would delay a wipe.
+#[test]
+fn the_wait_for_the_next_fetch_counts_down_to_the_hour() {
+	let mut source = load(&published_test_descriptor(1, "first", PEOPLE), None);
+	let before_first_fetch = source.next_fetch_in(START);
+	source.due_fetch(START).expect("a build copy is due at once");
+	let while_fetching = source.next_fetch_in(START);
+	serve(&mut source, &published_test_descriptor(2, "first", PEOPLE), START);
+
+	assert_eq!(
+		[
+			before_first_fetch,
+			while_fetching,
+			source.next_fetch_in(START + 600),
+			source.next_fetch_in(START + 3600),
+		],
+		[Some(Duration::ZERO), None, Some(Duration::from_secs(3000)), Some(Duration::ZERO)]
+	);
+}
+
 /// A copy past `validUntil` or `expiresAt` still runs. The host is told, so
 /// it can show the stack as stale or shut down.
 #[test]
