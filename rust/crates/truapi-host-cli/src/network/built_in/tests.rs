@@ -242,7 +242,12 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 		let built_in = network.built_in_stack();
 		let bundled = truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, true)
 			.expect("the bundled copy starts an app");
+		let identity = truapi::platform::StackIdentity {
+			id: bundled.id().to_string(),
+			generation: bundled.generation().to_string(),
+		};
 		let expected = truapi::platform::Stack::new(
+			identity,
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },

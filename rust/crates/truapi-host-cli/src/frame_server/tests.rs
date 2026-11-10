@@ -505,9 +505,14 @@ mod cross_product_storage {
 			.duration_since(std::time::UNIX_EPOCH)
 			.expect("clock is after the epoch")
 			.as_secs();
-		let applied = product_config::apply(platform, std::slice::from_ref(&config), now)
-			.await
-			.expect("the config applies");
+		let applied = product_config::apply(
+			platform,
+			platform.stack_identity(),
+			std::slice::from_ref(&config),
+			now,
+		)
+		.await
+		.expect("the config applies");
 		applied.lines.join("\n")
 	}
 

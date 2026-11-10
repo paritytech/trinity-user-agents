@@ -6,6 +6,11 @@ fn test_network() -> crate::network::Stack {
 	crate::network::Network::default().bundled_stack(ChainBackend::Rpc)
 }
 
+/// `slot` of [`test_network`]'s stack, as the core addresses it.
+fn stack_key(slot: CoreStorageKey) -> StackStorageKey {
+	StackStorageKey { stack: test_network().identity().id, slot }
+}
+
 /// Battery examples that preflight `getChainInfo` resolve the genesis they
 /// ask for through this set, so an error here fails every one of them.
 ///
@@ -265,8 +270,7 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 /// `CliPlatform` discarded `PairingDeviceIdentity` and then overwrote it on
 /// the next unrelated write.
 ///
-/// Keys on disk are hex of the SCALE-encoded `CoreStorageKey`, so
-/// `AuthSession` is `00` and `PairingDeviceIdentity` is `01`.
+/// Keys on disk are hex of the SCALE-encoded `StackStorageKey`.
 #[tokio::test]
 async fn cli_platform_preserves_unreadable_core_storage() {
 	use truapi::platform::CoreStorage;
@@ -277,8 +281,13 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 	std::fs::create_dir_all(&state_dir).expect("state dir");
 	let core_path = state_dir.join("core-storage.json");
 
-	std::fs::write(&core_path, r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#)
-		.expect("seed core storage");
+	let on_disk = |slot| hex::encode(parity_scale_codec::Encode::encode(&stack_key(slot)));
+	let seeded = format!(
+		r#"{{"values":{{"{}":"cafebabe","{}":"deadbeef","ff":"zzzz"}}}}"#,
+		on_disk(CoreStorageKey::AuthSession),
+		on_disk(CoreStorageKey::PairingDeviceIdentity),
+	);
+	std::fs::write(&core_path, seeded).expect("seed core storage");
 
 	let platform = CliPlatform::new(
 		&test_network(),
@@ -289,13 +298,16 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 
 	// Nothing loaded: the good entries went with the bad one.
 	assert_eq!(
-		platform.read_core_storage(CoreStorageKey::AuthSession).await.expect("read"),
+		platform
+			.read_core_storage(stack_key(CoreStorageKey::AuthSession))
+			.await
+			.expect("read"),
 		None,
 		"AuthSession should have loaded but the file was discarded"
 	);
 	assert_eq!(
 		platform
-			.read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+			.read_core_storage(stack_key(CoreStorageKey::PairingDeviceIdentity))
 			.await
 			.expect("read"),
 		None
@@ -303,7 +315,7 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 
 	// The host writes one unrelated key. That persists the whole map.
 	platform
-		.write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+		.write_core_storage(stack_key(CoreStorageKey::AuthSession), vec![0x42])
 		.await
 		.expect("write");
 
@@ -436,7 +448,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 	futures::executor::block_on(
-		platform.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32]),
+		platform.write_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey), vec![7; 32]),
 	)
 	.expect("write device key");
 
@@ -445,7 +457,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	platform.switch_pairing_user_storage("bob.dot").expect("select bob");
 	assert_eq!(
 		futures::executor::block_on(
-			platform.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+			platform.read_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey))
 		)
 		.expect("read device key as bob"),
 		Some(vec![7; 32])
@@ -454,13 +466,15 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	// A user-scoped slot stays isolated, so the routing is not simply
 	// making every slot global.
 	futures::executor::block_on(
-		platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
+		platform.write_core_storage(stack_key(CoreStorageKey::AutoSigningKeys), vec![1, 2, 3]),
 	)
 	.expect("write bob auto-signing keys");
 	platform.switch_pairing_user_storage("alice.dot").expect("restore alice");
 	assert_eq!(
-		futures::executor::block_on(platform.read_core_storage(CoreStorageKey::AutoSigningKeys))
-			.expect("read alice auto-signing keys"),
+		futures::executor::block_on(
+			platform.read_core_storage(stack_key(CoreStorageKey::AutoSigningKeys))
+		)
+		.expect("read alice auto-signing keys"),
 		None
 	);
 
@@ -473,7 +487,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	);
 	assert_eq!(
 		futures::executor::block_on(
-			restarted.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+			restarted.read_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey))
 		)
 		.expect("read device key after restart"),
 		Some(vec![7; 32])

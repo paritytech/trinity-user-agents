@@ -42,10 +42,10 @@ import type {
 
 import type {
   AuthState,
-  CoreStorageKey,
   HostScan,
   JsonRpcConnection,
   PermissionDecision,
+  StackStorageKey,
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
@@ -1002,19 +1002,21 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   };
 
   const productKey = (key: string): string => `product:${key}`;
-  const coreKey = (key: CoreStorageKey): string =>
-    key.value === undefined
-      ? `core:${key.tag}`
+  const coreKey = ({ stack, slot }: StackStorageKey): string =>
+    slot.value === undefined
+      ? `core:${slot.tag}:${stack}`
       : // Entries sorted, so a payload built field-by-field in a different
         // order still addresses the slot it addressed before.
-        `core:${key.tag}:${JSON.stringify(key.value, (_, inner: unknown) =>
-          inner !== null && typeof inner === "object" && !Array.isArray(inner)
-            ? Object.fromEntries(
-                Object.entries(inner as Record<string, unknown>).sort(
-                  ([left], [right]) => left.localeCompare(right),
-                ),
-              )
-            : inner,
+        `core:${slot.tag}:${stack}:${JSON.stringify(
+          slot.value,
+          (_, inner: unknown) =>
+            inner !== null && typeof inner === "object" && !Array.isArray(inner)
+              ? Object.fromEntries(
+                  Object.entries(inner as Record<string, unknown>).sort(
+                    ([left], [right]) => left.localeCompare(right),
+                  ),
+                )
+              : inner,
         )}`;
   /** Replacing a mock decision must invalidate the core's settled answer. */
   const forgetStoredAuthorization = (permission: string): void => {
@@ -1733,6 +1735,16 @@ export interface TestStackChain {
  * production bundle takes a {@link ProductRuntimeConfig.stack} only.
  */
 export interface TestStack {
+  /**
+   * The stack's identity. The core keys everything it stores by it, so two
+   * test stacks that must not share state take different ones.
+   */
+  id: string;
+  /**
+   * The run of the stack's chains. The core does not read a manifest it
+   * cached under another generation.
+   */
+  generation: string;
   /** The network `getChainInfo` reports. */
   network: string;
   /** The dotNS TLD a signing host derives its reserved identities under. */
@@ -1766,6 +1778,8 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
  */
 export function mockTestStack(): TestStack {
   return {
+    id: "mock",
+    generation: "mock",
     network: "mock",
     tld: "paseo",
     people: { genesisHash: MOCK_GENESIS.people },

@@ -1637,10 +1637,13 @@ hex values are ignored with warnings.
 ```json
 {
   "values": {
-    "<SCALE-encoded CoreStorageKey hex>": "<value hex>"
+    "<SCALE-encoded StackStorageKey hex>": "<value hex>"
   }
 }
 ```
+
+A key is a slot together with the identity of the stack it belongs to, so a
+fork and its source keep separate entries in one file.
 
 Core state includes auth sessions, pairing bootstrap material, permission
 state, and other role-owned runtime data.

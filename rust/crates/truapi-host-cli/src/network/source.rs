@@ -84,7 +84,9 @@ impl NetworkSource {
 			NetworkChoice::Stack(stack_arg) => {
 				let stack = load_descriptor(&stack_arg.value)
 					.await
-					.and_then(|descriptor| Stack::new(descriptor, self.chain_backend))
+					.and_then(|(stack_id, descriptor)| {
+						Stack::new(stack_id, descriptor, self.chain_backend)
+					})
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
 			},
