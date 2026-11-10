@@ -88,7 +88,7 @@ pub fn stack_from_js(
 		&pointer,
 		&descriptor,
 		allows_reserved_values,
-		Arc::new(records),
+		Box::new(records),
 		Arc::new(RealTimer),
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))?;
@@ -97,7 +97,7 @@ pub fn stack_from_js(
 			fetch: SendWrapper::new(fetch),
 			changed: get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new),
 		};
-		refresh.start(Arc::new(host), spawner);
+		refresh.start(Box::new(host), spawner);
 	}
 	Ok(WasmStack { stack: refresh.stack(), refresh: Some(refresh) })
 }
