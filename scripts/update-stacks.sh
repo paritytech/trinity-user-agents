@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Refresh each stack descriptor truapi-host bundles in rust/crates/truapi-host-cli/stacks from its link.
+# Refresh each stack descriptor in stacks/, the copies truapi-host bundles, from its link.
 # Fails when any stack was not refreshed; how the CLI uses the copies is in that crate's SPEC.md §14.1.
 # Usage: TRUAPI_HOST=<truapi-host binary, default `truapi-host` on PATH> bash scripts/update-stacks.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STACKS_DIR="$(dirname "$SCRIPT_DIR")/rust/crates/truapi-host-cli/stacks"
+STACKS_DIR="$(dirname "$SCRIPT_DIR")/stacks"
 HOST="${TRUAPI_HOST:-truapi-host}"
 
 command -v "$HOST" >/dev/null || {
