@@ -836,17 +836,22 @@ impl SigningHostRuntime {
 			.map(|session| session.progress(crate::current_unix_millis()))
 	}
 
-	/// What funding session `intent`'s overlay offers, while it is up.
+	/// What funding session `intent`'s overlay offers while it is up,
+	/// worked out as it is read.
 	pub fn funding_options(
 		&self,
 		intent: &str,
 	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
-		self.services.funding().book().options(intent)
+		let presenting = self.services.funding().presenting();
+		if !presenting.iter().any(|up| up == intent) {
+			return None;
+		}
+		self.services.funding_options(intent)
 	}
 
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: &str) -> Option<crate::platform::FundingQuoteList> {
-		self.services.funding().book().quotes(intent)
+		self.services.funding_quotes().list(intent)
 	}
 
 	/// The funding sessions the host has heard of that the core holds in

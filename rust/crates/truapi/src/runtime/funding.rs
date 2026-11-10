@@ -14,7 +14,6 @@
 //! hand-overs and timers must exist, and brings them in line one pass at a
 //! time.
 
-mod book;
 #[cfg(not(target_arch = "wasm32"))]
 mod store;
 #[cfg(test)]
@@ -73,7 +72,6 @@ use truapi::latest::{
 };
 
 pub use crate::host_logic::funding::FundingBookEntry;
-pub use book::FundingSessionBook;
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
 use crate::{
@@ -226,9 +224,8 @@ struct Reconciler {
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
 struct Announcements {
-	/// Each change with the record the session had when it was queued, or
-	/// `None` for one compacted before then.
-	pending: VecDeque<(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>)>,
+	/// Each change, with the status a product is told.
+	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
 	/// The [`FundingRegistry::is_in_progress`] the host was last told.
@@ -237,26 +234,18 @@ struct Announcements {
 
 /// One change the host is told of.
 enum Announcement {
-	Session(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>),
+	Session(String, HostFundingStatusSubscribeItem),
 	InProgress(bool),
 }
 
-/// What a host draws its funding screens from, pushed by the core so the
-/// host never reads it back. Native hosts get it through their funding
+/// What changed in what a host draws its funding screens from, which it
+/// reads back from the core. Native hosts get it through their funding
 /// callbacks; a host without one gets only
 /// [`FundingPlatform::funding_session_changed`].
 pub trait FundingFeed: Send + Sync {
-	/// A session changed: its status, the session as the core now holds it
-	/// and the progress the host draws. Every session the host has to hear
-	/// of comes through here once more when funding resumes. `session` and
-	/// `progress` are `None` once the core keeps only the session's summary.
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		status: HostFundingStatusSubscribeItem,
-		session: Option<FundingSession>,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	);
+	/// Session `intent` changed. Every session the host has to hear of comes
+	/// through here once more when funding resumes.
+	fn funding_session_changed(&self, intent: String);
 
 	/// Whether a provider still works on any session: once funding resumes,
 	/// and again whenever it changes. A host that remembers it starts
@@ -264,14 +253,10 @@ pub trait FundingFeed: Send + Sync {
 	/// checkpoint without waiting for a product.
 	fn funding_in_progress_changed(&self, in_progress: bool);
 
-	/// What session `intent`'s overlay offers: before the overlay shows,
-	/// after each selection the host reports while it is up, and after each
-	/// quote list, which can teach the core new limits.
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		options: crate::host_logic::funding_providers::FundingOptions,
-	);
+	/// What session `intent`'s overlay offers changed: before the overlay
+	/// shows, after each selection the host reports while it is up, and
+	/// after each quote list, which can teach the core new limits.
+	fn funding_options_changed(&self, intent: String);
 
 	/// Session `intent`'s quote list is gone: the user selected another
 	/// route than it priced.
@@ -450,9 +435,6 @@ pub struct FundingRegistry {
 	frames: Mutex<HashMap<String, (u64, ProductContext)>>,
 	/// The number the next tracked frame takes.
 	next_frame: AtomicU64,
-	/// The funding state the host reads back, filled as the host is told
-	/// what changed.
-	book: FundingSessionBook,
 }
 
 impl FundingRegistry {
@@ -477,11 +459,6 @@ impl FundingRegistry {
 	/// The host's funding feed, when one is installed.
 	pub fn feed(&self) -> Option<Arc<dyn FundingFeed>> {
 		self.feed.get().cloned()
-	}
-
-	/// The funding state the host reads back.
-	pub fn book(&self) -> &FundingSessionBook {
-		&self.book
 	}
 
 	/// Every session the host has heard of that the registry holds in full,
@@ -513,11 +490,6 @@ impl FundingRegistry {
 	/// A registry belonging to `services`.
 	pub fn new(services: Weak<RuntimeServices>) -> Self {
 		Self { services, ..Self::default() }
-	}
-
-	/// The services the registry belongs to, while they are alive.
-	pub fn services(&self) -> Option<Arc<RuntimeServices>> {
-		self.services.upgrade()
 	}
 
 	/// Assign open session `intent` to the provider the user chose, and hand
@@ -1656,11 +1628,9 @@ impl FundingRegistry {
 	/// it has not told the user how it went.
 	fn tell_host_packed(&self, packed: &PackedSession) {
 		if self.platform.get().is_some() {
-			self.lock_announcements().pending.push_back((
-				packed.summary.intent.clone(),
-				packed.summary.wire_item(),
-				None,
-			));
+			self.lock_announcements()
+				.pending
+				.push_back((packed.summary.intent.clone(), packed.summary.wire_item()));
 		}
 	}
 
@@ -1668,11 +1638,9 @@ impl FundingRegistry {
 	/// once the user starts it.
 	fn tell_host(&self, held: &Held, session: &FundingSession) {
 		if self.platform.get().is_some() && !held.presenting.contains_key(&session.intent) {
-			self.lock_announcements().pending.push_back((
-				session.intent.clone(),
-				session.wire_item(),
-				Some(Box::new(session.clone())),
-			));
+			self.lock_announcements()
+				.pending
+				.push_back((session.intent.clone(), session.wire_item()));
 		}
 	}
 
@@ -1696,9 +1664,7 @@ impl FundingRegistry {
 			let next = {
 				let mut announcements = self.lock_announcements();
 				let next = match announcements.pending.pop_front() {
-					Some((intent, item, queued)) => {
-						Some(Announcement::Session(intent, item, queued))
-					},
+					Some((intent, item)) => Some(Announcement::Session(intent, item)),
 					None if announcements.in_progress != Some(in_progress) => {
 						announcements.in_progress = Some(in_progress);
 						Some(Announcement::InProgress(in_progress))
@@ -1710,19 +1676,11 @@ impl FundingRegistry {
 			};
 			let feed = self.feed();
 			match next {
-				Some(Announcement::Session(intent, item, queued)) => {
+				Some(Announcement::Session(intent, item)) => {
 					self.close_moved_frame(platform.as_ref(), &intent);
-					platform.funding_session_changed(intent.clone(), item.clone());
-					// The record the session has now, or the one it was queued
-					// with once it is compacted.
-					let session = self.get(&intent).or(queued.map(|queued| *queued));
-					if session.is_none() {
-						self.book.overlay_closed(&intent);
-					}
+					platform.funding_session_changed(intent.clone(), item);
 					if let Some(feed) = feed {
-						let progress =
-							session.as_ref().map(|session| session.progress(current_unix_millis()));
-						feed.funding_session_changed(intent, item, session, progress);
+						feed.funding_session_changed(intent);
 					}
 				},
 				Some(Announcement::InProgress(in_progress)) => {
@@ -2438,7 +2396,6 @@ impl RuntimeServices {
 			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
 			.collect();
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
-		registry.book().overlay_closed(&session.intent);
 		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.

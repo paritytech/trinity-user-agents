@@ -2728,25 +2728,13 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 }
 
 impl crate::runtime::FundingFeed for RecordingFundingPlatform {
-	fn funding_session_changed(
-		&self,
-		_intent: String,
-		_status: truapi::latest::HostFundingStatusSubscribeItem,
-		_session: Option<crate::host_logic::funding::FundingSession>,
-		_progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-	}
+	fn funding_session_changed(&self, _intent: String) {}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
 		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
 	}
 
-	fn funding_options_changed(
-		&self,
-		_intent: String,
-		_options: crate::host_logic::funding_providers::FundingOptions,
-	) {
-	}
+	fn funding_options_changed(&self, _intent: String) {}
 
 	fn funding_quotes_withdrawn(&self, intent: String) {
 		self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent);
@@ -3308,7 +3296,24 @@ struct GatedFundingPlatform {
 		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
 	/// Whether the host was told of a session, which it is once started.
 	told: AtomicBool,
+	/// The options read back on each notice, as a host reads them.
 	options: Mutex<Vec<(String, crate::host_logic::funding_providers::FundingOptions)>>,
+	services: std::sync::Weak<RuntimeServices>,
+}
+
+impl GatedFundingPlatform {
+	/// An overlay over `services` that shows until `answer` says how it ended.
+	fn new(
+		services: &Arc<RuntimeServices>,
+		answer: Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>,
+	) -> Arc<Self> {
+		Arc::new(Self {
+			answer: Mutex::new(answer),
+			told: AtomicBool::new(false),
+			options: Mutex::new(Vec::new()),
+			services: Arc::downgrade(services),
+		})
+	}
 }
 
 #[async_trait::async_trait]
@@ -3343,22 +3348,16 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 }
 
 impl crate::runtime::FundingFeed for GatedFundingPlatform {
-	fn funding_session_changed(
-		&self,
-		_intent: String,
-		_status: truapi::latest::HostFundingStatusSubscribeItem,
-		_session: Option<crate::host_logic::funding::FundingSession>,
-		_progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-	}
+	fn funding_session_changed(&self, _intent: String) {}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		options: crate::host_logic::funding_providers::FundingOptions,
-	) {
+	fn funding_options_changed(&self, intent: String) {
+		let Some(options) =
+			self.services.upgrade().and_then(|services| services.funding_options(&intent))
+		else {
+			return;
+		};
 		self.options.lock().expect("options mutex poisoned").push((intent, options));
 	}
 }
@@ -3373,11 +3372,7 @@ fn provider_workers_run_while_the_overlay_is_up() {
 	let workers = Arc::new(DemandRecorder::default());
 	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
 	let (answer, answered) = futures::channel::oneshot::channel();
-	let platform = Arc::new(GatedFundingPlatform {
-		answer: Mutex::new(Some(answered)),
-		told: AtomicBool::new(false),
-		options: Mutex::new(Vec::new()),
-	});
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening = std::thread::spawn({
@@ -3418,11 +3413,7 @@ fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
 	let services = funding_services();
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	let (answer, answered) = futures::channel::oneshot::channel();
-	let platform = Arc::new(GatedFundingPlatform {
-		answer: Mutex::new(Some(answered)),
-		told: AtomicBool::new(false),
-		options: Mutex::new(Vec::new()),
-	});
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening = std::thread::spawn({
@@ -3482,11 +3473,7 @@ fn a_selection_without_an_asset_goes_by_the_resolved_one() {
 		RAMP_MANIFEST.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
 	offer_provider(&services, "ramp.dot", &germany_only);
 	let (answer, answered) = futures::channel::oneshot::channel();
-	let platform = Arc::new(GatedFundingPlatform {
-		answer: Mutex::new(Some(answered)),
-		told: AtomicBool::new(false),
-		options: Mutex::new(Vec::new()),
-	});
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening = std::thread::spawn({
@@ -3547,11 +3534,7 @@ fn a_funding_request_answers_before_the_overlay_closes() {
 	] {
 		let services = funding_services();
 		let (answer, answered) = futures::channel::oneshot::channel();
-		let platform = Arc::new(GatedFundingPlatform {
-			answer: Mutex::new(Some(answered)),
-			told: AtomicBool::new(false),
-			options: Mutex::new(Vec::new()),
-		});
+		let platform = GatedFundingPlatform::new(&services, Some(answered));
 		assert!(services.funding().install_platform(platform.clone()));
 		let host = funding_host(&services, "wallet.dot", true);
 
@@ -9477,7 +9460,7 @@ fn a_selection_on_another_route_withdraws_the_quotes() {
 		);
 		(
 			services.funding_quotes().shown(&intent).is_some(),
-			services.funding().book().quotes(&intent).is_some(),
+			services.funding_quotes().list(&intent).is_some(),
 			platform.withdrawn.lock().expect("withdrawn mutex poisoned").clone(),
 		)
 	};
@@ -9498,11 +9481,7 @@ fn quotes_are_asked_from_the_selection_and_only_the_current_list_is_read() {
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	answer_quotes(&services, "ramp.dot", card_quote("q1"));
 	let (answer, answered) = futures::channel::oneshot::channel();
-	let platform = Arc::new(GatedFundingPlatform {
-		answer: Mutex::new(Some(answered)),
-		told: AtomicBool::new(false),
-		options: Mutex::new(Vec::new()),
-	});
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening = std::thread::spawn({
@@ -9538,9 +9517,9 @@ fn quotes_are_asked_from_the_selection_and_only_the_current_list_is_read() {
 		rows.iter()
 			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
 	});
-	let listed = services.funding().book().quotes(&intent).map(|list| list.request_id);
+	let listed = services.funding_quotes().list(&intent).map(|list| list.request_id);
 	let second = services.request_selected_quotes(&intent, 2_000).expect("asked");
-	let after = services.funding().book().quotes(&intent).map(|list| list.request_id);
+	let after = services.funding_quotes().list(&intent).map(|list| list.request_id);
 	answer
 		.send(crate::platform::FundingPresentOutcome::Dismissed)
 		.expect("overlay waiting");
@@ -9569,11 +9548,10 @@ fn a_quote_list_is_complete_once_every_row_answered() {
 		rows.iter()
 			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
 	});
-	let partial = services.funding().book().quotes(&intent).map(|list| list.complete);
+	let partial = services.funding_quotes().list(&intent).map(|list| list.complete);
 	all_answered(&services, &intent);
-	let full = eventually(5, || {
-		services.funding().book().quotes(&intent).is_some_and(|list| list.complete)
-	});
+	let full =
+		eventually(5, || services.funding_quotes().list(&intent).is_some_and(|list| list.complete));
 	assert_eq!((partial, full), (Some(false), true));
 }
 
@@ -9727,11 +9705,7 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 			crate::platform::FundingPresentOutcome::Started,
 		)));
-		let feed = Arc::new(GatedFundingPlatform {
-			answer: Mutex::new(None),
-			told: AtomicBool::new(false),
-			options: Mutex::new(Vec::new()),
-		});
+		let feed = GatedFundingPlatform::new(&services, None);
 		assert!(services.funding().install_feed(feed.clone()));
 		let germany_only = RAMP_MANIFEST
 			.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);

@@ -807,13 +807,7 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 }
 
 impl crate::runtime::FundingFeed for FundingCallbackPlatform {
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		_status: v01::HostFundingStatusSubscribeItem,
-		_session: Option<crate::host_logic::funding::FundingSession>,
-		_progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
+	fn funding_session_changed(&self, intent: String) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Session);
 	}
 
@@ -822,11 +816,7 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 		self.funding.funding_changed(None, FundingChangeKind::InProgress);
 	}
 
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		_options: crate::host_logic::funding_providers::FundingOptions,
-	) {
+	fn funding_options_changed(&self, intent: String) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Options);
 	}
 

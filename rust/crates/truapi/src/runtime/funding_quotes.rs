@@ -34,7 +34,7 @@ use truapi::latest::{
 };
 
 use super::{
-	funding::{FundingSessionBook, lock, within},
+	funding::{lock, within},
 	funding_providers::selected_asset,
 	services::RuntimeServices,
 };
@@ -92,9 +92,9 @@ struct Watch {
 	/// What every round prices. A quote the session is handed takes its rail,
 	/// asset and network from here.
 	ask: FundingQuoteAsk,
-	/// The rows the host was last shown; their quotes are the ones the
-	/// session can be handed to.
-	shown: Vec<FundingQuoteRow>,
+	/// The list the host was last shown, which it reads back; its quotes
+	/// are the ones the user can pick.
+	list: Option<FundingQuoteList>,
 	/// Ends the rounds, with every quote still asked and the worker it holds.
 	rounds: AbortHandle,
 	/// Whether to hand the session to the best quote once every row
@@ -119,7 +119,7 @@ impl FundingQuotes {
 		let request_id = watches.next_request;
 		watches.by_session.insert(
 			intent.to_string(),
-			Watch { request_id, ask, shown: Vec::new(), rounds, start_when_quoted: false },
+			Watch { request_id, ask, list: None, rounds, start_when_quoted: false },
 		);
 		(request_id, registration)
 	}
@@ -172,13 +172,8 @@ impl FundingQuotes {
 
 	/// Disarm session `intent`'s start when quoted, and stop its quotes when
 	/// `selection` names another rail, asset, network or country than their
-	/// ask, clearing its list from `book`. Returns whether it stopped them.
-	fn reselect(
-		&self,
-		intent: &str,
-		selection: &FundingSelection,
-		book: &FundingSessionBook,
-	) -> bool {
+	/// ask, which drops its list. Returns whether it stopped them.
+	fn reselect(&self, intent: &str, selection: &FundingSelection) -> bool {
 		let mut watches = lock(&self.watches);
 		let Some(watch) = watches.by_session.get_mut(intent) else {
 			return false;
@@ -197,21 +192,14 @@ impl FundingQuotes {
 			return false;
 		}
 		watches.by_session.remove(intent);
-		book.quotes_withdrawn(intent);
 		true
 	}
 
-	/// Keep `list` as what session `intent`'s host is shown, recorded in
-	/// `book`, and say whether to show it: only a list of the session's
+	/// Keep `list` as what session `intent`'s host is shown, and say whether
+	/// to show it: only a list of the session's
 	/// current request, while the session can still be quoted. A session that
 	/// cannot loses its request.
-	fn publish(
-		&self,
-		intent: &str,
-		list: &FundingQuoteList,
-		quotable: bool,
-		book: &FundingSessionBook,
-	) -> bool {
+	fn publish(&self, intent: &str, list: &FundingQuoteList, quotable: bool) -> bool {
 		let mut watches = lock(&self.watches);
 		let Some(watch) = watches
 			.by_session
@@ -221,8 +209,7 @@ impl FundingQuotes {
 			return false;
 		};
 		if quotable {
-			watch.shown = list.rows.clone();
-			book.quotes_changed(intent, list.clone());
+			watch.list = Some(list.clone());
 			return true;
 		}
 		watches.by_session.remove(intent);
@@ -241,7 +228,7 @@ impl FundingQuotes {
 	) -> Option<FundingChoice> {
 		let watches = lock(&self.watches);
 		let watch = watches.by_session.get(intent)?;
-		watch.shown.iter().find_map(|row| match &row.state {
+		watch.list.iter().flat_map(|list| &list.rows).find_map(|row| match &row.state {
 			FundingQuoteState::Quoted { quote }
 				if row.provider_id == *provider_id &&
 					quote.quote_id == quote_id &&
@@ -264,10 +251,18 @@ impl FundingQuotes {
 		lock(&self.watches).by_session.get(intent).map(|watch| watch.ask.clone())
 	}
 
+	/// Session `intent`'s current request's latest list.
+	pub fn list(&self, intent: &str) -> Option<FundingQuoteList> {
+		lock(&self.watches).by_session.get(intent).and_then(|watch| watch.list.clone())
+	}
+
 	/// The rows session `intent`'s host was last shown.
 	#[cfg(test)]
 	pub(crate) fn shown(&self, intent: &str) -> Option<Vec<FundingQuoteRow>> {
-		lock(&self.watches).by_session.get(intent).map(|watch| watch.shown.clone())
+		lock(&self.watches)
+			.by_session
+			.get(intent)
+			.map(|watch| watch.list.as_ref().map(|list| list.rows.clone()).unwrap_or_default())
 	}
 
 	/// Show `rows` for `ask` in session `intent`, as a round would, without
@@ -286,7 +281,7 @@ impl FundingQuotes {
 			issue: None,
 			complete: false,
 		};
-		self.publish(intent, &list, true, &FundingSessionBook::default());
+		self.publish(intent, &list, true);
 	}
 }
 
@@ -369,8 +364,6 @@ impl RuntimeServices {
 			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
 		let ask = FundingQuoteAsk { direction, ..ask };
 		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
-		// The list before belongs to the request this one replaces.
-		self.funding().book().quotes_withdrawn(intent);
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
@@ -455,7 +448,7 @@ impl RuntimeServices {
 	/// list without a usable quote disarms it.
 	pub fn start_funding_when_quoted(self: &Arc<Self>, intent: &str, request_id: u64) {
 		if self.funding_quotes().arm(intent, request_id) &&
-			let Some(list) = self.funding().book().quotes(intent)
+			let Some(list) = self.funding_quotes().list(intent)
 		{
 			self.start_if_quoted(intent, &list);
 		}
@@ -494,7 +487,7 @@ impl RuntimeServices {
 	/// Stop session `intent`'s quotes when `selection` no longer matches their
 	/// ask, telling the host its list is gone; see [`FundingQuotes::reselect`].
 	pub fn withdraw_unselected_quotes(&self, intent: &str, selection: &FundingSelection) {
-		if self.funding_quotes().reselect(intent, selection, self.funding().book()) &&
+		if self.funding_quotes().reselect(intent, selection) &&
 			let Some(feed) = self.funding().feed()
 		{
 			feed.funding_quotes_withdrawn(intent.to_string());
@@ -505,10 +498,9 @@ impl RuntimeServices {
 	/// it no longer answers the session's request or the session can no
 	/// longer be quoted. Returns whether it was shown.
 	fn publish_quotes(self: &Arc<Self>, intent: &str, list: &mut FundingQuoteList) -> bool {
-		let book = self.funding().book();
 		// A session the core no longer knows loses its request.
 		let Some(session) = self.funding().get(intent) else {
-			return self.funding_quotes().publish(intent, list, false, book);
+			return self.funding_quotes().publish(intent, list, false);
 		};
 		list.best = best_quote(session.direction, &list.rows, |provider_id| {
 			self.funding_providers().is_quote_target(provider_id)
@@ -517,7 +509,7 @@ impl RuntimeServices {
 		list.refusal = funding_view::quotes_refusal(&list.rows);
 		list.issue = funding_view::quotes_issue(&list.rows);
 		let quotable = !session.is_terminal() && session.provider_id.is_none();
-		if !self.funding_quotes().publish(intent, list, quotable, book) {
+		if !self.funding_quotes().publish(intent, list, quotable) {
 			return false;
 		}
 		if let Some(platform) = self.funding().platform() {

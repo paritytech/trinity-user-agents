@@ -364,14 +364,21 @@ impl RuntimeServices {
 		}
 	}
 
-	/// Send the host what session `intent`'s overlay offers for the user's
-	/// selection so far. Nothing is sent for a session the core does not
+	/// Tell the host what session `intent`'s overlay offers changed, for a
+	/// session the core holds.
+	pub fn send_funding_options(self: &Arc<Self>, intent: &str) {
+		if let Some(feed) = self.funding().feed() &&
+			self.funding().get(intent).is_some()
+		{
+			feed.funding_options_changed(intent.to_string());
+		}
+	}
+
+	/// What session `intent`'s overlay offers for the user's selection so
+	/// far, worked out as it is read. `None` for a session the core does not
 	/// hold.
-	pub fn send_funding_options(&self, intent: &str) {
-		let (Some(feed), Some(session)) = (self.funding().feed(), self.funding().get(intent))
-		else {
-			return;
-		};
+	pub fn funding_options(self: &Arc<Self>, intent: &str) -> Option<FundingOptions> {
+		let session = self.funding().get(intent)?;
 		let providers = self.funding_providers();
 		let selection = self.funding().selection(intent);
 		let candidates = providers.candidates(session.direction);
@@ -428,7 +435,7 @@ impl RuntimeServices {
 		if detected_country.is_none() {
 			self.detect_country_for_options(intent);
 		}
-		let options = FundingOptions {
+		Some(FundingOptions {
 			candidates,
 			countries,
 			limits,
@@ -437,17 +444,13 @@ impl RuntimeServices {
 			asset,
 			tokens,
 			detected_country: detected_country.flatten(),
-		};
-		self.funding().book().options_changed(intent, options.clone());
-		feed.funding_options_changed(intent.to_string(), options);
+		})
 	}
 
 	/// Ask the host for the user's country in the background, and send
 	/// session `intent` its options again once it answered one.
-	fn detect_country_for_options(&self, intent: &str) {
-		let Some(services) = self.funding().services() else {
-			return;
-		};
+	fn detect_country_for_options(self: &Arc<Self>, intent: &str) {
+		let services = self.clone();
 		let intent = intent.to_string();
 		(self.spawner)(Box::pin(async move {
 			if services.detected_funding_country().await.is_some() {
@@ -531,7 +534,7 @@ impl RuntimeServices {
 
 	/// Read `product_id`'s Worker manifest and brand into what the core goes
 	/// by.
-	async fn read_provider_manifest(&self, product_id: &ProductId) {
+	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
 		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
 		let mut changed =
 			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
@@ -547,7 +550,7 @@ impl RuntimeServices {
 	/// for one the host lists without a manifest: every open overlay is sent
 	/// its options again, and every watched quote list asks again at once,
 	/// so a provider read after the overlay opened still shows and quotes.
-	fn funding_providers_changed(&self) {
+	fn funding_providers_changed(self: &Arc<Self>) {
 		self.funding_providers().changed.wake();
 		for intent in self.funding().presenting() {
 			self.send_funding_options(&intent);
