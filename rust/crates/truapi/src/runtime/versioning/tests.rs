@@ -1,8 +1,14 @@
 use super::*;
 use crate::{
-	latest, v01,
-	versioned::local_storage::{
-		HostLocalStorageReadError, HostLocalStorageReadRequest, HostLocalStorageReadResponse,
+	latest, v01, v02,
+	versioned::{
+		local_storage::{
+			HostLocalStorageReadError, HostLocalStorageReadRequest, HostLocalStorageReadResponse,
+		},
+		renderer::{
+			HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
+			HostRendererActionSubscribeRequest,
+		},
 	},
 };
 use futures::{FutureExt, executor::block_on, stream};
@@ -187,4 +193,38 @@ fn converting_a_subscription_keeps_it_lazy_and_drops_its_source() {
 	assert!(!dropped.load(Ordering::SeqCst));
 	drop(subscription);
 	assert!(dropped.load(Ordering::SeqCst));
+}
+
+/// A dropped item reaches the host log, so a product that never sees an event
+/// can be traced to the version it subscribed with.
+#[test]
+fn a_dropped_subscription_item_is_logged() {
+	let footer_tap = v02::HostRendererActionSubscribeItem {
+		context: v02::RenderContext::ChatRoomFooter {
+			room_id: "room".into(),
+			message_type: "register".into(),
+		},
+		action_id: "join".into(),
+		payload: Vec::new(),
+	};
+
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let subscription: Subscription<
+			HostRendererActionSubscribeItem,
+			CallError<HostRendererActionSubscribeError>,
+		> = block_on(
+			version(HostRendererActionSubscribeRequest::V1)
+				.exec(|()| async move { Subscription::new(stream::iter([Ok(footer_tap)])) }),
+		);
+		assert_eq!(block_on(subscription.collect::<Vec<_>>()), Vec::new());
+	});
+
+	assert_eq!(
+		lines,
+		vec![
+			"truapi.tracing.warn truapi::runtime::versioning: dropping a subscription item no v1 \
+			 variant carries {item=truapi::versioned::renderer::HostRendererActionSubscribeItem}"
+				.to_string()
+		]
+	);
 }

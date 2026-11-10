@@ -65,7 +65,16 @@ where
 	fn from_latest(latest: Self::Latest, version: u8) -> Self {
 		Self::new(latest.filter_map(move |result| {
 			core::future::ready(match result {
-				Ok(item) => Item::try_from_latest(item, version).map(Ok),
+				Ok(item) => {
+					let item = Item::try_from_latest(item, version);
+					if item.is_none() {
+						tracing::warn!(
+							item = %core::any::type_name::<Item>(),
+							"dropping a subscription item no v{version} variant carries"
+						);
+					}
+					item.map(Ok)
+				},
 				Err(error) => {
 					Some(Err(error.map_domain(|domain| Error::from_latest(domain, version))))
 				},

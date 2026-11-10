@@ -583,6 +583,30 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
+    /// The native runtime cannot draw a docked card, and a room that shows
+    /// neither its input nor its card must say why in the host log.
+    @Test func aCardDockedUnderTheNativeRuntimeIsLoggedAsRefused() throws {
+        let runtime = ManagedChatRuntime(
+            productId: try ProductId("test.dot"),
+            manager: FakeWorkerManager(worker: FakeChatWorker())
+        )
+        let logger = RecordingLogger()
+        let decoder = ProductMessageDecoder(
+            runtime: runtime,
+            tokenResolver: StubWidgetDesignTokenResolver(),
+            description: nil,
+            resolveImage: WidgetImageResolver { _ in nil },
+            logger: logger
+        )
+
+        let card = decoder.makeRoomFooterCard(roomId: "room", messageType: "register", payload: Data([1]))
+
+        #expect(card == nil)
+        #expect(logger.lines == [
+            .warning("Room room docks a register card, but only the TrUAPI chat runtime can draw one")
+        ])
+    }
+
     /// The product replaces its card on every update and may clear it, and each
     /// card left drawing would hold a render stream open on the product.
     @Test func aReplacedOrClearedCardStopsDrawing() async throws {

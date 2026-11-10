@@ -66,7 +66,10 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
         messageType: String,
         payload: Data
     ) -> (any ChatInputViewConfigurationProtocol)? {
-        guard let handler = runtime as? TrUAPIChatHandler else { return nil }
+        guard let handler = runtime as? TrUAPIChatHandler else {
+            logger.warning("Room \(roomId) docks a \(messageType) card, but only the TrUAPI chat runtime can draw one")
+            return nil
+        }
 
         let footer = Chat.RoomFooter.card(messageType: messageType, payload: payload)
         let viewModel: ProductWidgetViewModel
