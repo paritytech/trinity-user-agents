@@ -858,9 +858,11 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
 }
 
 /// Forwards every worker transition request to the host's
-/// `requestWorkerTransition(productId, transition)` callback.
+/// `requestWorkerTransition(productId, transition)` callback, and a worker
+/// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
 struct WasmWorkerController {
 	request: SendWrapper<Function>,
+	crashing: Option<SendWrapper<Function>>,
 }
 
 impl crate::host_logic::worker::WorkerController for WasmWorkerController {
@@ -875,6 +877,16 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 			&JsValue::from_str(name),
 		);
 	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		if let Some(crashing) = &self.crashing {
+			let _ = crashing.call2(
+				&JsValue::NULL,
+				&JsValue::from_str(product_id.as_str()),
+				&JsValue::from(crashes),
+			);
+		}
+	}
 }
 
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
@@ -884,9 +896,11 @@ fn install_worker_controller(
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
 	let request = get_function(callbacks, "requestWorkerTransition")?;
+	let crashing = get_optional_function(callbacks, "workerCrashing")?;
 	assert!(
 		ledger.install_worker_controller(Arc::new(WasmWorkerController {
 			request: SendWrapper::new(request),
+			crashing: crashing.map(SendWrapper::new),
 		})),
 		"a freshly built runtime installs its worker controller once"
 	);
@@ -1145,6 +1159,18 @@ impl WasmPairingHostRuntime {
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
+		}
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
 
@@ -1433,6 +1459,18 @@ impl WasmSigningHostRuntime {
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
+		}
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
 

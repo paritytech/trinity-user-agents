@@ -318,4 +318,4 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
   root listing the cards, with the manifest carrying only `includes.pocket`.
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
-  picks belongs in the renderer's `Effect` vocabulary.
+  picks is a [material](materials.md).

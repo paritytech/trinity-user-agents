@@ -289,15 +289,14 @@ private extension TabBarBottomChromeController {
 
     /// A touch on the Docklet restarts its idle countdown and cancels a pending outside-touch tuck.
     func observeTouch(_ touch: UITouch) {
-        let location = touch.location(in: view)
-        foldController.recordTouch(isOnDocklet: isOnDocklet(at: location))
+        foldController.recordTouch(isOnDocklet: isOnDocklet(touch))
     }
 
-    /// The bar's host, which holds the open panel, and the Grab zone count as the Docklet. The Edge glow does not,
-    /// since it sits on the right edge even while the bar is shown.
-    func isOnDocklet(at location: CGPoint) -> Bool {
-        let barFrame = barHost.view.convert(barHost.view.bounds, to: view)
-        return barFrame.contains(location) || isInGrabZone(location)
+    /// A touch that hit-tests into the bar's host, which holds the open panel, or lands in the Grab zone counts as
+    /// the Docklet. The host's empty area passes touches through, so it does not count.
+    func isOnDocklet(_ touch: UITouch) -> Bool {
+        let isOnBar = touch.view?.isDescendant(of: barHost.view) ?? false
+        return isOnBar || isInGrabZone(touch.location(in: view))
     }
 }
 

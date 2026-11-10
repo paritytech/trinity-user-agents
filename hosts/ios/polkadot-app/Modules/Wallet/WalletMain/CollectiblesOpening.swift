@@ -1,10 +1,9 @@
 /// The opening of the Collectibles book. The cover swings open while the product loads, and the page expands once
-/// the load has finished and the frames have settled. A load that does not finish in time fails the page instead.
+/// the load has finished. A load that does not finish in time fails the page instead.
 struct CollectiblesOpening {
     enum Stage: Equatable {
         case closed
         case opened
-        case settling
         case expanding
         case shown
         case failed
@@ -14,12 +13,10 @@ struct CollectiblesOpening {
         case coverOpened
         case pageLoading(Bool)
         case loadTimedOut
-        case framesSettled
         case pageExpanded
     }
 
     enum Step: Equatable {
-        case awaitSteadyFrames
         case expandPage
         case showFailure
     }
@@ -33,20 +30,17 @@ struct CollectiblesOpening {
         switch (stage, event) {
         case (.closed, .coverOpened):
             stage = .opened
-            return awaitStepIfLoaded()
+            return expandStepIfLoaded()
         case let (_, .pageLoading(isLoading)):
             if isLoading {
                 loadStarted = true
             } else if loadStarted {
                 loadFinished = true
             }
-            return awaitStepIfLoaded()
+            return expandStepIfLoaded()
         case (.opened, .loadTimedOut):
             stage = .failed
             return .showFailure
-        case (.settling, .framesSettled):
-            stage = .expanding
-            return .expandPage
         case (.expanding, .pageExpanded):
             stage = .shown
             return nil
@@ -55,10 +49,10 @@ struct CollectiblesOpening {
         }
     }
 
-    private mutating func awaitStepIfLoaded() -> Step? {
+    private mutating func expandStepIfLoaded() -> Step? {
         guard stage == .opened, loadFinished else { return nil }
 
-        stage = .settling
-        return .awaitSteadyFrames
+        stage = .expanding
+        return .expandPage
     }
 }

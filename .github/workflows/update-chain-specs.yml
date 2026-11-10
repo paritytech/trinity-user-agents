@@ -95,9 +95,9 @@ jobs:
             and the stale catalog constant on the right; copy the left one into `networks.rs`, and
             update any consumer that pins the old hash.
 
-            If `test_disposable_network_hosts` fails, a stack moved an endpoint: confirm the new
+            If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
             host is a test network before adding it to `TEST_NETWORK_HOSTS` in
-            `rust/crates/truapi-host-cli/src/network.rs`.
+            `rust/crates/truapi-host-cli/src/network/tests.rs`.
 
             Merging this publishes a dev snapshot of `@parity/truapi-provider` automatically
             (dev-publish.yml triggers on chain-spec changes landing on main). Consumers still

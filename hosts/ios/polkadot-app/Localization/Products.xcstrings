@@ -1148,6 +1148,39 @@
         }
       }
     },
+    "product.replace.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(name)@ will close."
+          }
+        }
+      }
+    },
+    "product.replace.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open"
+          }
+        }
+      }
+    },
+    "product.replace.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open %1$(name)@?"
+          }
+        }
+      }
+    },
     "product.tabs.accessibility.closeSearch": {
       "extractionState": "manual",
       "localizations": {

@@ -92,6 +92,9 @@ private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = 
 
 private fun HostEvent.toSentryEvent() = SentryEvent().apply {
     message = Message().apply { formatted = name }
+    // One group per event name. Sentry would otherwise group these by the stack
+    // trace it attaches, which splits one name across several groups.
+    fingerprints = listOf(this@toSentryEvent.name)
     level = SentryLevel.INFO
     logger = "host.telemetry"
     this@toSentryEvent.tags.forEach(::setTag)

@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import UIKit
 import UIKitExt
@@ -21,6 +22,11 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
     func updateLoadPhase(_ phase: ProductLoadPhase)
+    func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
+}
+
+extension SPAViewProtocol {
+    func showChainStatus(_: [ChainConnectionStatusViewModel]) {}
 }
 
 @MainActor
@@ -56,6 +62,7 @@ protocol SPAInteractorOutputProtocol: AnyObject {
     func didRestartLoading()
     func didPrepareChat(chatId: Chat.Id)
     func didUpdateLoadPhase(_ phase: ProductLoadPhase)
+    func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
 }
 
 @MainActor
@@ -75,4 +82,5 @@ protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     )
 
     func close(tabId: UUID)
+    func dismiss(view: ControllerBackedProtocol?)
 }

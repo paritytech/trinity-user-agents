@@ -199,43 +199,6 @@ private extension SPAViewController {
         }
     }
 
-    func makeMenuElements() -> [UIMenuElement] {
-        var elements: [UIMenuElement] = []
-
-        if presenter.hasChatEntry() {
-            elements.append(UIAction(
-                title: String(localized: .spaActionOpenChat),
-                image: UIImage(systemName: "bubble.left")
-            ) { [weak self] _ in
-                self?.presenter.didTapOpenChat()
-            })
-        }
-
-        elements.append(UIAction(
-            title: String(localized: .spaActionRefresh),
-            image: UIImage(systemName: "arrow.clockwise")
-        ) { [weak self] _ in
-            self?.presenter.didTapRefresh()
-        })
-
-        elements.append(UIAction(
-            title: String(localized: .spaActionShare),
-            image: UIImage(systemName: "square.and.arrow.up")
-        ) { [weak self] _ in
-            self?.presenter.didTapShare()
-        })
-
-        let closeApp = UIAction(
-            title: String(localized: .spaActionCloseApp),
-            image: UIImage(systemName: "xmark")
-        ) { [weak self] _ in
-            self?.presenter.didTapClose()
-        }
-        elements.append(UIMenu(options: .displayInline, children: [closeApp]))
-
-        return elements
-    }
-
     // MARK: - Actions
 
     @objc func onMoreTapped() {
@@ -319,7 +282,7 @@ extension SPAViewController: StatusBarTitleProviding {
     func makeStatusBarMenu() -> UIMenu {
         UIMenu(children: [
             UIDeferredMenuElement.uncached { [weak self] completion in
-                completion(self?.makeMenuElements() ?? [])
+                completion(self?.presenter.makeMenuElements() ?? [])
             }
         ])
     }

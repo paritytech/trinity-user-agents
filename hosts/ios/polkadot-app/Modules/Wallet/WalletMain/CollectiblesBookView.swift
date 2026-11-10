@@ -18,7 +18,6 @@ enum CollectiblesBookTiming {
     static let pageCornerRadius: CGFloat = 20
     static let pageInset: CGFloat = DSSpacings.mediumIncreased
     static let loadTimeout: TimeInterval = 10
-    static let settleCap: TimeInterval = 1
 }
 
 /// The Collectibles book cover, drawn over the page until it swings open. It is the Pocket peek's own picture, so the

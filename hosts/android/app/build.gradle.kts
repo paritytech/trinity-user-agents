@@ -194,6 +194,9 @@ dependencies {
     testImplementation(libs.squareup.okhttp3.mockwebserver)
     testImplementation(libs.squareup.okhttp3.tls)
 
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)

@@ -9,7 +9,7 @@ import WebKit
 /// The Collectibles screen pushed over the Wallet, with the stash product filling it.
 ///
 /// The screen opens like a book. Its cover swings open while the product loads, and the page grows to fill the screen
-/// once the load has finished and the frames have settled. A load that does not finish in time fails the page instead.
+/// once the load has finished. A load that does not finish in time fails the page instead.
 final class CollectiblesViewController: UIViewController {
     private let product: SPAViewProtocol
     private weak var origin: PocketOrigin?
@@ -25,8 +25,6 @@ final class CollectiblesViewController: UIViewController {
     private var pendingClose: (() -> Void)?
     private var loadObservation: NSKeyValueObservation?
     private var loadTimeout: Task<Void, Never>?
-    private let frameWatch = FrameIntervalWatch()
-    private var steadyFrames = SteadyFrameRule()
 
     init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
@@ -203,12 +201,6 @@ private extension CollectiblesViewController {
     }
 
     func openCover() {
-        frameWatch.watch(
-            cap: nil,
-            until: { [weak self] interval in self?.steadyFrames.sample(interval) ?? false },
-            then: {}
-        )
-
         book.openCover { [weak self] in
             guard let self, !runPendingClose() else { return }
 
@@ -279,12 +271,6 @@ private extension CollectiblesViewController {
         guard let step = opening.handle(event) else { return }
 
         switch step {
-        case .awaitSteadyFrames:
-            frameWatch.watch(
-                cap: CollectiblesBookTiming.settleCap,
-                until: { [weak self] interval in self?.steadyFrames.isSteady(after: interval) ?? false },
-                then: { [weak self] in self?.apply(.framesSettled) }
-            )
         case .expandPage:
             expandPage()
         case .showFailure:
@@ -351,6 +337,5 @@ private extension CollectiblesViewController {
     func stopWatchingLoad() {
         loadObservation = nil
         loadTimeout?.cancel()
-        frameWatch.cancel()
     }
 }
