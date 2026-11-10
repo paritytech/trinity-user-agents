@@ -46,10 +46,14 @@ pub trait StackHost: Send + Sync {
 /// The stack a host build runs and the background refresh of its descriptor.
 pub struct StackRefresh {
 	shared: Arc<Shared>,
+	running: OnceLock<Running>,
+}
+
+/// The refresh loop, once started.
+struct Running {
+	/// Asks the loop for a fetch now.
 	forced: mpsc::UnboundedSender<()>,
-	/// The receiving end of `forced`, until the refresh starts.
-	waiting: Mutex<Option<mpsc::UnboundedReceiver<()>>>,
-	task: OnceLock<BackgroundTask>,
+	_task: BackgroundTask,
 }
 
 struct Shared {
@@ -82,12 +86,9 @@ impl StackRefresh {
 		});
 		let source =
 			StackSource::load(pointer, bundled, stored.as_deref(), allows_reserved_values, now())?;
-		let (forced, waiting) = mpsc::unbounded();
 		Ok(Self {
 			shared: Arc::new(Shared { source: Mutex::new(source), records, timer }),
-			forced,
-			waiting: Mutex::new(Some(waiting)),
-			task: OnceLock::new(),
+			running: OnceLock::new(),
 		})
 	}
 
@@ -107,19 +108,25 @@ impl StackRefresh {
 	///
 	/// Set-once: answers whether this call started the refresh.
 	pub fn start(&self, host: Arc<dyn StackHost>, spawner: &Spawner) -> bool {
-		let Some(forced) = self.waiting.lock().expect("stack refresh mutex poisoned").take() else {
-			return false;
-		};
-		let task = BackgroundTask::spawn(spawner, self.shared.clone().run(host, forced));
-		self.task.set(task).is_ok()
+		let mut started = false;
+		self.running.get_or_init(|| {
+			started = true;
+			let (forced, requests) = mpsc::unbounded();
+			let task = BackgroundTask::spawn(spawner, self.shared.clone().run(host, requests));
+			Running { forced, _task: task }
+		});
+		started
 	}
 
 	/// Fetches the descriptor now instead of when the copy is old enough, as
-	/// after a chain answers with another genesis hash. Returns at once. A
-	/// request made before [`Self::start`] is served once it runs.
+	/// after a chain answers with another genesis hash. Returns at once.
+	/// Requests made while a fetch is out lead to one more fetch, not one
+	/// each. Does nothing before [`Self::start`].
 	pub fn refresh_now(&self) {
-		// The loop holds the receiver for as long as this value lives.
-		let _ = self.forced.unbounded_send(());
+		if let Some(running) = self.running.get() {
+			// The loop holds the receiver for as long as this value lives.
+			let _ = running.forced.unbounded_send(());
+		}
 	}
 }
 
@@ -151,7 +158,11 @@ impl Shared {
 			}
 			force = match select(self.timer.sleep(DUE_CHECK_INTERVAL), forced.next()).await {
 				Either::Left(_) => false,
-				Either::Right((Some(()), _)) => true,
+				Either::Right((Some(()), _)) => {
+					// Requests made while a fetch was out ask for one fetch, not one each.
+					while forced.try_recv().is_ok() {}
+					true
+				},
 				Either::Right((None, _)) => return,
 			};
 		}
