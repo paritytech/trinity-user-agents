@@ -129,8 +129,9 @@ pub fn product_source(
 
 /// The products bundled under `root`, by id: each non-hidden, non-empty
 /// directory named by a product id, with what it ships and the name and icon
-/// its root manifest gives it, read as [`ProductBrand::parse`] reads them. A
-/// root manifest that gives no brand leaves both out, logged.
+/// its root manifest gives it: a non-blank `displayName`, a `description` and
+/// an icon with a CID and a format. A root manifest that gives no brand
+/// leaves both out, logged.
 #[uniffi::export]
 pub fn bundled_products(root: String, reader: Box<dyn BundleReader>) -> Vec<BundleEntry> {
 	products(&root, reader.as_ref())

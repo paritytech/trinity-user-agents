@@ -910,18 +910,20 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Quotes of `amount` for funding session `intent` on what the user
-	/// selected, sent through [`FundingPlatform::funding_quotes_changed`]
-	/// (natively `funding_changed` with `Quotes`); see
-	/// [`RuntimeServices::request_selected_quotes`]. Returns the request id
-	/// each list carries, `None` when there is nothing to price.
+	/// Quotes of `amount` for funding session `intent` on the rail, asset,
+	/// network and country the user selected, sent through
+	/// [`FundingPlatform::funding_quotes_changed`] (natively `funding_changed`
+	/// with `Quotes`). An ask the running request already prices keeps it.
+	/// Returns the request id each list carries, `None` while the selection
+	/// names no asset or `amount` is zero.
 	pub fn request_funding_quotes(&self, intent: &str, amount: u128) -> Option<u64> {
 		self.services.request_selected_quotes(intent, amount)
 	}
 
 	/// Start funding session `intent` on the best quote of request
-	/// `request_id` once every provider answered it; see
-	/// [`RuntimeServices::start_funding_when_quoted`].
+	/// `request_id` once every provider answered it. A new request, a
+	/// selection, [`Self::cancel_funding_auto_start`] or a list with no usable
+	/// quote cancels it.
 	pub fn start_funding_when_quoted(&self, intent: &str, request_id: u64) {
 		self.services.start_funding_when_quoted(intent, request_id);
 	}
