@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Refresh each stack descriptor truapi-host bundles in rust/crates/truapi-host-cli/stacks from its link,
+# Refresh each stack descriptor in stacks/, the copies truapi-host bundles, from its link,
 # and the copy a host app bundles of the same stack. A host app's copy is refreshed only when the app's
-# link equals the CLI's, since the app verifies the copy under its own link's key; links are never written.
+# link equals the one in stacks/, since the app verifies the copy under its own link's key; links are never written.
 # Fails when any stack was not refreshed; how the CLI uses the copies is in that crate's SPEC.md §14.1.
 # Usage: TRUAPI_HOST=<truapi-host binary, default `truapi-host` on PATH> bash scripts/update-stacks.sh
 
@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-STACKS_DIR="$REPO_DIR/rust/crates/truapi-host-cli/stacks"
+STACKS_DIR="$REPO_DIR/stacks"
 HOST="${TRUAPI_HOST:-truapi-host}"
 
 # Where each host app keeps a stack's `.link` and `.json`, `{name}` standing for the stack's name.

@@ -1756,7 +1756,7 @@ A stack with the id `polkadot` cannot run, since that namespace may contain
 sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
-ships a signed copy of each in `stacks/<name>.json`, with the link that carries
+ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
 its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
