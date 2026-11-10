@@ -24,6 +24,8 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing/host-page` | The browser half the fixture drives, for a suite that boots its own page.                                        |
 | `@parity/truapi-host/wasm/testing`   | The raw glue for the signing-enabled bundle the test host runs on.                                                  |
 
+A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](../../../docs/migration/test-host.md).
+
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`.
 `wasm/web` is the production browser host and excludes
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
