@@ -73,6 +73,16 @@ struct WalletMainPocketTests {
         #expect(try screen.wireframe.openedProduct == ProductId("stash.\(network)"))
     }
 
+    /// The Balance card opens its screen from the Wallet, so a tap on it must reach the wireframe that pushes it.
+    @Test
+    func openingTheBalanceCardShowsItsScreen() {
+        let screen = CollectiblesScreen(tld: StubDotNsTldProvider(tld: nil))
+
+        screen.presenter.showBalanceCard()
+
+        #expect(screen.wireframe.showedBalanceCard)
+    }
+
     /// The remote switch pulls the card from every installed app without a
     /// release. A switched-off app must not read the chain either, since the
     /// suffix read is retried for as long as it goes unanswered.
@@ -120,7 +130,6 @@ private func makeInteractor(
     remoteConfig.collectiblesEnabled = collectiblesEnabled
 
     let interactor = WalletMainInteractor(
-        networkStatusObserver: StubNetworkStatusObserver(),
         pocketPrewarmer: PocketPrewarmer(
             products: StubProductResolver(),
             dotNsResolver: SlowArchives(delay: warmDelay)
@@ -144,7 +153,6 @@ private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
         (shown, continuation) = AsyncStream<Set<PocketCardKey>>.makeStream()
     }
 
-    func didReceive(networkStatus _: NetworkStatus) {}
     func didReceiveCollectibles(page _: ProductPage) {}
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
@@ -176,8 +184,7 @@ private struct CollectiblesScreen {
         let interactor = makeInteractor(tld: tld, collectiblesEnabled: collectiblesEnabled)
         presenter = WalletMainPresenter(
             interactor: interactor,
-            wireframe: wireframe,
-            titleViewModelFactory: NetworkStatusTitleViewModelFactory(screenTitle: "")
+            wireframe: wireframe
         )
         interactor.presenter = presenter
         presenter.view = view
@@ -215,18 +222,22 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     }
 
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
-    func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
-    func frame(of _: PocketCardKey) -> CGRect? { nil }
-    var openCard: PocketCardKey? { nil }
-    func setOpenCard(_: PocketCardKey?) {}
-    func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
+    func frame(of _: PocketItem) -> CGRect? { nil }
+    var openItem: PocketItem? { nil }
+    func setOpenItem(_: PocketItem?) {}
+    func moveOpenItem(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
     private(set) var openedProduct: ProductId?
+    private(set) var showedBalanceCard = false
 
-    func showProduct(page: ProductPage) {
+    func showBalanceCard() {
+        showedBalanceCard = true
+    }
+
+    func showCollectibles(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
     }
 
@@ -264,10 +275,6 @@ private final class LateTld: DotNsTldProviding {
 
         return try await resolveTld()
     }
-}
-
-private final class StubNetworkStatusObserver: NetworkStatusObserving {
-    func start(onStatus _: @escaping @MainActor (NetworkStatus) -> Void) {}
 }
 
 /// Stands in for the archive fetch a warm performs, which is the slow part the

@@ -48,8 +48,8 @@ use wasm_bindgen::{JsCast, prelude::*};
 use crate::SigningHostRuntime;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime,
-	host_logic::worker::WorkerTransition, subscription::Spawner,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
+	host_logic::worker::WorkerTransition,
 };
 
 mod generated_bridge;
@@ -858,9 +858,11 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
 }
 
 /// Forwards every worker transition request to the host's
-/// `requestWorkerTransition(productId, transition)` callback.
+/// `requestWorkerTransition(productId, transition)` callback, and a worker
+/// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
 struct WasmWorkerController {
 	request: SendWrapper<Function>,
+	crashing: Option<SendWrapper<Function>>,
 }
 
 impl crate::host_logic::worker::WorkerController for WasmWorkerController {
@@ -875,6 +877,16 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 			&JsValue::from_str(name),
 		);
 	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		if let Some(crashing) = &self.crashing {
+			let _ = crashing.call2(
+				&JsValue::NULL,
+				&JsValue::from_str(product_id.as_str()),
+				&JsValue::from(crashes),
+			);
+		}
+	}
 }
 
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
@@ -884,9 +896,11 @@ fn install_worker_controller(
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
 	let request = get_function(callbacks, "requestWorkerTransition")?;
+	let crashing = get_optional_function(callbacks, "workerCrashing")?;
 	assert!(
 		ledger.install_worker_controller(Arc::new(WasmWorkerController {
 			request: SendWrapper::new(request),
+			crashing: crashing.map(SendWrapper::new),
 		})),
 		"a freshly built runtime installs its worker controller once"
 	);
@@ -933,9 +947,7 @@ impl WasmPairingHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = pairing_host_config_from_js(&host_config)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
@@ -1148,6 +1160,18 @@ impl WasmPairingHostRuntime {
 		}
 	}
 
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+		}
+	}
+
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op, and so
 	/// is an id that is not a product id.
@@ -1281,9 +1305,7 @@ impl WasmSigningHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = signing_host_config_from_js(&host_config)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
@@ -1436,6 +1458,18 @@ impl WasmSigningHostRuntime {
 		}
 	}
 
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+		}
+	}
+
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op, and so
 	/// is an id that is not a product id.
@@ -1584,9 +1618,7 @@ impl WasmProductRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.

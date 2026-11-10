@@ -10,7 +10,7 @@ pub const NFT_PURSE_MAX_NAME_BYTES: usize = 64;
 
 /// Id of an NFT purse. Ids are allocated in order from 0. The main purse,
 /// which every user has and Root owns, is `u32::MAX`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseId(pub u32);
 
 /// Public key of one item in a purse. The host holds its secret.
@@ -446,11 +446,11 @@ pub enum NftPurseDepositError {
 }
 
 /// Request for the key a sender seals a `Static` cheque to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseStaticReceiveKeyRequest {}
 
 /// The host's static receive key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseStaticReceiveKeyResponse {
 	/// The X25519 key `Static` cheques are sealed to. The same for every
 	/// product.

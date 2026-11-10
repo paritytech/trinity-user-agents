@@ -18,6 +18,7 @@ final class SPARustRuntimeInteractor {
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
     private let chatProviderFactory: ChatContactDataProviderMaking
+    private let chainStatusProvider: ChainStatusProviding?
 
     private var runtime: SPARuntimeProtocol?
     private var jsEngine: JSEngineProtocol?
@@ -30,6 +31,7 @@ final class SPARustRuntimeInteractor {
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
+    private var chainStatusTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
@@ -39,7 +41,8 @@ final class SPARustRuntimeInteractor {
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
-        chatProviderFactory: ChatContactDataProviderMaking
+        chatProviderFactory: ChatContactDataProviderMaking,
+        chainStatusProvider: ChainStatusProviding?
     ) {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
@@ -49,12 +52,14 @@ final class SPARustRuntimeInteractor {
         self.logger = logger
         self.productRepository = productRepository
         self.chatProviderFactory = chatProviderFactory
+        self.chainStatusProvider = chainStatusProvider
     }
 
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
         reloadTask?.cancel()
+        chainStatusTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
 
@@ -67,6 +72,7 @@ final class SPARustRuntimeInteractor {
 extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
         jsEngine = engine
+        subscribeToChainStatus()
 
         startRuntime(engine: engine)
     }
@@ -142,10 +148,25 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
 }
 
 private extension SPARustRuntimeInteractor {
+    func subscribeToChainStatus() {
+        guard let chainStatusProvider else { return }
+
+        chainStatusTask = Task { [weak self, chainStatusProvider, logger] in
+            do {
+                for try await rows in chainStatusProvider.statusStream() {
+                    self?.presenter?.didReceiveChainStatus(rows)
+                }
+            } catch {
+                logger.error("SPA(rust): Chain status stream failed: \(error)")
+            }
+        }
+    }
+
     /// A dotNS page is its manifest, so a resolution failure is the page failing. A direct URL is
     /// its own content and the manifest only names it, so a label that holds no records — a local
-    /// server opened from debug settings — still opens, unnamed. A development server page is not
-    /// published content, so nothing is resolved for it.
+    /// server opened from debug settings — still opens, unnamed. A bundled product is read from the
+    /// app alone, and a development server page is not published content, so nothing is resolved for
+    /// either.
     func resolveProduct() async throws -> ResolvedProduct? {
         let domain = configuration.productDomain
 
@@ -159,6 +180,8 @@ private extension SPARustRuntimeInteractor {
             ).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
+        case .bundled:
+            return nil
         #if DEBUG
             case .devServer:
                 return nil

@@ -14,12 +14,12 @@
 mod replay;
 
 use std::{
-	collections::{HashSet, VecDeque},
-	sync::Arc,
+	collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+	sync::{Arc, Mutex},
 	time::Instant,
 };
 
-use core::future::Future;
+use core::{future::Future, ops::ControlFlow, time::Duration};
 
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -39,54 +39,58 @@ use crate::{
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::{
-		entropy::root_entropy_source,
-		product_account::{
-			ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
-		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
-			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
-			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
-			establish_responder_session_info, v2,
+			PairingDeeplinkDecodeError, VersionedHandshakeProposal, bootstrap_topic,
+			decode_pairing_deeplink, encrypt_v2_handshake_response, v2,
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
 		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
+		authority::{AccountHolder, AuthoritySession},
 		services::RuntimeServices,
-		signing_host::{SigningHost, SigningHostSsoService},
+		signing_host::{SigningHost, SigningHostSsoService, WalletAccountHolder},
 		sso_remote::{fresh_statement_expiry, sso_message_id},
 		sso_service::{Dispatch, SsoWithdrawals},
-		statement_store_rpc,
+		statement_store_rpc::{self, StatementSubmitError},
 	},
+	time::{Backoff, retry},
 	unix_time::current_unix_secs as statement_current_unix_secs,
 };
-use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
-
-/// RFC-0022 domain for the responder's persistent SSO X25519 key.
-const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
+use replay::{ReplayExecution, ReplayRequest, SsoReplayLocks, SsoReplayScope, execute_once};
 
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 
-fn derive_responder_identity(
-	entropy: &[u8],
-	network_suffix: &str,
-) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-	let statement = derive_identity_keypair(entropy, network_suffix)?;
-	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(entropy, SSO_ENCRYPTION_DOMAIN);
-	let identity_chat_private_key = derive_identity_chat_private_key(entropy);
-	Ok((
-		ResponderIdentity {
-			statement_secret: statement.secret.to_bytes(),
-			statement_public_key: statement.public.to_bytes(),
-			encryption_secret_key,
-			encryption_public_key,
-		},
-		identity_chat_private_key,
-	))
+/// Resends under [`Resend::Briefly`], after 1, 2, 4 and 8 seconds: about 15
+/// seconds in all.
+const MAX_RESENDS: u32 = 4;
+
+/// Pauses between resends, growing to at most 8 seconds.
+#[cfg(not(test))]
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
+#[cfg(test)]
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(8));
+
+/// How long to resend a statement while the People chain is unreachable.
+#[derive(Clone, Copy)]
+enum Resend {
+	/// Up to [`MAX_RESENDS`] times, when the caller can recover from losing it.
+	Briefly,
+	/// Until the store answers, for the answer to a request that already ran
+	/// and will not run again.
+	UntilAnswered,
+}
+
+impl Resend {
+	/// Whether the statement may be sent again after `sends` sends.
+	fn allows_another_after(self, sends: u32) -> bool {
+		match self {
+			Self::Briefly => sends <= MAX_RESENDS,
+			Self::UntilAnswered => true,
+		}
+	}
 }
 
 /// Bounded set of undecodable request ids acknowledged within one serve loop.
@@ -124,6 +128,27 @@ pub enum ResponderExit {
 	PeerDisconnected,
 	/// The statement subscription ended without a disconnect message; retain the pairing and retry.
 	SubscriptionEnded,
+}
+
+/// Why [`crate::SigningHostRuntime::resume_pairing`] stopped serving.
+///
+/// Either way the peer is still paired.
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+pub enum ResumePairingError {
+	/// The session could not be served at all: this signing host has no active
+	/// local session, or the session keys could not be derived. Serving again
+	/// fails the same way until the local session changes.
+	#[display("{reason}")]
+	CannotServe {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// Serving failed after it started. Serving again may succeed.
+	#[display("{reason}")]
+	Interrupted {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Public key material identifying one pairing host's resumable SSO session.
@@ -197,6 +222,15 @@ impl PairedSsoPeer {
 	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
 	}
+
+	/// The replay ledger scope for this peer's requests to `root_public_key`.
+	fn replay_scope(self, root_public_key: [u8; 32]) -> SsoReplayScope {
+		SsoReplayScope {
+			root_public_key,
+			peer_statement_account_id: self.statement_account_id,
+			peer_encryption_public_key: self.encryption_public_key,
+		}
+	}
 }
 
 /// Longest metadata value a pairing prompt renders; the rest is dropped.
@@ -255,15 +289,66 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 /// duplicate detection.
 pub struct SsoResponderService {
 	services: Arc<RuntimeServices>,
+	wallet: Arc<WalletAccountHolder>,
 	signing_host: Arc<SigningHost>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
+	unpublished_answers: UnpublishedAnswers,
+}
+
+/// Refused answers, published when their request is redelivered instead of
+/// running it again.
+///
+/// Holds the newest request per peer, the only one its channel can redeliver.
+/// In memory only.
+#[derive(Default)]
+struct UnpublishedAnswers {
+	by_peer: Mutex<HashMap<SsoReplayScope, (String, Vec<RemoteMessage>)>>,
+}
+
+impl UnpublishedAnswers {
+	/// Keep `answers` to `request_id`, replacing those kept for an older request.
+	fn keep(&self, scope: SsoReplayScope, request_id: &str, answers: Vec<RemoteMessage>) {
+		if answers.is_empty() {
+			return;
+		}
+		self.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.insert(scope, (request_id.to_string(), answers));
+	}
+
+	/// Take the answers kept for `request_id`.
+	fn take(&self, scope: SsoReplayScope, request_id: &str) -> Vec<RemoteMessage> {
+		match self
+			.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.entry(scope)
+		{
+			Entry::Occupied(kept) if kept.get().0 == request_id => kept.remove().1,
+			_ => Vec::new(),
+		}
+	}
 }
 
 impl SsoResponderService {
 	/// Answer peers of `signing_host` over the runtime's statement store.
 	pub fn new(services: Arc<RuntimeServices>, signing_host: Arc<SigningHost>) -> Arc<Self> {
-		Arc::new(Self { services, signing_host, replay_locks: SsoReplayLocks::default() })
+		Arc::new(Self {
+			services,
+			wallet: signing_host.wallet().clone(),
+			signing_host,
+			replay_locks: SsoReplayLocks::default(),
+			unpublished_answers: UnpublishedAnswers::default(),
+		})
+	}
+
+	/// The wallet activation a pairing operation answers under.
+	fn wallet_session(&self) -> Result<AuthoritySession, String> {
+		self.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())
 	}
 
 	/// Answer `deeplink` and serve the resulting SSO session until it ends.
@@ -284,39 +369,18 @@ impl SsoResponderService {
 		deeplink: &str,
 	) -> Result<EstablishedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		// Product accounts and the SSO statement identity derive from the
-		// canonical root key; the identity is the RFC-0022 `uid.<suffix>` default
-		// account of the network this host is configured for.
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let (identity, identity_chat_private_key) =
-			derive_responder_identity(&entropy, self.signing_host.network_suffix())
-				.map_err(|err| format!("responder identity derivation failed: {err}"))?;
+		let wallet_session = self.wallet_session()?;
 		let device_enc_secret =
 			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
 		let device_enc_pub_key = device_enc_secret.public_key().0;
-		let session = responder_session_from_identity(&identity, peer)?;
-
-		let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
-			identity_account_id: identity.statement_public_key,
-			root_account_id: root.public.to_bytes(),
-			identity_chat_private_key,
-			sso_enc_pub_key: identity.encryption_public_key,
-			device_enc_pub_key,
-			root_entropy_source: root_entropy_source(&entropy),
-		}));
-		submit_handshake_answer(
-			&self.services,
-			&session,
-			peer,
-			&success,
-			"sso-responder handshake",
-		)
-		.await?;
+		let (session, statement) = self
+			.wallet
+			.pairing_answer(&wallet_session, peer, device_enc_pub_key)
+			.map_err(|error| error.to_string())?;
+		submit_handshake_answer(&self.services, &statement, "sso-responder handshake").await?;
+		self.wallet
+			.require_current_session(&wallet_session)
+			.map_err(|error| error.to_string())?;
 		debug!("answered pairing handshake");
 		// The submit is the earliest point the peer could read the answer.
 		if let Some(observer) = self.services.device_pairing_observer() {
@@ -325,42 +389,33 @@ impl SsoResponderService {
 
 		Ok(EstablishedPairing {
 			session,
-			replay_scope: SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
+			replay_scope: peer.replay_scope(wallet_session.public_key),
 		})
 	}
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
-	pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
-		serve_session(
-			self,
-			session,
-			SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
-		)
-		.await
+	pub async fn resume_pairing(
+		&self,
+		peer: PairedSsoPeer,
+	) -> Result<ResponderExit, ResumePairingError> {
+		let cannot_serve = |reason| ResumePairingError::CannotServe { reason };
+		let wallet_session = self.wallet_session().map_err(cannot_serve)?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| cannot_serve(error.to_string()))?;
+		serve_session(self, session, peer.replay_scope(wallet_session.public_key))
+			.await
+			.map_err(|reason| ResumePairingError::Interrupted { reason })
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
 	pub async fn disconnect_paired_host(&self, peer: PairedSsoPeer) -> Result<(), String> {
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
+		let wallet_session = self.wallet_session()?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		let message_id = sso_message_id();
 		let message = RemoteMessage {
 			message_id: message_id.clone(),
@@ -372,10 +427,7 @@ impl SsoResponderService {
 			vec![message],
 			fresh_statement_expiry(),
 		)?;
-		self.services
-			.statement_store
-			.submit_sso(statement, "sso-responder disconnect")
-			.await
+		publish(&self.services, &statement, "sso-responder disconnect", Resend::Briefly).await
 	}
 
 	/// Tell the pairing host that allowance allocation is under way, moving it off
@@ -391,25 +443,17 @@ impl SsoResponderService {
 		deeplink: &str,
 	) -> Result<AnnouncedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
-		let entropy = self
-			.signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let (identity, _) = derive_responder_identity(&entropy, self.signing_host.network_suffix())
-			.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let session = responder_session_from_identity(&identity, peer)?;
-
+		let wallet_session = self.wallet_session()?;
+		let transport = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
-		submit_handshake_answer(
-			&self.services,
-			&session,
-			peer,
-			&pending,
-			"sso-responder allowance allocation",
-		)
-		.await?;
+		let statement = prepare_handshake_answer(&transport, peer, &pending)?;
+		submit_handshake_answer(&self.services, &statement, "sso-responder allowance allocation")
+			.await?;
 		debug!("told pairing host that allowance allocation started");
-		Ok(AnnouncedPairing { identity, peer })
+		Ok(AnnouncedPairing { transport, peer })
 	}
 
 	/// Tell the pairing host that pairing failed, so it reports `reason` and offers
@@ -419,67 +463,49 @@ impl SsoResponderService {
 		announced: &AnnouncedPairing,
 		reason: String,
 	) -> Result<(), String> {
-		let session = responder_session_from_identity(&announced.identity, announced.peer)?;
-		let failed = v2::EncryptedResponse::Failed(reason);
-		submit_handshake_answer(
-			&self.services,
-			&session,
+		let statement = prepare_handshake_answer(
+			&announced.transport,
 			announced.peer,
-			&failed,
-			"sso-responder pairing failure",
-		)
-		.await?;
+			&v2::EncryptedResponse::Failed(reason),
+		)?;
+		submit_handshake_answer(&self.services, &statement, "sso-responder pairing failure")
+			.await?;
 		debug!("told pairing host that pairing failed");
 		Ok(())
 	}
 }
 
-fn responder_session(
-	entropy: &[u8],
-	network_suffix: &str,
+/// Transport and peer of an in-progress pairing notice.
+///
+/// The transport is derived once, when the allocation is announced, so the
+/// failure notice can still be signed after the wallet locks or switches.
+pub struct AnnouncedPairing {
+	transport: SsoSessionInfo,
 	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	let (identity, _) = derive_responder_identity(entropy, network_suffix)
-		.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-	responder_session_from_identity(&identity, peer)
 }
 
-fn responder_session_from_identity(
-	identity: &ResponderIdentity,
-	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	establish_responder_session_info(
-		identity,
-		peer.statement_account_id,
-		peer.encryption_public_key,
-	)
-}
-
-/// Encrypt `response` to the pairing host and post it on the handshake topic.
-async fn submit_handshake_answer(
-	services: &RuntimeServices,
-	session: &SsoSessionInfo,
+/// Encrypt `response` to `peer` and sign it on the handshake topic.
+pub fn prepare_handshake_answer(
+	transport: &SsoSessionInfo,
 	peer: PairedSsoPeer,
 	response: &v2::EncryptedResponse,
-	context: &'static str,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
 	let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
 	let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-	let statement = build_signed_statement(
-		session,
-		topic,
-		topic,
-		handshake.encode(),
-		fresh_statement_expiry(),
-	)?;
-	services.statement_store.submit(statement, context).await
+	build_signed_statement(transport, topic, topic, handshake.encode(), fresh_statement_expiry())
 }
 
-/// Keep the responder identity and peer for both pairing notices.
-// No `Debug`: it holds the responder statement secret.
-pub struct AnnouncedPairing {
-	identity: ResponderIdentity,
-	peer: PairedSsoPeer,
+/// Post a signed handshake answer, resending it briefly while the People
+/// chain is unreachable.
+async fn submit_handshake_answer(
+	services: &RuntimeServices,
+	statement: &[u8],
+	label: &'static str,
+) -> Result<(), String> {
+	resend_while_unreachable(label, Resend::Briefly, || {
+		services.statement_store.submit(statement, label)
+	})
+	.await
 }
 
 /// Serve inbound session statements until the session ends.
@@ -631,16 +657,14 @@ async fn read_statements(
 				if let Some(request_id) = error.request_id &&
 					decode_failure_request_ids.insert(request_id.clone())
 				{
-					let ack = build_signed_session_response_statement(
+					acknowledge_request(
+						services,
 						session,
 						request_id,
-						SsoResponseCode::DecodingFailed as u8,
-						fresh_statement_expiry(),
-					)?;
-					services
-						.statement_store
-						.submit_sso(ack, "sso-responder decode-failed ack")
-						.await?;
+						SsoResponseCode::DecodingFailed,
+						"sso-responder decode-failed ack",
+					)
+					.await?;
 				}
 				continue;
 			},
@@ -693,38 +717,71 @@ async fn serve_statement(
 	replay_scope: SsoReplayScope,
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
-	let request_id = incoming.request_id.clone();
-	let expires_at_unix_secs = incoming.expires_at_unix_secs;
-	let duplicate_exit = duplicate_request_exit(&incoming);
 	let services = &responder.services;
+	let request_id = incoming.request_id.clone();
+	let request =
+		ReplayRequest { id: &request_id, expires_at_unix_secs: incoming.expires_at_unix_secs };
+	let duplicate_exit = duplicate_request_exit(&incoming);
+	let mut unpublished = Vec::new();
 	let execution = execute_once(
 		services.platform.as_ref(),
 		&responder.replay_locks,
 		replay_scope,
-		&request_id,
-		expires_at_unix_secs,
+		request,
 		statement_current_unix_secs(),
-		|| serve_request(services, service, session, incoming),
+		acknowledge_request(
+			services,
+			session,
+			request_id.clone(),
+			SsoResponseCode::Success,
+			"sso-responder ack",
+		),
+		|| serve_request(services, service, session, incoming, &mut unpublished),
 	)
-	.await?;
-	Ok(match execution {
+	.await;
+	responder.unpublished_answers.keep(replay_scope, &request_id, unpublished);
+	Ok(match execution? {
 		ReplayExecution::Duplicate => {
-			acknowledge_request(services, session, &request_id).await?;
+			publish_kept_answers(responder, session, replay_scope, &request_id).await?;
 			duplicate_exit
 		},
 		ReplayExecution::Executed(exit) => exit,
 	})
 }
 
-/// Ack one inbound request statement and answer its batched messages.
+/// Publish the answers kept for `request_id` when it is delivered again,
+/// keeping those the People chain still refuses.
+async fn publish_kept_answers(
+	responder: &SsoResponderService,
+	session: &SsoSessionInfo,
+	replay_scope: SsoReplayScope,
+	request_id: &str,
+) -> Result<(), String> {
+	let mut refused = Vec::new();
+	let mut refusal = None;
+	for answer in responder.unpublished_answers.take(replay_scope, request_id) {
+		if let Err(reason) = publish_answer(&responder.services, session, &answer).await {
+			refused.push(answer);
+			refusal.get_or_insert(reason);
+		}
+	}
+	responder.unpublished_answers.keep(replay_scope, request_id, refused);
+	refusal.map_or(Ok(()), Err)
+}
+
+/// Answer the batched messages of one acked request statement.
+///
+/// An answer the People chain refuses is added to `unpublished` and the
+/// remaining messages are still answered, since the request will not run
+/// again. The first refusal is returned.
 async fn serve_request(
 	services: &RuntimeServices,
 	service: &SigningHostSsoService,
 	session: &SsoSessionInfo,
 	incoming: IncomingSsoRequest,
+	unpublished: &mut Vec<RemoteMessage>,
 ) -> Result<Option<ResponderExit>, String> {
-	acknowledge_request(services, session, &incoming.request_id).await?;
-
+	let mut refusal = None;
 	for message in incoming.messages {
 		let request_name = message.name();
 		let responding_to = message.message_id.clone();
@@ -746,15 +803,7 @@ async fn serve_request(
 			},
 		};
 		let response_message_id = response.message_id.clone();
-		let statement_request_id = format!("resp:{response_message_id}");
-		let statement = build_outgoing_request_statement(
-			session,
-			statement_request_id,
-			vec![response],
-			fresh_statement_expiry(),
-		)?;
-		let publish_result =
-			services.statement_store.submit_sso(statement, "sso-responder response").await;
+		let publish_result = publish_answer(services, session, &response).await;
 		let elapsed_ms = started.elapsed().as_millis();
 		match publish_result {
 			Ok(()) => {
@@ -778,7 +827,7 @@ async fn serve_request(
 					%response_message_id,
 					outcome = outcome.outcome,
 					reason = outcome.reason.as_deref().unwrap_or_default(),
-					elapsed_ms = elapsed_ms as u64,
+					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
 			},
 			Err(reason) => {
@@ -804,27 +853,95 @@ async fn serve_request(
 					%response_message_id,
 					outcome = failure.outcome,
 					reason = %reason,
-					elapsed_ms = elapsed_ms as u64,
+					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
-				return Err(reason);
+				unpublished.push(response);
+				refusal.get_or_insert(reason);
 			},
 		}
 	}
-	Ok(None)
+	refusal.map_or(Ok(None), Err)
+}
+
+/// Publish `answer` on the session's request channel, sending it again until
+/// the People chain takes or refuses it.
+async fn publish_answer(
+	services: &RuntimeServices,
+	session: &SsoSessionInfo,
+	answer: &RemoteMessage,
+) -> Result<(), String> {
+	let statement = build_outgoing_request_statement(
+		session,
+		format!("resp:{}", answer.message_id),
+		vec![answer.clone()],
+		fresh_statement_expiry(),
+	)?;
+	publish(services, &statement, "sso-responder response", Resend::UntilAnswered).await
 }
 
 async fn acknowledge_request(
 	services: &RuntimeServices,
 	session: &SsoSessionInfo,
-	request_id: &str,
+	request_id: String,
+	code: SsoResponseCode,
+	label: &'static str,
 ) -> Result<(), String> {
 	let ack = build_signed_session_response_statement(
 		session,
-		request_id.to_string(),
-		SsoResponseCode::Success as u8,
+		request_id,
+		code as u8,
 		fresh_statement_expiry(),
 	)?;
-	services.statement_store.submit_sso(ack, "sso-responder ack").await
+	publish(services, &ack, label, Resend::Briefly).await
+}
+
+/// Publish a session statement, resending it as `resend` allows.
+async fn publish(
+	services: &RuntimeServices,
+	statement: &[u8],
+	label: &'static str,
+	resend: Resend,
+) -> Result<(), String> {
+	resend_while_unreachable(label, resend, || {
+		services.statement_store.submit_sso(statement, label)
+	})
+	.await
+}
+
+/// Run `submit`, and again after a pause while the People chain is
+/// unreachable, as long as `resend` allows. Any answer from the store is final.
+/// Resending is safe: the store answers `known` for a statement it holds.
+async fn resend_while_unreachable<SubmitFn, SubmitFuture>(
+	label: &'static str,
+	resend: Resend,
+	submit: SubmitFn,
+) -> Result<(), String>
+where
+	SubmitFn: Fn() -> SubmitFuture,
+	SubmitFuture: Future<Output = Result<(), StatementSubmitError>>,
+{
+	let mut pauses = RESEND_PAUSES;
+	let mut sends = 0;
+	retry(
+		|| {
+			sends += 1;
+			let can_resend = resend.allows_another_after(sends);
+			let submitted = submit();
+			async move {
+				match submitted.await {
+					Err(error) if can_resend && error.is_unreachable() => {
+						ControlFlow::Continue(error)
+					},
+					result => ControlFlow::Break(result.map_err(|error| error.to_string())),
+				}
+			}
+		},
+		|error| {
+			warn!(label, %error, "People chain unreachable; sending the statement again");
+			pauses.next_pause()
+		},
+	)
+	.await
 }
 
 fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit> {
@@ -858,910 +975,4 @@ fn response_cli_summary(
 }
 
 #[cfg(test)]
-mod tests {
-	use super::{super::LocalActivation, *};
-	use crate::{
-		host_internal::{
-			sso_messages::{
-				self, GetAccountAliasResponse, OnExistingAllowancePolicy, RemoteMessage,
-				RingVrfError, SsoAllocatedResource, SsoAllocationOutcome,
-			},
-			sso_wire::ResponseOutcome,
-		},
-		host_logic::product_account::{
-			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
-			derive_root_keypair_from_entropy,
-		},
-		platform::ProductId,
-	};
-
-	/// The key a host advertises on chain must be the one it serves over
-	/// pairing. These derive independently, so a test that asks only one of
-	/// them cannot see the two drift apart — which is the failure this pins.
-	#[test]
-	fn the_advertised_chat_key_is_the_one_the_responder_serves() {
-		const CHAT_ENTROPY: [u8; 16] = [0xAB; 16];
-		const SUFFIX: &str = "paseo";
-
-		let (_, served) =
-			derive_responder_identity(&CHAT_ENTROPY, SUFFIX).expect("responder identity derives");
-		let registration = crate::host_logic::attestation::build_lite_registration(
-			&CHAT_ENTROPY,
-			SUFFIX,
-			[0x11; 32],
-			"headless",
-			None,
-			0,
-			None,
-			None,
-		)
-		.expect("registration builds");
-
-		assert_eq!(
-			&registration.identifier_key[1..33],
-			&crate::host_logic::x25519_seal::X25519PrivateKey::from(served).public_key().0,
-			"the advertised chat key is not the one served over pairing"
-		);
-	}
-	use crate::{
-		host_logic::statement_store::decode_verified_statement_data,
-		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
-		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
-		test_support::{StubPlatform, test_spawner},
-	};
-	use std::sync::Arc;
-	use truapi::latest as api;
-
-	const ENTROPY: [u8; 16] = [0xab; 16];
-	/// The fixture's People chain is paseo-next-v2 (see `PEOPLE_METADATA`),
-	/// whose runtime carries the `paseo` network suffix.
-	const NETWORK_SUFFIX: &str = "paseo";
-
-	fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
-		let platform: Arc<dyn Platform> = platform;
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			// No dotNS Asset Hub, so activation looks up no username.
-			[0; 32],
-			NETWORK_SUFFIX.to_string(),
-		)
-		.expect("signing host config is valid");
-		let services = RuntimeServices::new(
-			platform.clone(),
-			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
-			test_spawner(),
-		);
-		let signing_host = SigningHost::new(services.clone(), config.network_suffix);
-		futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		(services, signing_host)
-	}
-
-	#[test]
-	fn responder_advertises_and_signs_with_the_local_uid_identity() {
-		let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-		let local_identity = signing_host.current_session().unwrap().identity_account_id.unwrap();
-		let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
-		assert_eq!(identity.statement_public_key, local_identity);
-		// The statement identity is the network's `uid.<suffix>` account, the
-		// one the pairing host resolves a username for; a `.dot` account has
-		// no lite record on a test network.
-		assert_ne!(
-			derive_responder_identity(&ENTROPY, "dot").unwrap().0.statement_public_key,
-			local_identity
-		);
-
-		let (_, host_encryption_public_key) =
-			derive_x25519_keypair_from_entropy(&[0x42; 16], b"sso");
-		let session =
-			establish_responder_session_info(&identity, [0x55; 32], host_encryption_public_key)
-				.unwrap();
-		let statement = build_signed_statement(
-			&session,
-			[0x66; 32],
-			[0x77; 32],
-			b"handshake".to_vec(),
-			fresh_statement_expiry(),
-		)
-		.unwrap();
-		let verified =
-			decode_verified_statement_data(&statement, Some(identity.statement_public_key))
-				.unwrap();
-		assert_eq!(verified.signer, local_identity);
-	}
-
-	#[test]
-	fn advertised_device_key_is_independent_of_the_identity() {
-		let (services, _signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-
-		let secret = futures::executor::block_on(services.device_encryption_secret()).unwrap();
-		let advertised = X25519PrivateKey::from(secret).public_key().0;
-
-		// The regression this guards: advertising the SSO channel key as the
-		// device key makes every device sharing an identity indistinguishable.
-		let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, SSO_ENCRYPTION_DOMAIN);
-		assert_ne!(advertised, sso_public);
-	}
-
-	/// Both handshake notices the signing host sends outside `Success` must be
-	/// readable by the host that advertised the keys, or the pairing host is
-	/// left on a screen no later message can move it off.
-	#[test]
-	fn the_pairing_notices_decode_on_the_pairing_host() {
-		use crate::host_logic::sso::pairing::{
-			VersionedHandshakeResponse, decrypt_v2_handshake_response,
-			generate_pairing_device_identity,
-		};
-
-		// Encrypt to the key a pairing host actually advertises, so each notice
-		// is decrypted with the secret that host kept rather than one the test
-		// chose for both sides.
-		let pairing_identity = generate_pairing_device_identity().unwrap();
-		let peer = PairedSsoPeer {
-			statement_account_id: pairing_identity.statement_store_public_key,
-			encryption_public_key: pairing_identity.encryption_public_key,
-		};
-
-		for response in [
-			v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation),
-			v2::EncryptedResponse::Failed("no free StatementStore slot".to_string()),
-		] {
-			let VersionedHandshakeResponse::V2 { encrypted_message, public_key } =
-				encrypt_v2_handshake_response(peer.encryption_public_key, &response).unwrap();
-
-			assert_eq!(
-				decrypt_v2_handshake_response(
-					pairing_identity.encryption_secret_key,
-					public_key,
-					&encrypted_message,
-				)
-				.unwrap(),
-				response,
-			);
-		}
-	}
-
-	fn pairing_deeplink(peer: PairedSsoPeer) -> String {
-		let proposal = VersionedHandshakeProposal::V2(v2::Proposal {
-			device: v2::Device {
-				statement_account_id: peer.statement_account_id,
-				encryption_public_key: peer.encryption_public_key,
-			},
-			metadata: vec![v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string())],
-		});
-		format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()))
-	}
-
-	#[derive(Default)]
-	struct RecordingPairingObserver {
-		paired: std::sync::Mutex<Vec<PairedSsoPeer>>,
-	}
-
-	impl RecordingPairingObserver {
-		fn paired(&self) -> Vec<PairedSsoPeer> {
-			self.paired.lock().expect("paired device list mutex poisoned").clone()
-		}
-	}
-
-	impl DevicePairingObserver for RecordingPairingObserver {
-		fn device_paired(&self, device: PairedSsoPeer) {
-			self.paired.lock().expect("paired device list mutex poisoned").push(device);
-		}
-	}
-
-	fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
-		signing_fixture(Arc::new(StubPlatform {
-			rpc_method_responses: vec![(
-				"statement_submit",
-				format!(r#"{{"status":"{submit_status}"}}"#),
-			)],
-			..Default::default()
-		}))
-	}
-
-	/// Without this the host never learns a device paired, so no contact is
-	/// told a new device joined.
-	#[test]
-	fn a_paired_device_is_reported_to_the_host() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
-		let (services, signing_host) = pairing_fixture("new");
-		let observer = Arc::new(RecordingPairingObserver::default());
-		assert!(services.install_device_pairing_observer(observer.clone()));
-
-		futures::executor::block_on(
-			SsoResponderService::new(services, signing_host)
-				.establish_pairing(&pairing_deeplink(peer)),
-		)
-		.expect("the handshake is answered");
-
-		assert_eq!(observer.paired(), vec![peer]);
-	}
-
-	/// Reporting a handshake the peer never received would have the host
-	/// announce a device over a session that does not exist.
-	#[test]
-	fn a_handshake_that_never_landed_reports_no_device() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
-		// Neither "new" nor "known", so the submit is rejected.
-		let (services, signing_host) = pairing_fixture("ignored");
-		let observer = Arc::new(RecordingPairingObserver::default());
-		assert!(services.install_device_pairing_observer(observer.clone()));
-
-		let failure = futures::executor::block_on(
-			SsoResponderService::new(services, signing_host)
-				.establish_pairing(&pairing_deeplink(peer)),
-		)
-		.expect_err("a rejected handshake submit fails the pairing");
-		// Without this the test would also pass on a failure from earlier,
-		// leaving the rule unexercised.
-		assert!(
-			failure.contains("statement_submit not accepted"),
-			"pairing failed before the handshake submit: {failure}"
-		);
-
-		assert_eq!(observer.paired(), Vec::new());
-	}
-
-	#[test]
-	fn pairing_without_an_observer_still_answers_the_handshake() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
-		let (services, signing_host) = pairing_fixture("new");
-
-		futures::executor::block_on(
-			SsoResponderService::new(services, signing_host)
-				.establish_pairing(&pairing_deeplink(peer)),
-		)
-		.expect("the handshake is answered without an observer");
-	}
-
-	/// The peer writes what the pairing prompt calls it. Rendering that as
-	/// sent lets it reorder or pad out the prompt's own words around itself.
-	#[test]
-	fn proposal_metadata_is_sanitized_before_a_host_prompts_with_it() {
-		let long = "n".repeat(MAX_PAIRING_METADATA_CHARS + 10);
-		let proposal = VersionedHandshakeProposal::V2(v2::Proposal {
-			device: v2::Device {
-				statement_account_id: [0x31; 32],
-				encryption_public_key: [0x42; 32],
-			},
-			metadata: vec![
-				// A right-to-left override and a newline, either of which
-				// rewrites what the surrounding prompt text reads as.
-				v2::MetadataEntry(
-					v2::MetadataKey::HostName,
-					"  Wallet\u{202e}trebo\n  ".to_string(),
-				),
-				v2::MetadataEntry(v2::MetadataKey::HostVersion, long.clone()),
-				v2::MetadataEntry(v2::MetadataKey::HostIcon, "\u{2066}\t ".to_string()),
-				v2::MetadataEntry(v2::MetadataKey::Custom("seat".to_string()), "3".to_string()),
-			],
-		});
-		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
-
-		assert_eq!(
-			PairingProposal::from_deeplink(&deeplink)
-				.expect("a well-formed deeplink decodes")
-				.metadata,
-			PairingProposalMetadata {
-				host_name: Some("Wallettrebo".to_string()),
-				host_version: Some("n".repeat(MAX_PAIRING_METADATA_CHARS)),
-				// Nothing renderable survived, so the host has no name to show
-				// rather than an empty one.
-				host_icon: None,
-				// Neither key was sent, and a key outside the well-known set
-				// is not one a prompt has a place for.
-				platform_type: None,
-				platform_version: None,
-			}
-		);
-	}
-
-	#[test]
-	fn pairing_deeplink_exposes_the_public_material_needed_to_resume() {
-		let proposal = VersionedHandshakeProposal::V2(v2::Proposal {
-			device: v2::Device {
-				statement_account_id: [0x31; 32],
-				encryption_public_key: [0x42; 32],
-			},
-			metadata: vec![v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string())],
-		});
-		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
-
-		assert_eq!(
-			PairedSsoPeer::from_deeplink(&deeplink).unwrap(),
-			PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] }
-		);
-	}
-
-	#[test]
-	fn persisted_peer_rebuilds_the_original_responder_session() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x53; 32],
-			encryption_public_key: X25519PrivateKey::from([0x64; 32]).public_key().0,
-		};
-		let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
-		let mut expected = establish_responder_session_info(
-			&identity,
-			peer.statement_account_id,
-			peer.encryption_public_key,
-		)
-		.unwrap();
-		let resumed = responder_session(&ENTROPY, NETWORK_SUFFIX, peer).unwrap();
-
-		assert_eq!(
-			crate::host_logic::statement_store::statement_public_key_from_secret(resumed.ss_secret)
-				.unwrap(),
-			expected.ss_public_key
-		);
-		expected.ss_secret = resumed.ss_secret;
-
-		assert_eq!(resumed, expected);
-	}
-
-	#[test]
-	fn replayed_disconnect_still_terminates_the_peer() {
-		let disconnect = IncomingSsoRequest {
-			request_id: "disconnect-1".to_string(),
-			expires_at_unix_secs: Some(200),
-			messages: vec![RemoteMessage {
-				message_id: "message-1".to_string(),
-				data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-			}],
-		};
-		let ordinary = IncomingSsoRequest {
-			request_id: "empty-1".to_string(),
-			expires_at_unix_secs: Some(200),
-			messages: Vec::new(),
-		};
-
-		assert_eq!(
-			(duplicate_request_exit(&disconnect), duplicate_request_exit(&ordinary)),
-			(Some(ResponderExit::PeerDisconnected), None)
-		);
-	}
-
-	fn answer(
-		signing_host: &Arc<SigningHost>,
-		message_id: &str,
-		request: v1::RemoteMessage,
-	) -> v1::RemoteMessage {
-		let service = SigningHostSsoService::new(signing_host.clone());
-		let message = RemoteMessage {
-			message_id: message_id.to_string(),
-			data: RemoteMessageData::V1(request),
-		};
-		let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
-		else {
-			panic!("expected a response");
-		};
-		let RemoteMessageData::V1(data) = answer.message.data;
-		data
-	}
-
-	#[test]
-	fn dispatch_without_session_distinguishes_requests_responses_and_disconnects() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-		let service = SigningHostSsoService::new(signing_host);
-		let dispatch = |data| {
-			futures::executor::block_on(service.dispatch(
-				None,
-				RemoteMessage { message_id: "m-1".to_string(), data: RemoteMessageData::V1(data) },
-			))
-		};
-
-		assert_eq!(dispatch(v1::RemoteMessage::Disconnected), Dispatch::Disconnected);
-		assert_eq!(
-			dispatch(v1::RemoteMessage::ProductSubtreeResponse(sso_messages::Response {
-				responding_to: "m-1".to_string(),
-				payload: Ok([7; 32]),
-			})),
-			Dispatch::NotARequest("ProductSubtreeResponse"),
-		);
-		let Dispatch::Response(answer) = dispatch(v1::RemoteMessage::ProductSubtreeRequest(
-			sso_messages::ProductSubtreeRequest { product_id: ProductId::for_test("myapp.dot") },
-		)) else {
-			panic!("expected a disconnected error response");
-		};
-		let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(response)) =
-			answer.message.data
-		else {
-			panic!("expected the request's response variant");
-		};
-		assert_eq!(response.responding_to, "m-1");
-		assert_eq!(response.payload, Err("signing host session is not active".to_string()));
-	}
-
-	#[test]
-	fn response_summary_reports_protocol_errors_without_multiline_output() {
-		let payload: GetAccountAliasResponse =
-			Err(RingVrfError::Unknown { reason: "chain RPC\ntimed out".to_string() });
-
-		let result = ResponseOutcome::from_payload(&payload);
-		let summary = response_cli_summary(
-			"SSO response sent",
-			"get_account_alias",
-			"statement-1",
-			"alias-1",
-			"alias-1:response",
-			&result,
-			42,
-		);
-
-		assert_eq!(result.outcome, "error");
-		assert_eq!(
-			summary,
-			"SSO response sent · get_account_alias · error\n\
-             statement_request_id=statement-1\n\
-             responding_to=alias-1\n\
-             response_message_id=alias-1:response\n\
-             elapsed_ms=42\n\
-            reason=Unknown: chain RPC timed out"
-		);
-	}
-
-	#[cfg(not(target_arch = "wasm32"))]
-	#[test]
-	fn allocation_failure_details_reach_the_response_transcript() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			chain_connect_error: Some("allocation node unavailable"),
-			..StubPlatform::default()
-		}));
-		let service = SigningHostSsoService::new(signing_host);
-		let request = RemoteMessage::request(
-			"allocation-1".to_string(),
-			sso_messages::ResourceAllocationRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				resources: vec![
-					api::AllocatableResource::AutoSigning,
-					api::AllocatableResource::BulletinAllowance,
-					api::AllocatableResource::StatementStoreAllowance,
-				],
-				on_existing: OnExistingAllowancePolicy::Ignore,
-			},
-		);
-		let Dispatch::Response(answer) = futures::executor::block_on(service.answer(request))
-		else {
-			panic!("expected an allocation response");
-		};
-		let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
-			answer.message.data
-		else {
-			panic!("expected an allocation response");
-		};
-		assert!(matches!(
-			response.payload.unwrap().as_slice(),
-			[
-				SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning { .. }),
-				SsoAllocationOutcome::NotAvailable,
-				SsoAllocationOutcome::NotAvailable,
-			]
-		));
-		assert_eq!(answer.outcome.outcome, "partial");
-		let reason = answer.outcome.reason.as_deref().unwrap();
-		assert!(reason.starts_with("1 of 3 requested resources allocated; 2 unavailable"));
-		assert_eq!(reason.matches("allocation node unavailable").count(), 2, "{reason}");
-		assert!(!reason.contains(['\r', '\n']));
-		let cli = response_cli_summary(
-			"SSO response sent",
-			"resource_allocation",
-			"allocation-1",
-			"allocation-1",
-			&answer.message.message_id,
-			&answer.outcome,
-			0,
-		);
-		assert!(cli.contains(&format!("reason={reason}")));
-	}
-
-	#[test]
-	fn account_alias_requires_confirmation_for_cross_product_request() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-
-		let response = answer(
-			&signing_host,
-			"alias-1",
-			v1::RemoteMessage::GetAccountAliasRequest(sso_messages::ProductRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				payload: api::HostAccountGetAliasRequest {
-					key_handle: api::ProductAccountId {
-						dot_ns_identifier: ProductId::for_test("peopl.dot"),
-						derivation_index: api::DerivationIndex::Index(0),
-					},
-					context: api::ProductProofContext {
-						product_id: ProductId::for_test("other.dot"),
-						suffix: api::DerivationIndex::Index(0),
-					},
-					ring_location: api::RingLocation { chain_id: [0; 32], junctions: vec![] },
-				},
-			}),
-		);
-
-		let v1::RemoteMessage::GetAccountAliasResponse(response) = response else {
-			panic!("expected alias response");
-		};
-		assert_eq!(response.payload.unwrap_err(), RingVrfError::Rejected);
-	}
-
-	#[test]
-	fn resource_allocation_requires_confirmation_before_allocation() {
-		let platform = Arc::new(StubPlatform::default());
-		let (_, signing_host) = signing_fixture(platform.clone());
-
-		let response = answer(
-			&signing_host,
-			"alloc-1",
-			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				resources: vec![api::AllocatableResource::StatementStoreAllowance],
-				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
-			}),
-		);
-
-		let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
-			panic!("expected resource allocation response");
-		};
-		assert_eq!(response.payload.unwrap(), vec![SsoAllocationOutcome::Rejected]);
-
-		// The confirmation review names the beneficiary product so the user
-		// knows which product receives the delegated allowance key.
-		let reviews = platform
-			.resource_allocation_reviews
-			.lock()
-			.expect("resource allocation review list mutex poisoned");
-		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.dot"));
-	}
-
-	#[test]
-	fn auto_signing_allocation_returns_the_product_subtree_secret() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			..StubPlatform::default()
-		});
-		let (_, signing_host) = signing_fixture(platform);
-		let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-		let expected_secret =
-			derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot"))
-				.expect("product subtree secret derives")
-				.secret
-				.to_bytes();
-		let expected_ring_vrf_domain_entropy =
-			derive_ring_vrf_domain_entropy(&ENTROPY, &ProductId::for_test("myapp.dot"))
-				.expect("ring-VRF domain entropy derives");
-
-		let response = answer(
-			&signing_host,
-			"alloc-auto-signing",
-			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				resources: vec![api::AllocatableResource::AutoSigning],
-				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
-			}),
-		);
-
-		let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
-			panic!("expected resource allocation response");
-		};
-		assert_eq!(
-			response.payload.unwrap(),
-			vec![SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
-				product_root_private_key: expected_secret,
-				ring_vrf_domain_entropy: expected_ring_vrf_domain_entropy,
-			})]
-		);
-	}
-
-	fn allocation_after_session_change(replacement: Option<Vec<u8>>) {
-		use futures::{FutureExt, channel::oneshot};
-
-		let (release, gate) = oneshot::channel();
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
-			..StubPlatform::default()
-		});
-		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SigningHostSsoService::new(signing_host.clone());
-		let message = RemoteMessage::request(
-			"alloc-stale".to_string(),
-			sso_messages::ResourceAllocationRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				resources: vec![api::AllocatableResource::AutoSigning],
-				on_existing: OnExistingAllowancePolicy::Ignore,
-			},
-		);
-
-		futures::executor::block_on(async {
-			let answer = service.answer(message);
-			futures::pin_mut!(answer);
-			assert!(answer.as_mut().now_or_never().is_none());
-			assert_eq!(platform.resource_allocation_reviews.lock().unwrap().len(), 1);
-
-			signing_host.disconnect().await;
-			if let Some(entropy) = replacement {
-				signing_host.activate_local_session(entropy).await.unwrap();
-			}
-			release.send(()).unwrap();
-
-			let Dispatch::Response(answer) = answer.await else {
-				panic!("expected an allocation response");
-			};
-			let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
-				answer.message.data
-			else {
-				panic!("expected an allocation response");
-			};
-			assert_eq!(response.responding_to, "alloc-stale");
-			assert!(response.payload.is_err(), "stale consent must not release keys");
-			assert!(platform.sent_rpc.lock().unwrap().is_empty());
-		});
-	}
-
-	fn allocation_request(message_id: &str) -> RemoteMessage {
-		RemoteMessage::request(
-			message_id.to_string(),
-			sso_messages::ResourceAllocationRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				resources: vec![api::AllocatableResource::AutoSigning],
-				on_existing: OnExistingAllowancePolicy::Ignore,
-			},
-		)
-	}
-
-	fn cancel(message_id: &str, target: &str) -> RemoteMessage {
-		RemoteMessage {
-			message_id: message_id.to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(sso_messages::Withdrawal {
-				message_id: target.to_string(),
-			})),
-		}
-	}
-
-	/// The phone spends once the person approves an allocation, so a
-	/// withdrawal that arrives while the prompt is open must end the prompt
-	/// with nothing allocated and nothing to post.
-	#[test]
-	fn a_cancel_withdraws_an_allocation_while_its_prompt_is_open() {
-		let (_release, gate) = futures::channel::oneshot::channel();
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
-			..StubPlatform::default()
-		});
-		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SigningHostSsoService::new(signing_host);
-		let allocation = service.answer(allocation_request("alloc-1"));
-		futures::pin_mut!(allocation);
-		assert!(allocation.as_mut().now_or_never().is_none());
-
-		let withdrawal = service
-			.answer(cancel("cancel-1", "alloc-1"))
-			.now_or_never()
-			.expect("a withdrawal is answered at once");
-		let allocation = allocation
-			.as_mut()
-			.now_or_never()
-			.expect("a withdrawn request stops waiting on its prompt");
-
-		assert_eq!(
-			(withdrawal, allocation, platform.sent_rpc.lock().unwrap().len()),
-			(Dispatch::Withdraw("alloc-1".to_string()), Dispatch::Withdrawn, 0)
-		);
-	}
-
-	/// Statements arrive out of order, so a withdrawal can land first. The
-	/// request it names must then never reach the person at all.
-	#[test]
-	fn a_cancel_that_arrives_first_stops_its_request_before_it_prompts() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			..StubPlatform::default()
-		});
-		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SigningHostSsoService::new(signing_host);
-
-		futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1")));
-		let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));
-
-		assert_eq!(allocation, Dispatch::Withdrawn);
-		assert!(platform.resource_allocation_reviews.lock().unwrap().is_empty());
-	}
-
-	fn statement(request_id: &str, message: RemoteMessage) -> Vec<IncomingSsoRequest> {
-		vec![IncomingSsoRequest {
-			request_id: request_id.to_string(),
-			expires_at_unix_secs: None,
-			messages: vec![message],
-		}]
-	}
-
-	/// Without this a `Cancel` waits behind the very request it withdraws,
-	/// and reaches it only after the person has answered.
-	#[test]
-	fn a_cancel_is_read_while_the_request_it_names_is_being_served() {
-		let withdrawals = SsoWithdrawals::default();
-		let (pages, statements) = futures::channel::mpsc::unbounded();
-		pages
-			.unbounded_send(Ok(statement("stmt-1", allocation_request("alloc-1"))))
-			.unwrap();
-		let serving = serve_pages(statements, &withdrawals, |incoming| {
-			let request = withdrawals.begin(&incoming.messages[0].message_id);
-			async move {
-				if let Some(request) = request {
-					request.cancel.cancelled().await;
-				}
-				Ok(Some(ResponderExit::PeerDisconnected))
-			}
-		});
-		futures::pin_mut!(serving);
-		assert!(serving.as_mut().now_or_never().is_none());
-
-		pages
-			.unbounded_send(Ok(statement("stmt-2", cancel("cancel-1", "alloc-1"))))
-			.unwrap();
-
-		assert_eq!(serving.as_mut().now_or_never(), Some(Ok(ResponderExit::PeerDisconnected)));
-	}
-
-	/// The request being served has been acked and recorded as started, so
-	/// redelivery would never answer it. A broken subscription must let it
-	/// finish before the loop reports the failure.
-	#[test]
-	fn a_failing_subscription_lets_the_request_being_served_finish() {
-		let withdrawals = SsoWithdrawals::default();
-		let (pages, statements) = futures::channel::mpsc::unbounded();
-		let (release, gate) = futures::channel::oneshot::channel::<()>();
-		let mut gate = Some(gate);
-		pages
-			.unbounded_send(Ok(statement("stmt-1", allocation_request("alloc-1"))))
-			.unwrap();
-		let serving = serve_pages(statements, &withdrawals, |_| {
-			let gate = gate.take();
-			async move {
-				if let Some(gate) = gate {
-					let _ = gate.await;
-				}
-				Ok(None)
-			}
-		});
-		futures::pin_mut!(serving);
-		assert!(serving.as_mut().now_or_never().is_none());
-
-		pages.unbounded_send(Err("subscription failed".to_string())).unwrap();
-		let before_the_request_finished = serving.as_mut().now_or_never();
-		let once_it_finished = before_the_request_finished.is_none().then(|| {
-			let _ = release.send(());
-			serving.as_mut().now_or_never()
-		});
-
-		assert_eq!(
-			(before_the_request_finished, once_it_finished),
-			(None, Some(Some(Err("subscription failed".to_string()))))
-		);
-	}
-
-	#[test]
-	fn resource_consent_cannot_authorize_a_replacement_account() {
-		allocation_after_session_change(Some(vec![0xcd; 16]));
-	}
-
-	#[test]
-	fn resource_consent_cannot_survive_same_account_reactivation() {
-		allocation_after_session_change(Some(ENTROPY.to_vec()));
-	}
-
-	#[test]
-	fn resource_consent_cannot_survive_disconnect() {
-		allocation_after_session_change(None);
-	}
-
-	#[test]
-	fn legacy_transaction_request_uses_the_controlled_identity_account() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform {
-			create_transaction_confirmed: true,
-			chain_connect_error: Some("fixture has no live chain"),
-			..StubPlatform::default()
-		}));
-		let identity = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
-		let payload = api::LegacyAccountTxPayload {
-			signer: identity.public.to_bytes(),
-			genesis_hash: [0xaa; 32],
-			call_data: vec![0x00, 0x00],
-			extensions: vec![api::TxPayloadExtension {
-				id: "CheckNonce".to_string(),
-				extra: vec![1],
-				additional_signed: vec![2, 3],
-			}],
-			tx_ext_version: 0,
-		};
-
-		let response = answer(
-			&signing_host,
-			"legacy-tx-1",
-			v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
-				sso_messages::CreateTransactionWithLegacyAccountRequest {
-					payload: sso_messages::CreateTransactionLegacyPayload::V1(payload),
-				},
-			),
-		);
-
-		let v1::RemoteMessage::CreateTransactionResponse(response) = response else {
-			panic!("expected create transaction response");
-		};
-		// The identity key is accepted, so the request gets as far as reading
-		// the runtime metadata.
-		let error = response.payload.expect_err("fixture has no chain metadata");
-		assert!(format!("{error:?}").contains("cannot load chain metadata"), "{error:?}");
-	}
-
-	#[test]
-	fn product_subtree_request_is_consent_free_and_hard_derived() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-		let response = answer(
-			&signing_host,
-			"subtree-1",
-			v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
-				product_id: ProductId::for_test("browse.dot"),
-			}),
-		);
-
-		let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
-			panic!("expected product subtree response");
-		};
-		let root =
-			derive_root_keypair_from_entropy(&ENTROPY).expect("fixture entropy derives root");
-		let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
-			&root,
-			&ProductId::for_test("browse.dot"),
-		)
-		.expect("fixture derives subtree")
-		.public
-		.to_bytes();
-		assert_eq!(response.responding_to, "subtree-1");
-		assert_eq!(response.payload, Ok(expected));
-	}
-
-	#[test]
-	fn decode_failure_request_ids_dedup_and_bound() {
-		let mut served = DecodeFailureRequestIds::new();
-
-		// First sighting is served; an immediate duplicate is rejected.
-		assert!(served.insert("req-a".to_string()));
-		assert!(!served.insert("req-a".to_string()));
-
-		// Fill to capacity with distinct ids; the set never exceeds the bound.
-		for i in 0..MAX_DECODE_FAILURE_REQUEST_IDS {
-			served.insert(format!("fill-{i}"));
-		}
-		assert_eq!(served.seen.len(), MAX_DECODE_FAILURE_REQUEST_IDS);
-		assert_eq!(served.order.len(), MAX_DECODE_FAILURE_REQUEST_IDS);
-
-		// The oldest id ("req-a") has been evicted, so it is accepted again,
-		// while a recent id is still deduped — memory stays bounded regardless
-		// of how many ids a peer streams.
-		assert!(served.insert("req-a".to_string()));
-		assert!(!served.insert(format!("fill-{}", MAX_DECODE_FAILURE_REQUEST_IDS - 1)));
-		assert_eq!(served.seen.len(), MAX_DECODE_FAILURE_REQUEST_IDS);
-	}
-}
+mod tests;

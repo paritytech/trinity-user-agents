@@ -2,11 +2,13 @@
 
 use super::{
 	super::{
+		allowances::AllowanceResource,
 		authority::{
-			AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
-			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			AccountGrant, Allowance, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
+			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
-		sso_remote::{SsoRemoteResponseError, SsoSessionKey},
+		sso_remote::SsoRemoteResponseError,
 	},
 	PairingHost,
 };
@@ -34,10 +36,11 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
-		let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
-		if let Some(public_key) = self.known_product_subtree(session, cache_key.clone()).await {
+		if session.sso.is_none() {
+			return Err(AuthorityError::Disconnected);
+		}
+		let grant_revision = self.grants.lifecycle().revision();
+		if let Some(public_key) = self.grants.known_product_subtree(session, product_id).await {
 			return Ok(public_key);
 		}
 		let public_key = self
@@ -46,7 +49,8 @@ impl PairingHost {
 			.await?
 			.map_err(remote_authority_error)?;
 		if !self
-			.persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
+			.grants
+			.persist_product_subtree_if_current(session, grant_revision, product_id, public_key)
 			.await
 		{
 			return Err(AuthorityError::Disconnected);
@@ -263,16 +267,19 @@ impl PairingHost {
 		self.session.call(cx, session, request).await?
 	}
 
-	/// Ask the paired signing host to allocate product resources, caching any
-	/// returned allowance keys.
+	/// Ask the paired signing host to allocate product resources and keep the grants.
+	///
+	/// `grant_revision` is read before the allocation was confirmed, so a
+	/// product reset during the review discards the result.
 	pub async fn remote_allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
+		grant_revision: u64,
 		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
+		self.grants.lifecycle().require_revision(grant_revision)?;
 		let outcomes = self
 			.session
 			.call(
@@ -286,8 +293,18 @@ impl PairingHost {
 			)
 			.await?
 			.map_err(remote_authority_error)?;
-		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, product_id, &outcomes)
-			.await?;
+		for outcome in &outcomes {
+			if let SsoAllocationOutcome::Allocated(resource) = outcome {
+				self.retain_grant(
+					cx,
+					session,
+					grant_revision,
+					product_id,
+					decode_grant(resource.clone())?,
+				)
+				.await?;
+			}
+		}
 		Ok(latest::HostRequestResourceAllocationResponse {
 			outcomes: outcomes.into_iter().map(Into::into).collect(),
 		})
@@ -334,12 +351,18 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		if let Some(cached) = self
-			.cached_statement_store_allowance_key(session, lifecycle_epoch, product_id)
+		let grant_revision = self.grants.lifecycle().revision();
+		if let Some(Allowance::StatementStore { key, .. }) = self
+			.grants
+			.cached_allowance(
+				session,
+				grant_revision,
+				product_id,
+				AllowanceResource::StatementStore,
+			)
 			.await?
 		{
-			return Ok(cached);
+			return Ok(key);
 		}
 		match self
 			.remote_allowance_slot(
@@ -352,13 +375,16 @@ impl PairingHost {
 			.await?
 		{
 			SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-				self.cache_statement_store_allowance_key(
-					session,
-					lifecycle_epoch,
-					product_id,
-					slot_account_key,
-				)
-				.await
+				let key = StatementStoreAllowanceKey::from_secret_bytes(slot_account_key)?;
+				self.grants
+					.retain_allowance(
+						session,
+						grant_revision,
+						product_id,
+						&Allowance::StatementStore { key: key.clone(), period: None },
+					)
+					.await?;
+				Ok(key)
 			},
 			other => Err(unexpected_resource("statement-store allowance", &other)),
 		}
@@ -372,16 +398,18 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		if let Some(cached) =
-			self.cached_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?
+		let grant_revision = self.grants.lifecycle().revision();
+		if let Some(Allowance::Bulletin(key)) = self
+			.grants
+			.cached_allowance(session, grant_revision, product_id, AllowanceResource::Bulletin)
+			.await?
 		{
-			return Ok(cached);
+			return Ok(key);
 		}
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
-			lifecycle_epoch,
+			grant_revision,
 			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
@@ -396,12 +424,14 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		self.evict_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?;
+		let grant_revision = self.grants.lifecycle().revision();
+		self.grants
+			.evict_bulletin_allowance(session, grant_revision, product_id)
+			.await?;
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
-			lifecycle_epoch,
+			grant_revision,
 			product_id,
 			OnExistingAllowancePolicy::Increase,
 		)
@@ -412,7 +442,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		lifecycle_epoch: u64,
+		grant_revision: u64,
 		product_id: &ProductId,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
@@ -427,69 +457,67 @@ impl PairingHost {
 			.await?
 		{
 			SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-				self.cache_bulletin_allowance_key(
-					session,
-					lifecycle_epoch,
-					product_id,
-					slot_account_key,
-				)
-				.await
+				let key = BulletinAllowanceKey::from_secret_bytes(slot_account_key)?;
+				self.grants
+					.retain_allowance(
+						session,
+						grant_revision,
+						product_id,
+						&Allowance::Bulletin(key.clone()),
+					)
+					.await?;
+				Ok(key)
 			},
 			other => Err(unexpected_resource("bulletin allowance", &other)),
 		}
 	}
 
-	async fn cache_allowance_outcomes(
+	/// Keep one grant the paired signing host issued for this host's product.
+	async fn retain_grant(
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		lifecycle_epoch: u64,
+		grant_revision: u64,
 		product_id: &ProductId,
-		outcomes: &[SsoAllocationOutcome],
+		grant: AccountGrant,
 	) -> Result<(), AuthorityError> {
-		for outcome in outcomes {
-			if let SsoAllocationOutcome::Allocated(resource) = outcome {
-				match resource {
-					SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-						self.cache_statement_store_allowance_key(
-							session,
-							lifecycle_epoch,
-							product_id,
-							slot_account_key.clone(),
-						)
-						.await?;
-					},
-					SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-						self.cache_bulletin_allowance_key(
-							session,
-							lifecycle_epoch,
-							product_id,
-							slot_account_key.clone(),
-						)
-						.await?;
-					},
-					SsoAllocatedResource::SmartContractAllowance => {},
-					SsoAllocatedResource::AutoSigning {
-						product_root_private_key,
-						ring_vrf_domain_entropy,
-					} => {
-						let expected_product_subtree_public_key =
-							self.remote_product_subtree_public_key(cx, session, product_id).await?;
-						self.remember_auto_signing_key(
-							session,
-							lifecycle_epoch,
-							product_id,
-							expected_product_subtree_public_key,
-							*product_root_private_key,
-							*ring_vrf_domain_entropy,
-						)
-						.await?;
-					},
-				}
-			}
+		match grant {
+			AccountGrant::Allowance(allowance) => {
+				self.grants
+					.retain_allowance(session, grant_revision, product_id, &allowance)
+					.await
+			},
+			AccountGrant::AutoSigning(key) => {
+				let expected =
+					self.remote_product_subtree_public_key(cx, session, product_id).await?;
+				self.grants
+					.remember_auto_signing_key(session, grant_revision, product_id, expected, key)
+					.await
+			},
+			AccountGrant::SmartContract => Ok(()),
 		}
-		Ok(())
 	}
+}
+
+fn decode_grant(resource: SsoAllocatedResource) -> Result<AccountGrant, AuthorityError> {
+	Ok(match resource {
+		SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
+			AccountGrant::Allowance(Allowance::StatementStore {
+				key: StatementStoreAllowanceKey::from_secret_bytes(slot_account_key)?,
+				period: None,
+			})
+		},
+		SsoAllocatedResource::BulletinAllowance { slot_account_key } => AccountGrant::Allowance(
+			Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(slot_account_key)?),
+		),
+		SsoAllocatedResource::SmartContractAllowance => AccountGrant::SmartContract,
+		SsoAllocatedResource::AutoSigning { product_root_private_key, ring_vrf_domain_entropy } => {
+			AccountGrant::AutoSigning(AutoSigningKey::from_parts(
+				product_root_private_key,
+				ring_vrf_domain_entropy,
+			))
+		},
+	})
 }
 
 fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {
@@ -523,23 +551,4 @@ impl From<SsoAllocationOutcome> for latest::AllocationOutcome {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn unexpected_resource_reasons_include_only_safe_discriminants() {
-		let resource = SsoAllocatedResource::AutoSigning {
-			product_root_private_key: [0xA5; 64],
-			ring_vrf_domain_entropy: [0x5A; 32],
-		};
-
-		let AuthorityError::Unknown { reason } =
-			unexpected_resource("statement-store allowance", &resource)
-		else {
-			panic!("expected an unknown authority error");
-		};
-
-		assert_eq!(reason, "Unexpected statement-store allowance response resource: auto-signing");
-		assert!(!reason.contains("165, 165"));
-	}
-}
+mod tests;

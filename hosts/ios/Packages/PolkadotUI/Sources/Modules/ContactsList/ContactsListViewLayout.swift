@@ -170,7 +170,7 @@ private extension ContactsListViewLayout {
 
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 0
-            let topInset: CGFloat = viewModel.hasRequests ? 8 : 16
+            let topInset: CGFloat = viewModel.hasRequests ? 8 : 0
             section.contentInsets = .init(top: topInset, leading: 0, bottom: 0, trailing: 0)
             return section
         }

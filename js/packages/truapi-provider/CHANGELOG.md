@@ -1,5 +1,20 @@
 # @parity/truapi-provider
 
+## 0.4.0
+
+### Minor Changes
+
+- 88cf440: `connect` on a provider with an `addRpcChain` registration fails for any chain not registered on it, instead
+  of starting the light client for it from the bundled catalog. A provider without one still reaches every bundled
+  network by genesis hash. To mix the two, call `addNetwork` before `addRpcChain`: `addNetwork` registers all four
+  chains of the network, and a later registration replaces an earlier one.
+
+### Patch Changes
+
+- 220baea: Refactor the Rust host runtime and browser provider to the workspace Rust guidance: unit tests live in their
+  own files, lint suppressions are removed by fixing their causes, unused functions and derives are dropped, and
+  truncating casts are checked. The JavaScript API and wire protocol are unchanged.
+
 ## 0.3.2
 
 ### Patch Changes
