@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::{TEST_STACK_ID, test_storage_key};
 
 fn file_with_url(url: &str) -> ChatMessageContent {
 	ChatMessageContent::File(ChatFile {
@@ -535,9 +536,9 @@ fn product_context_decoding_normalizes_the_product_id() {
 	assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
 }
 
-/// `slot` of the stack `stack`, encoded as a host receives it.
+/// `slot` of the test stack, encoded as a host receives it.
 fn stack_key(slot: CoreStorageKey) -> Vec<u8> {
-	StackStorageKey { stack: "stack".to_string(), slot }.encode()
+	test_storage_key(slot).encode()
 }
 
 #[test]
@@ -549,7 +550,7 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 	assert_eq!(
 		describe_core_storage_key(&permission),
 		Ok(CoreStorageKeyDescription {
-			stack: "stack".to_string(),
+			stack: TEST_STACK_ID.to_string(),
 			kind: "PermissionAuthorization",
 			owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 		})
@@ -591,7 +592,7 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		let description = describe_core_storage_key(&stack_key(key)).expect("valid key");
 		assert_eq!(
 			description,
-			CoreStorageKeyDescription { stack: "stack".to_string(), kind, owner }
+			CoreStorageKeyDescription { stack: TEST_STACK_ID.to_string(), kind, owner }
 		);
 	}
 
@@ -655,7 +656,11 @@ fn persisted_permission_and_manifest_scopes_keep_their_string_encoding() {
 		assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key.clone()));
 		assert_eq!(
 			describe_core_storage_key(&stack_key(key)),
-			Ok(CoreStorageKeyDescription { stack: "stack".to_string(), kind, owner: Some(owner) })
+			Ok(CoreStorageKeyDescription {
+				stack: TEST_STACK_ID.to_string(),
+				kind,
+				owner: Some(owner)
+			})
 		);
 	}
 }
