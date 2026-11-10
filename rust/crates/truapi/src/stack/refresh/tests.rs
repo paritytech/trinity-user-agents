@@ -1,6 +1,9 @@
 use std::{
 	collections::{HashMap, VecDeque},
-	sync::mpsc::{Receiver, Sender, channel},
+	sync::{
+		atomic::{AtomicUsize, Ordering},
+		mpsc::{Receiver, Sender, channel},
+	},
 };
 
 use truapi::latest::GenericError;
@@ -50,6 +53,7 @@ impl StackRecords for MemoryRecords {
 /// A host that answers each fetch with the next queued response, never
 /// answers once the queue is empty, and passes on every status it is told.
 struct QueuedHost {
+	fetches: Arc<AtomicUsize>,
 	responses: Mutex<VecDeque<StackFetchResponse>>,
 	statuses: Mutex<Sender<StackStatus>>,
 }
@@ -57,6 +61,7 @@ struct QueuedHost {
 #[async_trait::async_trait]
 impl StackHost for QueuedHost {
 	async fn fetch_stack_descriptor(&self, _request: StackFetchRequest) -> StackFetchResponse {
+		self.fetches.fetch_add(1, Ordering::SeqCst);
 		let response = self.responses.lock().expect("responses mutex poisoned").pop_front();
 		match response {
 			Some(response) => response,
@@ -71,6 +76,7 @@ impl StackHost for QueuedHost {
 
 struct Started {
 	refresh: StackRefresh,
+	fetches: Arc<AtomicUsize>,
 	timer: Arc<ManualTimer>,
 	statuses: Receiver<StackStatus>,
 }
@@ -80,6 +86,13 @@ impl Started {
 		self.statuses
 			.recv_timeout(ANSWER_WAIT)
 			.expect("the host is told the stack's status")
+	}
+
+	/// Waits until the refresh loop has started its `sleeps`-th wait.
+	fn wait_for_sleeps(&self, sleeps: usize) {
+		while self.timer.sleeps() < sleeps {
+			std::thread::yield_now();
+		}
 	}
 }
 
@@ -93,9 +106,14 @@ fn start(records: Arc<MemoryRecords>, responses: Vec<StackFetchResponse>) -> Sta
 	let timer = Arc::new(ManualTimer::default());
 	let refresh = load(records, timer.clone());
 	let (told, statuses) = channel();
-	let host = QueuedHost { responses: Mutex::new(responses.into()), statuses: Mutex::new(told) };
+	let fetches = Arc::<AtomicUsize>::default();
+	let host = QueuedHost {
+		fetches: fetches.clone(),
+		responses: Mutex::new(responses.into()),
+		statuses: Mutex::new(told),
+	};
 	assert!(refresh.start(Arc::new(host), &Spawner::for_test()));
-	Started { refresh, timer, statuses }
+	Started { refresh, fetches, timer, statuses }
 }
 
 /// A host that is offline at launch still runs: the stack comes from the
@@ -171,12 +189,33 @@ fn a_host_that_never_answers_counts_as_unreachable() {
 	let started = start(Arc::default(), vec![]);
 	let _at_start = started.next_status();
 
-	while started.timer.remaining().is_empty() {
-		std::thread::yield_now();
-	}
+	started.wait_for_sleeps(1);
 	started.timer.advance(FETCH_TIMEOUT);
 
 	assert_eq!(started.next_status().last_refresh, Some(StackRefreshOutcome::Unreachable));
+}
+
+/// A host may ask for a refresh on every return to the foreground. Asking
+/// several times during one fetch must not queue a request to the
+/// descriptor's server for each.
+#[test]
+fn requests_made_during_a_fetch_lead_to_one_more_fetch() {
+	let started = start(Arc::default(), vec![]);
+	let _at_start = started.next_status();
+	started.wait_for_sleeps(1);
+
+	for _ in 0..3 {
+		started.refresh.refresh_now();
+	}
+	started.timer.advance(FETCH_TIMEOUT);
+	// The first fetch gave up; the loop waited, woke for the requests and
+	// started the second.
+	started.wait_for_sleeps(3);
+	started.timer.advance(FETCH_TIMEOUT);
+	started.wait_for_sleeps(4);
+	std::thread::sleep(Duration::from_millis(50));
+
+	assert_eq!((started.fetches.load(Ordering::SeqCst), started.timer.sleeps()), (2, 4));
 }
 
 /// The core reads at most 1 MiB whatever the host sends, so a host that
@@ -184,7 +223,7 @@ fn a_host_that_never_answers_counts_as_unreachable() {
 #[test]
 fn a_document_past_the_size_cap_is_not_read() {
 	let oversized = StackFetchResponse::Document {
-		bytes: vec![b' '; MAX_DESCRIPTOR_BYTES as usize + 1],
+		bytes: vec![b' '; usize::try_from(MAX_DESCRIPTOR_BYTES).expect("fits usize") + 1],
 		etag: None,
 	};
 	let started = start(Arc::default(), vec![oversized]);
@@ -198,7 +237,11 @@ fn a_document_past_the_size_cap_is_not_read() {
 fn the_refresh_starts_once() {
 	let started = start(Arc::default(), vec![]);
 	let (told, _statuses) = channel();
-	let second = QueuedHost { responses: Mutex::default(), statuses: Mutex::new(told) };
+	let second = QueuedHost {
+		fetches: Arc::default(),
+		responses: Mutex::default(),
+		statuses: Mutex::new(told),
+	};
 
 	assert!(!started.refresh.start(Arc::new(second), &Spawner::for_test()));
 }

@@ -18,7 +18,6 @@ const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
 ///
 /// Send a `GET` to `url`. Do not follow redirects: the descriptor's URL rules
 /// hold only for the URL the stack's link names.
-#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct StackFetchRequest {
 	/// The descriptor's URL.
@@ -31,7 +30,6 @@ pub struct StackFetchRequest {
 }
 
 /// What a fetch of the stack's descriptor got.
-#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StackFetchResponse {
 	/// `200 OK`.
@@ -91,12 +89,12 @@ pub struct StackStatus {
 }
 
 /// One verified copy of the descriptor, and the stack it names.
-struct Copy {
+struct HeldCopy {
 	descriptor: Descriptor,
 	stack: Stack,
 }
 
-impl Copy {
+impl HeldCopy {
 	fn new(verified: Verified, allows_reserved_values: bool) -> Result<Self, StackError> {
 		let stack = Stack::from_descriptor(&verified.descriptor, allows_reserved_values)?;
 		Ok(Self { descriptor: verified.descriptor, stack })
@@ -113,7 +111,7 @@ impl Copy {
 /// starts from.
 struct Opened {
 	reader: StackReader,
-	running: Copy,
+	running: HeldCopy,
 	first_fetch: Option<FetchRequest>,
 	stale: bool,
 	expired: bool,
@@ -132,7 +130,7 @@ impl Opened {
 		let read = reader.get(pointer, now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			running: Copy::new(current.stack, allows_reserved_values)?,
+			running: HeldCopy::new(current.stack, allows_reserved_values)?,
 			reader,
 			first_fetch: read.fetch,
 			stale: current.stale,
@@ -149,9 +147,9 @@ pub struct StackSource {
 	reader: StackReader,
 	/// The fetch the reader handed out when it was loaded.
 	first_fetch: Option<FetchRequest>,
-	running: Copy,
+	running: HeldCopy,
 	/// A newer copy the core runs from its next start.
-	next_start: Option<Copy>,
+	next_start: Option<HeldCopy>,
 	stale: bool,
 	expired: bool,
 	last_refresh: Option<StackRefreshOutcome>,
@@ -258,7 +256,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		};
-		let held = match Copy::new(accepted.stack, self.allows_reserved_values) {
+		let held = match HeldCopy::new(accepted.stack, self.allows_reserved_values) {
 			Ok(held) => held,
 			Err(error) => {
 				self.last_refresh = Some(match outcome {
