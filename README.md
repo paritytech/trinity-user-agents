@@ -455,6 +455,11 @@ needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
+The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
+finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
+explicitly supply both resolution options. The Android avatar adapter uses the one-shot
+`resolvePublicProfile(username, force)`; consuming the flow in those views is a follow-up.
+
 iOS contacts and chat views consume `resolvePublicProfile(username:options:)`
 as a finite `AsyncThrowingStream`. New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
