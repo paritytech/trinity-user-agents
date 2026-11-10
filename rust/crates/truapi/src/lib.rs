@@ -493,6 +493,12 @@ pub mod latest {
 	/// Face visibility change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
+	/// Request to turn the card above the calling Widget to one side.
+	pub type HostExpandedCardSetBackShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
+	/// Card turn failure.
+	pub type HostExpandedCardSetBackShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownError>;
 	/// Push notification scheduling request.
 	pub type HostPushNotificationRequest =
 		LatestOf<versioned::notifications::HostPushNotificationRequest>;
@@ -854,6 +860,8 @@ mod dotns_views;
 #[cfg(feature = "runtime")]
 mod dynamic_vrf;
 #[cfg(feature = "runtime")]
+mod evm_contract;
+#[cfg(feature = "runtime")]
 pub mod frame;
 #[cfg(feature = "runtime")]
 mod host_core;
@@ -873,9 +881,13 @@ pub mod platform;
 #[cfg(feature = "runtime")]
 mod protocol_error;
 #[cfg(feature = "runtime")]
+mod public_profile;
+#[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
+#[cfg(feature = "runtime")]
+mod spawner;
 #[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
@@ -945,6 +957,9 @@ mod nft_purse;
 mod pocket_cards;
 
 #[cfg(feature = "runtime")]
+pub use spawner::Spawner;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -980,6 +995,8 @@ pub use platform::{
 	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
+#[cfg(feature = "runtime")]
+pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]

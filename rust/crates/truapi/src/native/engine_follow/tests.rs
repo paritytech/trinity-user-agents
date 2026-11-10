@@ -9,8 +9,6 @@ use v01::{
 	HostPaymentTopUpStatusSubscribeItem as TopUp,
 };
 
-use crate::subscription::thread_per_subscription_spawner;
-
 /// A host engine whose follows run until the test ends them, in the order
 /// the core asked for them.
 struct Engine<E> {
@@ -61,7 +59,7 @@ fn top_ups(engine: &Arc<Engine<TopUpError>>, spawner: Spawner) -> StatusFollower
 
 /// Never runs what it is given, for tests that only count what was asked.
 fn idle() -> Spawner {
-	Arc::new(|_| {})
+	Spawner::with_test_scheduler(|_| {})
 }
 
 fn product() -> ProductId {
@@ -146,7 +144,7 @@ fn only_the_most_recent_final_statuses_are_kept() {
 #[test]
 fn an_engine_ending_early_abandons_or_fails_its_streams() {
 	let engine = Engine::new();
-	let follower = top_ups(&engine, thread_per_subscription_spawner());
+	let follower = top_ups(&engine, Spawner::for_test());
 
 	let shown = follower.subscribe(product(), [1; 32]);
 	follower.notify(product(), [1; 32], TopUp::Claiming);
@@ -177,7 +175,7 @@ fn an_engine_ending_early_abandons_or_fails_its_streams() {
 
 fn balance(engine: &Arc<Engine<HostRejection>>) -> BalanceFollower {
 	let engine = engine.clone();
-	BalanceFollower::new(Arc::new(move || engine.follow()), thread_per_subscription_spawner())
+	BalanceFollower::new(Arc::new(move || engine.follow()), Spawner::for_test())
 }
 
 // The balance is followed once while any product listens: a later product

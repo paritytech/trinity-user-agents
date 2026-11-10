@@ -25,12 +25,11 @@ use truapi::{latest, v01};
 use zeroize::Zeroizing;
 
 use crate::{
-	DevicePairingObserver, PairedSsoPeer,
+	DevicePairingObserver, PairedSsoPeer, Spawner,
 	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
-	subscription::Spawner,
 	time::{RealTimer, Timer, retry},
 };
 

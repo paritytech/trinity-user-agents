@@ -473,7 +473,7 @@ impl RuntimeServices {
 			return;
 		}
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let found = services.detected_funding_country().await.is_some();
 			services.funding_country_asked();
 			if found {
@@ -481,7 +481,7 @@ impl RuntimeServices {
 					services.send_funding_options(&intent);
 				}
 			}
-		}));
+		});
 	}
 
 	/// Read every host provider's manifest that is not already being read. A
@@ -489,15 +489,15 @@ impl RuntimeServices {
 	/// the provider.
 	pub fn refresh_funding_providers(self: &Arc<Self>) {
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let mut loaded = services.funding_providers().learned_store.lock().await;
 			services.load_learned_support(&mut loaded).await;
-		}));
+		});
 		for product_id in self.funding_providers().start_reads() {
 			let read = ManifestRead { services: self.clone(), product_id };
-			(self.spawner)(Box::pin(async move {
+			self.spawner.spawn(async move {
 				read.services.read_provider_manifest(&read.product_id).await;
-			}));
+			});
 		}
 	}
 
@@ -507,7 +507,7 @@ impl RuntimeServices {
 	pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
 		self.funding_providers().learn(support);
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			// Each write takes the records as they are once it holds the
 			// lock, so the last one to land is the newest.
 			let mut loaded = services.funding_providers().learned_store.lock().await;
@@ -522,7 +522,7 @@ impl RuntimeServices {
 			{
 				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
 			}
-		}));
+		});
 	}
 
 	/// Load what earlier answers showed unless `loaded` says it is in,

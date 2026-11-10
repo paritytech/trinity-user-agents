@@ -347,9 +347,9 @@ impl RuntimeServices {
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let _ = Abortable::new(rounds, registration).await;
-		}));
+		});
 		request_id
 	}
 
@@ -455,13 +455,13 @@ impl RuntimeServices {
 			return;
 		};
 		let (services, intent) = (self.clone(), intent.to_string());
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			if let Err(error) =
 				services.select_funding_provider(&intent, &provider_id, &quote_id).await
 			{
 				warn!(%intent, %error, "funding session not started when quoted");
 			}
-		}));
+		});
 	}
 
 	/// Stop session `intent`'s quotes when `selection` no longer matches their

@@ -20,7 +20,7 @@ use futures::{
 use truapi::v01;
 
 use super::errors::HostRejection;
-use crate::{platform::ProductId, subscription::Spawner};
+use crate::{Spawner, platform::ProductId};
 
 /// How long a product stream waits for an id's first status before it shows
 /// the pending one.
@@ -188,7 +188,7 @@ impl<T: EngineStatus> StatusFollower<T> {
 		let start = self.start(&mut state, &key);
 		drop(state);
 		if let Some(start) = start {
-			(self.spawner)(start);
+			self.spawner.spawn(start);
 		}
 	}
 
@@ -213,7 +213,7 @@ impl<T: EngineStatus> StatusFollower<T> {
 		following.streams.push(sender);
 		drop(state);
 		if let Some(start) = start {
-			(self.spawner)(start);
+			self.spawner.spawn(start);
 		}
 		product_stream(events)
 	}
@@ -393,7 +393,7 @@ impl BalanceFollower {
 		following.streams.push(sender);
 		drop(state);
 		if let Some(start) = start {
-			(self.spawner)(start);
+			self.spawner.spawn(start);
 		}
 		BalanceStream { balances, state: self.state.clone() }.boxed()
 	}

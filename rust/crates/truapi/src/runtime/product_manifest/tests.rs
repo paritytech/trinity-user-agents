@@ -1,4 +1,70 @@
 use super::*;
+use crate::host_logic::dotns_gateway::{
+	DotnsPopController, ProtocolRegistry, dispatcher_address_key,
+};
+use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolCall;
+
+struct ManifestContracts;
+
+#[async_trait::async_trait]
+impl DotnsTransport for ManifestContracts {
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		assert_eq!(key, dispatcher_address_key());
+		Ok(Some(vec![0x11; 20]))
+	}
+
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		if dest == &[0x11; 20] &&
+			DotnsPopController::protocolRegistryCall::abi_decode(&input).is_ok()
+		{
+			return Ok(DotnsPopController::protocolRegistryCall::abi_encode_returns(
+				&Address::repeat_byte(0x22),
+			));
+		}
+		if dest == &[0x22; 20] {
+			if ProtocolRegistry::tldCall::abi_decode(&input).is_ok() {
+				return Ok(ProtocolRegistry::tldCall::abi_encode_returns(&".paseo".to_string()));
+			}
+			let call = ProtocolRegistry::getCall::abi_decode(&input).unwrap();
+			assert_eq!(call.key, B256::right_padding_from(b"registry"));
+			return Ok(ProtocolRegistry::getCall::abi_encode_returns(&Address::repeat_byte(0x33)));
+		}
+		let node = node_on(".paseo", "shop.paseo");
+		if dest == &[0x33; 20] {
+			let call = DotnsRegistry::resolverCall::abi_decode(&input).unwrap();
+			assert_eq!(call.node.0, node);
+			return Ok(DotnsRegistry::resolverCall::abi_encode_returns(&Address::repeat_byte(
+				0x55,
+			)));
+		}
+		let call = ContentResolver::textCall::abi_decode(&input).unwrap();
+		assert_eq!((*dest, call.node.0, call.key.as_str()), ([0x55; 20], node, "manifest"));
+		Err(EvmContractError::Reverted { detail: "node resolver has no text records".into() })
+	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
+}
+
+#[test]
+fn a_manifest_uses_the_nodes_resolver_and_treats_a_revert_as_absent() {
+	assert_eq!(
+		futures::executor::block_on(read_text_record(
+			&mut ManifestContracts,
+			&ProductId::for_test("shop.paseo"),
+			None,
+			MANIFEST_RECORD_KEY,
+		))
+		.unwrap(),
+		None
+	);
+}
 
 /// The node a product id resolves to on a network serving `tld`.
 fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
@@ -71,7 +137,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			[0; 32],
 			[0xbb; 32],
 			asset_hub_chain_genesis_hash,
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
 			ceiling,
@@ -110,5 +176,35 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			),
 			(None, ManifestSource::TimedOut),
 		]
+	);
+}
+
+/// Lookups for one product that start while none has finished share one
+/// lookup, so a burst of them holds one Asset Hub follow, not one each.
+#[test]
+fn concurrent_lookups_for_one_product_open_one_follow() {
+	let platform = std::sync::Arc::new(crate::test_support::StubPlatform::default());
+	let services = RuntimeServices::new(
+		platform.clone(),
+		crate::platform::HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		[0; 32],
+		[0xbb; 32],
+		[0xcc; 32],
+		crate::Spawner::for_test(),
+	);
+	let product = ProductId::for_test("peopl.dot");
+
+	futures::executor::block_on(futures::future::join_all(
+		(0..4).map(|_| root_manifest(&services, platform.as_ref(), &product)),
+	));
+
+	assert_eq!(
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow"),
+		1
 	);
 }
