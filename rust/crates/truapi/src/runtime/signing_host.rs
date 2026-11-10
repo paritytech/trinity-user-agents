@@ -155,7 +155,7 @@ impl SigningHost {
 				[0xbb; 32],
 				Some([0xcc; 32]),
 			),
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		Self::with_ring_resolver(services, ring_resolver)
 	}
@@ -746,7 +746,7 @@ impl SigningHost {
 			return;
 		}
 		let weak_host = Arc::downgrade(self);
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			loop {
 				{
 					let Some(host) = weak_host.upgrade() else {
@@ -760,7 +760,7 @@ impl SigningHost {
 				};
 				futures_timer::Delay::new(delay).await;
 			}
-		}));
+		});
 	}
 
 	/// Record statement accounts to keep renewed under the active wallet.

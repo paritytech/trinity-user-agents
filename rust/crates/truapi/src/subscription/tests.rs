@@ -662,7 +662,7 @@ impl futures::Stream for PendingDropStream {
 fn register_then_stop_emits_no_extra_frames() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 	let slow_stream: SubscriptionStream = Box::pin(stream::pending());
 	manager.register("p:1".to_string(), 7, 99, slow_stream, transport_dyn);
 	manager.handle_stop("p:1");
@@ -682,7 +682,7 @@ fn a_mid_stream_interrupt_ends_the_subscription_where_it_happens() {
 	// Drive the worker on the caller's thread so the frame list is
 	// complete by the time `register` returns: the assertion below is
 	// that nothing follows the interrupt.
-	let inline_spawner: Spawner = Arc::new(futures::executor::block_on);
+	let inline_spawner = Spawner::with_test_scheduler(futures::executor::block_on);
 	let manager = SubscriptionManager::new(inline_spawner);
 	let failure: CallError<v01::GenericError> =
 		CallError::HostFailure { reason: "platform stream failed".to_string() };
@@ -705,7 +705,7 @@ fn a_mid_stream_interrupt_ends_the_subscription_where_it_happens() {
 fn register_completion_emits_interrupt() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 	let items = dummy_stream(vec![vec![0xaa], vec![0xbb]]);
 	manager.register("p:1".to_string(), 7, 99, items, transport_dyn);
 	let observed = transport_typed.wait_for(3, std::time::Duration::from_secs(2));
@@ -731,7 +731,7 @@ fn register_completion_emits_interrupt() {
 fn double_stop_is_idempotent() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 	let slow_stream: SubscriptionStream = Box::pin(stream::pending());
 	manager.register("p:1".to_string(), 7, 99, slow_stream, transport_dyn);
 	manager.handle_stop("p:1");
@@ -748,7 +748,7 @@ fn double_stop_is_idempotent() {
 fn subscription_uses_provided_spawner_not_native_thread() {
 	let invocations = Arc::new(AtomicUsize::new(0));
 	let invocations_for_spawner = invocations.clone();
-	let spawner: Spawner = Arc::new(move |fut: BoxFuture<'static, ()>| {
+	let spawner = Spawner::with_test_scheduler(move |fut| {
 		invocations_for_spawner.fetch_add(1, Ordering::SeqCst);
 		std::thread::spawn(move || futures::executor::block_on(fut));
 	});
@@ -776,7 +776,7 @@ fn subscription_uses_provided_spawner_not_native_thread() {
 fn stop_before_activate_aborts_subscription() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 	let token = manager.reserve("p:1".to_string());
 	manager.handle_stop("p:1");
 	let items = dummy_stream(vec![vec![0x01], vec![0x02]]);
@@ -796,7 +796,7 @@ fn stop_before_activate_aborts_subscription() {
 fn duplicate_start_supersedes_previous_without_leak() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 
 	// First subscription never yields; the second reservation for the
 	// same id must stop it.
@@ -827,7 +827,7 @@ fn duplicate_start_supersedes_previous_without_leak() {
 fn cancel_all_stops_live_subscription_streams() {
 	let transport_typed = Arc::new(RecordingTransport::new());
 	let transport_dyn: Arc<dyn Transport> = transport_typed.clone();
-	let manager = SubscriptionManager::new(thread_per_subscription_spawner());
+	let manager = SubscriptionManager::new(Spawner::for_test());
 	let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let stream: SubscriptionStream = Box::pin(PendingDropStream { dropped: dropped.clone() });
 
