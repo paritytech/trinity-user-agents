@@ -3188,6 +3188,41 @@ fn the_host_reads_back_what_the_core_says_changed() {
 	);
 }
 
+// Funding is available once the configuration offers a provider, and the
+// host hears so only when the list really changed, not on each refresh.
+#[test]
+fn providers_change_is_announced_only_when_the_list_changes() {
+	use super::funding_feed::FundingChangeKind;
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+	let configure = |names: &[&str]| {
+		host.set_funding_provider_config(
+			names.iter().map(|name| name.to_string()).collect(),
+			vec![],
+		)
+		.expect("configured");
+		let changes = funding.changes.lock().expect("changes mutex poisoned");
+		let announced =
+			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
+		(announced.count(), host.funding_available())
+	};
+
+	assert_eq!(
+		(
+			host.funding_available(),
+			configure(&["ramp.dot"]),
+			configure(&["ramp.dot"]),
+			configure(&[])
+		),
+		(false, (1, true), (1, true), (2, false))
+	);
+}
+
 /// The bridge hands its markers to a host without passing through the tracing
 /// layer, so the table check and the detail cap are applied on that path too.
 mod bridge_lines {

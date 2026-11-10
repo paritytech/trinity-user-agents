@@ -829,6 +829,14 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 	) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Options);
 	}
+
+	fn funding_quotes_withdrawn(&self, intent: String) {
+		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
+	}
+
+	fn funding_providers_changed(&self) {
+		self.funding.funding_changed(None, FundingChangeKind::Providers);
+	}
 }
 
 /// Rank of a terminal status.

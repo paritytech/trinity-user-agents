@@ -519,6 +519,16 @@ pub enum FundingStep {
 	Sent,
 }
 
+impl FundingStep {
+	/// The steps a session in `direction` goes through, in order.
+	pub fn of(direction: FundingDirection) -> &'static [FundingStep] {
+		match direction {
+			FundingDirection::In => &[Self::Started, Self::Received, Self::Added],
+			FundingDirection::Out => &[Self::Started, Self::Received, Self::Sent],
+		}
+	}
+}
+
 /// What is happening now, for the line under a session's milestones.
 ///
 /// Hosts word it with the session's rail, asset and amount: "{rail}" is
@@ -894,14 +904,7 @@ impl FundingSession {
 
 	/// The session's progress for its direction and rail at `now_ms`.
 	pub fn progress(&self, now_ms: u64) -> FundingProgress {
-		let steps: &[FundingStep] = match self.direction {
-			FundingDirection::In => {
-				&[FundingStep::Started, FundingStep::Received, FundingStep::Added]
-			},
-			FundingDirection::Out => {
-				&[FundingStep::Started, FundingStep::Received, FundingStep::Sent]
-			},
-		};
+		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates
 				.iter()

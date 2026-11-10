@@ -319,12 +319,17 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 			cash_amount: Some(95),
 			differing_requested: Some(100),
 			stopped_at: None,
+			steps: vec![FundingStep::Started, FundingStep::Received, FundingStep::Sent],
+			waiting_at: Some(FundingStep::Sent),
 		}
 	);
 	let mut paid = summary(FundingDirection::Out, released, FundingStatus::Sent);
 	paid.payout = Some(FundingPayout::PaidOut);
 	let paid = ending(&paid);
-	assert_eq!((paid.payout_state, paid.stopped_at), (Some(FundingPayoutState::PaidOut), None));
+	assert_eq!(
+		(paid.payout_state, paid.stopped_at, paid.waiting_at),
+		(Some(FundingPayoutState::PaidOut), None, None)
+	);
 	let mut expired = summary(
 		FundingDirection::In,
 		FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: 2 },
@@ -333,9 +338,28 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 	expired.amount = None;
 	let expired = ending(&expired);
 	assert_eq!(
-		(expired.outcome, expired.cash_amount, expired.differing_requested),
-		(FundingEndedOutcome::Failed { reason: FundingFailure::Expired }, Some(90), None)
+		(expired.outcome, expired.cash_amount, expired.differing_requested, expired.steps),
+		(
+			FundingEndedOutcome::Failed { reason: FundingFailure::Expired },
+			Some(90),
+			None,
+			vec![FundingStep::Started, FundingStep::Received, FundingStep::Added],
+		)
 	);
+}
+
+#[test]
+fn networks_read_by_name() {
+	let cases = [
+		("polkadot", "Polkadot"),
+		("ethereum", "Ethereum"),
+		("arbitrum one", "Arbitrum One"),
+		("BNB", "Bnb"),
+		("base-sepolia", "Base-Sepolia"),
+	];
+	for (id, name) in cases {
+		assert_eq!(funding_network_name(id.into()), name);
+	}
 }
 
 // Divergence "Sent funds button": the fact behind it holds on a bank top-up
