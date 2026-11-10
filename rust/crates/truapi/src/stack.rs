@@ -57,13 +57,11 @@ pub struct Stack {
 	chains: StackChains,
 }
 
-/// What tells a stack from every other stack, and one run of its chains from
-/// the next.
+/// A stack's id and the generation of its chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackIdentity {
-	/// The stack's identity: `trinity_stack::Pointer::stack_id` of its pointer.
-	/// A fork and its source have different ones, though their chains share
-	/// genesis hashes.
+	/// `trinity_stack::Pointer::stack_id` of the stack's pointer. A fork has
+	/// the same genesis hashes as its source and a different id.
 	pub id: String,
 	/// The descriptor's `generation`, which changes whenever the stack
 	/// restarts its chains, as after a wipe.

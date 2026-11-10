@@ -1734,13 +1734,13 @@ export interface TestStackChain {
  */
 export interface TestStack {
   /**
-   * The stack's identity. The core keys everything it stores by it, so two
-   * test stacks that must not share state take different ones.
+   * The stack's id. Give two test stacks different ids to keep their stored
+   * state apart.
    */
   id: string;
   /**
-   * The run of the stack's chains. The core does not read a manifest it
-   * cached under another generation.
+   * Changes when the stack's chains restart, as after a wipe. The core then
+   * reads cached manifests again.
    */
   generation: string;
   /** The network `getChainInfo` reports. */
