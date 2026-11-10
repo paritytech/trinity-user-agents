@@ -2,6 +2,8 @@
 //! reference also parses the GLSL, so a body it refuses only by parsing, such
 //! as one with a syntax error, passes here and fails the device's compiler.
 
+use crate::materials::glsl::{PARAMETER_QUALIFIERS, SAMPLING_FUNCTIONS, Token, tokenize};
+
 const INPUTS: [&str; 8] = [
 	"r_input",
 	"r_base",
@@ -15,32 +17,6 @@ const INPUTS: [&str; 8] = [
 
 const INTERFACE_KEYWORDS: [&str; 7] =
 	["uniform", "layout", "attribute", "varying", "buffer", "shared", "precision"];
-
-const SAMPLING_FUNCTIONS: [&str; 14] = [
-	"texture",
-	"textureProj",
-	"textureLod",
-	"textureOffset",
-	"texelFetch",
-	"texelFetchOffset",
-	"textureProjOffset",
-	"textureLodOffset",
-	"textureProjLod",
-	"textureProjLodOffset",
-	"textureGrad",
-	"textureGradOffset",
-	"textureProjGrad",
-	"textureProjGradOffset",
-];
-
-const ENTRY_PARAMETER_QUALIFIERS: [&str; 7] =
-	["in", "out", "inout", "const", "lowp", "mediump", "highp"];
-
-#[derive(Clone, Copy, PartialEq)]
-enum Token<'a> {
-	Word(&'a str),
-	Symbol(char),
-}
 
 /// Whether `body` keeps every body rule and declares `vec4 material(vec2)`,
 /// both as Shaderlab reads it and as the GLSL compiler reads it. The compiler
@@ -116,7 +92,7 @@ fn entry_point_declared(tokens: &[Token]) -> bool {
 /// `[qualifiers] vec2 [name] )`, the tokens after the entry point's `(`.
 fn entry_parameter(tokens: &[Token]) -> bool {
 	let mut rest = tokens.iter().skip_while(
-		|token| matches!(token, Token::Word(word) if ENTRY_PARAMETER_QUALIFIERS.contains(word)),
+		|token| matches!(token, Token::Word(word) if PARAMETER_QUALIFIERS.contains(word)),
 	);
 	if rest.next() != Some(&Token::Word("vec2")) {
 		return false;
@@ -126,39 +102,4 @@ fn entry_parameter(tokens: &[Token]) -> bool {
 		Some(Token::Word(_)) => rest.next() == Some(&Token::Symbol(')')),
 		_ => false,
 	}
-}
-
-/// Words and symbols outside comments and numbers. `None` when the body has a
-/// preprocessor directive or a comment that never ends.
-fn tokenize(source: &str) -> Option<Vec<Token<'_>>> {
-	let mut tokens = Vec::new();
-	let mut rest = source;
-	while let Some(next) = rest.chars().next() {
-		if let Some(comment) = rest.strip_prefix("//") {
-			rest = comment.find('\n').map_or("", |end| &comment[end..]);
-		} else if let Some(comment) = rest.strip_prefix("/*") {
-			rest = &comment[comment.find("*/")? + 2..];
-		} else if next == '#' {
-			return None;
-		} else if next.is_ascii_alphabetic() || next == '_' {
-			let end = rest
-				.find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-				.unwrap_or(rest.len());
-			tokens.push(Token::Word(&rest[..end]));
-			rest = &rest[end..];
-		} else if next.is_ascii_digit() ||
-			(next == '.' && rest[1..].starts_with(|character: char| character.is_ascii_digit()))
-		{
-			let end = rest
-				.find(|character: char| !character.is_ascii_alphanumeric() && character != '.')
-				.unwrap_or(rest.len());
-			rest = &rest[end..];
-		} else {
-			if !next.is_whitespace() {
-				tokens.push(Token::Symbol(next));
-			}
-			rest = &rest[next.len_utf8()..];
-		}
-	}
-	Some(tokens)
 }

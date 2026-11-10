@@ -26,8 +26,9 @@ rust/crates/
                          images hosts draw from Bulletin by CID and checks them; its
                          `materials` module keeps the materials renderer trees name
                          in the same database, read from Bulletin by its
-                         `bulletin_lookup` module and checked against Shaderlab's
-                         material format and the tree limits
+                         `bulletin_lookup` module, checked against Shaderlab's
+                         material format and the tree limits, and built into the
+                         shaders apps compile (GLSL ES, and Metal through naga)
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
@@ -110,6 +111,9 @@ scripts/refresh-host-import.sh
 scripts/host-papp-fixtures.ts
                            print host-papp's encoding of the SSO messages the core
                            pins, from a triangle-js-sdks checkout
+scripts/shaderlab-shader-fixtures.ts
+                           print the shaders Shaderlab's compile step writes for the
+                           core's material shader tests, from a shaderlab-spa checkout
 scripts/truapi-host-installer.sh
                            one-liner installer for the prebuilt truapi-host CLI
 scripts/build-cli-runner.ts

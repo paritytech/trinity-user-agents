@@ -338,10 +338,15 @@ const DELETE: &str = "DELETE FROM material WHERE id = ?1";
 
 #[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod format;
+mod glsl;
 #[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod limits;
 #[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod metal;
+#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod noise;
+#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod shader;
 
 #[cfg(test)]
 mod tests;

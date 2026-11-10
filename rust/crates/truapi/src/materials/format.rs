@@ -10,7 +10,10 @@ use serde_json::{Map, Value};
 use truapi::latest::{ImageRef, MaterialFailure, Parameter};
 
 use self::body::follows_body_rules;
-use super::MAX_MATERIAL_BYTES;
+use super::{
+	MAX_MATERIAL_BYTES,
+	shader::{MaterialShader, ShaderLanguage, material_shader},
+};
 
 mod body;
 
@@ -137,10 +140,20 @@ impl ParamKind {
 	}
 }
 
+/// A declared parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Param {
+	/// Its name, without the `p_` or `sp_` prefix the shader gives it.
+	pub name: String,
+	/// Its type.
+	pub kind: ParamKind,
+}
+
 /// A material that passed every format rule.
 #[derive(Debug)]
 pub struct Material {
-	params: Vec<ParamKind>,
+	params: Vec<Param>,
+	body: String,
 }
 
 impl Material {
@@ -148,7 +161,20 @@ impl Material {
 	/// type, with finite numbers, and noise only where one channel is read.
 	pub fn arguments_match(&self, args: &[Parameter]) -> bool {
 		self.params.len() == args.len() &&
-			self.params.iter().zip(args).all(|(kind, argument)| kind.accepts(argument))
+			self.params
+				.iter()
+				.zip(args)
+				.all(|(param, argument)| param.kind.accepts(argument))
+	}
+
+	/// The shaders an app compiles to draw this material in `language`. Without
+	/// `float_filterable` they filter 32-bit float images themselves.
+	pub fn shader(
+		&self,
+		language: ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<MaterialShader, MaterialFailure> {
+		material_shader(&self.params, &self.body, language, float_filterable)
 	}
 }
 
@@ -196,7 +222,7 @@ pub fn read_material(bytes: &[u8]) -> Result<Material, FormatError> {
 	}
 	let canonical: String = core::iter::once(HEADER.to_string())
 		.chain(controls.iter().map(|control| format!("{CONTROL}{}", control_json(control))))
-		.chain([canonical_body])
+		.chain([canonical_body.clone()])
 		.collect::<Vec<_>>()
 		.join("\n");
 	if canonical.len() > MAX_MATERIAL_BYTES {
@@ -205,7 +231,7 @@ pub fn read_material(bytes: &[u8]) -> Result<Material, FormatError> {
 	if canonical != text {
 		return Err(FormatError::NonCanonical);
 	}
-	Ok(Material { params })
+	Ok(Material { params, body: canonical_body })
 }
 
 /// Version 1 reads no feature, so any `@requires` line is refused: a
@@ -248,27 +274,25 @@ fn is_directive(line: &str) -> bool {
 		.is_some_and(|rest| rest.trim_start_matches(is_js_space).starts_with('@'))
 }
 
-fn read_params(controls: &[Map<String, Value>]) -> Result<Vec<ParamKind>, FormatError> {
+fn read_params(controls: &[Map<String, Value>]) -> Result<Vec<Param>, FormatError> {
 	if controls.len() > MAX_PARAMS {
 		return Err(FormatError::InvalidParameter);
 	}
-	let mut names = Vec::with_capacity(controls.len());
-	let mut params = Vec::with_capacity(controls.len());
+	let mut params: Vec<Param> = Vec::with_capacity(controls.len());
 	for control in controls {
 		let name = control.get("name").and_then(Value::as_str).filter(|name| is_identifier(name));
 		let kind = control.get("type").and_then(Value::as_str).and_then(ParamKind::parse);
 		let (Some(name), Some(kind)) = (name, kind) else {
 			return Err(FormatError::InvalidParameter);
 		};
-		if names.contains(&name) ||
+		if params.iter().any(|param| param.name == name) ||
 			!range_allowed(control, kind) ||
 			!default_allowed(control, kind) ||
 			!presentation_allowed(control, kind)
 		{
 			return Err(FormatError::InvalidParameter);
 		}
-		names.push(name);
-		params.push(kind);
+		params.push(Param { name: name.to_string(), kind });
 	}
 	Ok(params)
 }
