@@ -1,0 +1,199 @@
+import './index.css';
+
+import { ThemeProvider, Toaster, berlinTheme, themes } from '@novasamatech/tr-ui';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ErrorBoundary } from 'react-error-boundary';
+
+import { ElectronSplashScreen, FallbackScreen, WebSplashScreen } from '@/shared/components';
+import { isElectron, isProductionBuild, reloadApp } from '@/shared/env';
+import { resetFeatureStatuses, updateFeatureStatus } from '@/shared/feature-config';
+import { silenceDebugConsole } from '@/shared/logger';
+import { Sentry, initSentry } from '@/shared/sentry';
+import { TranslationProvider, useLocalePreference } from '@/shared/translation';
+import { delay } from '@/shared/utils';
+import { useThemeName, useThemeVariant } from '@/domains/application';
+// Eager import: registers the call window's `__callInit` MessagePort listener
+// before the preload posts the port on did-finish-load (no-op in the main app).
+import { isCallWindowLocation } from '@/features/call/runtime/callInitPort';
+import { NativeThemeSyncer, ThemeNameSyncer, ThemeSyncer } from '@/features/theme-toggle';
+
+import { LoadingDelay, controlledLazy } from './DelayedSuspense';
+
+declare module 'react' {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- module augmentation requires interface
+  interface CSSProperties {
+    appRegion?: 'drag' | 'no-drag';
+    // Allow CSS custom properties (e.g. theme vars like --w-rjv-*) in inline styles.
+    [customProperty: `--${string}`]: string | number | undefined;
+  }
+}
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- declaration merging requires interface
+  interface Window {
+    __browser_config: {
+      enableFeature(name: string): void;
+      disableFeature(name: string): void;
+      resetFeatureConfig(): void;
+    };
+    __rendererConsoleLoggingInstalled?: boolean;
+  }
+}
+
+window.__browser_config = {
+  enableFeature: name => updateFeatureStatus([name, true]),
+  disableFeature: name => updateFeatureStatus([name, false]),
+  resetFeatureConfig: () => resetFeatureStatuses(),
+};
+
+const CLEAR_LOADING_TIMEOUT = 700;
+const DIRTY_LOADING_TIMEOUT = 2000;
+
+// The A/V call window loads this same bundle at the `#/call` route in its own
+// BrowserWindow. It is dark-only by design (its Figma is built against dark
+// tokens), so pin it to dark and skip the theme syncers below — the app's
+// light/dark preference must not leak into it.
+const isCallWindow = isCallWindowLocation();
+
+const App = controlledLazy(() => import('./App').then(m => m.App));
+
+const setupRendererConsoleLogging = () => {
+  if (!isElectron() || !window.App?.logRendererConsole) return;
+  if (window.__rendererConsoleLoggingInstalled) return;
+  window.__rendererConsoleLoggingInstalled = true;
+
+  const originalConsoleDebug = console.debug.bind(console);
+  console.debug = (...values: unknown[]) => {
+    originalConsoleDebug(...values);
+    window.App.logRendererConsole('debug', values);
+  };
+
+  const originalConsoleInfo = console.info.bind(console);
+  console.info = (...values: unknown[]) => {
+    originalConsoleInfo(...values);
+    window.App.logRendererConsole('info', values);
+  };
+
+  const originalConsoleWarn = console.warn.bind(console);
+  console.warn = (...values: unknown[]) => {
+    originalConsoleWarn(...values);
+    window.App.logRendererConsole('warn', values);
+  };
+
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...values: unknown[]) => {
+    // Mute the polkadot-api chain-follow unpin chatter (`console.error("unpin", err)`
+    // in `@novasamatech/host-substrate-chain-connection`). It fires whenever the
+    // server has already evicted the block we're trying to unpin (finalised /
+    // reorged) — benign, but it floods the renderer console.
+    if (values[0] === 'unpin' && values[1] instanceof Error && /Invalid block hash/i.test(values[1].message)) {
+      return;
+    }
+    originalConsoleError(...values);
+    window.App.logRendererConsole('error', values);
+  };
+
+  window.addEventListener('error', event => {
+    window.App.logRendererConsole('error', [
+      '[window:error]',
+      event.message,
+      event.filename,
+      `line:${event.lineno}`,
+      `column:${event.colno}`,
+      event.error,
+    ]);
+  });
+
+  window.addEventListener('unhandledrejection', event => {
+    window.App.logRendererConsole('error', ['[window:unhandledrejection]', event.reason]);
+  });
+};
+
+initSentry();
+setupRendererConsoleLogging();
+
+// Production builds mute `console.debug` app-wide — the verbose diagnostics level
+// (WebRTC traces etc.). Modules keep using `console` as usual and don't gate
+// logging themselves. Must run after setupRendererConsoleLogging so muted output
+// doesn't reach the file logs either.
+if (isProductionBuild()) {
+  silenceDebugConsole();
+}
+
+/**
+ * All this loading logic can be described like this:
+ *
+ * If App component loads before `CLEAR_LOADING_TIMEOUT` timeout it shows
+ * immediately, else splash screen appears for at least DIRTY_LOADING_TIMEOUT.
+ */
+const Root = () => {
+  const [renderSplashScreen, setRenderSplashScreen] = useState(false);
+  const [appLoaded, setAppLoaded] = useState(false);
+
+  useEffect(() => {
+    setTimeout(() => {
+      setRenderSplashScreen(true);
+    }, CLEAR_LOADING_TIMEOUT);
+  }, []);
+
+  const loadingDelay = useMemo(() => {
+    if (renderSplashScreen && !appLoaded) {
+      return delay(DIRTY_LOADING_TIMEOUT);
+    }
+
+    return null;
+  }, [renderSplashScreen, appLoaded]);
+
+  const splashScreen = renderSplashScreen ? isElectron() ? <ElectronSplashScreen /> : <WebSplashScreen /> : null;
+
+  const browserTheme = useThemeVariant();
+  const locale = useLocalePreference();
+  const themeName = useThemeName();
+  const initialTheme = themes[themeName] ?? berlinTheme;
+  const mode = isCallWindow ? 'dark' : browserTheme;
+
+  return (
+    <TranslationProvider locale={locale}>
+      <ThemeProvider theme={initialTheme} defaultMode={mode}>
+        {!isCallWindow && (
+          <>
+            <ThemeSyncer />
+            <ThemeNameSyncer />
+            <NativeThemeSyncer />
+          </>
+        )}
+        <ErrorBoundary
+          FallbackComponent={FallbackScreen}
+          onError={(error, errorInfo) => {
+            Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } });
+            const message = error ? error.toString() : '';
+            console.error(message);
+            console.error(errorInfo.componentStack);
+            if (message.includes('Failed to fetch dynamically imported module')) {
+              reloadApp();
+            }
+          }}
+        >
+          <Suspense fallback={splashScreen}>
+            <App onReady={() => setAppLoaded(true)} />
+            {loadingDelay && <LoadingDelay suspense={loadingDelay} />}
+          </Suspense>
+        </ErrorBoundary>
+        <Toaster />
+      </ThemeProvider>
+    </TranslationProvider>
+  );
+};
+
+const container = document.getElementById('app');
+if (!container) {
+  throw new Error('Root container is missing in index.html');
+}
+
+// document.body.style.minWidth = `1366px`;
+
+// NOTE: React 18 Strict mode renders twice in DEV mode
+// which leads to errors in components that use camera
+// https://reactjs.org/docs/strict-mode.html#ensuring-reusable-state
+createRoot(container).render(<Root />);

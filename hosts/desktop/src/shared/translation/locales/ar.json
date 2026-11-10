@@ -1,0 +1,1225 @@
+{
+  "common": {
+    "action": {
+      "back": "رجوع",
+      "moreDetails": "مزيد من التفاصيل",
+      "hideDetails": "إخفاء التفاصيل",
+      "cancel": "إلغاء",
+      "allow": "السماح",
+      "skip": "تخطٍ (للتطوير فقط)",
+      "sign": "توقيع",
+      "signing": "جارٍ التوقيع...",
+      "reply": "رد",
+      "copyText": "نسخ النص",
+      "forward": "إعادة توجيه",
+      "select": "تحديد",
+      "delete": "حذف",
+      "add": "إضافة",
+      "search": "بحث...",
+      "writeMessage": "اكتب رسالة...",
+      "retry": "إعادة المحاولة",
+      "disconnect": "قطع الاتصال",
+      "all": "الكل",
+      "electronics": "إلكترونيات",
+      "fashion": "أزياء",
+      "downloadLogs": "تنزيل السجلات"
+    },
+    "label": {
+      "signer": "الموقّع",
+      "chain": "السلسلة",
+      "method": "الطريقة",
+      "arguments": "الوسائط",
+      "callData": "Call data",
+      "message": "الرسالة"
+    },
+    "status": {
+      "loading": "جارٍ التحميل...",
+      "noProductFound": "لم يتم العثور على أي منتج",
+      "unknownUser": "مستخدم غير معروف",
+      "online": "متصل",
+      "live": "مباشر",
+      "daysLeft": "متبقٍ {count} يوم"
+    },
+    "error": {
+      "somethingWentWrong": "عذرًا! حدث خطأ ما",
+      "tryAgain": "يرجى المحاولة مرة أخرى أو العودة لاحقًا",
+      "logsHelpText": "مشاركة السجلات مع المطوّرين ستساعد في حل هذه المشكلة"
+    },
+    "aria": {
+      "openFullscreen": "فتح بملء الشاشة",
+      "reloadWidget": "إعادة تحميل الأداة",
+      "close": "إغلاق",
+      "clear": "مسح",
+      "reload": "إعادة التحميل"
+    },
+    "cancel": "إلغاء",
+    "web3summitEnded": {
+      "ariaLabel": "انتهى Web3 Summit",
+      "title": "انتهى Web3 Summit",
+      "subtitle": "ترقّب المزيد من التحديثات"
+    }
+  },
+  "feature": {
+    "favorites": {
+      "title": "المفضلة",
+      "searchPlaceholder": "بحث",
+      "searchAriaLabel": "البحث في المفضلة",
+      "emptyTitle": "لا توجد تطبيقات مفضلة بعد",
+      "emptyDescription": "احفظ تطبيقاتك المفضلة للوصول السريع إليها",
+      "browseApps": "تصفّح التطبيقات",
+      "searchNoResults": {
+        "title": "لا توجد نتائج",
+        "description": "حاول تعديل بحثك."
+      },
+      "openFullscreenAria": "فتح المفضلة",
+      "addAria": "إضافة إلى المفضلة",
+      "removeAria": "إزالة من المفضلة",
+      "addDialog": {
+        "title": "إضافة إلى المفضلة",
+        "searchPlaceholder": "بحث",
+        "searchAriaLabel": "البحث عن منتجات",
+        "loadingAria": "جارٍ تحميل التطبيقات",
+        "nothingToAdd": {
+          "title": "لا يوجد ما يمكن إضافته",
+          "description": "جميع التطبيقات المتاحة موجودة بالفعل في مفضلتك"
+        },
+        "noResults": {
+          "title": "لا توجد نتائج",
+          "description": "حاول تعديل بحثك."
+        },
+        "error": {
+          "title": "حدث خطأ ما",
+          "retry": "إعادة المحاولة"
+        }
+      }
+    },
+    "call": {
+      "audioCall": "مكالمة صوتية",
+      "videoCall": "مكالمة فيديو",
+      "returnToCall": "العودة إلى المكالمة"
+    },
+    "browser": {
+      "addressPlaceholder": "أدخل عنوان ‎{tld}",
+      "navigationBackAria": "رجوع",
+      "navigationForwardAria": "تقدّم",
+      "addressWelcome": "مرحبًا بك في Polkadot! أدخل عنوان ‎.dot هنا",
+      "removeFromDashboard": "إزالة المنتج من لوحة التحكم",
+      "addressSuggestions": "كل التطبيقات",
+      "addressNoResults": "لم يتم العثور على تطبيقات",
+      "recentlyOpened": "فُتح مؤخرًا",
+      "recentClearedTitle": "تم مسح علامات التبويب المفتوحة مؤخرًا بنجاح",
+      "undoLabel": "تراجع {seconds} ث",
+      "ramUsage": "استخدام الذاكرة: {value}",
+      "ramUsageUnavailable": "استخدام الذاكرة: —",
+      "newTab": "علامة تبويب جديدة",
+      "newTabPrompt": "أدخل عنوان ‎{tld}",
+      "closeTab": "إغلاق علامة التبويب",
+      "signTransaction": "توقيع المعاملة",
+      "signingRequestTitle": "طلب توقيع {call}",
+      "operationTitle": {
+        "utilityBatchAll": "Utility Batch All",
+        "utilityBatch": "Utility Batch",
+        "utilityForceBatch": "Utility Force Batch"
+      },
+      "batchBehavior": {
+        "revertOnError": "تُلغى المعاملات المضمّنة عند حدوث خطأ",
+        "executeUntilError": "تُنفَّذ المعاملات المضمّنة حتى أول خطأ",
+        "ignoreErrors": "تتجاهل المعاملات المضمّنة الأخطاء"
+      },
+      "signMessageRequestTitle": "طلب توقيع رسالة خام",
+      "rawMessageNotReadableCaption": "لا يمكن عرض هذه الرسالة بصيغة قابلة للقراءة",
+      "copyMessage": "نسخ الرسالة",
+      "account": "الحساب",
+      "accountAddress": "عنوان الحساب",
+      "network": "الشبكة",
+      "networkFee": "رسوم الشبكة",
+      "transactionDetailsTitle": "تفاصيل المعاملة",
+      "copyArguments": "نسخ الوسائط",
+      "copyCallData": "نسخ call data",
+      "signingByAppAccount": "التوقيع بحساب التطبيق ذي الفهرس {index}",
+      "accountAddressUnavailable": "عنوان الحساب غير متاح — أعد توصيل Polkadot App",
+      "copyAccountAddress": "نسخ عنوان الحساب",
+      "polkadotAppHint": "لتوقيع معاملة، افتح Polkadot App",
+      "polkadotAppRawMessageHint": "لتوقيع هذه الرسالة، افتح Polkadot App",
+      "continueToSign": "متابعة",
+      "signPolkadotAppTitle": "توقيع المعاملة",
+      "signPolkadotAppLine1": "افتح Polkadot App على جهازك،",
+      "signPolkadotAppLine2": "ثم اضغط على توقيع أو رفض",
+      "signPolkadotAppDeviceLabel": "Polkadot App",
+      "signPolkadotAppSignButton": "توقيع",
+      "signPolkadotAppRejectButton": "رفض",
+      "signPolkadotAppValidFor": "صالح لمدة {time}",
+      "openMobileAppTitle": "افتح تطبيق الهاتف",
+      "openMobileAppLine1": "تأكّد من تثبيت Polkadot App،",
+      "openMobileAppLine2": "ثم افتحه للمتابعة",
+      "signingTimedOutTitle": "انتهت مهلة طلب التوقيع",
+      "signingTimedOutBody": "لم يكتمل الطلب في الوقت المحدد",
+      "transactionSigningRejected": "تم إلغاء توقيع المعاملة",
+      "transactionSigned": "تم توقيع المعاملة",
+      "messageSigned": "تم توقيع الرسالة",
+      "signingFailedTitle": "تعذّر توقيع المعاملة",
+      "signingFailedBody": "حدث خطأ ما. افتح التفاصيل لمزيد من المعلومات.",
+      "signingErrorToastDetails": "التفاصيل",
+      "signingErrorDetailsLabel": "التفاصيل",
+      "signingErrorCopyDetails": "نسخ تفاصيل الخطأ",
+      "havingTroubleSigning": "هل تواجه مشكلة في التأكيد على الهاتف؟",
+      "havingTroubleSigningDialog": {
+        "title": "هل تواجه مشكلة في التأكيد؟",
+        "description": "أعد تحميل التطبيق وحاول تنفيذ هذه العملية مرة أخرى. إذا لم ينفع ذلك، جرّب تسجيل الخروج ثم الدخول من جديد",
+        "troubleshootingGuide": "دليل استكشاف الأخطاء",
+        "reload": "إعادة التحميل"
+      },
+      "noAllowanceErrorTitle": "الحساب غير جاهز بعد",
+      "noAllowanceErrorDescription": "نحن نجهّز حسابك. يرجى المحاولة مرة أخرى بعد قليل.",
+      "statementStoreErrorTitle": "خطأ في statement store",
+      "feeUnavailable": "—",
+      "customChainSigningWarning": "تفاصيل المعاملة غير متاحة لهذه السلسلة المخصّصة. راجع call data الخام قبل التوقيع.",
+      "webVersionNotification": "أنت تستخدم نسخة الويب من التطبيق. استخدم نسخة سطح المكتب للتفاعل مع المنتجات.",
+      "findPlaceholder": "بحث في الصفحة",
+      "findCount": "{current}/{total}",
+      "findNoResults": "لا توجد نتائج",
+      "findNext": "النتيجة التالية",
+      "findPrevious": "النتيجة السابقة",
+      "findClose": "إغلاق شريط البحث",
+      "zoomIn": "تكبير",
+      "zoomOut": "تصغير",
+      "zoomReset": "إعادة ضبط التكبير",
+      "zoomPercent": "{percent}%",
+      "clearRecent": "مسح"
+    },
+    "userManager": {
+      "connectionStatus": {
+        "connected": "متصل",
+        "reconnecting": "جارٍ إعادة الاتصال…",
+        "offline": "أنت غير متصل بالإنترنت",
+        "noConnection": "غير متصل — انقر لتسجيل الدخول"
+      },
+      "aria": {
+        "account": "الحساب",
+        "connectAccount": "توصيل الحساب"
+      },
+      "banner": {
+        "connectedTitle": "متصل بـ {networkName}",
+        "connectedSubtitle": "تم إقران سطح المكتب مع الهاتف",
+        "reconnectingTitle": "جارٍ إعادة الاتصال بـ {networkName}…",
+        "reconnectingSubtitle": "محاولة الوصول إلى العقدة من جديد",
+        "offlineTitle": "أنت غير متصل بالإنترنت",
+        "offlineSubtitle": "تحقق من اتصال الإنترنت وحاول مرة أخرى",
+        "noConnectionTitle": "غير متصل",
+        "noConnectionSubtitle": "سجّل الدخول لإقران حسابك"
+      },
+      "popover": {
+        "settings": "الإعدادات"
+      }
+    },
+    "chat": {
+      "proceedInChat": {
+        "menuItem": "المتابعة في الدردشة",
+        "toast": {
+          "errorTitle": "تعذّر إنشاء غرفة الدردشة"
+        }
+      },
+      "title": "الدردشة",
+      "widgetTitle": "آخر الدردشات",
+      "fullscreenTitle": "الدردشات",
+      "unreadMessagesAria": "رسائل غير مقروءة",
+      "category": "الاتصالات",
+      "replyToYourself": "الرد على نفسك",
+      "replyTo": "الرد على {name}",
+      "noConversations": "لا توجد محادثات بعد",
+      "startNewChat": "ابدأ محادثة جديدة",
+      "searchPlaceholder": "البحث في المحادثات...",
+      "searchByUsernameOrMessages": "ابحث باسم المستخدم أو في الرسائل",
+      "searchChatsAndContacts": "الدردشات وجهات الاتصال",
+      "searchMessages": "الرسائل",
+      "sayHelloOptional": "ألقِ التحية... (اختياري)",
+      "sending": "جارٍ الإرسال...",
+      "sendRequest": "إرسال الطلب",
+      "search": "بحث",
+      "noResults": "لا توجد نتائج لـ «{query}»",
+      "results": "النتائج ({count})",
+      "recent": "الأخيرة",
+      "clear": "مسح",
+      "contacts": "جهات الاتصال",
+      "noMessages": "لا توجد رسائل بعد",
+      "thisIsChat": "هذه دردشة",
+      "noResultsFound": "لم يتم العثور على نتائج",
+      "noResultsDescription": "لم نجد أي شيء يطابق بحثك. جرّب كلمات مختلفة.",
+      "quickChat": "دردشة سريعة",
+      "viewMore": "عرض المزيد",
+      "syncStatus": {
+        "outOfSync": {
+          "title": "قد تكون الرسائل غير متزامنة",
+          "subtitle": "افتح تطبيق الهاتف لمزامنة الرسائل"
+        },
+        "syncing": {
+          "title": "جارٍ جلب أحدث الرسائل",
+          "subtitle": "جارٍ مزامنة الرسائل من الهاتف…"
+        },
+        "synced": {
+          "title": "الرسائل محدَّثة",
+          "subtitle": "الهاتف متصل"
+        },
+        "error": {
+          "title": "فشلت المزامنة",
+          "subtitle": "أعد تشغيل التطبيقين"
+        }
+      },
+      "sendMessageToBegin": "أرسل رسالة لبدء المحادثة",
+      "mediaMobileOnly": "لا يمكن عرض هذه الرسالة إلا في تطبيق الهاتف",
+      "noChatsYet": "لا توجد دردشات بعد",
+      "yourChatWillAppear": "ستظهر دردشتك هنا",
+      "yourChatsWillAppear": "ستظهر دردشاتك هنا",
+      "noChatSelected": "لم يتم تحديد أي دردشة",
+      "selectChatToView": "اختر دردشة لعرض المحادثة",
+      "request": {
+        "entryTitle": "طلبات الرسائل",
+        "listHint": "تظهر هنا طلبات الرسائل من أشخاص ليسوا في قائمة جهات اتصالك",
+        "messageHidden": "الرسالة مخفية",
+        "messageHiddenFull": "تم إخفاء الرسالة بناءً على إعداداتك الافتراضية",
+        "viewMessage": "عرض الرسالة",
+        "banner": "أضف <b>{name}</b> إلى جهات اتصالك لقبول طلب الدردشة.<br></br>لن يعرف أنك اطّلعت على رسالته حتى تقبل الطلب.",
+        "accept": "قبول",
+        "decline": "رفض",
+        "declinedToast": "تم رفض الطلب من {name}",
+        "youApproved": "لقد وافقت على الطلب",
+        "peerApproved": "وافق {name} على طلب الرسالة",
+        "youSent": "<b>أنت</b> أرسلت طلب رسالة",
+        "leftChat": "غادر {name} الدردشة",
+        "modalTitle": "هل تريد إضافة جهة اتصال جديدة لبدء الدردشة؟",
+        "modalBody": "بعد دخولك إلى الدردشة، تأكّد من أن <b>{name}</b> يبدأ محادثة معك أيضًا، وإلا فقد لا تُرى رسالتك.",
+        "cancel": "إلغاء",
+        "continue": "متابعة",
+        "inviteTitle": "دعوة {name} إلى الدردشة",
+        "inviteHint": "يمكنك إرسال رسالة واحدة فقط في هذه الدعوة",
+        "inviteFailed": "تعذّر إرسال الدعوة. تحقق من اتصالك وحاول مرة أخرى.",
+        "waitForAccept": "انتظر حتى يقبل <b>{name}</b> رسالة طلبك قبل إرسال الرسالة التالية.",
+        "today": "اليوم"
+      },
+      "contactSearch": {
+        "searchEntry": "بحث",
+        "placeholder": "ابحث باسم المستخدم أو في الرسائل",
+        "tabChats": "الدردشات",
+        "tabApps": "التطبيقات",
+        "groupChatsAndContacts": "الدردشات وجهات الاتصال",
+        "groupMessages": "الرسائل",
+        "recent": "الأخيرة",
+        "clear": "مسح",
+        "appsComingSoon": "البحث في التطبيقات قريبًا",
+        "noResultsTitle": "لا توجد نتائج",
+        "noResultsHint": "حاول تعديل بحثك"
+      },
+      "settings": {
+        "title": "الدردشات",
+        "subtitle": "تحكّم في طريقة عمل الدردشات وطلبات الرسائل",
+        "messageRequestsSection": "طلبات الرسائل",
+        "hideByDefault": "إخفاء طلبات الرسائل افتراضيًا",
+        "hideByDefaultHint": "تبقى الطلبات الجديدة مخفية حتى تفتحها وتضغط على عرض الرسالة"
+      },
+      "editMessage": "تعديل",
+      "editingMessage": "جارٍ تعديل الرسالة",
+      "edited": "(مُعدَّلة)",
+      "editHistory": "سجل التعديلات",
+      "currentMessage": "الحالية",
+      "earlierVersion": "نسخة سابقة",
+      "viewEditHistory": "عرض سجل التعديلات",
+      "originalMessage": "الأصلية",
+      "leaveChat": "مغادرة الدردشة",
+      "blockUser": "حظر المستخدم",
+      "unblockUser": "إلغاء حظر المستخدم",
+      "blockedNotice": "لن تتلقى أي رسائل أو طلبات حتى تلغي حظر {name}.",
+      "unblock": "إلغاء الحظر",
+      "transfer": {
+        "youSent": "لقد أرسلت",
+        "sent": "أُرسلت",
+        "received": "استُلمت",
+        "coinage": {
+          "submitting": "جارٍ الإرسال",
+          "sending": "جارٍ الإرسال",
+          "sent": "أُرسلت",
+          "delivered": "تم التسليم",
+          "claimed": "تمت المطالبة"
+        }
+      },
+      "call": {
+        "title": {
+          "incomingVoice": "مكالمة صوتية واردة",
+          "outgoingVoice": "مكالمة صوتية صادرة",
+          "incomingVideo": "مكالمة فيديو واردة",
+          "outgoingVideo": "مكالمة فيديو صادرة",
+          "ongoingVoice": "مكالمة صوتية جارية",
+          "ongoingVideo": "مكالمة فيديو جارية",
+          "voice": "مكالمة صوتية",
+          "video": "مكالمة فيديو",
+          "missedVoice": "مكالمة صوتية فائتة",
+          "missedVideo": "مكالمة فيديو فائتة",
+          "canceledVoice": "مكالمة صوتية ملغاة",
+          "canceledVideo": "مكالمة فيديو ملغاة"
+        },
+        "subtitle": {
+          "openToCall": "افتح تطبيق الهاتف لإجراء المكالمة",
+          "openToReturn": "افتح تطبيق الهاتف للعودة",
+          "openToCallBack": "افتح تطبيق الهاتف لمعاودة الاتصال",
+          "openToCallAgain": "افتح تطبيق الهاتف للاتصال مرة أخرى",
+          "tapToCall": "اضغط للاتصال",
+          "tapToReturn": "اضغط للعودة",
+          "tapToCallBack": "اضغط لمعاودة الاتصال",
+          "tapToCallAgain": "اضغط للاتصال مرة أخرى"
+        }
+      }
+    },
+    "productActionsMenu": {
+      "trigger": "إجراءات المنتج",
+      "openSettings": "فتح الإعدادات"
+    },
+    "onboarding": {
+      "logoText": "منتجات من أجل الناس",
+      "mainText": "سجّل الدخول لاستكشاف Polkadot",
+      "description": "استخدم الكاميرا لتسجيل الدخول",
+      "phoneHint": "سيؤدي هذا إلى فتح Polkadot App",
+      "errorTitle": "خطأ في المصادقة",
+      "error": "حدث خطأ ما أثناء المصادقة",
+      "errorNoFreeSlotsTitle": "تم بلوغ الحد",
+      "errorNoFreeSlotsDescription": "لا يمكنك إضافة أكثر من 8 أجهزة. افصل أحد الأجهزة في Polkadot App لإضافة جهاز جديد.",
+      "loggingInToast": "جارٍ تسجيل الدخول... لحظة من فضلك",
+      "completingPairing": "جارٍ إكمال الإقران…",
+      "connection": {
+        "offline": {
+          "title": "أنت غير متصل بالإنترنت",
+          "subtitle": "تحقق من اتصال الإنترنت وحاول مرة أخرى"
+        },
+        "reaching": {
+          "title": "جارٍ إعادة الاتصال بـ Polkadot…",
+          "subtitle": "محاولة الوصول إلى العقدة من جديد"
+        },
+        "restored": {
+          "title": "جارٍ إعادة الاتصال بـ Polkadot…",
+          "subtitle": "تمت استعادة الاتصال بالإنترنت"
+        },
+        "accountSetup": {
+          "title": "لا يزال حسابك قيد الإعداد",
+          "subtitle": "يرجى المحاولة مرة أخرى لاحقًا"
+        }
+      }
+    },
+    "dashboard": {
+      "title": "لوحة التحكم",
+      "toolbar": {
+        "ariaLabel": "إجراءات لوحة التحكم",
+        "pagesLabel": "صفحات لوحة التحكم",
+        "switchToPage": "الانتقال إلى الصفحة {number}"
+      },
+      "menu": {
+        "addToFavorites": "إضافة إلى المفضلة",
+        "removeFromFavorites": "إزالة من المفضلة",
+        "toast": {
+          "addedToFavorites": "تمت إضافة {productName} إلى المفضلة بنجاح",
+          "removedFromFavorites": "تمت إزالة {productName} من المفضلة"
+        }
+      },
+      "addWidget": {
+        "title": "إضافة أداة",
+        "sizeAndType": "الحجم والنوع",
+        "selectWidget": "اختر أداة من القائمة",
+        "noWidgetsAvailable": "لا توجد أدوات متاحة.",
+        "noSearchResults": "لا توجد أدوات تطابق بحثك.",
+        "loading": "جارٍ تحميل الأدوات…",
+        "loadFailed": "تعذّر تحميل الأدوات. حاول لاحقًا.",
+        "createFolder": "مجلد جديد",
+        "createFolderDescription": "إنشاء مجلد جديد بهذه الأداة",
+        "addToFavorites": "إضافة إلى المفضلة",
+        "addedToFavoritesButton": "أُضيف إلى المفضلة",
+        "done": "تم",
+        "add": "إضافة",
+        "open": "فتح",
+        "noSupportedSizes": "لا تتوفر لهذه الأداة أحجام مدعومة للإضافة.",
+        "searchPlaceholder": "أدخل عنوان ‎{tld} للعثور على التطبيقات",
+        "searchAriaLabel": "البحث عن تطبيقات",
+        "cards": {
+          "product": {
+            "title": "أداة منتج",
+            "description": "أداة وصول سريع من لوحة التحكم"
+          },
+          "chat": {
+            "title": "أداة الدردشة",
+            "description": "وصول سريع إلى دردشاتك"
+          },
+          "favorites": {
+            "title": "المفضلة",
+            "description": "مجلد لاختصارات منتجاتك المفضلة"
+          }
+        },
+        "toast": {
+          "widgetAddedProduct": "تمت إضافة أداة {widgetTitle} {sizeLabel} إلى لوحة التحكم بنجاح",
+          "addedToFavorites": "تمت إضافة {productName} إلى المفضلة بنجاح",
+          "widgetAddFailed": "تعذّرت إضافة الأداة. حاول مرة أخرى أو افتح لوحة التحكم لتعديل أداة موجودة.",
+          "favoritesAddFailed": "تعذّرت الإضافة إلى المفضلة. حاول مرة أخرى.",
+          "viewAction": "عرض"
+        }
+      },
+      "addToDashboard": {
+        "label": "إضافة إلى لوحة التحكم",
+        "toast": {
+          "targetUnresolved": "تعذّر فتح نافذة الإضافة إلى لوحة التحكم لهذا العنصر."
+        }
+      },
+      "domainNotFound": "لم يتم العثور على النطاق",
+      "placeholder": {
+        "widgetNotFound": "لم تعد هذه الأداة موجودة",
+        "widgetUnavailable": "الأداة غير متاحة حاليًا",
+        "deleteWidget": "حذف الأداة"
+      },
+      "favorites": {
+        "title": "المفضلة",
+        "removeFolder": "إزالة المجلد",
+        "removeProduct": "إزالة الأداة",
+        "empty": "لا توجد مفضلات بعد",
+        "emptyPlaceholder": "احفظ تطبيقاتك المفضلة للوصول السريع إليها",
+        "browseApps": "تصفّح التطبيقات",
+        "viewMore": "عرض المزيد"
+      },
+      "empty": {
+        "title": "ستظهر أدوات المنتجات هنا.",
+        "description": "أضف أول أداة للبدء."
+      },
+      "widgetMenu": {
+        "sizeLabel": "الحجم",
+        "sizeSmall": "صغير",
+        "sizeMedium": "متوسط",
+        "sizeLarge": "كبير",
+        "sizeHorizontal": "أفقي",
+        "cleanup": "تنظيم لوحة التحكم",
+        "reload": "إعادة تحميل الأداة",
+        "removeWidget": "إزالة الأداة"
+      }
+    },
+    "ticketApp": {
+      "title": "Ticket App",
+      "category": "الفعاليات",
+      "daysLeft": "الأيام المتبقية",
+      "upcoming": "الفعاليات القادمة",
+      "entryTicket": "تذكرة الدخول"
+    },
+    "shopping": {
+      "title": "Mark3t",
+      "category": "التسوّق",
+      "totalSaved": "إجمالي التوفير",
+      "thisMonth": "هذا الشهر"
+    },
+    "hackm3": {
+      "title": "Hackm3",
+      "category": "المستندات",
+      "online": "{count} متصل",
+      "live": "مباشر",
+      "docs": "المستندات",
+      "shared": "المشتركة"
+    },
+    "user": {
+      "welcomeBack": "أهلًا بعودتك",
+      "logOut": "تسجيل الخروج",
+      "logIn": "تسجيل الدخول"
+    },
+    "settings": {
+      "title": "الإعدادات",
+      "testnetEndpoints": "نقاط اتصال شبكة الاختبار",
+      "endpointStable": "مستقرة",
+      "group": {
+        "preferences": "التفضيلات",
+        "privacy": "الخصوصية والأمان",
+        "development": "التطوير"
+      }
+    },
+    "themeToggle": {
+      "title": "المظهر",
+      "appearance": "السمة",
+      "colorMode": "وضع الألوان",
+      "device": "الجهاز",
+      "day": "نهاري",
+      "night": "ليلي",
+      "berlin": "برلين",
+      "tokyo": "طوكيو",
+      "lisbon": "لشبونة",
+      "malta": "مالطا",
+      "preview": {
+        "outgoingFirst": "هل ستحضر Polkadot Summit؟ 🎉",
+        "incoming": "بالطبع! وأنت؟",
+        "outgoingSecond": "لن أفوّته أبدًا 👋 أراك هناك!"
+      }
+    },
+    "updateCheck": {
+      "title": "التحديث",
+      "channel": {
+        "title": "قناة التحديث",
+        "stable": "مستقرة",
+        "experimental": "تجريبية",
+        "stableHint": "إصدارات مُتحقَّق منها. يُنصح بها للاستخدام اليومي.",
+        "experimentalHint": "أحدث الإصدارات مباشرة من التطوير. قد تكون غير مستقرة."
+      },
+      "checkForUpdates": "التحقق من التحديثات",
+      "checking": "جارٍ التحقق من التحديثات…",
+      "checkingHint": "قد يستغرق هذا لحظات",
+      "upToDate": "‏Polkadot Desktop محدَّث!",
+      "upToDateHint": "لديك أحدث إصدار من Polkadot Desktop. الإصدار {version} مثبَّت",
+      "upToDateHintNoVersion": "لديك أحدث إصدار من Polkadot Desktop.",
+      "downloading": "جارٍ تنزيل التحديث…",
+      "downloadingHint": "قد يستغرق هذا لحظات",
+      "progress": "التقدّم",
+      "downloadingPercent": "{percent}%",
+      "readyToInstall": "التحديث جاهز",
+      "readyToInstallHint": "أعد تشغيل Polkadot Desktop لتطبيق أحدث إصدار",
+      "installNow": "إعادة التشغيل",
+      "notNow": "لاحقًا",
+      "error": "فشل التحديث",
+      "errorHint": "يرجى المحاولة مرة أخرى أو التواصل مع فريق التطوير",
+      "unsupported": "التحديثات غير متاحة",
+      "unsupportedHint": "لا يمكن لهذا الإصدار من Polkadot Desktop تحديث نفسه.",
+      "close": "إغلاق",
+      "updateAvailable": "تحديث جديد لـ Polkadot Desktop!",
+      "updateAvailableHint": "الإصدار {version} متاح",
+      "updated": "تم تحديث Polkadot Desktop!",
+      "updatedHint": "تم تثبيت الإصدار {version}",
+      "relaunch": "إعادة التشغيل"
+    },
+    "productSettings": {
+      "title": "التطبيقات",
+      "subtitle": "التطبيقات التي تفاعلت معها",
+      "searchPlaceholder": "ابحث بالاسم أو بعنوان ‎{tld}",
+      "searchAriaLabel": "البحث عن تطبيقات بالاسم أو بعنوان ‎{tld}",
+      "clearCache": "مسح ذاكرة التخزين المؤقت",
+      "forgetApp": "نسيان التطبيق",
+      "requestedPermissions": "الأذونات المطلوبة",
+      "noPermissions": "لم يتم طلب أي أذونات",
+      "toast": {
+        "appReset": "تمت إعادة تعيين {productName}",
+        "cacheCleared": "تم مسح ذاكرة التخزين المؤقت لـ {productName}"
+      },
+      "clearCacheDialog": {
+        "title": "هل تريد مسح ذاكرة التخزين المؤقت لـ {productName}؟",
+        "description": "ستُزال البيانات المخزّنة مؤقتًا من هذا الجهاز، بما في ذلك الملفات المؤقتة والمحتوى المحفوظ محليًا."
+      },
+      "forgetDialog": {
+        "title": "هل تريد نسيان {productName}؟",
+        "description": "سيؤدي ذلك إلى مسح جميع بيانات الموقع وإعادة تعيين أذونات {productName}. تبقى علامة التبويب مفتوحة؛ وسيُعاد تحميل كل شيء من جديد في المرة القادمة."
+      },
+      "webDomains": {
+        "dialogTitle": "إدارة الوصول إلى نطاقات الويب لـ {productName}"
+      },
+      "appPermission": {
+        "title": "وصول {productName} إلى {permission}",
+        "description": "تتحكّم هذه الإعدادات في وصول تطبيق {productName} وأوضاعه المختلفة إلى {permission}",
+        "resetToDefault": "إعادة التعيين إلى الافتراضي",
+        "noDomainsRequested": "لم يتم طلب أي نطاقات بعد"
+      },
+      "aliasPermission": {
+        "label": "Alias",
+        "description": "أدر وصول alias بين التطبيقات لهذا التطبيق",
+        "contextsLabel": "سياقات alias",
+        "contextsDescription": "أدر الوصول لكل سياق alias",
+        "noContextsRequested": "لم يتم طلب أي سياقات alias بعد",
+        "dialogTitle": "إدارة الوصول إلى سياق alias لتطبيق {productName}"
+      }
+    },
+    "productPermissions": {
+      "permissionRequest": {
+        "productKindLabel": "المنتج",
+        "closeDialog": "إغلاق",
+        "title": "هل تسمح بالوصول إلى {label}؟",
+        "deny": "عدم السماح",
+        "allowOnce": "السماح مرة واحدة",
+        "allowAlways": "السماح دائمًا",
+        "domainsLabel": "النطاقات",
+        "permission": {
+          "Camera": "الكاميرا",
+          "Microphone": "الميكروفون",
+          "Bluetooth": "البلوتوث",
+          "Location": "الموقع",
+          "Notifications": "الإشعارات",
+          "Clipboard": "الحافظة",
+          "OpenUrl": "فتح رابط خارجي",
+          "Biometrics": "القياسات الحيوية",
+          "Motion": "مستشعرات الحركة",
+          "NFC": "NFC",
+          "Files": "الملفات",
+          "Remote": "نطاقات الويب",
+          "WebRtc": "WebRTC",
+          "ChainSubmit": "الإرسال إلى السلسلة",
+          "PreimageSubmit": "إرسال preimage",
+          "StatementSubmit": "إرسال statement",
+          "BalanceAccess": "الرصيد",
+          "UserIdentity": "الهوية"
+        },
+        "reason": {
+          "Camera": "يُستخدم لميزات مثل مكالمات الفيديو ومسح رموز QR والتقاط الوسائط",
+          "Microphone": "يُستخدم لميزات مثل المكالمات الصوتية والمراسلة وتسجيل الصوت",
+          "Bluetooth": "يُستخدم للاتصال بالأجهزة القريبة ونقل البيانات",
+          "Location": "يُستخدم للخدمات المعتمدة على الموقع وتخصيص المحتوى",
+          "Notifications": "يُستخدم لإرسال التحديثات والتنبيهات والمعلومات المهمة إليك",
+          "Clipboard": "يُستخدم لنسخ ولصق المحتوى الذي تختار مشاركته",
+          "OpenUrl": "يُستخدم لفتح الروابط الخارجية في متصفحك الافتراضي",
+          "Biometrics": "يُستخدم للميزات التي تتطلب التحقق من هويتك",
+          "Motion": "يُستخدم للميزات التي تستجيب لكيفية تحريك جهازك أو إمالته",
+          "NFC": "يُستخدم للقراءة والكتابة اللاسلكية مع البطاقات والأجهزة القريبة",
+          "Files": "يُستخدم لميزات مثل رفع الملفات وتنزيلها وإدارتها",
+          "Remote": "يُستخدم لإرسال الطلبات إلى النطاقات التالية",
+          "WebRtc": "يُستخدم لميزات الاتصال الفوري مثل المكالمات الصوتية ومكالمات الفيديو",
+          "ChainSubmit": "يُستخدم لبث المعاملات الموقّعة إلى أي سلسلة Substrate",
+          "PreimageSubmit": "يُستخدم لإرسال بيانات preimage إلى Bulletin Chain",
+          "StatementSubmit": "يُستخدم لإرسال statement إلى statement store",
+          "BalanceAccess": "يُستخدم لقراءة رصيدك القابل للإنفاق ولمعرفة متى يفشل الدفع بسبب انخفاض الرصيد. لا يسمح بالإنفاق",
+          "UserIdentity": "الوصول إلى اسم المستخدم الأساسي مطلوب لأغراض التعريف. يمكنك إدارة ذلك لاحقًا من الإعدادات."
+        }
+      },
+      "remotePermissionRequest": {
+        "title": "طلب إذن عن بُعد",
+        "description": "يطلب وصولًا عن بُعد إلى {permission}.",
+        "deny": "رفض"
+      },
+      "externalBlockedToast": "تم حظر طلب شبكة إلى {origin}. غيّر ذلك في أذونات التطبيق.",
+      "settings": {
+        "heading": "الأذونات",
+        "subheading": "اطّلع على الأذونات الممنوحة لهذا التطبيق وأدرها",
+        "remoteHeading": "الأذونات عن بُعد",
+        "remoteSubheading": "أذونات الوصول إلى ميزات الشبكة عن بُعد"
+      }
+    },
+    "customChains": {
+      "title": "السلاسل المخصّصة",
+      "addSection": "إضافة سلسلة",
+      "registeredSection": "السلاسل المسجّلة",
+      "endpointLabel": "نقطة اتصال WebSocket",
+      "endpointPlaceholder": "ws://localhost:9944",
+      "nameLabel": "الاسم (اختياري)",
+      "namePlaceholder": "يُكتشف تلقائيًا من العقدة",
+      "addButton": "إضافة سلسلة",
+      "addingButton": "جارٍ الاتصال…",
+      "emptyState": "لم تتم إضافة أي سلاسل مخصّصة. اتصل بعقدة Substrate محلية أو بسلسلة مستضافة مخصّصة.",
+      "errors": {
+        "invalidUrlTitle": "عنوان غير صالح",
+        "invalidUrlDescription": "يجب أن يكون عنوانًا يبدأ بـ ws:// أو wss://",
+        "duplicateBuiltinTitle": "مسجّلة بالفعل",
+        "duplicateBuiltinDescription": "هذه السلسلة مضمّنة بالفعل",
+        "duplicateCustomTitle": "مسجّلة بالفعل",
+        "duplicateCustomDescription": "هذه السلسلة موجودة بالفعل ضمن سلاسلك المخصّصة",
+        "connectionFailedTitle": "فشل الاتصال",
+        "unknownError": "خطأ غير معروف"
+      },
+      "addedToastTitle": "تمت إضافة السلسلة",
+      "addedToastDescription": "{name} ({genesisHash})",
+      "removeChainAriaLabel": "إزالة {name}"
+    },
+    "permissionSettings": {
+      "navItem": "الأذونات",
+      "heading": "الأذونات",
+      "subheading": "راجع وصول التطبيقات إلى الميزات والبيانات وأدره",
+      "categoryHeading": "{name}:",
+      "appCount": "{count, plural, =0 {لا توجد تطبيقات} one {تطبيق واحد} two {تطبيقان} few {# تطبيقات} many {# تطبيقًا} other {# تطبيق}}",
+      "category": {
+        "device": "الوصول إلى الجهاز والنظام",
+        "onchain": "الإجراءات على السلسلة",
+        "service": "الوصول إلى الخدمات"
+      },
+      "status": {
+        "ask": "السؤال دائمًا (افتراضي)",
+        "granted": "مسموح",
+        "denied": "مرفوض"
+      },
+      "detail": {
+        "rulesTitle": "القواعد والضمانات",
+        "appsLabel": "التطبيقات:",
+        "noApps": "لم يطلب أي تطبيق هذا الإذن",
+        "allowedFor": "مسموح لـ {modalities}",
+        "appSubtitle": "{baseName} • {allowed}"
+      },
+      "permission": {
+        "Clipboard": {
+          "label": "الحافظة",
+          "description": "يُستخدم لنسخ ولصق المحتوى الذي تختار مشاركته",
+          "rule": {
+            "1": "الوصول فقط بعد إجراء صريح منك (مثل اللصق)",
+            "2": "لا قراءة في الخلفية",
+            "3": "لا تُخزَّن البيانات أو تُرسَل دون إذن",
+            "4": "الوصول مقتصر على الجلسة النشطة"
+          }
+        },
+        "Microphone": {
+          "label": "الميكروفون",
+          "description": "يُستخدم لميزات مثل المكالمات الصوتية والمراسلة وتسجيل الصوت",
+          "rule": {
+            "1": "الضغط للتحدث أو بدء التسجيل بشكل صريح",
+            "2": "لا استماع في الخلفية",
+            "3": "مؤشر مرئي عند التشغيل",
+            "4": "الوصول عبر وساطة المضيف فقط"
+          }
+        },
+        "Camera": {
+          "label": "الكاميرا",
+          "description": "يُستخدم لميزات مثل مكالمات الفيديو ومسح رموز QR والتقاط الوسائط",
+          "rule": {
+            "1": "الوصول فقط عند استخدامك الفعلي للكاميرا",
+            "2": "لا تسجيل في الخلفية",
+            "3": "مؤشر مرئي عند تشغيل الكاميرا",
+            "4": "لا تُخزَّن أي بيانات أو تُشارَك دون إذنك"
+          }
+        },
+        "Notifications": {
+          "label": "الإشعارات",
+          "description": "يُستخدم لإرسال التحديثات والتنبيهات والمعلومات المهمة إليك",
+          "rule": {
+            "1": "لا إشعارات مفرطة أو غير مرغوب فيها",
+            "2": "لا وصول إلى بيانات حساسة عبر الإشعارات"
+          }
+        },
+        "Bluetooth": {
+          "label": "البلوتوث",
+          "description": "يُستخدم للاتصال بالأجهزة القريبة ونقل البيانات",
+          "rule": {
+            "1": "الوصول إلى الأجهزة القريبة فقط",
+            "2": "لا اتصالات في الخلفية دون تفاعل منك",
+            "3": "لا وصول إلى بيانات حساسة دون إذن"
+          }
+        },
+        "Location": {
+          "label": "الموقع",
+          "description": "يُستخدم للخدمات المعتمدة على الموقع وتخصيص المحتوى",
+          "rule": {
+            "1": "لا يُستخدم الموقع في الخلفية",
+            "2": "يُستخدم الموقع فقط عند الحاجة إليه لميزات محددة",
+            "3": "لا تُخزَّن بيانات الموقع أو تُشارَك دون إذن"
+          }
+        },
+        "Biometrics": {
+          "label": "القياسات الحيوية",
+          "description": "يُستخدم للميزات التي تتطلب التحقق من هويتك",
+          "rule": {
+            "1": "يُستخدم فقط بعد مصادقتك الصريحة (مثل Face ID أو Touch ID)",
+            "2": "لا يصل هذا المنتج إلى البيانات الحيوية ولا يخزّنها إطلاقًا",
+            "3": "يتولى جهازك المصادقة بأمان",
+            "4": "يُستخدم فقط لإلغاء القفل أو الموافقة على الإجراءات"
+          }
+        },
+        "Motion": {
+          "label": "مستشعرات الحركة",
+          "description": "يُستخدم للميزات التي تستجيب لكيفية تحريك جهازك أو إمالته",
+          "rule": {
+            "1": "يقرأ حركة الجهاز واتجاهه فقط",
+            "2": "لا يمكنه الوصول إلى موقعك أو الكاميرا",
+            "3": "يمكنك إلغاء الوصول لاحقًا من الإعدادات"
+          }
+        },
+        "OpenExternalUrl": {
+          "label": "فتح رابط خارجي",
+          "description": "يُستخدم لفتح الروابط الخارجية في متصفحك الافتراضي",
+          "rule": {
+            "1": "تُفتح الروابط فقط بعد تفاعلك",
+            "2": "لا إعادة توجيه تلقائية ولا إجراءات في الخلفية",
+            "3": "تُفتح الروابط المطلوبة صراحةً فقط",
+            "4": "لا تُشارَك أي بيانات دون إذنك"
+          }
+        },
+        "ExternalRequest": {
+          "label": "نطاقات الويب",
+          "description": "يُستخدم لإرسال طلبات HTTP إلى النطاقات التالية",
+          "rule": {
+            "1": "تقتصر الطلبات على النطاقات المحددة فقط",
+            "2": "لا مشاركة تلقائية للبيانات دون إجراء من المستخدم",
+            "3": "تمر جميع الطلبات عبر وساطة المضيف",
+            "4": "لا وصول افتراضي إلى البيانات المحلية أو الحساسة"
+          }
+        },
+        "WebRtc": {
+          "label": "WebRTC",
+          "description": "يُستخدم لميزات الاتصال الفوري مثل المكالمات الصوتية ومكالمات الفيديو",
+          "rule": {
+            "1": "يُستخدم أثناء الاتصال النشط فقط",
+            "2": "لا اتصالات في الخلفية دون تفاعل منك",
+            "3": "تُنشأ الاتصالات المباشرة عند الحاجة فقط",
+            "4": "قد يكشف عنوان IP الخاص بك أثناء الاستخدام"
+          }
+        },
+        "ChainSubmit": {
+          "label": "الإرسال إلى السلسلة",
+          "description": "يُستخدم لبث المعاملات الموقّعة إلى أي سلسلة Substrate",
+          "rule": {
+            "1": "لا يمكن إرسال سوى المعاملات الموقّعة",
+            "2": "لا تُنشأ المعاملات أو تُعدَّل تلقائيًا",
+            "3": "لا يتم الإرسال إلا بعد تأكيدك",
+            "4": "لا وصول إلى مفاتيحك الخاصة أو بياناتك الحساسة"
+          }
+        },
+        "PreimageSubmit": {
+          "label": "إرسال preimage",
+          "description": "يُستخدم لإرسال بيانات preimage إلى Bulletin Chain",
+          "rule": {
+            "1": "البيانات المخزنة عامة على سلسلة Bulletin",
+            "2": "السماح دائمًا يشمل كل عمليات الرفع، والسماح مرة واحدة يشمل عملية رفع واحدة",
+            "3": "تُرسَل البيانات كما هي تمامًا دون تعديل",
+            "4": "لا وصول إلى مفاتيحك الخاصة أو بياناتك الحساسة"
+          }
+        },
+        "StatementSubmit": {
+          "label": "إرسال statement",
+          "description": "يُستخدم لإرسال statement إلى statement store",
+          "rule": {
+            "1": "لا يمكن إرسال سوى المعاملات الموقّعة",
+            "2": "لا تُنشأ المعاملات أو تُعدَّل تلقائيًا",
+            "3": "لا يتم الإرسال إلا بعد تأكيدك",
+            "4": "لا وصول إلى مفاتيحك الخاصة أو بياناتك الحساسة"
+          }
+        },
+        "BalanceAccess": {
+          "label": "الرصيد",
+          "description": "يُستخدم لقراءة رصيدك القابل للإنفاق",
+          "rule": {
+            "1": "يعرض الرصيد المتاح للمدفوعات",
+            "2": "لا يسمح للمنتج بإنفاق الأموال أو تحويلها",
+            "3": "يمكنه معرفة أن الدفع قد رُفض لأن رصيدك كان منخفضًا جدًا",
+            "4": "يؤدي إلغاء الوصول إلى إيقاف تحديثات الرصيد"
+          }
+        },
+        "UserIdentity": {
+          "label": "الهوية",
+          "description": "الكشف عن اسم المستخدم الأساسي",
+          "rule": {
+            "1": "يكشف اسم المستخدم الأساسي للمنتج",
+            "2": "يُستخدم لأغراض التعريف فقط",
+            "3": "لا تُشارَك أي بيانات شخصية أخرى",
+            "4": "يمكنك إلغاء الوصول لاحقًا من الإعدادات"
+          }
+        },
+        "Files": {
+          "label": "الملفات",
+          "description": "يُستخدم لميزات مثل رفع الملفات وتنزيلها وإدارتها",
+          "rule": {
+            "1": "الوصول إلى الملفات التي تحددها صراحةً فقط",
+            "2": "لا وصول إلى ملفاتك في الخلفية",
+            "3": "لا تُعدَّل الملفات دون إجراء منك",
+            "4": "لا تُشارَك أي ملفات دون إذنك"
+          }
+        }
+      }
+    },
+    "statementStoreNetwork": {
+      "title": "نقطة اتصال شبكة الاختبار",
+      "changeNetworkDialog": {
+        "title": "هل تريد تغيير نقطة اتصال شبكة الاختبار وتسجيل الخروج؟",
+        "description": "سيؤدي تبديل نقطة الاتصال إلى تسجيل خروجك وإعادة تحميل التطبيق. ستحتاج إلى تسجيل الدخول من جديد.",
+        "confirm": "تغيير نقطة الاتصال"
+      },
+      "options": {
+        "endpointStable": "مستقرة"
+      }
+    },
+    "offlineAccess": {
+      "menu": {
+        "enable": "تفعيل الوصول دون اتصال",
+        "remove": "إزالة الوصول دون اتصال",
+        "update": "تحديث إصدار التطبيق"
+      },
+      "updateDescription": "يتوفر إصدار أحدث. حدّث الإصدار المثبَّت إلى الأحدث.",
+      "section": {
+        "title": "الوصول دون اتصال",
+        "description": "يخزّن التطبيق لاستخدامه دون إنترنت",
+        "enable": "تفعيل",
+        "remove": "إزالة",
+        "updateTitle": "يتوفر تحديث لـ {modality}",
+        "updateReady": "التحديث من الإصدار {fromVersion} إلى {toVersion} جاهز للتثبيت",
+        "update": "تحديث",
+        "modality": {
+          "app": "التطبيق",
+          "widget": "الأداة",
+          "worker": "خدمات الخلفية (مثل غرف الدردشة)"
+        }
+      },
+      "enableDialog": {
+        "title": "تفعيل الوصول دون اتصال",
+        "description": "سيؤدي هذا إلى تخزين إصدار التطبيق الحالي لاستخدامه دون اتصال بالإنترنت",
+        "confirm": "تفعيل"
+      },
+      "removeDialog": {
+        "title": "إزالة الوصول دون اتصال",
+        "description": "سيؤدي هذا إلى قطع اتصالك بـ {name}، ولن تتمكن من استخدام التطبيق دون اتصال بالإنترنت. يمكنك تفعيل هذا الإعداد لاحقًا في أي وقت.",
+        "confirm": "إزالة"
+      },
+      "updateDialog": {
+        "title": "تحديث إصدار التطبيق إلى {version}",
+        "description": "سيؤدي هذا إلى تخزين إصدار التطبيق {version} لاستخدامه دون إنترنت",
+        "confirm": "تحديث"
+      },
+      "toast": {
+        "enabled": "أصبح {name} متاحًا دون اتصال",
+        "removed": "تمت إزالة الاستخدام دون اتصال لـ {name}",
+        "updated": "تم تحديث {name} إلى أحدث إصدار",
+        "noVersion": "المنتج لا يعمل حاليًا",
+        "error": "تعذّر تغيير الوصول دون اتصال",
+        "updateError": "تعذّر تحديث الإصدار",
+        "modalityUpdate": {
+          "title": "يتوفر تحديث لـ {modality}",
+          "description": "الإصدار {version} جاهز للتثبيت",
+          "action": "تحديث"
+        }
+      }
+    },
+    "languageSettings": {
+      "title": "اللغة",
+      "locale": {
+        "en": "الإنجليزية",
+        "es": "الإسبانية",
+        "fr": "الفرنسية",
+        "de": "الألمانية",
+        "it": "الإيطالية",
+        "pt": "البرتغالية",
+        "zh-Hans": "الصينية (المبسّطة)",
+        "ja": "اليابانية",
+        "ko": "الكورية",
+        "ru": "الروسية",
+        "ar": "العربية",
+        "hi": "الهندية",
+        "tr": "التركية"
+      }
+    },
+    "inputModality": {
+      "title": "بحث",
+      "placeholder": "ابحث أو أدخل عنوان {tld}",
+      "attach": "إرفاق ملفات",
+      "removeAttachment": "إزالة المرفق",
+      "loadingAttachment": "جارٍ تحميل المرفق…",
+      "asked": "تم سؤال {count} من المنتجات على هذه الشاشة…",
+      "noContext": "لا شيء على هذه الشاشة يمكنه الإجابة عن ذلك.",
+      "noCandidates": "لا شيء يمكنه التعامل مع هذا.",
+      "goTo": "انتقل إلى",
+      "pickerPrompt": "أي منتج يجب أن يستلم «{fileName}»؟",
+      "pickerEmpty": "لا يوجد منتج على هذه الشاشة يقبل هذا النوع من الملفات.",
+      "attachmentTooLarge": "كبير جدًا على التمرير: {fileName}",
+      "scan": "مسح رمز",
+      "scanPrompt": "الرمز الممسوح",
+      "scanWillOpen": "سيؤدي هذا إلى فتح {productId}.",
+      "scanWillAsk": "سيُطرح هذا على المنتجات في هذه الشاشة.",
+      "scanConfirm": "متابعة",
+      "scanCancel": "إلغاء",
+      "scanUnavailable": "لا تتوفر كاميرا في هذا الجهاز.",
+      "scanDenied": "تم رفض الوصول إلى الكاميرا.",
+      "fromThisScreen": "من هذه الشاشة",
+      "recentlyVisited": "المفتوحة مؤخرًا",
+      "clearRecent": "مسح",
+      "addressFavorites": "المفضلة",
+      "suggestionSeparator": "—"
+    },
+    "networkConnection": {
+      "title": "اتصالات الشبكة",
+      "chainsLoading": "جارٍ تحميل الشبكات…",
+      "chainsEmpty": "لا توجد شبكات مُهيّأة.",
+      "noLightClient": "لا يتوفر عميل خفيف",
+      "mode": {
+        "lightClient": "العميل الخفيف",
+        "rpc": "مزودون موثوقون",
+        "lightClientHint": "تحقّق من بيانات الشبكة مباشرةً على جهازك دون الوثوق بالمزودين",
+        "rpcHint": "وصول أسرع عبر مزودين موثوقين لكن بخصوصية أقل"
+      },
+      "advanced": {
+        "title": "متقدم",
+        "description": "تهيئة طرق الاتصال"
+      },
+      "slowLoad": {
+        "title": "التحميل يستغرق وقتًا أطول من المعتاد",
+        "description": "تجاوز الانتظار وحمّل أسرع باستخدام مزودين موثوقين لهذه الجلسة",
+        "action": "تحميل أسرع"
+      },
+      "loadFailed": {
+        "title": "تعذّر تحميل هذه الصفحة",
+        "description": "استغرق الاتصال وقتًا طويلاً. أعد المحاولة أو استخدم اتصالاً أسرع.",
+        "descriptionReloadOnly": "استغرق الاتصال وقتًا طويلاً. جرّب إعادة تحميل الصفحة.",
+        "reload": "إعادة تحميل الصفحة"
+      },
+      "role": {
+        "identity": "الهوية",
+        "apps": "التطبيقات",
+        "transactions": "المعاملات"
+      }
+    },
+    "productRuntime": {
+      "permissionDenied": {
+        "systemDeviceSettings": "إعدادات الجهاز",
+        "Camera": {
+          "title": "الوصول إلى الكاميرا مطلوب",
+          "description": "يُستخدم لميزات مثل مكالمات الفيديو ومسح رموز QR والتقاط الوسائط"
+        },
+        "Microphone": {
+          "title": "الوصول إلى الميكروفون مطلوب",
+          "description": "يُستخدم لميزات مثل المكالمات الصوتية والمراسلة وتسجيل الصوت"
+        }
+      },
+      "review": {
+        "deny": "رفض",
+        "signPayload": {
+          "title": "توقيع حمولة المعاملة",
+          "subtitle": "راجع الحمولة قبل توقيعها."
+        },
+        "signRaw": {
+          "title": "توقيع الرسالة",
+          "subtitle": "راجع الرسالة قبل توقيعها."
+        },
+        "createTransaction": {
+          "title": "إنشاء معاملة",
+          "subtitle": "راجع المعاملة قبل إرسالها."
+        },
+        "signVrf": {
+          "title": "توقيع نص VRF",
+          "subtitle": "راجع النص قبل توقيعه."
+        },
+        "allowance": {
+          "title": "تخصيص الموارد",
+          "subtitle": "راجع الموارد التي يطلبها هذا التطبيق."
+        },
+        "statementSign": {
+          "title": "توقيع البيان",
+          "subtitle": "راجع البيان قبل توقيعه."
+        },
+        "createProof": {
+          "title": "إنشاء إثبات",
+          "subtitle": "راجع الإثبات الذي يطلبه هذا التطبيق."
+        },
+        "legacyAccountNotice": "يجري التوقيع بحساب قديم.",
+        "resource": {
+          "statementStore": "خانة مخزن البيانات",
+          "bulletin": "خانة تخزين Bulletin",
+          "smartContract": "غاز العقد الذكي للحساب {account}",
+          "autoSigning": "التوقيع نيابةً عنك دون السؤال في كل مرة"
+        },
+        "accountAccess": {
+          "title": "السماح بالوصول إلى حساب {targetIdentifier}؟",
+          "subtitle": "يتيح لهذا التطبيق العمل بحساب يخص تطبيقًا آخر",
+          "warning": "بالسماح بذلك، يمكن لهذا التطبيق استخدام حساب التطبيق الآخر نيابةً عنك"
+        },
+        "identityDisclosure": {
+          "title": "مشاركة اسم المستخدم الخاص بك مع هذا التطبيق؟",
+          "subtitle": "سيتمكن هذا التطبيق من رؤية اسم المستخدم الأساسي الخاص بك",
+          "warning": "بالسماح بذلك، يمكن لهذا التطبيق التعرف عليك من خلال اسم المستخدم الخاص بك"
+        },
+        "productSubtree": {
+          "title": "السماح لهذا التطبيق بالوصول إلى حسابه؟",
+          "subtitle": "يجلب حساب هذا التطبيق من جهازك المقترن"
+        }
+      }
+    }
+  },
+  "widget": {
+    "permission": {
+      "modality": {
+        "app": {
+          "label": "التطبيق",
+          "description": "أدر وصول {productName} إلى {permission} في وضع ملء الشاشة"
+        },
+        "widget": {
+          "label": "الأدوات",
+          "description": "أدر وصول أدوات {productName} إلى {permission} على لوحة التحكم"
+        }
+      }
+    },
+    "rateLimiter": {
+      "description": "تم بلوغ حد {limiterType}",
+      "types": {
+        "rpc": "RPC",
+        "featureSupport": "دعم الميزات",
+        "navigation": "التنقّل",
+        "localStorageRead": "قراءة التخزين المحلي",
+        "localStorageWrite": "الكتابة في التخزين المحلي",
+        "pushNotification": "إشعار الدفع",
+        "pushNotificationCancel": "إلغاء إشعار الدفع",
+        "permissions": "الأذونات",
+        "legacyAccounts": "الحسابات القديمة",
+        "identityAccount": "حساب الهوية",
+        "productAccounts": "حسابات المنتج",
+        "alias": "Alias",
+        "proof": "إثبات",
+        "signVrf": "توقيع VRF",
+        "ringVrfRegister": "تسجيل مفتاح Ring VRF",
+        "ringVrfList": "سرد مفاتيح Ring VRF",
+        "ringVrfSign": "توقيع Ring VRF",
+        "entropy": "العشوائية",
+        "login": "تسجيل الدخول",
+        "preimage": "Preimage"
+      }
+    },
+    "webview": {
+      "error": {
+        "domainResolve": "تعذّر العثور على المنتج.",
+        "fetchingFailed": "تعذّر جلب المنتج.",
+        "loadFailed": "فشل التحميل: {description} ({code})"
+      },
+      "loading": {
+        "reaching": "جارٍ الوصول إلى {identifier}",
+        "reachingGeneric": "جارٍ الوصول"
+      },
+      "crash": {
+        "title": "توقّف المنتج عن العمل",
+        "subtitle": "حاول إعادة تحميل الصفحة.",
+        "reload": "إعادة التحميل",
+        "advanced": "عرض التفاصيل",
+        "reason": "السبب: {reason}",
+        "exitCode": "رمز الخروج: {code}"
+      },
+      "unresponsive": {
+        "title": "الصفحة لا تستجيب",
+        "subtitle": "قد تتعافى من تلقاء نفسها، أو يمكنك إعادة تحميلها الآن.",
+        "reload": "إعادة التحميل",
+        "advanced": "عرض التفاصيل"
+      },
+      "degraded": {
+        "title": "استجابة المنتج بطيئة",
+        "reload": "إعادة التحميل",
+        "dismiss": "تجاهل"
+      }
+    },
+    "productContainerBinding": {
+      "aliasPermission": {
+        "title": "هل تسمح بالوصول إلى alias الخاص بك في {requestedIdentifier}؟",
+        "subtitle": "يُستخدم لربط حساب هويتك بين التطبيقات",
+        "keyOwner": "باستخدام مفتاح {keyOwner}",
+        "requestingProduct": "المنتج الطالب",
+        "requestedContext": "السياق المطلوب",
+        "warning": "بالسماح بذلك، تتيح لهذا التطبيق التعرّف عليك وتتبّع نشاطك في تطبيق آخر",
+        "deny": "عدم السماح",
+        "allowOnce": "السماح مرة واحدة",
+        "allowAlways": "السماح دائمًا"
+      },
+      "proofPermission": {
+        "title": "هل تسمح لـ {requestedIdentifier} بإثبات أنك شخص حقيقي؟",
+        "subtitle": "يثبت أنك إنسان فريد دون الكشف عن هويتك",
+        "warning": "بالسماح بذلك، يمكن لهذا التطبيق إنشاء إثبات شخصية موقّع نيابةً عنك",
+        "deny": "عدم السماح",
+        "allow": "السماح"
+      },
+      "signVrf": {
+        "title": "هل تسمح لـ {requestingIdentifier} بإنشاء توقيع عشوائي قابل للتحقق؟",
+        "subtitle": "ينتج توقيع VRF بأسلوب القرعة مرتبطًا بحساب منتجك",
+        "account": "حساب التوقيع",
+        "transcript": "Transcript",
+        "transcriptLabel": "التسمية",
+        "warning": "بالسماح بذلك، يمكن لهذا التطبيق إنشاء توقيع VRF نيابةً عنك",
+        "deny": "عدم السماح",
+        "allow": "السماح"
+      },
+      "allocationRequest": {
+        "title": "طلب تخصيص",
+        "description": "يطلب {productName} تخصيص موارد",
+        "requestedResources": "الموارد المطلوبة",
+        "polkadotAppHint": "استعد للموافقة في Polkadot App",
+        "grantAccess": "متابعة",
+        "pending": "جارٍ التخصيص...",
+        "polkadotAppLine1": "افتح Polkadot App على هاتفك،",
+        "polkadotAppLine2": "ثم وافق عليه أو ارفضه",
+        "polkadotAppApproveButton": "موافقة",
+        "allocationRejected": "تم إلغاء طلب التخصيص",
+        "smartContractDetailsIntro": "ستوقّع الحسابات التالية على استدعاءات العقود تلقائيًا:",
+        "appAccountWithIndex": "حساب التطبيق ذو الفهرس {index}",
+        "copyAccountAddress": "نسخ عنوان الحساب",
+        "resource": {
+          "StatementStoreAllowance": "نشر statement نيابةً عنك",
+          "BulletinAllowance": "النشر على Bulletin Chain نيابةً عنك",
+          "SmartContractAllowance": "توقيع استدعاءات العقود الذكية تلقائيًا",
+          "AutoSigning": "توقيع المعاملات تلقائيًا"
+        }
+      }
+    }
+  }
+}

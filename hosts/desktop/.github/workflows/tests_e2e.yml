@@ -1,0 +1,311 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      ALLURE_JOB_RUN_ID:
+        type: string
+        description: ALLURE_JOB_RUN_ID service parameter. Leave blank.
+        required: false
+      ALLURE_USERNAME:
+        type: string
+        description: ALLURE_USERNAME service parameter. Leave blank.
+        required: false
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+  CI: true
+  ALLURE_ENDPOINT: ${{ secrets.ALLURE_ENDPOINT }}
+  ALLURE_PROJECT_ID: ${{ secrets.ALLURE_PROJECT_ID }}
+  ALLURE_TOKEN: ${{ secrets.ALLURE_TOKEN }}
+  ALLURE_JOB_RUN_ID: ${{ github.event.inputs.ALLURE_JOB_RUN_ID }}
+  ALLURE_RESULTS: allure-results
+
+permissions:
+  contents: read
+
+jobs:
+  # Sign-in no longer needs a repository secret — it runs a local `truapi-host` against an
+  # identity this repository caches. The asset to protect is therefore that cache, not a token:
+  # it holds plaintext mnemonics for attested on-chain identities, and a fork pull request can
+  # read base-branch caches. So trust is decided by fork status, and a fork run gets neither the
+  # signer-backed projects nor the cache.
+  #
+  # `pull_request_target` would hand secrets to fork runs, and is deliberately NOT used: combined
+  # with checking out the pull request's code it executes untrusted code with repository secrets.
+  context:
+    name: context
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.probe.outputs.projects }}
+      trusted: ${{ steps.probe.outputs.trusted }}
+    steps:
+      - name: Probe trust level
+        id: probe
+        run: |
+          set -euo pipefail
+          # Every Playwright project belongs to exactly one of these two lists, so the full set is
+          # their concatenation — a project cannot fall out of the fork-safe run by being forgotten
+          # in a second literal.
+          NO_SECRETS='["smoke","link-navigation","browser"]'
+          # Signs in through a local truapi-host holding an attested on-chain identity.
+          SIGNER_BACKED='["auth","authenticated","product-sdk","chat"]'
+
+          if [ "${{ github.event.pull_request.head.repo.fork }}" != "true" ]; then
+            echo "Trusted run — running the full project set"
+            echo "projects=$(jq -cn --argjson a "$NO_SECRETS" --argjson b "$SIGNER_BACKED" '$a + $b')" >> "$GITHUB_OUTPUT"
+            echo "trusted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Fork pull request — running the projects that need no identity"
+            echo "projects=$NO_SECRETS" >> "$GITHUB_OUTPUT"
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Build the Vite output (renderer/main/preload) once.
+  # The bundles are pure JS — no native code, no OS-specific packaging — so all
+  # three OS runners can reuse a single Linux-built artifact.
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Build application
+        uses: ./.github/actions/build-app
+        with:
+          version: 1.1.1
+          include_dist_artifacts: false
+          artifact_suffix: shared
+          # Build in development mode so the e2e suite's dev/test affordances (onboarding skip
+          # button, network picker) are present — production builds hide them via isProductionBuild().
+          build_type: dev
+          environments: ${{ vars.VITE_ENVIRONMENTS }}
+          firebase_api_key: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          firebase_project_id: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          firebase_app_id: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          webrtc_turn_host: ${{ secrets.VITE_WEBRTC_TURN_HOST }}
+          webrtc_turn_secret: ${{ secrets.VITE_WEBRTC_TURN_SECRET }}
+          webrtc_turn_ttl: ${{ secrets.VITE_WEBRTC_TURN_TTL }}
+          sandbox_ipfs_allowlist: ${{ secrets.SANDBOX_IPFS_ALLOWLIST }}
+          sandbox_relay_allowlist: ${{ secrets.SANDBOX_RELAY_ALLOWLIST }}
+          update_repo_owner: ${{ vars.UPDATE_REPO_OWNER }}
+          update_repo_name: ${{ vars.UPDATE_REPO_NAME }}
+
+  e2e:
+    name: ${{ matrix.project }} · ${{ matrix.os.short }}
+    needs: [build, context]
+    runs-on: ${{ matrix.os.runner }}
+    timeout-minutes: 45
+    # `setup-allurectl` inside the composite action resolves the current workflow run through the
+    # REST API, which the default `contents: read` does not cover — without this every project fails
+    # before a single test runs, but only once Allure TestOps is fully configured, so the gap stays
+    # invisible while any of its three secrets is missing.
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - { short: linux, runner: ubuntu-latest }
+          # - { short: macos, runner: macos-latest }
+          # - { short: windows, runner: windows-latest }
+        project: ${{ fromJSON(needs.context.outputs.projects) }}
+
+    outputs:
+      allure-launch-id: ${{ steps.run-tests.outputs.allure-launch-id }}
+      allure-launch-url: ${{ steps.run-tests.outputs.allure-launch-url }}
+      allure-job-run-url: ${{ steps.run-tests.outputs.allure-job-run-url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Run E2E tests
+        id: run-tests
+        uses: ./.github/actions/run-e2e-tests
+        with:
+          artifact-name: build-output-shared
+          playwright-browsers: chromium
+          test-command: npm run test:e2e:${{ matrix.project }}
+          signer-backed: ${{ contains(fromJSON('["auth","authenticated","product-sdk","chat"]'), matrix.project) }}
+          identity-cache: ${{ needs.context.outputs.trusted }}
+          cache-scope: ${{ matrix.project }}
+          # Repository/organization variable, optional — unset keeps the harness default.
+          identity-url: ${{ vars.E2E_IDENTITY_URL }}
+          launch-name: "E2E #${{ github.run_number }}"
+          results-artifact-name: allure-results-${{ matrix.project }}-${{ matrix.os.short }}
+          junit-artifact-name: e2e-junit-${{ matrix.project }}-${{ matrix.os.short }}
+
+  security:
+    name: security · ${{ matrix.os.short }}
+    needs: build
+    if: ${{ !cancelled() }}
+    # Same REST-API read as the `e2e` job above — this one runs the composite action too.
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ${{ matrix.os.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - { short: linux, runner: ubuntu-latest }
+          - { short: macos, runner: macos-latest }
+          - { short: windows, runner: windows-latest }
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Run Security tests
+        uses: ./.github/actions/run-e2e-tests
+        with:
+          playwright-browsers: chromium
+          test-command: npm run test:e2e:security
+          artifact-name: build-output-shared
+          launch-name: "E2E #${{ github.run_number }}"
+          results-artifact-name: allure-results-security-${{ matrix.os.short }}
+          junit-artifact-name: e2e-junit-security-${{ matrix.os.short }}
+
+  report:
+    name: report
+    needs: [e2e, security]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # Render the per-project / per-OS comparison into the run's Step Summary
+      # before any heavier Allure work, so the at-a-glance table is present even
+      # if a downstream Allure step fails.
+      - name: Download JUnit results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: e2e-junit-*
+          path: junit
+        continue-on-error: true
+
+      # Kept per-shard (no merge-multiple): the renderer derives project/OS from
+      # the artifact directory names, and the merge step below normalizes the
+      # results for the Allure CLI.
+      - name: Download Allure results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: allure-results-*
+          path: allure-shards
+        continue-on-error: true
+
+      - name: Render E2E summary
+        if: always()
+        shell: bash
+        run: >
+          python3 .github/scripts/render-e2e-report.py --mode=step-summary
+          --junit junit --allure allure-shards >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect failure media
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        shell: bash
+        run: >
+          python3 .github/scripts/render-e2e-report.py --mode=failure-media
+          --allure allure-shards --out media
+
+      - name: Merge Allure results
+        shell: bash
+        run: >
+          python3 .github/scripts/render-e2e-report.py --mode=merge
+          --allure allure-shards --out allure-results
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Install Allure 3 CLI
+        shell: bash
+        run: npm install --no-save allure@3.13.2 @allurereport/plugin-awesome@3.13.2 @actions/artifact@6.2.1
+
+      - name: Generate Allure report
+        shell: bash
+        run: node node_modules/allure/cli.js generate allure-results
+
+      - name: Generate single-file Allure report
+        shell: bash
+        run: node node_modules/allure/cli.js generate --config allurerc.singlefile.mjs allure-results
+
+      - name: Upload Allure report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: allure-report
+          path: allure-report
+          if-no-files-found: warn
+
+      - name: Upload single-file Allure report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: allure-report-single-file
+          path: allure-report-single
+          if-no-files-found: warn
+
+      - name: Upload failure media artifacts
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const upload = require('${{ github.workspace }}/.github/scripts/upload-failure-media.cjs')
+            await upload({ mediaDir: 'media' })
+
+      - name: Publish PR comment
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LAUNCH_URL: ${{ needs.e2e.outputs.allure-launch-url }}
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          python3 .github/scripts/render-e2e-report.py --mode=pr-comment \
+            --junit junit --allure allure-shards \
+            --media media/manifest.json \
+            --launch-url "$LAUNCH_URL" \
+            --run-url "$RUN_URL" > e2e-comment.md
+          MARKER='<!-- e2e-report -->'
+          COMMENT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"${MARKER}\")) | .id][0] // empty" | head -n1)
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" -F body=@e2e-comment.md
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@e2e-comment.md
+          fi

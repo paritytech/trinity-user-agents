@@ -1,0 +1,346 @@
+@import '@novasamatech/tr-ui/styles.css';
+@import 'tailwindcss';
+
+@config '../tailwind.config.ts';
+
+html {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+html,
+body {
+  transition: max-height 0.5s ease-in-out;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * Defensive override for a Radix Dialog scroll-lock leak.
+ *
+ * Radix's react-remove-scroll sets `pointer-events: none` on <body> while a
+ * modal is open and injects a paired \3c style> that re-enables pointer events
+ * on the modal content. Under React 19 + production build the style
+ * occasionally fails to inject (react-style-singleton ref-count desync after
+ * a portal cycle), leaving the modal visible but unclickable.
+ *
+ * Force pointer events on top of the body lock for our own dialog content
+ * so the modal stays interactive regardless of whether the upstream style
+ * was injected.
+ *
+ * Remove once we own the scroll lock ourselves (centralized controller) or
+ * the upstream bug is fixed.
+ */
+[data-slot='dialog-content'],
+[data-slot='dialog-content'] *,
+[data-sonner-toaster],
+[data-sonner-toaster] * {
+  pointer-events: auto !important;
+}
+
+/*
+ * Every layer below renders in a portal under <body>, so it can be painted over a
+ * `app-region: drag` region — the toolbar (Header) and the whole onboarding screen
+ * are both drag regions. Chromium hands presses on a drag region to the OS for window
+ * dragging *before* the renderer hit-tests them, so a layer that overlaps one never
+ * receives the click (and a double press maximizes the window instead).
+ *
+ * A portal is a sibling of #app, which is where the drag region is declared
+ * (src/index.html), so it inherits no region of its own — and inheriting nothing does
+ * not subtract the region painted underneath. Each layer has to say `no-drag`, which
+ * subtracts its rect, for presses to land in the renderer.
+ *
+ * The popper wrapper covers popover / dropdown-menu / select / tooltip / context-menu
+ * in one selector. Toasts are scoped to the toast element rather than the container so
+ * the container's empty background stays draggable.
+ */
+[data-radix-popper-content-wrapper],
+[data-slot='dialog-content'],
+[data-slot='alert-dialog-content'],
+[data-sonner-toast] {
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  --app-focus-ring-size: 2px;
+  --app-focus-ring-color: color-mix(in srgb, var(--stroke-tertiary) 35%, transparent);
+  --scroll-background-default: color-mix(in srgb, var(--stroke-tertiary) 60%, transparent);
+}
+
+:where(a[href], button, input, select, textarea, summary, [role='button'], [tabindex]:not([tabindex='-1'])):not([data-slot]):not(
+    [data-no-app-focus]
+  ):focus {
+  outline: none;
+}
+
+:where(a[href], button, input, select, textarea, summary, [role='button'], [tabindex]:not([tabindex='-1'])):not([data-slot]):not(
+    [data-no-app-focus]
+  ):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 var(--app-focus-ring-size) var(--app-focus-ring-color);
+}
+
+/*
+ * `dir` mirrors layout but never the content of an SVG, so a back chevron keeps
+ * pointing left while its button moves to the right edge — the arrow ends up
+ * contradicting the direction it navigates. lucide stamps a stable per-icon
+ * class on every glyph, so mirroring here covers all 42 call sites at once and
+ * anything added later, instead of a `rtl:-scale-x-100` that each new usage has
+ * to remember. Only icons whose meaning is "towards the start/end of the text
+ * flow" belong here: up/down chevrons and non-directional glyphs must not flip.
+ */
+[dir='rtl'] :is(.lucide-chevron-left, .lucide-chevron-right, .lucide-arrow-left, .lucide-arrow-right) {
+  transform: scaleX(-1);
+}
+
+/* Scrollbar for Firefox */
+* {
+  scrollbar-width: thin;
+}
+
+/* Scrollbar for other Browsers */
+/* Width */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px; /* horizontal scrollbar */
+}
+
+/* Track */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-track:vertical {
+  margin: 2px 0;
+}
+
+::-webkit-scrollbar-track:horizontal {
+  margin: 0 2px;
+}
+
+/* Handle */
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: padding-box;
+  background-color: var(--scroll-background-default);
+}
+
+/* Search input reset  */
+[type='search']::-webkit-search-cancel-button,
+[type='search']::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.scrollbar-stable {
+  scrollbar-gutter: stable both-edges;
+}
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.react-grid-layout .react-grid-placeholder,
+.react-grid-placeholder {
+  opacity: 1 !important;
+  border: 2px dashed rgba(128, 128, 128, 0.5) !important;
+  border-radius: 12px !important;
+  background-color: rgba(128, 128, 128, 0.18) !important;
+}
+
+/* Loading logo pulse animation */
+/* Animates from 29px to 43px (scale 0.67 to 1 based on 43px) */
+@keyframes logo-pulse {
+  0%,
+  100% {
+    transform: scale(0.67);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+}
+
+.animate-logo-pulse {
+  animation: logo-pulse 1.5s ease-in-out infinite;
+  width: 43px;
+}
+
+@keyframes loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/* Find bar entrance — slides down from the top edge as it fades in. */
+@keyframes find-bar-in {
+  from {
+    transform: translateY(-10px) scale(0.97);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-find-bar-in {
+  animation: find-bar-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Input spotlight entrance.
+ *
+ * This surface opens dozens of times a day, so the motion overshoots instead of
+ * easing — it should read as sprung rather than slid — while staying short.
+ * Duration is what makes a frequent interaction feel slow; overshoot is what
+ * makes it feel alive, and the two are independent.
+ *
+ * Rows animate individually because the answers genuinely arrive one at a time:
+ * each product answers on its own schedule and the list merges incrementally, so
+ * the stagger is showing the user something true about the fan-out rather than
+ * decorating it. `backwards` fill keeps a delayed row invisible until its turn
+ * instead of flashing at full opacity first.
+ */
+@keyframes spotlight-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spotlight-card-in {
+  0% {
+    transform: translateY(-1rem) scale(0.96);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(0.25rem) scale(1.012);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes spotlight-row-in {
+  0% {
+    transform: translateY(0.5rem) scale(0.985);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(-0.09rem) scale(1.004);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-spotlight-backdrop-in {
+  animation: spotlight-backdrop-in 140ms ease-out;
+}
+
+.animate-spotlight-card-in {
+  animation: spotlight-card-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.animate-spotlight-row-in {
+  animation: spotlight-row-in 220ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+/* The viewfinder arrives after the card has most of the way finished resizing —
+ * hence the delay and the `backwards` fill, which keeps it invisible until its
+ * turn instead of flashing at full opacity first. It fades rather than springs:
+ * the card is already moving, and two things overshooting at once reads as
+ * jitter. */
+@keyframes spotlight-scanner-in {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-spotlight-scanner-in {
+  animation: spotlight-scanner-in 240ms cubic-bezier(0.22, 1, 0.36, 1) 90ms backwards;
+}
+
+/* Overshoot is motion for its own sake, which is exactly what this asks to be
+ * spared. Collapse rather than remove, so `backwards` fill still resolves and no
+ * row is left stuck at zero opacity. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spotlight-backdrop-in,
+  .animate-spotlight-card-in,
+  .animate-spotlight-row-in,
+  .animate-spotlight-scanner-in {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+}
+
+/* Dashboard widget loading — whole-block opacity pulse (see
+   docs/_plans/dashboard-widget-pulse-loading-design.md). The column stagger
+   (animation-delay) is applied inline by DashboardCardChrome. */
+@keyframes widget-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-widget-pulse {
+  animation: widget-pulse 1.8s ease-in-out infinite;
+}
+
+/* Renderer tree `Effect::Rainbow` — the one visual effect the TrUAPI render
+   vocabulary defines. The gradient is painted through the text it wraps, which is
+   why a descendant that sets its own colour opts itself out. */
+@keyframes renderer-rainbow {
+  to {
+    background-position: 200% center;
+  }
+}
+
+.animate-renderer-rainbow {
+  animation: renderer-rainbow 4s linear infinite;
+  background: linear-gradient(90deg, #ff0040, #ff8000, #ffe000, #00c060, #0080ff, #8000ff, #ff0040) 0 center / 200% auto;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Stopped, not shortened: collapsing an infinite loop to 1ms strobes rather than
+   settles. The gradient still reads as intended, just static. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-renderer-rainbow {
+    animation: none;
+  }
+}

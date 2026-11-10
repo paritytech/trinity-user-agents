@@ -1,0 +1,1 @@
+export { productDashboardFeature } from './feature';

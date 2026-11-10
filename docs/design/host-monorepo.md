@@ -55,7 +55,7 @@ and argued separately.
   |  js/packages/            TypeScript SDK                      |
   |        ^                                                     |
   |        | consumed by                                         |
-  |  hosts/ios/  hosts/android/  hosts/web/                      |
+  |  hosts/ios/  hosts/android/  hosts/desktop/  hosts/web/      |
   |        each a host application, presentation stays native    |
   +--------------------------------------------------------------+
              |                |                |
@@ -172,9 +172,9 @@ output and one consumer" describes the shape after #670 lands rather than the sh
 
 ## What is imported, and from where
 
-The sources are `polkadot-ios-community`, `polkadot-android-community` and `dotli-community`. All three are public, so
-importing them into this public repository publishes nothing that was not already public. The private application
-repositories are not in scope.
+The sources are `polkadot-ios-community`, `polkadot-android-community`, `polkadot-desktop-community` and
+`dotli-community`. All four are public, so importing them into this public repository publishes nothing that was not
+already public. The private application repositories are not in scope.
 
 `hosts/imports.json` records which source each tree came from and the revision it was taken at.
 `scripts/refresh-host-import.sh status <host>` reports how far a tree has drifted from its source, and `refresh` moves it

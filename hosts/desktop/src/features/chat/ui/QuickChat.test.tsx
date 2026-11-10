@@ -1,0 +1,59 @@
+// @vitest-environment happy-dom
+
+import 'fake-indexeddb/auto';
+
+import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from '@tanstack/react-router';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { of } from 'rxjs';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { TEST_IDS } from '@/shared/test-ids';
+import { TranslationProvider } from '@/shared/translation';
+import { type ProductChatRoom, roomsResource } from '@/domains/chat';
+import { truapiRuntimeUseCase } from '@/aggregates/truapi-runtime';
+
+import { QuickChat } from './QuickChat';
+
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- a brand cannot be satisfied by a literal
+const USER = `0x${'11'.repeat(32)}` as ProductChatRoom['userId'];
+
+const room: ProductChatRoom = { sessionId: 's1', roomId: 'room-1', productId: 'demo.dot', userId: USER, createdAt: 1 };
+
+async function renderQuickChat(served: ProductChatRoom) {
+  truapiRuntimeUseCase.publishAuthState({ tag: 'Connected', value: { publicKey: USER, identityAccountId: USER } });
+  roomsResource.instead(() => of([served]));
+
+  const rootRoute = createRootRoute({
+    component: () => (
+      <TranslationProvider>
+        <QuickChat open onOpenChange={() => {}}>
+          <button>trigger</button>
+        </QuickChat>
+      </TranslationProvider>
+    ),
+  });
+  const router = createRouter({ routeTree: rootRoute, history: createMemoryHistory({ initialEntries: ['/'] }) });
+  await router.load();
+
+  render(<RouterProvider router={router} />);
+  fireEvent.click(await screen.findByTestId(TEST_IDS.chatRoomItem));
+}
+
+afterEach(() => {
+  truapiRuntimeUseCase.dispose();
+});
+
+describe('QuickChat', () => {
+  it('hides the composer in a product room whose user input is none', async () => {
+    await renderQuickChat({ ...room, userInput: 'none' });
+
+    await screen.findByTestId(TEST_IDS.chatNoMessagesPlaceholder);
+    expect(screen.queryByTestId(TEST_IDS.chatMessageInput)).toBeNull();
+  });
+
+  it('shows the composer in a product room without a setting', async () => {
+    await renderQuickChat(room);
+
+    expect(await screen.findByTestId(TEST_IDS.chatMessageInput)).toBeInTheDocument();
+  });
+});

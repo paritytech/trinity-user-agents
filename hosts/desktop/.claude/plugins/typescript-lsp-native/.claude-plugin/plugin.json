@@ -1,0 +1,24 @@
+{
+  "name": "typescript-lsp-native",
+  "description": "TypeScript language server backed by the project's own TypeScript 7 (tsgo) binary — the same Go engine WebStorm runs — instead of the Node tsserver.",
+  "version": "1.0.0",
+  "author": {
+    "name": "polkadot-desktop"
+  },
+  "lspServers": {
+    "typescript": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/tsgo-lsp.sh",
+      "args": [],
+      "extensionToLanguage": {
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".js": "javascript",
+        ".jsx": "javascriptreact",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".mjs": "javascript",
+        ".cjs": "javascript"
+      }
+    }
+  }
+}

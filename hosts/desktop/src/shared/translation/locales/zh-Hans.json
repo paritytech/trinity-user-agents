@@ -1,0 +1,1225 @@
+{
+  "common": {
+    "action": {
+      "back": "返回",
+      "moreDetails": "更多详情",
+      "hideDetails": "隐藏详情",
+      "cancel": "取消",
+      "allow": "允许",
+      "skip": "跳过（仅限开发）",
+      "sign": "签名",
+      "signing": "签名中…",
+      "reply": "回复",
+      "copyText": "复制文本",
+      "forward": "转发",
+      "select": "选择",
+      "delete": "删除",
+      "add": "添加",
+      "search": "搜索…",
+      "writeMessage": "输入消息…",
+      "retry": "重试",
+      "disconnect": "断开连接",
+      "all": "全部",
+      "electronics": "电子产品",
+      "fashion": "时尚",
+      "downloadLogs": "下载日志"
+    },
+    "label": {
+      "signer": "签名者",
+      "chain": "链",
+      "method": "方法",
+      "arguments": "参数",
+      "callData": "Call data",
+      "message": "消息"
+    },
+    "status": {
+      "loading": "加载中…",
+      "noProductFound": "未找到产品",
+      "unknownUser": "未知用户",
+      "online": "在线",
+      "live": "直播中",
+      "daysLeft": "剩余 {count} 天"
+    },
+    "error": {
+      "somethingWentWrong": "出错了",
+      "tryAgain": "请重试或稍后再来",
+      "logsHelpText": "与开发者共享日志有助于解决此问题"
+    },
+    "aria": {
+      "openFullscreen": "全屏打开",
+      "reloadWidget": "重新加载小组件",
+      "close": "关闭",
+      "clear": "清除",
+      "reload": "重新加载"
+    },
+    "cancel": "取消",
+    "web3summitEnded": {
+      "ariaLabel": "Web3 Summit 已结束",
+      "title": "Web3 Summit 已结束",
+      "subtitle": "敬请关注后续消息"
+    }
+  },
+  "feature": {
+    "favorites": {
+      "title": "收藏",
+      "searchPlaceholder": "搜索",
+      "searchAriaLabel": "搜索收藏",
+      "emptyTitle": "还没有收藏的应用",
+      "emptyDescription": "收藏常用应用，方便快速访问",
+      "browseApps": "浏览应用",
+      "searchNoResults": {
+        "title": "无结果",
+        "description": "请尝试调整搜索条件。"
+      },
+      "openFullscreenAria": "打开收藏",
+      "addAria": "添加到收藏",
+      "removeAria": "从收藏中移除",
+      "addDialog": {
+        "title": "添加到收藏",
+        "searchPlaceholder": "搜索",
+        "searchAriaLabel": "搜索产品",
+        "loadingAria": "正在加载应用",
+        "nothingToAdd": {
+          "title": "没有可添加的内容",
+          "description": "所有可用应用都已在你的收藏中"
+        },
+        "noResults": {
+          "title": "无结果",
+          "description": "请尝试调整搜索条件。"
+        },
+        "error": {
+          "title": "出错了",
+          "retry": "重试"
+        }
+      }
+    },
+    "call": {
+      "audioCall": "语音通话",
+      "videoCall": "视频通话",
+      "returnToCall": "返回通话"
+    },
+    "browser": {
+      "addressPlaceholder": "输入 {tld} 地址",
+      "navigationBackAria": "后退",
+      "navigationForwardAria": "前进",
+      "addressWelcome": "欢迎来到 Polkadot！在此输入 .dot 地址",
+      "removeFromDashboard": "从仪表板移除该产品",
+      "addressSuggestions": "全部应用",
+      "addressNoResults": "未找到应用",
+      "recentlyOpened": "最近打开",
+      "recentClearedTitle": "最近打开的标签页已成功清除",
+      "undoLabel": "撤销 {seconds} 秒",
+      "ramUsage": "内存占用：{value}",
+      "ramUsageUnavailable": "内存占用：—",
+      "newTab": "新标签页",
+      "newTabPrompt": "输入 {tld} 地址",
+      "closeTab": "关闭标签页",
+      "signTransaction": "签署交易",
+      "signingRequestTitle": "{call} 签名请求",
+      "operationTitle": {
+        "utilityBatchAll": "Utility Batch All",
+        "utilityBatch": "Utility Batch",
+        "utilityForceBatch": "Utility Force Batch"
+      },
+      "batchBehavior": {
+        "revertOnError": "所含交易在出错时全部回滚",
+        "executeUntilError": "所含交易执行至首次出错为止",
+        "ignoreErrors": "所含交易忽略错误"
+      },
+      "signMessageRequestTitle": "原始消息签名请求",
+      "rawMessageNotReadableCaption": "此消息无法以可读格式显示",
+      "copyMessage": "复制消息",
+      "account": "账户",
+      "accountAddress": "账户地址",
+      "network": "网络",
+      "networkFee": "网络手续费",
+      "transactionDetailsTitle": "交易详情",
+      "copyArguments": "复制参数",
+      "copyCallData": "复制 call data",
+      "signingByAppAccount": "使用索引为 {index} 的应用账户签名",
+      "accountAddressUnavailable": "账户地址不可用 — 请重新连接 Polkadot App",
+      "copyAccountAddress": "复制账户地址",
+      "polkadotAppHint": "要签署交易，请打开 Polkadot App",
+      "polkadotAppRawMessageHint": "要签署此消息，请打开 Polkadot App",
+      "continueToSign": "继续",
+      "signPolkadotAppTitle": "签署交易",
+      "signPolkadotAppLine1": "在你的设备上打开 Polkadot App，",
+      "signPolkadotAppLine2": "然后点按「签名」或「拒绝」",
+      "signPolkadotAppDeviceLabel": "Polkadot App",
+      "signPolkadotAppSignButton": "签名",
+      "signPolkadotAppRejectButton": "拒绝",
+      "signPolkadotAppValidFor": "有效期 {time}",
+      "openMobileAppTitle": "打开移动应用",
+      "openMobileAppLine1": "请确认已安装 Polkadot App，",
+      "openMobileAppLine2": "然后打开它以继续",
+      "signingTimedOutTitle": "签名请求已超时",
+      "signingTimedOutBody": "请求未能及时完成",
+      "transactionSigningRejected": "交易签名已取消",
+      "transactionSigned": "交易已签名",
+      "messageSigned": "消息已签名",
+      "signingFailedTitle": "交易签名失败",
+      "signingFailedBody": "出了点问题。打开「详情」了解更多信息。",
+      "signingErrorToastDetails": "详情",
+      "signingErrorDetailsLabel": "详情",
+      "signingErrorCopyDetails": "复制错误详情",
+      "havingTroubleSigning": "在手机上确认时遇到问题？",
+      "havingTroubleSigningDialog": {
+        "title": "确认时遇到问题？",
+        "description": "请重新加载应用并再次执行该操作。若仍无效，请尝试退出登录后重新登录",
+        "troubleshootingGuide": "故障排查指南",
+        "reload": "重新加载"
+      },
+      "noAllowanceErrorTitle": "账户尚未就绪",
+      "noAllowanceErrorDescription": "我们正在设置你的账户，请稍后重试。",
+      "statementStoreErrorTitle": "statement store 错误",
+      "feeUnavailable": "—",
+      "customChainSigningWarning": "此自定义链无法显示交易详情。签名前请检查原始 call data。",
+      "webVersionNotification": "你正在使用应用的网页版。请使用桌面版与产品交互。",
+      "findPlaceholder": "在页面中查找",
+      "findCount": "{current}/{total}",
+      "findNoResults": "无结果",
+      "findNext": "下一个匹配项",
+      "findPrevious": "上一个匹配项",
+      "findClose": "关闭查找栏",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "zoomReset": "重置缩放",
+      "zoomPercent": "{percent}%",
+      "clearRecent": "清除"
+    },
+    "userManager": {
+      "connectionStatus": {
+        "connected": "已连接",
+        "reconnecting": "正在重新连接…",
+        "offline": "你处于离线状态",
+        "noConnection": "未连接 — 点击登录"
+      },
+      "aria": {
+        "account": "账户",
+        "connectAccount": "连接账户"
+      },
+      "banner": {
+        "connectedTitle": "已连接到 {networkName}",
+        "connectedSubtitle": "桌面端已与手机配对",
+        "reconnectingTitle": "正在重新连接到 {networkName}…",
+        "reconnectingSubtitle": "正在再次尝试连接节点",
+        "offlineTitle": "你处于离线状态",
+        "offlineSubtitle": "请检查网络连接后重试",
+        "noConnectionTitle": "未连接",
+        "noConnectionSubtitle": "登录以配对你的账户"
+      },
+      "popover": {
+        "settings": "设置"
+      }
+    },
+    "chat": {
+      "proceedInChat": {
+        "menuItem": "在聊天中继续",
+        "toast": {
+          "errorTitle": "无法创建聊天室"
+        }
+      },
+      "title": "聊天",
+      "widgetTitle": "最近聊天",
+      "fullscreenTitle": "聊天",
+      "unreadMessagesAria": "未读消息",
+      "category": "通讯",
+      "replyToYourself": "回复自己",
+      "replyTo": "回复 {name}",
+      "noConversations": "还没有会话",
+      "startNewChat": "发起新会话",
+      "searchPlaceholder": "搜索会话…",
+      "searchByUsernameOrMessages": "按用户名或消息内容搜索",
+      "searchChatsAndContacts": "聊天与联系人",
+      "searchMessages": "消息",
+      "sayHelloOptional": "打个招呼…（可选）",
+      "sending": "发送中…",
+      "sendRequest": "发送请求",
+      "search": "搜索",
+      "noResults": "未找到与「{query}」相关的结果",
+      "results": "结果（{count}）",
+      "recent": "最近",
+      "clear": "清除",
+      "contacts": "联系人",
+      "noMessages": "还没有消息",
+      "thisIsChat": "这是一个聊天",
+      "noResultsFound": "未找到结果",
+      "noResultsDescription": "没有找到与你的搜索匹配的内容。请尝试其他关键词。",
+      "quickChat": "快速聊天",
+      "viewMore": "查看更多",
+      "syncStatus": {
+        "outOfSync": {
+          "title": "消息可能未同步",
+          "subtitle": "打开移动应用以同步消息"
+        },
+        "syncing": {
+          "title": "正在获取最新消息",
+          "subtitle": "正在从手机同步消息…"
+        },
+        "synced": {
+          "title": "消息已是最新",
+          "subtitle": "手机在线"
+        },
+        "error": {
+          "title": "同步失败",
+          "subtitle": "请重启两端应用"
+        }
+      },
+      "sendMessageToBegin": "发送一条消息，开始会话",
+      "mediaMobileOnly": "此消息只能在移动应用中查看",
+      "noChatsYet": "还没有聊天",
+      "yourChatWillAppear": "你的聊天将显示在这里",
+      "yourChatsWillAppear": "你的聊天将显示在这里",
+      "noChatSelected": "未选择聊天",
+      "selectChatToView": "选择一个聊天以查看会话",
+      "request": {
+        "entryTitle": "消息请求",
+        "listHint": "来自不在你联系人列表中的人的消息请求会显示在这里",
+        "messageHidden": "消息已隐藏",
+        "messageHiddenFull": "根据你的默认设置，此消息已隐藏",
+        "viewMessage": "查看消息",
+        "banner": "将 <b>{name}</b> 添加到联系人以接受该聊天请求。<br></br>在你接受之前，对方不会知道你已看到消息。",
+        "accept": "接受",
+        "decline": "拒绝",
+        "declinedToast": "已拒绝来自 {name} 的请求",
+        "youApproved": "你已同意该请求",
+        "peerApproved": "{name} 同意了消息请求",
+        "youSent": "<b>你</b>发送了消息请求",
+        "leftChat": "{name} 已离开聊天",
+        "modalTitle": "添加新联系人以开始聊天？",
+        "modalBody": "进入聊天后，请确保 <b>{name}</b> 也向你发起聊天，否则你的消息可能不会被看到。",
+        "cancel": "取消",
+        "continue": "继续",
+        "inviteTitle": "邀请 {name} 聊天",
+        "inviteHint": "此邀请中只能发送一条消息",
+        "inviteFailed": "无法发送邀请。请检查网络连接后重试。",
+        "waitForAccept": "请等待 <b>{name}</b> 接受你的请求消息后再发送下一条消息。",
+        "today": "今天"
+      },
+      "contactSearch": {
+        "searchEntry": "搜索",
+        "placeholder": "按用户名或消息内容搜索",
+        "tabChats": "聊天",
+        "tabApps": "应用",
+        "groupChatsAndContacts": "聊天与联系人",
+        "groupMessages": "消息",
+        "recent": "最近",
+        "clear": "清除",
+        "appsComingSoon": "应用搜索即将推出",
+        "noResultsTitle": "无结果",
+        "noResultsHint": "请尝试调整搜索条件"
+      },
+      "settings": {
+        "title": "聊天",
+        "subtitle": "管理聊天与消息请求的行为方式",
+        "messageRequestsSection": "消息请求",
+        "hideByDefault": "默认隐藏消息请求",
+        "hideByDefaultHint": "新请求将保持隐藏，直到你打开并点按「查看消息」"
+      },
+      "editMessage": "编辑",
+      "editingMessage": "正在编辑消息",
+      "edited": "（已编辑）",
+      "editHistory": "编辑记录",
+      "currentMessage": "当前",
+      "earlierVersion": "早前版本",
+      "viewEditHistory": "查看编辑记录",
+      "originalMessage": "原始",
+      "leaveChat": "退出聊天",
+      "blockUser": "屏蔽用户",
+      "unblockUser": "解除屏蔽",
+      "blockedNotice": "在你解除对 {name} 的屏蔽之前，你不会收到任何消息或请求。",
+      "unblock": "解除屏蔽",
+      "transfer": {
+        "youSent": "你已发送",
+        "sent": "已发送",
+        "received": "已收到",
+        "coinage": {
+          "submitting": "提交中",
+          "sending": "发送中",
+          "sent": "已发送",
+          "delivered": "已送达",
+          "claimed": "已领取"
+        }
+      },
+      "call": {
+        "title": {
+          "incomingVoice": "来电（语音）",
+          "outgoingVoice": "去电（语音）",
+          "incomingVideo": "来电（视频）",
+          "outgoingVideo": "去电（视频）",
+          "ongoingVoice": "语音通话中",
+          "ongoingVideo": "视频通话中",
+          "voice": "语音通话",
+          "video": "视频通话",
+          "missedVoice": "未接语音通话",
+          "missedVideo": "未接视频通话",
+          "canceledVoice": "已取消的语音通话",
+          "canceledVideo": "已取消的视频通话"
+        },
+        "subtitle": {
+          "openToCall": "打开移动应用以拨打",
+          "openToReturn": "打开移动应用以返回",
+          "openToCallBack": "打开移动应用以回拨",
+          "openToCallAgain": "打开移动应用以再次拨打",
+          "tapToCall": "点按以通话",
+          "tapToReturn": "点按以返回",
+          "tapToCallBack": "点按以回拨",
+          "tapToCallAgain": "点按以再次通话"
+        }
+      }
+    },
+    "productActionsMenu": {
+      "trigger": "产品操作",
+      "openSettings": "打开设置"
+    },
+    "onboarding": {
+      "logoText": "为人而生的产品",
+      "mainText": "登录以探索 Polkadot",
+      "description": "使用相机登录",
+      "phoneHint": "这将打开 Polkadot App",
+      "errorTitle": "认证错误",
+      "error": "认证过程中出了点问题",
+      "errorNoFreeSlotsTitle": "已达上限",
+      "errorNoFreeSlotsDescription": "最多只能添加 8 台设备。请在 Polkadot App 中断开其中一台设备，再添加新设备。",
+      "loggingInToast": "正在登录…请稍候",
+      "completingPairing": "正在完成配对…",
+      "connection": {
+        "offline": {
+          "title": "你处于离线状态",
+          "subtitle": "请检查网络连接后重试"
+        },
+        "reaching": {
+          "title": "正在重新连接到 Polkadot…",
+          "subtitle": "正在再次尝试连接节点"
+        },
+        "restored": {
+          "title": "正在重新连接到 Polkadot…",
+          "subtitle": "网络连接已恢复"
+        },
+        "accountSetup": {
+          "title": "你的账户仍在设置中",
+          "subtitle": "请稍后重试"
+        }
+      }
+    },
+    "dashboard": {
+      "title": "仪表板",
+      "toolbar": {
+        "ariaLabel": "仪表板操作",
+        "pagesLabel": "仪表板页面",
+        "switchToPage": "切换到第 {number} 页"
+      },
+      "menu": {
+        "addToFavorites": "添加到收藏",
+        "removeFromFavorites": "从收藏中移除",
+        "toast": {
+          "addedToFavorites": "{productName} 已成功添加到收藏",
+          "removedFromFavorites": "{productName} 已从收藏中移除"
+        }
+      },
+      "addWidget": {
+        "title": "添加小组件",
+        "sizeAndType": "尺寸与类型",
+        "selectWidget": "从列表中选择一个小组件",
+        "noWidgetsAvailable": "没有可用的小组件。",
+        "noSearchResults": "没有与你的搜索匹配的小组件。",
+        "loading": "正在加载小组件…",
+        "loadFailed": "无法加载小组件。请稍后再试。",
+        "createFolder": "新建文件夹",
+        "createFolderDescription": "用此小组件新建一个文件夹",
+        "addToFavorites": "添加到收藏",
+        "addedToFavoritesButton": "已添加到收藏",
+        "done": "完成",
+        "add": "添加",
+        "open": "打开",
+        "noSupportedSizes": "该小组件没有可添加的支持尺寸。",
+        "searchPlaceholder": "输入 {tld} 地址以查找应用",
+        "searchAriaLabel": "搜索应用",
+        "cards": {
+          "product": {
+            "title": "产品小组件",
+            "description": "从仪表板快速访问的小组件"
+          },
+          "chat": {
+            "title": "聊天小组件",
+            "description": "快速访问你的聊天"
+          },
+          "favorites": {
+            "title": "收藏",
+            "description": "存放你收藏的产品快捷方式的文件夹"
+          }
+        },
+        "toast": {
+          "widgetAddedProduct": "{widgetTitle} {sizeLabel} 小组件已成功添加到仪表板",
+          "addedToFavorites": "{productName} 已成功添加到收藏",
+          "widgetAddFailed": "无法添加小组件。请重试，或打开仪表板调整已有的小组件。",
+          "favoritesAddFailed": "无法添加到收藏。请重试。",
+          "viewAction": "查看"
+        }
+      },
+      "addToDashboard": {
+        "label": "添加到仪表板",
+        "toast": {
+          "targetUnresolved": "无法为该项打开「添加到仪表板」对话框。"
+        }
+      },
+      "domainNotFound": "未找到域名",
+      "placeholder": {
+        "widgetNotFound": "该小组件已不存在",
+        "widgetUnavailable": "该小组件当前不可用",
+        "deleteWidget": "删除小组件"
+      },
+      "favorites": {
+        "title": "收藏",
+        "removeFolder": "移除文件夹",
+        "removeProduct": "移除小组件",
+        "empty": "还没有收藏",
+        "emptyPlaceholder": "收藏常用应用，方便快速访问",
+        "browseApps": "浏览应用",
+        "viewMore": "查看更多"
+      },
+      "empty": {
+        "title": "产品小组件将显示在这里。",
+        "description": "添加第一个小组件即可开始。"
+      },
+      "widgetMenu": {
+        "sizeLabel": "尺寸",
+        "sizeSmall": "小",
+        "sizeMedium": "中",
+        "sizeLarge": "大",
+        "sizeHorizontal": "横向",
+        "cleanup": "整理仪表板",
+        "reload": "重新加载小组件",
+        "removeWidget": "移除小组件"
+      }
+    },
+    "ticketApp": {
+      "title": "Ticket App",
+      "category": "活动",
+      "daysLeft": "剩余天数",
+      "upcoming": "即将举行的活动",
+      "entryTicket": "入场券"
+    },
+    "shopping": {
+      "title": "Mark3t",
+      "category": "购物",
+      "totalSaved": "累计节省",
+      "thisMonth": "本月"
+    },
+    "hackm3": {
+      "title": "Hackm3",
+      "category": "文档",
+      "online": "{count} 人在线",
+      "live": "直播中",
+      "docs": "文档",
+      "shared": "共享"
+    },
+    "user": {
+      "welcomeBack": "欢迎回来",
+      "logOut": "退出登录",
+      "logIn": "登录"
+    },
+    "settings": {
+      "title": "设置",
+      "testnetEndpoints": "测试网端点",
+      "endpointStable": "稳定版",
+      "group": {
+        "preferences": "偏好设置",
+        "privacy": "隐私与安全",
+        "development": "开发"
+      }
+    },
+    "themeToggle": {
+      "title": "外观",
+      "appearance": "主题",
+      "colorMode": "配色模式",
+      "device": "跟随设备",
+      "day": "浅色",
+      "night": "深色",
+      "berlin": "柏林",
+      "tokyo": "东京",
+      "lisbon": "里斯本",
+      "malta": "马耳他",
+      "preview": {
+        "outgoingFirst": "嘿，你去 Polkadot Summit 吗？🎉",
+        "incoming": "当然去！你呢？",
+        "outgoingSecond": "绝对不会错过 👋 到时候见！"
+      }
+    },
+    "updateCheck": {
+      "title": "更新",
+      "channel": {
+        "title": "更新通道",
+        "stable": "稳定版",
+        "experimental": "实验版",
+        "stableHint": "已验证的版本，推荐日常使用。",
+        "experimentalHint": "直接来自开发分支的最新版本，可能不稳定。"
+      },
+      "checkForUpdates": "检查更新",
+      "checking": "正在检查更新…",
+      "checkingHint": "这可能需要一点时间",
+      "upToDate": "Polkadot Desktop 已是最新版本！",
+      "upToDateHint": "你已使用最新版本的 Polkadot Desktop。已安装版本 {version}",
+      "upToDateHintNoVersion": "你已使用最新版本的 Polkadot Desktop。",
+      "downloading": "正在下载更新…",
+      "downloadingHint": "这可能需要一点时间",
+      "progress": "进度",
+      "downloadingPercent": "{percent}%",
+      "readyToInstall": "更新已就绪",
+      "readyToInstallHint": "重新启动 Polkadot Desktop 以应用最新版本",
+      "installNow": "重新启动",
+      "notNow": "稍后",
+      "error": "更新失败",
+      "errorHint": "请重试或联系开发团队",
+      "unsupported": "无法使用更新功能",
+      "unsupportedHint": "此版本的 Polkadot Desktop 无法自行更新。",
+      "close": "关闭",
+      "updateAvailable": "Polkadot Desktop 有新更新！",
+      "updateAvailableHint": "版本 {version} 已可用",
+      "updated": "Polkadot Desktop 已更新！",
+      "updatedHint": "已安装版本 {version}",
+      "relaunch": "重新启动"
+    },
+    "productSettings": {
+      "title": "应用",
+      "subtitle": "你使用过的应用",
+      "searchPlaceholder": "按名称或 {tld} 地址搜索",
+      "searchAriaLabel": "按名称或 {tld} 地址搜索应用",
+      "clearCache": "清除缓存",
+      "forgetApp": "忘记该应用",
+      "requestedPermissions": "已请求的权限",
+      "noPermissions": "未请求任何权限",
+      "toast": {
+        "appReset": "{productName} 已重置",
+        "cacheCleared": "{productName} 的缓存已清除"
+      },
+      "clearCacheDialog": {
+        "title": "清除 {productName} 的缓存？",
+        "description": "缓存数据将从此设备中移除，包括临时文件和本地存储的内容。"
+      },
+      "forgetDialog": {
+        "title": "忘记 {productName}？",
+        "description": "这将清除所有站点数据并重置 {productName} 的权限。标签页仍会保持打开；下次打开时所有内容都会重新加载。"
+      },
+      "webDomains": {
+        "dialogTitle": "管理 {productName} 的网页域名访问权限"
+      },
+      "appPermission": {
+        "title": "{productName} 的{permission}访问权限",
+        "description": "这些设置用于控制 {productName} 应用及其各个模式的{permission}访问权限",
+        "resetToDefault": "恢复默认",
+        "noDomainsRequested": "尚未请求任何域名"
+      },
+      "aliasPermission": {
+        "label": "Alias",
+        "description": "管理该应用的跨应用 alias 访问权限",
+        "contextsLabel": "Alias 上下文",
+        "contextsDescription": "按 alias 上下文管理访问权限",
+        "noContextsRequested": "尚未请求任何 alias 上下文",
+        "dialogTitle": "管理 {productName} 应用的 alias 上下文访问权限"
+      }
+    },
+    "productPermissions": {
+      "permissionRequest": {
+        "productKindLabel": "产品",
+        "closeDialog": "关闭",
+        "title": "允许访问{label}？",
+        "deny": "不允许",
+        "allowOnce": "仅允许一次",
+        "allowAlways": "始终允许",
+        "domainsLabel": "域名",
+        "permission": {
+          "Camera": "相机",
+          "Microphone": "麦克风",
+          "Bluetooth": "蓝牙",
+          "Location": "位置",
+          "Notifications": "通知",
+          "Clipboard": "剪贴板",
+          "OpenUrl": "打开外部链接",
+          "Biometrics": "生物识别",
+          "Motion": "运动传感器",
+          "NFC": "NFC",
+          "Files": "文件",
+          "Remote": "网页域名",
+          "WebRtc": "WebRTC",
+          "ChainSubmit": "链上提交",
+          "PreimageSubmit": "Preimage 提交",
+          "StatementSubmit": "Statement 提交",
+          "BalanceAccess": "余额",
+          "UserIdentity": "身份"
+        },
+        "reason": {
+          "Camera": "用于视频通话、扫描二维码和拍摄等功能",
+          "Microphone": "用于语音通话、消息和录音等功能",
+          "Bluetooth": "用于连接附近设备并传输数据",
+          "Location": "用于基于位置的服务和内容个性化",
+          "Notifications": "用于向你发送更新、提醒和重要信息",
+          "Clipboard": "用于复制和粘贴你选择共享的内容",
+          "OpenUrl": "用于在默认浏览器中打开外部链接",
+          "Biometrics": "用于需要验证你身份的功能",
+          "Motion": "用于根据你移动或倾斜设备而响应的功能",
+          "NFC": "用于与附近的标签和设备进行非接触式读写",
+          "Files": "用于上传、下载和管理文件等功能",
+          "Remote": "用于向以下域名发起请求",
+          "WebRtc": "用于语音和视频通话等实时通信功能",
+          "ChainSubmit": "用于向任意 Substrate 链广播已签名的交易",
+          "PreimageSubmit": "用于向 Bulletin Chain 提交 preimage 数据",
+          "StatementSubmit": "用于向 statement store 提交 statement",
+          "BalanceAccess": "用于读取你的可用余额，并在支付因余额不足而失败时获知。不允许花费资金",
+          "UserIdentity": "需要访问你的主用户名以进行身份识别。你之后可以在「设置」中管理此项。"
+        }
+      },
+      "remotePermissionRequest": {
+        "title": "远程权限请求",
+        "description": "正在请求对 {permission} 的远程访问权限。",
+        "deny": "拒绝"
+      },
+      "externalBlockedToast": "已拦截对 {origin} 的网络请求。可在应用权限中修改。",
+      "settings": {
+        "heading": "权限",
+        "subheading": "查看和管理已授予该应用的权限",
+        "remoteHeading": "远程权限",
+        "remoteSubheading": "访问远程网络功能的权限"
+      }
+    },
+    "customChains": {
+      "title": "自定义链",
+      "addSection": "添加链",
+      "registeredSection": "已注册的链",
+      "endpointLabel": "WebSocket 端点",
+      "endpointPlaceholder": "ws://localhost:9944",
+      "nameLabel": "名称（可选）",
+      "namePlaceholder": "由节点自动检测",
+      "addButton": "添加链",
+      "addingButton": "连接中…",
+      "emptyState": "尚未添加自定义链。可连接到本地 Substrate 节点或自托管的链。",
+      "errors": {
+        "invalidUrlTitle": "URL 无效",
+        "invalidUrlDescription": "必须是 ws:// 或 wss:// 开头的 URL",
+        "duplicateBuiltinTitle": "已注册",
+        "duplicateBuiltinDescription": "该链已是内置链",
+        "duplicateCustomTitle": "已注册",
+        "duplicateCustomDescription": "该链已在你的自定义链列表中",
+        "connectionFailedTitle": "连接失败",
+        "unknownError": "未知错误"
+      },
+      "addedToastTitle": "链已添加",
+      "addedToastDescription": "{name}（{genesisHash}）",
+      "removeChainAriaLabel": "移除 {name}"
+    },
+    "permissionSettings": {
+      "navItem": "权限",
+      "heading": "权限",
+      "subheading": "查看和管理应用对功能与数据的访问权限",
+      "categoryHeading": "{name}：",
+      "appCount": "{count, plural, =0 {没有应用} other {# 个应用}}",
+      "category": {
+        "device": "设备与系统访问",
+        "onchain": "链上操作",
+        "service": "服务访问"
+      },
+      "status": {
+        "ask": "每次询问（默认）",
+        "granted": "已允许",
+        "denied": "已拒绝"
+      },
+      "detail": {
+        "rulesTitle": "规则与防护",
+        "appsLabel": "应用：",
+        "noApps": "尚无应用请求此权限",
+        "allowedFor": "已允许用于 {modalities}",
+        "appSubtitle": "{baseName} • {allowed}"
+      },
+      "permission": {
+        "Clipboard": {
+          "label": "剪贴板",
+          "description": "用于复制和粘贴你选择共享的内容",
+          "rule": {
+            "1": "仅在你执行明确操作后访问（例如粘贴）",
+            "2": "不在后台读取",
+            "3": "未经许可不会存储或传输数据",
+            "4": "访问权限仅限当前活动会话"
+          }
+        },
+        "Microphone": {
+          "label": "麦克风",
+          "description": "用于语音通话、消息和录音等功能",
+          "rule": {
+            "1": "按住说话或由你明确触发录音",
+            "2": "不在后台收听",
+            "3": "使用时显示可视指示",
+            "4": "仅通过宿主中介访问"
+          }
+        },
+        "Camera": {
+          "label": "相机",
+          "description": "用于视频通话、扫描二维码和拍摄等功能",
+          "rule": {
+            "1": "仅在你主动使用相机时访问",
+            "2": "不在后台录制",
+            "3": "相机启用时显示可视指示",
+            "4": "未经你的许可不会存储或共享任何数据"
+          }
+        },
+        "Notifications": {
+          "label": "通知",
+          "description": "用于向你发送更新、提醒和重要信息",
+          "rule": {
+            "1": "不会发送过量或垃圾通知",
+            "2": "不会通过通知访问敏感数据"
+          }
+        },
+        "Bluetooth": {
+          "label": "蓝牙",
+          "description": "用于连接附近设备并传输数据",
+          "rule": {
+            "1": "仅访问附近的设备",
+            "2": "未经你的操作不会在后台建立连接",
+            "3": "未经许可不会访问敏感数据"
+          }
+        },
+        "Location": {
+          "label": "位置",
+          "description": "用于基于位置的服务和内容个性化",
+          "rule": {
+            "1": "不会在后台使用位置信息",
+            "2": "仅在特定功能需要时使用位置信息",
+            "3": "未经许可不会存储或共享位置数据"
+          }
+        },
+        "Biometrics": {
+          "label": "生物识别",
+          "description": "用于需要验证你身份的功能",
+          "rule": {
+            "1": "仅在你明确完成认证后使用（例如 Face ID 或 Touch ID）",
+            "2": "本产品从不访问或存储生物识别数据",
+            "3": "认证由你的设备安全处理",
+            "4": "仅用于解锁或批准操作"
+          }
+        },
+        "Motion": {
+          "label": "运动传感器",
+          "description": "用于根据你移动或倾斜设备而响应的功能",
+          "rule": {
+            "1": "仅读取设备的运动和方向",
+            "2": "无法访问你的位置或相机",
+            "3": "你可以稍后在设置中撤销访问权限"
+          }
+        },
+        "OpenExternalUrl": {
+          "label": "打开外部链接",
+          "description": "用于在默认浏览器中打开外部链接",
+          "rule": {
+            "1": "仅在你操作后打开链接",
+            "2": "不会自动跳转或执行后台操作",
+            "3": "仅打开明确请求的 URL",
+            "4": "未经你的许可不会共享任何数据"
+          }
+        },
+        "ExternalRequest": {
+          "label": "网页域名",
+          "description": "用于向以下域名发起 HTTP 请求",
+          "rule": {
+            "1": "请求仅限于指定的域名",
+            "2": "未经用户操作不会自动共享数据",
+            "3": "所有请求均经过宿主中介",
+            "4": "默认不访问本地或敏感数据"
+          }
+        },
+        "WebRtc": {
+          "label": "WebRTC",
+          "description": "用于语音和视频通话等实时通信功能",
+          "rule": {
+            "1": "仅在通信进行中使用",
+            "2": "未经你的操作不会在后台建立连接",
+            "3": "仅在需要时建立直连",
+            "4": "使用期间可能暴露你的 IP 地址"
+          }
+        },
+        "ChainSubmit": {
+          "label": "链上提交",
+          "description": "用于向任意 Substrate 链广播已签名的交易",
+          "rule": {
+            "1": "只能提交已签名的交易",
+            "2": "不会自动创建或修改交易",
+            "3": "仅在你确认后才会提交",
+            "4": "不会访问你的私钥或敏感数据"
+          }
+        },
+        "PreimageSubmit": {
+          "label": "Preimage 提交",
+          "description": "用于向 Bulletin Chain 提交 preimage 数据",
+          "rule": {
+            "1": "存储的数据在 Bulletin 链上是公开的",
+            "2": "“始终允许”适用于每次上传，“仅允许一次”仅适用于单次上传",
+            "3": "数据按原样提交，不作修改",
+            "4": "不会访问你的私钥或敏感数据"
+          }
+        },
+        "StatementSubmit": {
+          "label": "Statement 提交",
+          "description": "用于向 statement store 提交 statement",
+          "rule": {
+            "1": "只能提交已签名的交易",
+            "2": "不会自动创建或修改交易",
+            "3": "仅在你确认后才会提交",
+            "4": "不会访问你的私钥或敏感数据"
+          }
+        },
+        "BalanceAccess": {
+          "label": "余额",
+          "description": "用于读取你的可用余额",
+          "rule": {
+            "1": "显示可用于支付的余额",
+            "2": "不允许该产品花费或转移资金",
+            "3": "可以得知支付是否因余额不足而被拒绝",
+            "4": "撤销访问权限后将停止后续的余额更新"
+          }
+        },
+        "UserIdentity": {
+          "label": "身份",
+          "description": "披露主用户名",
+          "rule": {
+            "1": "向该产品披露你的主用户名",
+            "2": "仅用于身份识别",
+            "3": "不会共享其他个人数据",
+            "4": "你可以之后在「设置」中撤销该权限"
+          }
+        },
+        "Files": {
+          "label": "文件",
+          "description": "用于上传、下载和管理文件等功能",
+          "rule": {
+            "1": "仅访问你明确选择的文件",
+            "2": "不会在后台访问你的文件",
+            "3": "未经你的操作不会修改文件",
+            "4": "未经你的许可不会共享任何文件"
+          }
+        }
+      }
+    },
+    "statementStoreNetwork": {
+      "title": "测试网端点",
+      "changeNetworkDialog": {
+        "title": "更改测试网端点并退出登录？",
+        "description": "切换端点会让你退出登录并重新加载应用。你需要重新登录。",
+        "confirm": "更改端点"
+      },
+      "options": {
+        "endpointStable": "稳定版"
+      }
+    },
+    "offlineAccess": {
+      "menu": {
+        "enable": "启用离线访问",
+        "remove": "移除离线访问",
+        "update": "更新应用版本"
+      },
+      "updateDescription": "有更新的版本可用。请将已固定的版本更新到最新版。",
+      "section": {
+        "title": "离线访问",
+        "description": "存储应用以便在无网络时使用",
+        "enable": "启用",
+        "remove": "移除",
+        "updateTitle": "{modality} 有可用更新",
+        "updateReady": "从版本 {fromVersion} 到 {toVersion} 的更新已可安装",
+        "update": "更新",
+        "modality": {
+          "app": "应用",
+          "widget": "小组件",
+          "worker": "后台服务（例如聊天室）"
+        }
+      },
+      "enableDialog": {
+        "title": "启用离线访问",
+        "description": "这会存储当前的应用版本，以便在无网络连接时使用",
+        "confirm": "启用"
+      },
+      "removeDialog": {
+        "title": "移除离线访问",
+        "description": "这会断开你与 {name} 的连接，且在没有网络连接时将无法使用该应用。你随时可以重新启用此设置。",
+        "confirm": "移除"
+      },
+      "updateDialog": {
+        "title": "将应用版本更新到 {version}",
+        "description": "这会存储应用版本 {version}，以便在无网络时使用",
+        "confirm": "更新"
+      },
+      "toast": {
+        "enabled": "{name} 现在可离线使用",
+        "removed": "已移除 {name} 的离线使用",
+        "updated": "{name} 已更新到最新版本",
+        "noVersion": "该产品当前未在运行",
+        "error": "无法更改离线访问设置",
+        "updateError": "无法更新版本",
+        "modalityUpdate": {
+          "title": "{modality} 有可用更新",
+          "description": "版本 {version} 已可安装",
+          "action": "更新"
+        }
+      }
+    },
+    "languageSettings": {
+      "title": "语言",
+      "locale": {
+        "en": "英语",
+        "es": "西班牙语",
+        "fr": "法语",
+        "de": "德语",
+        "it": "意大利语",
+        "pt": "葡萄牙语",
+        "zh-Hans": "中文（简体）",
+        "ja": "日语",
+        "ko": "韩语",
+        "ru": "俄语",
+        "ar": "阿拉伯语",
+        "hi": "印地语",
+        "tr": "土耳其语"
+      }
+    },
+    "inputModality": {
+      "title": "搜索",
+      "placeholder": "搜索或输入 {tld} 地址",
+      "attach": "添加文件",
+      "removeAttachment": "移除附件",
+      "loadingAttachment": "正在加载附件…",
+      "asked": "已询问此屏幕上的 {count} 个产品…",
+      "noContext": "此屏幕上没有可以回答的内容。",
+      "noCandidates": "没有可以处理它的对象。",
+      "goTo": "前往",
+      "pickerPrompt": "“{fileName}”应发送给哪个产品？",
+      "pickerEmpty": "此屏幕上没有产品接受该文件类型。",
+      "attachmentTooLarge": "过大，无法转发：{fileName}",
+      "scan": "扫描码",
+      "scanPrompt": "已扫描的码",
+      "scanWillOpen": "这将打开 {productId}。",
+      "scanWillAsk": "这将询问此屏幕上的产品。",
+      "scanConfirm": "继续",
+      "scanCancel": "取消",
+      "scanUnavailable": "此设备没有可用的摄像头。",
+      "scanDenied": "摄像头访问被拒绝。",
+      "fromThisScreen": "来自此屏幕",
+      "recentlyVisited": "最近打开",
+      "clearRecent": "清除",
+      "addressFavorites": "收藏",
+      "suggestionSeparator": "—"
+    },
+    "networkConnection": {
+      "title": "网络连接",
+      "chainsLoading": "正在加载网络…",
+      "chainsEmpty": "尚未配置网络。",
+      "noLightClient": "没有可用的轻客户端",
+      "mode": {
+        "lightClient": "轻客户端",
+        "rpc": "可信提供方",
+        "lightClientHint": "无需信任提供方，直接在设备上验证网络数据",
+        "rpcHint": "通过可信提供方访问更快，但隐私性较低"
+      },
+      "advanced": {
+        "title": "高级",
+        "description": "配置连接方式"
+      },
+      "slowLoad": {
+        "title": "加载时间比平时更长",
+        "description": "跳过等待，本次会话改用可信提供方以更快加载",
+        "action": "更快加载"
+      },
+      "loadFailed": {
+        "title": "无法加载此页面",
+        "description": "连接耗时过长。请重试或改用更快的连接。",
+        "descriptionReloadOnly": "连接耗时过长。请尝试重新加载页面。",
+        "reload": "重新加载页面"
+      },
+      "role": {
+        "identity": "身份",
+        "apps": "应用",
+        "transactions": "交易"
+      }
+    },
+    "productRuntime": {
+      "permissionDenied": {
+        "systemDeviceSettings": "设备设置",
+        "Camera": {
+          "title": "需要相机访问权限",
+          "description": "用于视频通话、扫描二维码和拍摄等功能"
+        },
+        "Microphone": {
+          "title": "需要麦克风访问权限",
+          "description": "用于语音通话、消息和录音等功能"
+        }
+      },
+      "review": {
+        "deny": "拒绝",
+        "signPayload": {
+          "title": "签署交易载荷",
+          "subtitle": "签署前请检查载荷。"
+        },
+        "signRaw": {
+          "title": "签署消息",
+          "subtitle": "签署前请检查消息。"
+        },
+        "createTransaction": {
+          "title": "创建交易",
+          "subtitle": "提交前请检查交易。"
+        },
+        "signVrf": {
+          "title": "签署 VRF 转录",
+          "subtitle": "签署前请检查转录。"
+        },
+        "allowance": {
+          "title": "分配资源",
+          "subtitle": "请检查此应用请求的资源。"
+        },
+        "statementSign": {
+          "title": "签署声明",
+          "subtitle": "签署前请检查声明。"
+        },
+        "createProof": {
+          "title": "创建证明",
+          "subtitle": "请检查此应用请求的证明。"
+        },
+        "legacyAccountNotice": "正在使用旧版账户签署。",
+        "resource": {
+          "statementStore": "声明存储槽位",
+          "bulletin": "Bulletin 存储槽位",
+          "smartContract": "账户 {account} 的智能合约 gas",
+          "autoSigning": "代表你签署，无需每次询问"
+        },
+        "accountAccess": {
+          "title": "允许访问 {targetIdentifier} 的账户？",
+          "subtitle": "让此应用使用属于另一个应用的账户进行操作",
+          "warning": "允许后，此应用可代表你使用另一个应用的账户"
+        },
+        "identityDisclosure": {
+          "title": "与此应用分享你的用户名？",
+          "subtitle": "此应用将看到你的主用户名",
+          "warning": "允许后，此应用可通过你的用户名识别你"
+        },
+        "productSubtree": {
+          "title": "允许此应用访问自己的账户？",
+          "subtitle": "从你已配对的设备获取此应用的账户"
+        }
+      }
+    }
+  },
+  "widget": {
+    "permission": {
+      "modality": {
+        "app": {
+          "label": "应用",
+          "description": "管理 {productName} 在全屏模式下的{permission}访问权限"
+        },
+        "widget": {
+          "label": "小组件",
+          "description": "管理仪表板上 {productName} 小组件的{permission}访问权限"
+        }
+      }
+    },
+    "rateLimiter": {
+      "description": "已达到 {limiterType} 上限",
+      "types": {
+        "rpc": "RPC",
+        "featureSupport": "功能支持",
+        "navigation": "导航",
+        "localStorageRead": "本地存储读取",
+        "localStorageWrite": "本地存储写入",
+        "pushNotification": "推送通知",
+        "pushNotificationCancel": "推送通知取消",
+        "permissions": "权限",
+        "legacyAccounts": "旧版账户",
+        "identityAccount": "身份账户",
+        "productAccounts": "产品账户",
+        "alias": "Alias",
+        "proof": "证明",
+        "signVrf": "VRF 签名",
+        "ringVrfRegister": "Ring VRF 密钥注册",
+        "ringVrfList": "Ring VRF 密钥列表",
+        "ringVrfSign": "Ring VRF 签名",
+        "entropy": "熵",
+        "login": "登录",
+        "preimage": "Preimage"
+      }
+    },
+    "webview": {
+      "error": {
+        "domainResolve": "找不到该产品。",
+        "fetchingFailed": "无法获取该产品。",
+        "loadFailed": "加载失败：{description}（{code}）"
+      },
+      "loading": {
+        "reaching": "正在连接 {identifier}",
+        "reachingGeneric": "正在连接"
+      },
+      "crash": {
+        "title": "产品已停止运行",
+        "subtitle": "请尝试重新加载页面。",
+        "reload": "重新加载",
+        "advanced": "显示详情",
+        "reason": "原因：{reason}",
+        "exitCode": "退出代码：{code}"
+      },
+      "unresponsive": {
+        "title": "页面无响应",
+        "subtitle": "它可能会自行恢复，你也可以立即重新加载。",
+        "reload": "重新加载",
+        "advanced": "显示详情"
+      },
+      "degraded": {
+        "title": "产品响应缓慢",
+        "reload": "重新加载",
+        "dismiss": "忽略"
+      }
+    },
+    "productContainerBinding": {
+      "aliasPermission": {
+        "title": "允许 {requestedIdentifier} 访问你的 alias？",
+        "subtitle": "用于跨应用关联你的身份账户",
+        "keyOwner": "使用 {keyOwner} 的密钥",
+        "requestingProduct": "请求方产品",
+        "requestedContext": "请求的上下文",
+        "warning": "允许后，该应用将能够识别你并追踪你在另一个应用中的活动",
+        "deny": "不允许",
+        "allowOnce": "仅允许一次",
+        "allowAlways": "始终允许"
+      },
+      "proofPermission": {
+        "title": "允许 {requestedIdentifier} 证明你是真人？",
+        "subtitle": "在不透露身份的前提下证明你是唯一的真人",
+        "warning": "允许后，该应用可以代表你生成人格证明",
+        "deny": "不允许",
+        "allow": "允许"
+      },
+      "signVrf": {
+        "title": "允许 {requestingIdentifier} 创建可验证随机签名？",
+        "subtitle": "生成与你的产品账户绑定的抽签式 VRF 签名",
+        "account": "签名账户",
+        "transcript": "Transcript",
+        "transcriptLabel": "标签",
+        "warning": "允许后，该应用可以代表你生成 VRF 签名",
+        "deny": "不允许",
+        "allow": "允许"
+      },
+      "allocationRequest": {
+        "title": "额度请求",
+        "description": "{productName} 请求分配资源",
+        "requestedResources": "请求的资源",
+        "polkadotAppHint": "请准备在 Polkadot App 中批准",
+        "grantAccess": "继续",
+        "pending": "分配中…",
+        "polkadotAppLine1": "在你的手机上打开 Polkadot App，",
+        "polkadotAppLine2": "然后批准或拒绝",
+        "polkadotAppApproveButton": "批准",
+        "allocationRejected": "额度请求已取消",
+        "smartContractDetailsIntro": "以下账户将自动签署合约调用：",
+        "appAccountWithIndex": "索引为 {index} 的应用账户",
+        "copyAccountAddress": "复制账户地址",
+        "resource": {
+          "StatementStoreAllowance": "代表你发布 statement",
+          "BulletinAllowance": "代表你发布到 Bulletin Chain",
+          "SmartContractAllowance": "自动签署智能合约调用",
+          "AutoSigning": "自动签署交易"
+        }
+      }
+    }
+  }
+}

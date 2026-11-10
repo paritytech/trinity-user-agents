@@ -1,0 +1,642 @@
+name: Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_TYPE:
+        type: choice
+        description: Build type. "dev" keeps dev/test affordances (network picker, onboarding skip) that production builds hide; "production" matches release builds.
+        options:
+          - dev
+          - production
+        default: dev
+      AUTO_UPDATE_ENABLED:
+        type: boolean
+        description: Whether to enable auto-update in a published release. Branch builds always disable it.
+        required: false
+        default: true
+      PUBLISH_RELEASE:
+        type: boolean
+        description: Create and distribute a release. Allowed only when the selected ref is a v* tag.
+        required: false
+        default: false
+      ALLURE_JOB_RUN_ID:
+        type: string
+        description: ALLURE_JOB_RUN_ID service parameter. Leave blank.
+        required: false
+      ALLURE_USERNAME:
+        type: string
+        description: ALLURE_USERNAME service parameter. Leave blank.
+        required: false
+  push:
+    tags:
+      - 'v*'
+
+
+# Least privilege at the top; the one job that needs more (`release`, which creates the GitHub
+# Release) raises it for itself.
+permissions:
+  contents: read
+
+concurrency:
+  group: gh-release
+  cancel-in-progress: false
+
+env:
+  NODE_OPTIONS: '--max-old-space-size=8192'
+  CI: true
+  BUILD_TYPE: ${{ inputs.BUILD_TYPE || 'dev' }}
+  AUTO_UPDATE_ENABLED: ${{ (github.event_name == 'push' || inputs.PUBLISH_RELEASE) && (github.event_name == 'push' || inputs.AUTO_UPDATE_ENABLED) }}
+  ALLURE_ENDPOINT: ${{ secrets.ALLURE_ENDPOINT }}
+  ALLURE_PROJECT_ID: ${{ secrets.ALLURE_PROJECT_ID }}
+  ALLURE_TOKEN: ${{ secrets.ALLURE_TOKEN }}
+  ALLURE_JOB_RUN_ID: ${{ github.event.inputs.ALLURE_JOB_RUN_ID }}
+  ALLURE_RESULTS: allure-results
+
+jobs:
+  validate-mode:
+    name: Validate workflow mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prevent publication from a branch
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.PUBLISH_RELEASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "PUBLISH_RELEASE can be enabled only when the workflow ref is a v* tag."
+            echo "For branch testing, select the branch and leave PUBLISH_RELEASE disabled."
+            exit 1
+          fi
+
+  # Both checks here guard against a misconfiguration that produces a successful, wrong release
+  # rather than a failure — nothing surfaces until an installed client stops seeing updates.
+  config-check:
+    name: Check the release is configured consistently
+    needs: validate-mode
+    runs-on: ubuntu-latest
+    steps:
+      # The feed is configured in two halves: the URL the build is compiled against, and the bucket
+      # the pipeline publishes to. Either half alone means builds naming a feed nothing writes to,
+      # or a bucket no build reads.
+      - name: Feed URL and bucket agree
+        env:
+          FEED_URL_SET: ${{ secrets.AUTO_UPDATE_URL != '' }}
+          BUCKET: ${{ vars.UPDATE_S3_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [ "$FEED_URL_SET" = true ] && [ -z "$BUCKET" ]; then
+            echo "AUTO_UPDATE_URL points builds at a static feed, but UPDATE_S3_BUCKET is unset, so"
+            echo "nothing publishes to it. Set the bucket, or clear AUTO_UPDATE_URL to use GitHub"
+            echo "Releases."
+            exit 1
+          fi
+          if [ "$FEED_URL_SET" != true ] && [ -n "$BUCKET" ]; then
+            echo "UPDATE_S3_BUCKET is set, but AUTO_UPDATE_URL is not, so builds read GitHub"
+            echo "Releases while the pipeline publishes to a bucket no one reads."
+            exit 1
+          fi
+          echo "Update feed configuration is consistent."
+
+      # `electron-builder.js` refuses to package without an identity, which is the real enforcement.
+      # Repeating it here only moves the failure from the end of a forty-minute signed build to its
+      # first minute; the `_DEVELOP` fallback matches config/index.js.
+      - name: Identity is configured for this build type
+        env:
+          BUILD_TYPE: ${{ env.BUILD_TYPE }}
+          APP_ID: ${{ vars.APP_ID }}
+          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          APP_ID_DEVELOP: ${{ vars.APP_ID_DEVELOP }}
+          PRODUCT_NAME_DEVELOP: ${{ vars.PRODUCT_NAME_DEVELOP }}
+          APP_NAME_DEVELOP: ${{ vars.APP_NAME_DEVELOP }}
+        run: |
+          set -euo pipefail
+          resolve() {
+            local base="${1}" develop="${2}"
+            if [ "$BUILD_TYPE" = production ]; then printf '%s' "$base"; return; fi
+            printf '%s' "${develop:-$base}"
+          }
+          missing=()
+          [ -z "$(resolve "$APP_ID" "$APP_ID_DEVELOP")" ] && missing+=(APP_ID)
+          [ -z "$(resolve "$PRODUCT_NAME" "$PRODUCT_NAME_DEVELOP")" ] && missing+=(PRODUCT_NAME)
+          [ -z "$(resolve "$APP_NAME" "$APP_NAME_DEVELOP")" ] && missing+=(APP_NAME)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "No application identity is configured for BUILD_TYPE=$BUILD_TYPE, and there is no"
+            echo "default to fall back on. Set these repository variables (or their _DEVELOP"
+            echo "variants): ${missing[*]}"
+            exit 1
+          fi
+          echo "Identity for BUILD_TYPE=$BUILD_TYPE: $(resolve "$APP_ID" "$APP_ID_DEVELOP")"
+
+  unit-tests:
+    name: Code quality and unit tests
+    needs: validate-mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check by typescript
+        run: npm run types
+
+      - name: Run unit tests
+        run: npm test
+
+  build:
+    name: Build
+    needs: [validate-mode, config-check]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: ''
+            artifact_suffix: macOS
+          - os: ubuntu-latest
+            arch: '--x64'
+            artifact_suffix: Linux-x64
+          - os: ubuntu-24.04-arm
+            arch: '--arm64'
+            artifact_suffix: Linux-arm64
+          - os: windows-latest
+            arch: ''
+            artifact_suffix: Windows
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set build version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            BASE=$(node -p "require('./package.json').version")
+            BASE="${BASE%%-*}"
+            BASE="${BASE%%+*}"
+            BRANCH=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9-' '-' | cut -c1-32)
+            BRANCH=$(printf '%s' "$BRANCH" | sed 's/^-*//; s/-*$//')
+            [ -n "$BRANCH" ] || BRANCH=manual
+            VERSION="${BASE}-branch.${BRANCH}.${GITHUB_SHA:0:7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build app
+        uses: ./.github/actions/build-app
+        with:
+          apple_id: ${{ secrets.APPLE_ID }}
+          apple_app_specific_password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          apple_team_id: ${{ secrets.APPLE_TEAM_ID }}
+          apple_certificate_base64: ${{ secrets.CERTIFICATE_OSX_APPLICATION }}
+          apple_certificate_password: ${{ secrets.CERTIFICATE_PASSWORD }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          update_repo_owner: ${{ vars.UPDATE_REPO_OWNER }}
+          update_repo_name: ${{ vars.UPDATE_REPO_NAME }}
+          auto_update_url: ${{ secrets.AUTO_UPDATE_URL }}
+          app_id: ${{ vars.APP_ID }}
+          product_name: ${{ vars.PRODUCT_NAME }}
+          app_name: ${{ vars.APP_NAME }}
+          app_id_develop: ${{ vars.APP_ID_DEVELOP }}
+          product_name_develop: ${{ vars.PRODUCT_NAME_DEVELOP }}
+          app_name_develop: ${{ vars.APP_NAME_DEVELOP }}
+          app_author: ${{ vars.APP_AUTHOR }}
+          environments: ${{ vars.VITE_ENVIRONMENTS }}
+          firebase_api_key: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          firebase_project_id: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          firebase_app_id: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          webrtc_turn_host: ${{ secrets.VITE_WEBRTC_TURN_HOST }}
+          webrtc_turn_secret: ${{ secrets.VITE_WEBRTC_TURN_SECRET }}
+          webrtc_turn_ttl: ${{ secrets.VITE_WEBRTC_TURN_TTL }}
+          sandbox_ipfs_allowlist: ${{ secrets.SANDBOX_IPFS_ALLOWLIST }}
+          sandbox_relay_allowlist: ${{ secrets.SANDBOX_RELAY_ALLOWLIST }}
+          version: ${{ steps.version.outputs.version }}
+          build_type: ${{ env.BUILD_TYPE }}
+          enable_auto_update: ${{ env.AUTO_UPDATE_ENABLED }}
+          include_dist_artifacts: true
+          arch: ${{ matrix.arch }}
+          artifact_suffix: ${{ matrix.artifact_suffix }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          sentry_org: ${{ secrets.SENTRY_ORG }}
+          sentry_project: ${{ secrets.SENTRY_PROJECT }}
+          sentry_required: 'true'
+
+  # Dedicated e2e build for the test suite. The `build` job above produces the
+  # SIGNED app (production by default), whose dev/test affordances (onboarding-skip
+  # button, network picker, autotest sign-in hooks) are hidden by isProductionBuild() —
+  # so the e2e suite can't drive it. E2E therefore needs its own `build_type: dev`
+  # build, exactly like the per-PR `E2E Tests` workflow. Pure-JS bundles, so a
+  # single Linux-built artifact serves every OS shard.
+  e2e-build:
+    name: build (e2e)
+    needs: validate-mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Build application
+        uses: ./.github/actions/build-app
+        with:
+          version: 1.1.1
+          include_dist_artifacts: false
+          artifact_suffix: shared
+          # Development build so the e2e suite's dev/test affordances are present
+          # (production builds hide them via isProductionBuild()).
+          build_type: dev
+          environments: ${{ vars.VITE_ENVIRONMENTS }}
+          firebase_api_key: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          firebase_project_id: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          firebase_app_id: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          webrtc_turn_host: ${{ secrets.VITE_WEBRTC_TURN_HOST }}
+          webrtc_turn_secret: ${{ secrets.VITE_WEBRTC_TURN_SECRET }}
+          webrtc_turn_ttl: ${{ secrets.VITE_WEBRTC_TURN_TTL }}
+          sandbox_ipfs_allowlist: ${{ secrets.SANDBOX_IPFS_ALLOWLIST }}
+          sandbox_relay_allowlist: ${{ secrets.SANDBOX_RELAY_ALLOWLIST }}
+          update_repo_owner: ${{ vars.UPDATE_REPO_OWNER }}
+          update_repo_name: ${{ vars.UPDATE_REPO_NAME }}
+
+  # Per-project matrix against the e2e build — mirrors the green `E2E Tests`
+  # workflow. Each project runs as its own job via its own npm script, so each
+  # keeps its correct worker config (smoke/auth serial via --workers=1;
+  # authenticated/chat/product-sdk parallel) and its own signer slots.
+  # This replaces the previous single `test:e2e:all` run, which applied ONE
+  # global --workers to every project at once and ran against the production
+  # build.
+  #
+  # Platform coverage is no longer uniform. `smoke` needs no signer and keeps all
+  # three OSes, so platform-specific Electron behaviour is still validated against
+  # the same OS-agnostic artifact. The signer-backed projects are Linux-only:
+  # `truapi-host` publishes binaries for Darwin arm64, Linux x86_64 and Linux
+  # aarch64 only — its installer calls `die "unsupported platform"` on Windows and
+  # Intel macOS, which would fail those shards before a test ran. Restoring the
+  # dropped coverage means a Windows/Intel-Mac target upstream, not a change here.
+  e2e:
+    name: e2e ${{ matrix.project }} · ${{ matrix.os.short }}
+    needs: [validate-mode, e2e-build]
+    runs-on: ${{ matrix.os.runner }}
+    timeout-minutes: 60
+    # `setup-allurectl` inside the composite action resolves the current workflow run through the
+    # REST API, which the default `contents: read` does not cover — without this every project fails
+    # before a single test runs, but only once Allure TestOps is fully configured, so the gap stays
+    # invisible while any of its three secrets is missing.
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # smoke needs no signer, so it keeps full platform coverage.
+          - { project: smoke, os: { short: linux, runner: ubuntu-latest } }
+          - { project: smoke, os: { short: macos, runner: macos-latest } }
+          - { project: smoke, os: { short: windows, runner: windows-latest } }
+          # Signer-backed: truapi-host publishes no Windows or Intel-Mac binary.
+          - { project: auth, os: { short: linux, runner: ubuntu-latest } }
+          - { project: authenticated, os: { short: linux, runner: ubuntu-latest } }
+          - { project: product-sdk, os: { short: linux, runner: ubuntu-latest } }
+          - { project: chat, os: { short: linux, runner: ubuntu-latest } }
+
+    outputs:
+      allure-launch-id: ${{ steps.run-tests.outputs.allure-launch-id }}
+      allure-launch-url: ${{ steps.run-tests.outputs.allure-launch-url }}
+      allure-job-run-url: ${{ steps.run-tests.outputs.allure-job-run-url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E tests
+        id: run-tests
+        uses: ./.github/actions/run-e2e-tests
+        with:
+          playwright-browsers: chromium
+          test-command: npm run test:e2e:${{ matrix.project }}
+          artifact-name: build-output-shared
+          launch-name: "Release E2E tests - ${{ github.ref_name }}"
+          signer-backed: ${{ contains(fromJSON('["auth","authenticated","product-sdk","chat"]'), matrix.project) }}
+          identity-cache: 'true'
+          cache-scope: ${{ matrix.project }}
+          # Repository/organization variable, optional — unset keeps the harness default.
+          identity-url: ${{ vars.E2E_IDENTITY_URL }}
+          results-artifact-name: allure-results-${{ matrix.project }}-${{ matrix.os.short }}
+          junit-artifact-name: e2e-junit-${{ matrix.project }}-${{ matrix.os.short }}
+
+  # Render the per-project / per-OS e2e comparison into the run's Step Summary.
+  # Runs regardless of e2e outcome so the table is present on failures too.
+  # Mirrors triangle-e2e's notify summary; here the surface columns are the OS
+  # runners (Linux / macOS / Windows).
+  e2e-summary:
+    name: E2E summary
+    needs: [validate-mode, e2e]
+    if: ${{ !cancelled() && needs.validate-mode.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download JUnit results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: e2e-junit-*
+          path: junit
+        continue-on-error: true
+
+      # Kept per-shard (no merge-multiple): the renderer derives project/OS from
+      # the artifact directory names.
+      - name: Download Allure results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: allure-results-*
+          path: allure-shards
+        continue-on-error: true
+
+      - name: Render E2E summary
+        if: always()
+        shell: bash
+        run: >
+          python3 .github/scripts/render-e2e-report.py --mode=step-summary
+          --junit junit --allure allure-shards >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Create GitHub Release
+    needs: [validate-mode, build, unit-tests]
+    if: ${{ github.event_name == 'push' || inputs.PUBLISH_RELEASE }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      url: ${{ steps.release.outputs.url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: build-artifacts-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: ls -laR artifacts/
+
+      # `latest-linux.yml` is the file electron-updater fetches on Linux **x64** — arm64 asks for
+      # `latest-linux-arm64.yml` instead (`main/factories/updater.ts`). The two Linux legs of the
+      # build matrix merge into this one directory, so pin the unsuffixed name to the x64 metadata
+      # rather than leaving it to whichever upload landed last. Shipping the arm64 build under it
+      # would be silent here and surface on an installed x64 client as a sha512 mismatch.
+      - name: Pin latest-linux.yml to the x64 metadata
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/latest-linux-x64.yml ]; then
+            cp artifacts/latest-linux-x64.yml artifacts/latest-linux.yml
+          fi
+          if [ ! -f artifacts/latest-linux.yml ]; then
+            echo "No Linux x64 update metadata — x64 clients would never be offered this release."
+            exit 1
+          fi
+
+      - name: Create Release
+        id: release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          name: Polkadot Desktop ${{ needs.build.outputs.version }}${{ env.BUILD_TYPE == 'dev' && ' (dev)' || '' }}
+          tag_name: v${{ needs.build.outputs.version }}
+          draft: false
+          # Every release lands on the experimental channel first. promote-to-stable clears this
+          # flag and marks the release Latest, which is what the stable channel resolves to. A
+          # static-feed deployment resolves its channels in the bucket instead, so the flag is left
+          # exactly as that pipeline always set it.
+          prerelease: ${{ vars.UPDATE_S3_BUCKET == '' }}
+          make_latest: false
+          generate_release_notes: true
+          # The *.yml update metadata must ship as release assets: the electron-updater GitHub
+          # provider fetches latest.yml / latest-mac.yml / latest-linux*.yml from the release
+          # before it can resolve anything. Without them auto-update cannot work at all.
+          files: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe
+            artifacts/*.AppImage
+            artifacts/*.blockmap
+            artifacts/*.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publishes to the static update feed, for a deployment whose installed clients read one rather
+  # than GitHub Releases. `AUTO_UPDATE_URL` is the client half of the same switch: unset it and this
+  # job never runs, which is the case for a GitHub-Releases deployment.
+  #
+  # The bucket layout it produces is fixed and externally depended on — a download page links the
+  # unversioned names directly — so the artifacts are republished under static names rather than
+  # copied verbatim, and `rewrite-update-metadata.js` repoints the *.yml at those names so the
+  # updater resolves them too. `releases/<version>/` is the archive; `latest/` is the experimental
+  # channel; promote-to-stable renames the archive onto `stable/`.
+  mirror-static-feed:
+    name: Publish to the static update feed
+    needs: [validate-mode, build, release]
+    if: ${{ (github.event_name == 'push' || inputs.PUBLISH_RELEASE) && vars.UPDATE_S3_BUCKET != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.UPDATE_S3_REGION }}
+      S3_ENDPOINT: ${{ vars.UPDATE_S3_ENDPOINT }}
+      S3_BUCKET: ${{ vars.UPDATE_S3_BUCKET }}
+      VERSION: ${{ needs.build.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Node
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify the feed is fully configured
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -z "${S3_ENDPOINT:-}" ] && missing+=(UPDATE_S3_ENDPOINT)
+          [ -z "${AWS_DEFAULT_REGION:-}" ] && missing+=(UPDATE_S3_REGION)
+          [ -z "${AWS_ACCESS_KEY_ID:-}" ] && missing+=(SCW_ACCESS_KEY)
+          [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && missing+=(SCW_SECRET_KEY)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "UPDATE_S3_BUCKET names a feed to publish to, but it cannot be reached."
+            echo "Missing: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: build-artifacts-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Rewrite update metadata for static paths and inject GitHub release notes
+        run: node scripts/rewrite-update-metadata.js
+        env:
+          ARTIFACTS_DIR: artifacts
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Ensure latest-linux.yml is x64 for backward compatibility
+        run: |
+          if [ -f artifacts/latest-linux-x64.yml ]; then
+            cp artifacts/latest-linux-x64.yml artifacts/latest-linux.yml
+            echo "Set latest-linux.yml from x64 for backward compat"
+          fi
+
+      - name: Archive the release under /releases/
+        run: |
+          set -euo pipefail
+          aws s3 cp --endpoint-url "$S3_ENDPOINT" --recursive --acl public-read \
+            artifacts/ "s3://$S3_BUCKET/releases/$VERSION/"
+
+      - name: Publish static paths under /latest/
+        run: |
+          set -euo pipefail
+
+          # "<source basename>|<destination key>|<required|optional>". Optional entries are the ones
+          # whose artifact is not produced by every build (Linux arm64, and the per-platform
+          # metadata, which only exists on the OS that built it).
+          ENTRIES=(
+            "Polkadot Desktop-$VERSION-x64.exe|Polkadot-Desktop.exe|required"
+            "Polkadot Desktop-$VERSION-x64.exe.blockmap|Polkadot-Desktop.exe.blockmap|required"
+            "Polkadot Desktop-$VERSION-x64.dmg|Polkadot-Desktop-x64.dmg|required"
+            "Polkadot Desktop-$VERSION-arm64.dmg|Polkadot-Desktop-arm64.dmg|required"
+            "Polkadot Desktop-$VERSION-x64.zip|Polkadot-Desktop-x64.zip|required"
+            "Polkadot Desktop-$VERSION-x64.zip.blockmap|Polkadot-Desktop-x64.zip.blockmap|required"
+            "Polkadot Desktop-$VERSION-arm64.zip|Polkadot-Desktop-arm64.zip|required"
+            "Polkadot Desktop-$VERSION-arm64.zip.blockmap|Polkadot-Desktop-arm64.zip.blockmap|required"
+            "Polkadot Desktop-$VERSION-x86_64.AppImage|Polkadot-Desktop-x86_64.AppImage|required"
+            "Polkadot Desktop-$VERSION-x86_64.AppImage.blockmap|Polkadot-Desktop-x86_64.AppImage.blockmap|optional"
+            "Polkadot Desktop-$VERSION-arm64.AppImage|Polkadot-Desktop-arm64.AppImage|optional"
+            "Polkadot Desktop-$VERSION-arm64.AppImage.blockmap|Polkadot-Desktop-arm64.AppImage.blockmap|optional"
+            "latest.yml|latest.yml|optional"
+            "latest-mac.yml|latest-mac.yml|optional"
+            "latest-linux-x64.yml|latest-linux-x64.yml|optional"
+            "latest-linux-arm64.yml|latest-linux-arm64.yml|optional"
+            "latest-linux.yml|latest-linux.yml|optional"
+          )
+
+          for entry in "${ENTRIES[@]}"; do
+            IFS='|' read -r source destination requirement <<< "$entry"
+            if [ ! -f "artifacts/$source" ]; then
+              if [ "$requirement" = required ]; then
+                echo "Missing required artifact: $source" >&2
+                exit 1
+              fi
+              echo "✗ skip missing: $source"
+              continue
+            fi
+            echo "→ $source → latest/$destination"
+            aws s3 cp --endpoint-url "$S3_ENDPOINT" --acl public-read \
+              --cache-control "public, max-age=60, must-revalidate" \
+              "artifacts/$source" "s3://$S3_BUCKET/latest/$destination"
+          done
+
+  tests-report:
+    name: Generate and Send Reports
+    runs-on: ubuntu-latest
+    needs: [validate-mode, build, release, e2e]
+    if: ${{ github.event_name == 'push' || inputs.PUBLISH_RELEASE }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Export PDF report from Allure TestOps
+        id: export-pdf
+        uses: ./.github/actions/allure-export-pdf
+        with:
+          launch-id: ${{ needs.e2e.outputs.allure-launch-id }}
+          allure-endpoint: ${{ env.ALLURE_ENDPOINT }}
+          allure-token: ${{ env.ALLURE_TOKEN }}
+          report-name: "Smoke Tests - Release ${{ needs.build.outputs.version }}"
+          output-filename: allure-report.pdf
+
+      - name: Send Telegram message (with PDF)
+        uses: appleboy/telegram-action@78e5f2ccac7c07db6afc0e8a0f9055f8f6aef7b1 # master
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          format: markdown
+          document: ${{ steps.export-pdf.outputs.pdf-path }}
+          message: |
+            *Tests passed*
+            *Version:* v${{ needs.build.outputs.version }}
+            *Allure TestOps:* [View Results](${{ needs.e2e.outputs.allure-launch-url }})
+
+  release-notify:
+    name: Release notification
+    needs: [validate-mode, build, release]
+    if: ${{ github.event_name == 'push' || inputs.PUBLISH_RELEASE }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram message
+        uses: appleboy/telegram-action@78e5f2ccac7c07db6afc0e8a0f9055f8f6aef7b1 # master
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          format: markdown
+          message: |
+            🚀 *Version:* v${{ needs.build.outputs.version }}
+            🏗 *Build type:* ${{ env.BUILD_TYPE }}${{ env.BUILD_TYPE == 'dev' && ' (dev/test affordances enabled)' || '' }}
+
+            🔗 *Link to release:* ${{ needs.release.outputs.url }}
+
+            📦 *Downloads:* ${{ github.server_url }}/${{ github.repository }}/releases
+
+  telegram-notify-failure:
+    name: Telegram failure notification
+    needs: [validate-mode, build, unit-tests, release] #, e2e]
+    runs-on: ubuntu-latest
+    if: ${{ needs.validate-mode.result == 'success' && (github.event_name == 'push' || inputs.PUBLISH_RELEASE) && failure() }}
+    steps:
+      - name: Send failure Telegram message
+        uses: appleboy/telegram-action@78e5f2ccac7c07db6afc0e8a0f9055f8f6aef7b1 # master
+        with:
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          format: markdown
+          message: |
+            *Release Pipeline Failed*
+
+            *Tag:* ${{ github.ref_name }}
+            *Workflow:* ${{ github.workflow }}
+
+            Check the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

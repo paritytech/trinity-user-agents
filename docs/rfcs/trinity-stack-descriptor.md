@@ -37,8 +37,7 @@ use a stack that did not exist when that version shipped, such as a two-hour PPN
 
 - **iOS and Android** (`hosts/ios`, `hosts/android`) read chains, the DUB, the IPFS gateway and dotNS addresses from
   Firebase Remote Config, chosen by build flavour.
-- **[polkadot-desktop](https://github.com/paritytech/polkadot-desktop)** reads the same Firebase keys, plus a TURN host
-  and secret from `VITE_WEBRTC_TURN_*`.
+- **Desktop** (`hosts/desktop`) reads the same Firebase keys, plus a TURN host and secret from `VITE_WEBRTC_TURN_*`.
 - **[dotli-community](https://github.com/paritytech/dotli-community)** and the host core read genesis hashes and RPCs
   from `packages/config/src/network.ts` and the truapi-provider catalog.
 - **[dotns-sdk](https://github.com/paritytech/dotns-sdk)** keeps RPCs and contract addresses in `constants.ts`, so new

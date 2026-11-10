@@ -1,0 +1,1225 @@
+{
+  "common": {
+    "action": {
+      "back": "वापस",
+      "moreDetails": "और विवरण",
+      "hideDetails": "विवरण छिपाएँ",
+      "cancel": "रद्द करें",
+      "allow": "अनुमति दें",
+      "skip": "छोड़ें (सिर्फ़ Dev)",
+      "sign": "हस्ताक्षर करें",
+      "signing": "हस्ताक्षर हो रहा है...",
+      "reply": "जवाब दें",
+      "copyText": "टेक्स्ट कॉपी करें",
+      "forward": "फ़ॉरवर्ड करें",
+      "select": "चुनें",
+      "delete": "हटाएँ",
+      "add": "जोड़ें",
+      "search": "खोजें...",
+      "writeMessage": "संदेश लिखें...",
+      "retry": "फिर कोशिश करें",
+      "disconnect": "डिस्कनेक्ट करें",
+      "all": "सभी",
+      "electronics": "इलेक्ट्रॉनिक्स",
+      "fashion": "फ़ैशन",
+      "downloadLogs": "लॉग डाउनलोड करें"
+    },
+    "label": {
+      "signer": "हस्ताक्षरकर्ता",
+      "chain": "चेन",
+      "method": "मेथड",
+      "arguments": "आर्ग्युमेंट्स",
+      "callData": "Call data",
+      "message": "संदेश"
+    },
+    "status": {
+      "loading": "लोड हो रहा है...",
+      "noProductFound": "कोई प्रोडक्ट नहीं मिला",
+      "unknownUser": "अज्ञात उपयोगकर्ता",
+      "online": "ऑनलाइन",
+      "live": "लाइव",
+      "daysLeft": "{count} दिन बाकी"
+    },
+    "error": {
+      "somethingWentWrong": "ओह! कुछ गड़बड़ हो गई",
+      "tryAgain": "कृपया फिर कोशिश करें या बाद में आएँ",
+      "logsHelpText": "डेवलपर्स के साथ लॉग साझा करने से यह समस्या हल करने में मदद मिलेगी"
+    },
+    "aria": {
+      "openFullscreen": "फ़ुलस्क्रीन में खोलें",
+      "reloadWidget": "विजेट रीलोड करें",
+      "close": "बंद करें",
+      "clear": "साफ़ करें",
+      "reload": "रीलोड करें"
+    },
+    "cancel": "रद्द करें",
+    "web3summitEnded": {
+      "ariaLabel": "Web3 Summit समाप्त हुआ",
+      "title": "Web3 Summit समाप्त हुआ",
+      "subtitle": "आगे की जानकारी के लिए जुड़े रहें"
+    }
+  },
+  "feature": {
+    "favorites": {
+      "title": "पसंदीदा",
+      "searchPlaceholder": "खोजें",
+      "searchAriaLabel": "पसंदीदा में खोजें",
+      "emptyTitle": "अभी कोई पसंदीदा ऐप नहीं है",
+      "emptyDescription": "जल्दी पहुँच के लिए अपने पसंदीदा ऐप्स सहेजें",
+      "browseApps": "ऐप्स देखें",
+      "searchNoResults": {
+        "title": "कोई परिणाम नहीं",
+        "description": "अपनी खोज बदलकर देखें।"
+      },
+      "openFullscreenAria": "पसंदीदा खोलें",
+      "addAria": "पसंदीदा में जोड़ें",
+      "removeAria": "पसंदीदा से हटाएँ",
+      "addDialog": {
+        "title": "पसंदीदा में जोड़ें",
+        "searchPlaceholder": "खोजें",
+        "searchAriaLabel": "प्रोडक्ट खोजें",
+        "loadingAria": "ऐप्स लोड हो रहे हैं",
+        "nothingToAdd": {
+          "title": "जोड़ने के लिए कुछ नहीं है",
+          "description": "सभी उपलब्ध ऐप्स पहले से ही आपके पसंदीदा में हैं"
+        },
+        "noResults": {
+          "title": "कोई परिणाम नहीं",
+          "description": "अपनी खोज बदलकर देखें।"
+        },
+        "error": {
+          "title": "कुछ गड़बड़ हो गई",
+          "retry": "फिर कोशिश करें"
+        }
+      }
+    },
+    "call": {
+      "audioCall": "ऑडियो कॉल",
+      "videoCall": "वीडियो कॉल",
+      "returnToCall": "कॉल पर लौटें"
+    },
+    "browser": {
+      "addressPlaceholder": "{tld} पता दर्ज करें",
+      "navigationBackAria": "पीछे जाएँ",
+      "navigationForwardAria": "आगे जाएँ",
+      "addressWelcome": "Polkadot में आपका स्वागत है! यहाँ .dot पता दर्ज करें",
+      "removeFromDashboard": "प्रोडक्ट को डैशबोर्ड से हटाएँ",
+      "addressSuggestions": "सभी ऐप्स",
+      "addressNoResults": "कोई ऐप नहीं मिला",
+      "recentlyOpened": "हाल ही में खोला गया",
+      "recentClearedTitle": "हाल ही में खोले गए टैब सफलतापूर्वक साफ़ कर दिए गए",
+      "undoLabel": "पूर्ववत करें {seconds}से",
+      "ramUsage": "RAM उपयोग: {value}",
+      "ramUsageUnavailable": "RAM उपयोग: —",
+      "newTab": "नया टैब",
+      "newTabPrompt": "{tld} पता दर्ज करें",
+      "closeTab": "टैब बंद करें",
+      "signTransaction": "लेनदेन पर हस्ताक्षर करें",
+      "signingRequestTitle": "{call} हस्ताक्षर अनुरोध",
+      "operationTitle": {
+        "utilityBatchAll": "Utility Batch All",
+        "utilityBatch": "Utility Batch",
+        "utilityForceBatch": "Utility Force Batch"
+      },
+      "batchBehavior": {
+        "revertOnError": "त्रुटि होने पर शामिल लेनदेन वापस हो जाते हैं",
+        "executeUntilError": "शामिल लेनदेन पहली त्रुटि तक निष्पादित होते हैं",
+        "ignoreErrors": "शामिल लेनदेन त्रुटियों को अनदेखा करते हैं"
+      },
+      "signMessageRequestTitle": "रॉ संदेश हस्ताक्षर अनुरोध",
+      "rawMessageNotReadableCaption": "यह संदेश पठनीय रूप में नहीं दिखाया जा सकता",
+      "copyMessage": "संदेश कॉपी करें",
+      "account": "खाता",
+      "accountAddress": "खाते का पता",
+      "network": "नेटवर्क",
+      "networkFee": "नेटवर्क शुल्क",
+      "transactionDetailsTitle": "लेनदेन का विवरण",
+      "copyArguments": "आर्ग्युमेंट्स कॉपी करें",
+      "copyCallData": "call data कॉपी करें",
+      "signingByAppAccount": "इंडेक्स {index} वाले ऐप खाते से हस्ताक्षर",
+      "accountAddressUnavailable": "खाते का पता उपलब्ध नहीं — अपना Polkadot App फिर से कनेक्ट करें",
+      "copyAccountAddress": "खाते का पता कॉपी करें",
+      "polkadotAppHint": "लेनदेन पर हस्ताक्षर करने के लिए Polkadot App खोलें",
+      "polkadotAppRawMessageHint": "इस संदेश पर हस्ताक्षर करने के लिए Polkadot App खोलें",
+      "continueToSign": "जारी रखें",
+      "signPolkadotAppTitle": "लेनदेन पर हस्ताक्षर करें",
+      "signPolkadotAppLine1": "अपने डिवाइस पर Polkadot App खोलें,",
+      "signPolkadotAppLine2": "फिर हस्ताक्षर करें या अस्वीकार करें पर टैप करें",
+      "signPolkadotAppDeviceLabel": "Polkadot App",
+      "signPolkadotAppSignButton": "हस्ताक्षर करें",
+      "signPolkadotAppRejectButton": "अस्वीकार करें",
+      "signPolkadotAppValidFor": "{time} तक मान्य",
+      "openMobileAppTitle": "मोबाइल ऐप खोलें",
+      "openMobileAppLine1": "पक्का करें कि Polkadot App इंस्टॉल है,",
+      "openMobileAppLine2": "फिर जारी रखने के लिए उसे खोलें",
+      "signingTimedOutTitle": "हस्ताक्षर अनुरोध का समय समाप्त हुआ",
+      "signingTimedOutBody": "अनुरोध समय पर पूरा नहीं हुआ",
+      "transactionSigningRejected": "लेनदेन का हस्ताक्षर रद्द किया गया",
+      "transactionSigned": "लेनदेन पर हस्ताक्षर हो गया",
+      "messageSigned": "संदेश पर हस्ताक्षर हो गया",
+      "signingFailedTitle": "लेनदेन पर हस्ताक्षर नहीं हो सका",
+      "signingFailedBody": "कुछ गड़बड़ हो गई। और जानकारी के लिए विवरण खोलें।",
+      "signingErrorToastDetails": "विवरण",
+      "signingErrorDetailsLabel": "विवरण",
+      "signingErrorCopyDetails": "त्रुटि का विवरण कॉपी करें",
+      "havingTroubleSigning": "मोबाइल पर पुष्टि करने में दिक्कत हो रही है?",
+      "havingTroubleSigningDialog": {
+        "title": "पुष्टि करने में दिक्कत हो रही है?",
+        "description": "ऐप रीलोड करें और यह काम फिर से करके देखें। अगर इससे मदद न मिले, तो लॉग आउट करके फिर लॉग इन करें",
+        "troubleshootingGuide": "समस्या निवारण गाइड",
+        "reload": "रीलोड करें"
+      },
+      "noAllowanceErrorTitle": "खाता अभी तैयार नहीं है",
+      "noAllowanceErrorDescription": "हम आपका खाता सेट कर रहे हैं। कृपया थोड़ी देर में फिर कोशिश करें।",
+      "statementStoreErrorTitle": "statement store त्रुटि",
+      "feeUnavailable": "—",
+      "customChainSigningWarning": "इस कस्टम चेन के लिए लेनदेन का विवरण उपलब्ध नहीं है। हस्ताक्षर करने से पहले रॉ call data जाँच लें।",
+      "webVersionNotification": "आप ऐप का वेब संस्करण उपयोग कर रहे हैं। प्रोडक्ट्स के साथ काम करने के लिए डेस्कटॉप संस्करण का उपयोग करें।",
+      "findPlaceholder": "पेज में खोजें",
+      "findCount": "{current}/{total}",
+      "findNoResults": "कोई परिणाम नहीं",
+      "findNext": "अगला मिलान",
+      "findPrevious": "पिछला मिलान",
+      "findClose": "खोज पट्टी बंद करें",
+      "zoomIn": "ज़ूम इन",
+      "zoomOut": "ज़ूम आउट",
+      "zoomReset": "ज़ूम रीसेट करें",
+      "zoomPercent": "{percent}%",
+      "clearRecent": "साफ़ करें"
+    },
+    "userManager": {
+      "connectionStatus": {
+        "connected": "कनेक्ट है",
+        "reconnecting": "फिर से कनेक्ट हो रहा है…",
+        "offline": "आप ऑफ़लाइन हैं",
+        "noConnection": "कनेक्ट नहीं है — साइन इन करने के लिए क्लिक करें"
+      },
+      "aria": {
+        "account": "खाता",
+        "connectAccount": "खाता कनेक्ट करें"
+      },
+      "banner": {
+        "connectedTitle": "{networkName} से कनेक्ट है",
+        "connectedSubtitle": "डेस्कटॉप मोबाइल के साथ जोड़ा गया",
+        "reconnectingTitle": "{networkName} से फिर कनेक्ट हो रहा है…",
+        "reconnectingSubtitle": "नोड तक पहुँचने की फिर कोशिश हो रही है",
+        "offlineTitle": "आप ऑफ़लाइन हैं",
+        "offlineSubtitle": "इंटरनेट कनेक्शन जाँचें और फिर कोशिश करें",
+        "noConnectionTitle": "कनेक्ट नहीं है",
+        "noConnectionSubtitle": "अपना खाता जोड़ने के लिए लॉग इन करें"
+      },
+      "popover": {
+        "settings": "सेटिंग्स"
+      }
+    },
+    "chat": {
+      "proceedInChat": {
+        "menuItem": "चैट में जारी रखें",
+        "toast": {
+          "errorTitle": "चैट रूम नहीं बनाया जा सका"
+        }
+      },
+      "title": "चैट",
+      "widgetTitle": "हाल की चैट",
+      "fullscreenTitle": "चैट",
+      "unreadMessagesAria": "बिना पढ़े संदेश",
+      "category": "संचार",
+      "replyToYourself": "खुद को जवाब दें",
+      "replyTo": "{name} को जवाब दें",
+      "noConversations": "अभी कोई बातचीत नहीं है",
+      "startNewChat": "नई बातचीत शुरू करें",
+      "searchPlaceholder": "बातचीत खोजें...",
+      "searchByUsernameOrMessages": "उपयोगकर्ता नाम या संदेशों में खोजें",
+      "searchChatsAndContacts": "चैट और संपर्क",
+      "searchMessages": "संदेश",
+      "sayHelloOptional": "नमस्ते कहें... (वैकल्पिक)",
+      "sending": "भेजा जा रहा है...",
+      "sendRequest": "अनुरोध भेजें",
+      "search": "खोजें",
+      "noResults": "«{query}» के लिए कोई परिणाम नहीं मिला",
+      "results": "परिणाम ({count})",
+      "recent": "हाल के",
+      "clear": "साफ़ करें",
+      "contacts": "संपर्क",
+      "noMessages": "अभी कोई संदेश नहीं",
+      "thisIsChat": "यह एक चैट है",
+      "noResultsFound": "कोई परिणाम नहीं मिला",
+      "noResultsDescription": "आपकी खोज से मेल खाता कुछ नहीं मिला। अलग शब्द आज़माएँ।",
+      "quickChat": "त्वरित चैट",
+      "viewMore": "और देखें",
+      "syncStatus": {
+        "outOfSync": {
+          "title": "संदेश सिंक से बाहर हो सकते हैं",
+          "subtitle": "संदेश सिंक करने के लिए मोबाइल ऐप खोलें"
+        },
+        "syncing": {
+          "title": "नवीनतम संदेश लाए जा रहे हैं",
+          "subtitle": "मोबाइल से संदेश सिंक हो रहे हैं…"
+        },
+        "synced": {
+          "title": "संदेश अप-टू-डेट हैं",
+          "subtitle": "मोबाइल ऑनलाइन"
+        },
+        "error": {
+          "title": "सिंक विफल",
+          "subtitle": "दोनों ऐप्स पुनः आरंभ करें"
+        }
+      },
+      "sendMessageToBegin": "बातचीत शुरू करने के लिए संदेश भेजें",
+      "mediaMobileOnly": "यह संदेश सिर्फ़ मोबाइल ऐप में देखा जा सकता है",
+      "noChatsYet": "अभी कोई चैट नहीं",
+      "yourChatWillAppear": "आपकी चैट यहाँ दिखेगी",
+      "yourChatsWillAppear": "आपकी चैट यहाँ दिखेंगी",
+      "noChatSelected": "कोई चैट नहीं चुनी गई",
+      "selectChatToView": "बातचीत देखने के लिए कोई चैट चुनें",
+      "request": {
+        "entryTitle": "संदेश अनुरोध",
+        "listHint": "आपकी संपर्क सूची में शामिल न होने वाले लोगों के संदेश अनुरोध यहाँ दिखते हैं",
+        "messageHidden": "संदेश छिपा है",
+        "messageHiddenFull": "आपकी डिफ़ॉल्ट सेटिंग्स के अनुसार संदेश छिपाया गया",
+        "viewMessage": "संदेश देखें",
+        "banner": "चैट अनुरोध स्वीकार करने के लिए <b>{name}</b> को अपने संपर्कों में जोड़ें।<br></br>आपके स्वीकार करने तक उन्हें पता नहीं चलेगा कि आपने उनका संदेश देखा है।",
+        "accept": "स्वीकार करें",
+        "decline": "अस्वीकार करें",
+        "declinedToast": "{name} का अनुरोध अस्वीकार कर दिया गया",
+        "youApproved": "आपने अनुरोध स्वीकार किया",
+        "peerApproved": "{name} ने संदेश अनुरोध स्वीकार किया",
+        "youSent": "<b>आपने</b> संदेश अनुरोध भेजा",
+        "leftChat": "{name} ने चैट छोड़ दी",
+        "modalTitle": "चैट शुरू करने के लिए नया संपर्क जोड़ें?",
+        "modalBody": "चैट में जाने के बाद पक्का करें कि <b>{name}</b> भी आपके साथ चैट शुरू करें, वरना आपका संदेश शायद न दिखे।",
+        "cancel": "रद्द करें",
+        "continue": "जारी रखें",
+        "inviteTitle": "{name} को चैट के लिए आमंत्रित करें",
+        "inviteHint": "इस आमंत्रण में आप सिर्फ़ एक संदेश भेज सकते हैं",
+        "inviteFailed": "आमंत्रण नहीं भेजा जा सका। अपना कनेक्शन जाँचें और फिर कोशिश करें।",
+        "waitForAccept": "अगला संदेश भेजने से पहले <b>{name}</b> के आपका अनुरोध स्वीकार करने का इंतज़ार करें।",
+        "today": "आज"
+      },
+      "contactSearch": {
+        "searchEntry": "खोजें",
+        "placeholder": "उपयोगकर्ता नाम या संदेशों में खोजें",
+        "tabChats": "चैट",
+        "tabApps": "ऐप्स",
+        "groupChatsAndContacts": "चैट और संपर्क",
+        "groupMessages": "संदेश",
+        "recent": "हाल के",
+        "clear": "साफ़ करें",
+        "appsComingSoon": "ऐप खोज जल्द ही आ रही है",
+        "noResultsTitle": "कोई परिणाम नहीं",
+        "noResultsHint": "अपनी खोज बदलकर देखें"
+      },
+      "settings": {
+        "title": "चैट",
+        "subtitle": "चैट और संदेश अनुरोधों का व्यवहार प्रबंधित करें",
+        "messageRequestsSection": "संदेश अनुरोध",
+        "hideByDefault": "संदेश अनुरोध डिफ़ॉल्ट रूप से छिपाएँ",
+        "hideByDefaultHint": "नए अनुरोध तब तक छिपे रहते हैं जब तक आप उन्हें खोलकर संदेश देखें पर टैप न करें"
+      },
+      "editMessage": "संपादित करें",
+      "editingMessage": "संदेश संपादित हो रहा है",
+      "edited": "(संपादित)",
+      "editHistory": "संपादन इतिहास",
+      "currentMessage": "मौजूदा",
+      "earlierVersion": "पुराना संस्करण",
+      "viewEditHistory": "संपादन इतिहास देखें",
+      "originalMessage": "मूल",
+      "leaveChat": "चैट छोड़ें",
+      "blockUser": "उपयोगकर्ता को ब्लॉक करें",
+      "unblockUser": "उपयोगकर्ता को अनब्लॉक करें",
+      "blockedNotice": "जब तक आप {name} को अनब्लॉक नहीं करते, आपको कोई संदेश या अनुरोध नहीं मिलेगा।",
+      "unblock": "अनब्लॉक करें",
+      "transfer": {
+        "youSent": "आपने भेजा",
+        "sent": "भेजा गया",
+        "received": "प्राप्त हुआ",
+        "coinage": {
+          "submitting": "सबमिट हो रहा है",
+          "sending": "भेजा जा रहा है",
+          "sent": "भेजा गया",
+          "delivered": "पहुँच गया",
+          "claimed": "प्राप्त किया गया"
+        }
+      },
+      "call": {
+        "title": {
+          "incomingVoice": "इनकमिंग वॉइस कॉल",
+          "outgoingVoice": "आउटगोइंग वॉइस कॉल",
+          "incomingVideo": "इनकमिंग वीडियो कॉल",
+          "outgoingVideo": "आउटगोइंग वीडियो कॉल",
+          "ongoingVoice": "चल रही वॉइस कॉल",
+          "ongoingVideo": "चल रही वीडियो कॉल",
+          "voice": "वॉइस कॉल",
+          "video": "वीडियो कॉल",
+          "missedVoice": "छूटी हुई वॉइस कॉल",
+          "missedVideo": "छूटी हुई वीडियो कॉल",
+          "canceledVoice": "रद्द की गई वॉइस कॉल",
+          "canceledVideo": "रद्द की गई वीडियो कॉल"
+        },
+        "subtitle": {
+          "openToCall": "कॉल करने के लिए मोबाइल ऐप खोलें",
+          "openToReturn": "वापस जाने के लिए मोबाइल ऐप खोलें",
+          "openToCallBack": "वापस कॉल करने के लिए मोबाइल ऐप खोलें",
+          "openToCallAgain": "फिर से कॉल करने के लिए मोबाइल ऐप खोलें",
+          "tapToCall": "कॉल करने के लिए टैप करें",
+          "tapToReturn": "वापस जाने के लिए टैप करें",
+          "tapToCallBack": "वापस कॉल करने के लिए टैप करें",
+          "tapToCallAgain": "फिर कॉल करने के लिए टैप करें"
+        }
+      }
+    },
+    "productActionsMenu": {
+      "trigger": "प्रोडक्ट क्रियाएँ",
+      "openSettings": "सेटिंग्स खोलें"
+    },
+    "onboarding": {
+      "logoText": "लोगों के लिए प्रोडक्ट",
+      "mainText": "Polkadot को जानने के लिए लॉग इन करें",
+      "description": "लॉग इन करने के लिए अपने कैमरे का उपयोग करें",
+      "phoneHint": "इससे Polkadot App खुलेगा",
+      "errorTitle": "प्रमाणीकरण त्रुटि",
+      "error": "प्रमाणीकरण के दौरान कुछ गड़बड़ हो गई",
+      "errorNoFreeSlotsTitle": "सीमा पूरी हो गई",
+      "errorNoFreeSlotsDescription": "आप 8 से अधिक डिवाइस नहीं जोड़ सकते। नया जोड़ने के लिए Polkadot App में किसी एक डिवाइस को डिस्कनेक्ट करें।",
+      "loggingInToast": "लॉग इन हो रहा है... बस एक पल",
+      "completingPairing": "जोड़ी बनाना पूरा हो रहा है…",
+      "connection": {
+        "offline": {
+          "title": "आप ऑफ़लाइन हैं",
+          "subtitle": "इंटरनेट कनेक्शन जाँचें और फिर कोशिश करें"
+        },
+        "reaching": {
+          "title": "Polkadot से फिर कनेक्ट हो रहा है…",
+          "subtitle": "नोड तक पहुँचने की फिर कोशिश हो रही है"
+        },
+        "restored": {
+          "title": "Polkadot से फिर कनेक्ट हो रहा है…",
+          "subtitle": "इंटरनेट कनेक्शन बहाल हुआ"
+        },
+        "accountSetup": {
+          "title": "आपका खाता अभी सेट हो रहा है",
+          "subtitle": "कृपया बाद में फिर कोशिश करें"
+        }
+      }
+    },
+    "dashboard": {
+      "title": "डैशबोर्ड",
+      "toolbar": {
+        "ariaLabel": "डैशबोर्ड क्रियाएँ",
+        "pagesLabel": "डैशबोर्ड पेज",
+        "switchToPage": "पेज {number} पर जाएँ"
+      },
+      "menu": {
+        "addToFavorites": "पसंदीदा में जोड़ें",
+        "removeFromFavorites": "पसंदीदा से हटाएँ",
+        "toast": {
+          "addedToFavorites": "{productName} पसंदीदा में सफलतापूर्वक जोड़ दिया गया",
+          "removedFromFavorites": "{productName} पसंदीदा से हटा दिया गया"
+        }
+      },
+      "addWidget": {
+        "title": "विजेट जोड़ें",
+        "sizeAndType": "आकार और प्रकार",
+        "selectWidget": "सूची से कोई विजेट चुनें",
+        "noWidgetsAvailable": "कोई विजेट उपलब्ध नहीं है।",
+        "noSearchResults": "आपकी खोज से कोई विजेट मेल नहीं खाता।",
+        "loading": "विजेट लोड हो रहे हैं…",
+        "loadFailed": "विजेट लोड नहीं हो सके। बाद में फिर कोशिश करें।",
+        "createFolder": "नया फ़ोल्डर",
+        "createFolderDescription": "इस विजेट के साथ नया फ़ोल्डर बनाएँ",
+        "addToFavorites": "पसंदीदा में जोड़ें",
+        "addedToFavoritesButton": "पसंदीदा में जोड़ा गया",
+        "done": "हो गया",
+        "add": "जोड़ें",
+        "open": "खोलें",
+        "noSupportedSizes": "इस विजेट के लिए जोड़ने योग्य कोई समर्थित आकार नहीं है।",
+        "searchPlaceholder": "ऐप्स ढूँढ़ने के लिए {tld} पता दर्ज करें",
+        "searchAriaLabel": "ऐप्स खोजें",
+        "cards": {
+          "product": {
+            "title": "प्रोडक्ट विजेट",
+            "description": "डैशबोर्ड से त्वरित पहुँच वाला विजेट"
+          },
+          "chat": {
+            "title": "चैट विजेट",
+            "description": "अपनी चैट तक त्वरित पहुँच"
+          },
+          "favorites": {
+            "title": "पसंदीदा",
+            "description": "आपके पसंदीदा प्रोडक्ट शॉर्टकट्स का फ़ोल्डर"
+          }
+        },
+        "toast": {
+          "widgetAddedProduct": "{widgetTitle} {sizeLabel} विजेट डैशबोर्ड में सफलतापूर्वक जोड़ दिया गया",
+          "addedToFavorites": "{productName} पसंदीदा में सफलतापूर्वक जोड़ दिया गया",
+          "widgetAddFailed": "विजेट नहीं जोड़ा जा सका। फिर कोशिश करें या मौजूदा विजेट बदलने के लिए डैशबोर्ड खोलें।",
+          "favoritesAddFailed": "पसंदीदा में नहीं जोड़ा जा सका। फिर कोशिश करें।",
+          "viewAction": "देखें"
+        }
+      },
+      "addToDashboard": {
+        "label": "डैशबोर्ड में जोड़ें",
+        "toast": {
+          "targetUnresolved": "इस आइटम के लिए डैशबोर्ड में जोड़ने वाला डायलॉग नहीं खुल सका।"
+        }
+      },
+      "domainNotFound": "डोमेन नहीं मिला",
+      "placeholder": {
+        "widgetNotFound": "यह विजेट अब मौजूद नहीं है",
+        "widgetUnavailable": "यह विजेट फ़िलहाल उपलब्ध नहीं है",
+        "deleteWidget": "विजेट हटाएँ"
+      },
+      "favorites": {
+        "title": "पसंदीदा",
+        "removeFolder": "फ़ोल्डर हटाएँ",
+        "removeProduct": "विजेट हटाएँ",
+        "empty": "अभी कोई पसंदीदा नहीं",
+        "emptyPlaceholder": "जल्दी पहुँच के लिए अपने पसंदीदा ऐप्स सहेजें",
+        "browseApps": "ऐप्स देखें",
+        "viewMore": "और देखें"
+      },
+      "empty": {
+        "title": "प्रोडक्ट विजेट यहाँ दिखेंगे।",
+        "description": "शुरू करने के लिए पहला विजेट जोड़ें।"
+      },
+      "widgetMenu": {
+        "sizeLabel": "आकार",
+        "sizeSmall": "छोटा",
+        "sizeMedium": "मध्यम",
+        "sizeLarge": "बड़ा",
+        "sizeHorizontal": "क्षैतिज",
+        "cleanup": "डैशबोर्ड साफ़ करें",
+        "reload": "विजेट रीलोड करें",
+        "removeWidget": "विजेट हटाएँ"
+      }
+    },
+    "ticketApp": {
+      "title": "Ticket App",
+      "category": "इवेंट",
+      "daysLeft": "बाकी दिन",
+      "upcoming": "आगामी इवेंट",
+      "entryTicket": "प्रवेश टिकट"
+    },
+    "shopping": {
+      "title": "Mark3t",
+      "category": "शॉपिंग",
+      "totalSaved": "कुल बचत",
+      "thisMonth": "इस महीने"
+    },
+    "hackm3": {
+      "title": "Hackm3",
+      "category": "दस्तावेज़",
+      "online": "{count} ऑनलाइन",
+      "live": "लाइव",
+      "docs": "दस्तावेज़",
+      "shared": "साझा"
+    },
+    "user": {
+      "welcomeBack": "फिर से स्वागत है",
+      "logOut": "लॉग आउट",
+      "logIn": "लॉग इन"
+    },
+    "settings": {
+      "title": "सेटिंग्स",
+      "testnetEndpoints": "टेस्टनेट एंडपॉइंट",
+      "endpointStable": "स्थिर",
+      "group": {
+        "preferences": "प्राथमिकताएँ",
+        "privacy": "गोपनीयता और सुरक्षा",
+        "development": "डेवलपमेंट"
+      }
+    },
+    "themeToggle": {
+      "title": "दिखावट",
+      "appearance": "थीम",
+      "colorMode": "रंग मोड",
+      "device": "डिवाइस",
+      "day": "दिन",
+      "night": "रात",
+      "berlin": "बर्लिन",
+      "tokyo": "टोक्यो",
+      "lisbon": "लिस्बन",
+      "malta": "माल्टा",
+      "preview": {
+        "outgoingFirst": "सुनो, तुम Polkadot Summit जा रहे हो? 🎉",
+        "incoming": "बिल्कुल! और तुम?",
+        "outgoingSecond": "इसे मैं कभी नहीं छोड़ूँगा 👋 वहीं मिलते हैं!"
+      }
+    },
+    "updateCheck": {
+      "title": "अपडेट",
+      "channel": {
+        "title": "अपडेट चैनल",
+        "stable": "स्थिर",
+        "experimental": "प्रायोगिक",
+        "stableHint": "सत्यापित बिल्ड। रोज़ाना उपयोग के लिए अनुशंसित।",
+        "experimentalHint": "सीधे डेवलपमेंट से आए नवीनतम बिल्ड। अस्थिर हो सकते हैं।"
+      },
+      "checkForUpdates": "अपडेट देखें",
+      "checking": "अपडेट देखा जा रहा है…",
+      "checkingHint": "इसमें थोड़ा समय लग सकता है",
+      "upToDate": "Polkadot Desktop अप-टू-डेट है!",
+      "upToDateHint": "आपके पास Polkadot Desktop का नवीनतम संस्करण है। संस्करण {version} इंस्टॉल है",
+      "upToDateHintNoVersion": "आपके पास Polkadot Desktop का नवीनतम संस्करण है।",
+      "downloading": "अपडेट डाउनलोड हो रहा है…",
+      "downloadingHint": "इसमें थोड़ा समय लग सकता है",
+      "progress": "प्रगति",
+      "downloadingPercent": "{percent}%",
+      "readyToInstall": "अपडेट तैयार है",
+      "readyToInstallHint": "नवीनतम संस्करण लागू करने के लिए Polkadot Desktop फिर से शुरू करें",
+      "installNow": "फिर से शुरू करें",
+      "notNow": "बाद में",
+      "error": "अपडेट विफल",
+      "errorHint": "कृपया फिर कोशिश करें या डेवलपमेंट टीम से संपर्क करें",
+      "unsupported": "अपडेट उपलब्ध नहीं हैं",
+      "unsupportedHint": "Polkadot Desktop का यह बिल्ड खुद को अपडेट नहीं कर सकता।",
+      "close": "बंद करें",
+      "updateAvailable": "Polkadot Desktop का नया अपडेट!",
+      "updateAvailableHint": "संस्करण {version} उपलब्ध है",
+      "updated": "Polkadot Desktop अपडेट हो गया!",
+      "updatedHint": "संस्करण {version} इंस्टॉल हुआ",
+      "relaunch": "फिर से शुरू करें"
+    },
+    "productSettings": {
+      "title": "ऐप्स",
+      "subtitle": "वे ऐप्स जिनसे आपने इंटरैक्ट किया",
+      "searchPlaceholder": "नाम या {tld} पते से खोजें",
+      "searchAriaLabel": "नाम या {tld} पते से ऐप्स खोजें",
+      "clearCache": "कैश साफ़ करें",
+      "forgetApp": "ऐप भुला दें",
+      "requestedPermissions": "अनुरोधित अनुमतियाँ",
+      "noPermissions": "कोई अनुमति नहीं माँगी गई",
+      "toast": {
+        "appReset": "{productName} रीसेट कर दिया गया",
+        "cacheCleared": "{productName} का कैश साफ़ कर दिया गया"
+      },
+      "clearCacheDialog": {
+        "title": "{productName} का कैश साफ़ करें?",
+        "description": "कैश किया गया डेटा इस डिवाइस से हटा दिया जाएगा। इसमें अस्थायी फ़ाइलें और स्थानीय रूप से संग्रहित सामग्री शामिल है।"
+      },
+      "forgetDialog": {
+        "title": "{productName} को भुला दें?",
+        "description": "इससे साइट का सारा डेटा मिट जाएगा और {productName} की अनुमतियाँ रीसेट हो जाएँगी। टैब खुला रहेगा; अगली बार खोलने पर सब कुछ नए सिरे से लोड होगा।"
+      },
+      "webDomains": {
+        "dialogTitle": "{productName} के लिए वेब डोमेन पहुँच प्रबंधित करें"
+      },
+      "appPermission": {
+        "title": "{productName} की {permission} पहुँच",
+        "description": "ये सेटिंग्स {productName} ऐप और उसके अलग-अलग मोड की {permission} पहुँच को नियंत्रित करती हैं",
+        "resetToDefault": "डिफ़ॉल्ट पर रीसेट करें",
+        "noDomainsRequested": "अभी तक कोई डोमेन नहीं माँगा गया"
+      },
+      "aliasPermission": {
+        "label": "Alias",
+        "description": "इस ऐप के लिए क्रॉस-ऐप alias पहुँच प्रबंधित करें",
+        "contextsLabel": "Alias संदर्भ",
+        "contextsDescription": "प्रति alias संदर्भ पहुँच प्रबंधित करें",
+        "noContextsRequested": "अभी तक कोई alias संदर्भ नहीं माँगा गया",
+        "dialogTitle": "{productName} ऐप के लिए alias संदर्भ पहुँच प्रबंधित करें"
+      }
+    },
+    "productPermissions": {
+      "permissionRequest": {
+        "productKindLabel": "प्रोडक्ट",
+        "closeDialog": "बंद करें",
+        "title": "{label} तक पहुँच की अनुमति दें?",
+        "deny": "अनुमति न दें",
+        "allowOnce": "एक बार अनुमति दें",
+        "allowAlways": "हमेशा अनुमति दें",
+        "domainsLabel": "डोमेन",
+        "permission": {
+          "Camera": "कैमरा",
+          "Microphone": "माइक्रोफ़ोन",
+          "Bluetooth": "ब्लूटूथ",
+          "Location": "स्थान",
+          "Notifications": "सूचनाएँ",
+          "Clipboard": "क्लिपबोर्ड",
+          "OpenUrl": "बाहरी URL खोलना",
+          "Biometrics": "बायोमेट्रिक्स",
+          "Motion": "मोशन सेंसर",
+          "NFC": "NFC",
+          "Files": "फ़ाइलें",
+          "Remote": "वेब डोमेन",
+          "WebRtc": "WebRTC",
+          "ChainSubmit": "चेन सबमिट",
+          "PreimageSubmit": "Preimage सबमिट",
+          "StatementSubmit": "Statement सबमिट",
+          "BalanceAccess": "बैलेंस",
+          "UserIdentity": "पहचान"
+        },
+        "reason": {
+          "Camera": "वीडियो कॉल, QR स्कैन और मीडिया कैप्चर जैसी सुविधाओं के लिए उपयोग होता है",
+          "Microphone": "वॉइस कॉल, मैसेजिंग और ऑडियो रिकॉर्डिंग जैसी सुविधाओं के लिए उपयोग होता है",
+          "Bluetooth": "आसपास के डिवाइस से जुड़ने और डेटा भेजने के लिए उपयोग होता है",
+          "Location": "स्थान-आधारित सेवाओं और सामग्री को वैयक्तिक बनाने के लिए उपयोग होता है",
+          "Notifications": "आपको अपडेट, अलर्ट और ज़रूरी जानकारी भेजने के लिए उपयोग होता है",
+          "Clipboard": "आपके चुने हुए कंटेंट को कॉपी और पेस्ट करने के लिए उपयोग होता है",
+          "OpenUrl": "आपके डिफ़ॉल्ट ब्राउज़र में बाहरी लिंक खोलने के लिए उपयोग होता है",
+          "Biometrics": "उन सुविधाओं के लिए जिनमें आपकी पहचान सत्यापित करनी होती है",
+          "Motion": "उन सुविधाओं के लिए उपयोग किया जाता है जो आपके डिवाइस को हिलाने या झुकाने पर प्रतिक्रिया देती हैं",
+          "NFC": "आस-पास के टैग और डिवाइस के साथ संपर्क रहित पढ़ने और लिखने के लिए उपयोग किया जाता है",
+          "Files": "फ़ाइलें अपलोड, डाउनलोड और प्रबंधित करने जैसी सुविधाओं के लिए उपयोग होता है",
+          "Remote": "निम्न डोमेन पर अनुरोध भेजने के लिए उपयोग होता है",
+          "WebRtc": "वॉइस और वीडियो कॉल जैसी रीयल-टाइम संचार सुविधाओं के लिए उपयोग होता है",
+          "ChainSubmit": "किसी भी Substrate चेन पर हस्ताक्षरित लेनदेन प्रसारित करने के लिए उपयोग होता है",
+          "PreimageSubmit": "Bulletin Chain पर preimage डेटा भेजने के लिए उपयोग होता है",
+          "StatementSubmit": "statement store में statement भेजने के लिए उपयोग होता है",
+          "BalanceAccess": "आपका खर्च करने योग्य बैलेंस पढ़ने और यह जानने के लिए उपयोग किया जाता है कि बैलेंस बहुत कम होने से भुगतान कब विफल होता है। इससे खर्च करने की अनुमति नहीं मिलती",
+          "UserIdentity": "पहचान के लिए आपके मुख्य उपयोगकर्ता नाम तक पहुँच ज़रूरी है। आप इसे बाद में सेटिंग्स में प्रबंधित कर सकते हैं।"
+        }
+      },
+      "remotePermissionRequest": {
+        "title": "रिमोट अनुमति अनुरोध",
+        "description": "{permission} तक रिमोट पहुँच माँग रहा है।",
+        "deny": "अस्वीकार करें"
+      },
+      "externalBlockedToast": "{origin} पर नेटवर्क अनुरोध रोका गया। इसे ऐप अनुमतियों में बदलें।",
+      "settings": {
+        "heading": "अनुमतियाँ",
+        "subheading": "इस ऐप को दी गई अनुमतियाँ देखें और प्रबंधित करें",
+        "remoteHeading": "रिमोट अनुमतियाँ",
+        "remoteSubheading": "रिमोट नेटवर्क सुविधाओं तक पहुँच की अनुमतियाँ"
+      }
+    },
+    "customChains": {
+      "title": "कस्टम चेन",
+      "addSection": "चेन जोड़ें",
+      "registeredSection": "पंजीकृत चेन",
+      "endpointLabel": "WebSocket एंडपॉइंट",
+      "endpointPlaceholder": "ws://localhost:9944",
+      "nameLabel": "नाम (वैकल्पिक)",
+      "namePlaceholder": "नोड से स्वतः पहचाना गया",
+      "addButton": "चेन जोड़ें",
+      "addingButton": "कनेक्ट हो रहा है…",
+      "emptyState": "कोई कस्टम चेन नहीं जोड़ी गई। किसी स्थानीय Substrate नोड या कस्टम होस्टेड चेन से कनेक्ट करें।",
+      "errors": {
+        "invalidUrlTitle": "अमान्य URL",
+        "invalidUrlDescription": "यह ws:// या wss:// URL होना चाहिए",
+        "duplicateBuiltinTitle": "पहले से पंजीकृत",
+        "duplicateBuiltinDescription": "यह चेन पहले से ही अंतर्निर्मित चेन है",
+        "duplicateCustomTitle": "पहले से पंजीकृत",
+        "duplicateCustomDescription": "यह चेन पहले से ही आपकी कस्टम चेन में है",
+        "connectionFailedTitle": "कनेक्शन विफल",
+        "unknownError": "अज्ञात त्रुटि"
+      },
+      "addedToastTitle": "चेन जोड़ी गई",
+      "addedToastDescription": "{name} ({genesisHash})",
+      "removeChainAriaLabel": "{name} हटाएँ"
+    },
+    "permissionSettings": {
+      "navItem": "अनुमतियाँ",
+      "heading": "अनुमतियाँ",
+      "subheading": "सुविधाओं और डेटा तक ऐप्स की पहुँच की समीक्षा करें और उसे प्रबंधित करें",
+      "categoryHeading": "{name}:",
+      "appCount": "{count, plural, =0 {कोई ऐप नहीं} one {# ऐप} other {# ऐप्स}}",
+      "category": {
+        "device": "डिवाइस और सिस्टम पहुँच",
+        "onchain": "ऑन-चेन क्रियाएँ",
+        "service": "सेवाओं तक पहुँच"
+      },
+      "status": {
+        "ask": "हर बार पूछें (डिफ़ॉल्ट)",
+        "granted": "अनुमति है",
+        "denied": "अस्वीकृत"
+      },
+      "detail": {
+        "rulesTitle": "नियम और सुरक्षा उपाय",
+        "appsLabel": "ऐप्स:",
+        "noApps": "किसी ऐप ने यह अनुमति नहीं माँगी है",
+        "allowedFor": "{modalities} के लिए अनुमति है",
+        "appSubtitle": "{baseName} • {allowed}"
+      },
+      "permission": {
+        "Clipboard": {
+          "label": "क्लिपबोर्ड",
+          "description": "आपके चुने हुए कंटेंट को कॉपी और पेस्ट करने के लिए उपयोग होता है",
+          "rule": {
+            "1": "पहुँच सिर्फ़ आपकी स्पष्ट कार्रवाई के बाद (जैसे पेस्ट करना)",
+            "2": "बैकग्राउंड में कोई रीडिंग नहीं",
+            "3": "अनुमति के बिना डेटा संग्रहित या प्रेषित नहीं होता",
+            "4": "पहुँच सिर्फ़ सक्रिय सत्र तक सीमित"
+          }
+        },
+        "Microphone": {
+          "label": "माइक्रोफ़ोन",
+          "description": "वॉइस कॉल, मैसेजिंग और ऑडियो रिकॉर्डिंग जैसी सुविधाओं के लिए उपयोग होता है",
+          "rule": {
+            "1": "पुश-टू-टॉक या रिकॉर्डिंग की स्पष्ट शुरुआत",
+            "2": "बैकग्राउंड में कोई सुनवाई नहीं",
+            "3": "सक्रिय होने पर दृश्य संकेतक",
+            "4": "पहुँच सिर्फ़ होस्ट की मध्यस्थता से"
+          }
+        },
+        "Camera": {
+          "label": "कैमरा",
+          "description": "वीडियो कॉल, QR स्कैन और मीडिया कैप्चर जैसी सुविधाओं के लिए उपयोग होता है",
+          "rule": {
+            "1": "पहुँच सिर्फ़ तब जब आप सक्रिय रूप से कैमरा उपयोग करते हैं",
+            "2": "बैकग्राउंड में कोई रिकॉर्डिंग नहीं",
+            "3": "कैमरा सक्रिय होने पर दृश्य संकेतक",
+            "4": "आपकी अनुमति के बिना कोई डेटा संग्रहित या साझा नहीं होता"
+          }
+        },
+        "Notifications": {
+          "label": "सूचनाएँ",
+          "description": "आपको अपडेट, अलर्ट और ज़रूरी जानकारी भेजने के लिए उपयोग होता है",
+          "rule": {
+            "1": "अत्यधिक या स्पैम सूचनाएँ नहीं",
+            "2": "सूचनाओं के ज़रिए संवेदनशील डेटा तक पहुँच नहीं"
+          }
+        },
+        "Bluetooth": {
+          "label": "ब्लूटूथ",
+          "description": "आसपास के डिवाइस से जुड़ने और डेटा भेजने के लिए उपयोग होता है",
+          "rule": {
+            "1": "पहुँच सिर्फ़ आसपास के डिवाइस तक",
+            "2": "आपकी कार्रवाई के बिना बैकग्राउंड कनेक्शन नहीं",
+            "3": "अनुमति के बिना संवेदनशील डेटा तक पहुँच नहीं"
+          }
+        },
+        "Location": {
+          "label": "स्थान",
+          "description": "स्थान-आधारित सेवाओं और सामग्री को वैयक्तिक बनाने के लिए उपयोग होता है",
+          "rule": {
+            "1": "स्थान बैकग्राउंड में उपयोग नहीं होता",
+            "2": "स्थान सिर्फ़ तब उपयोग होता है जब किसी सुविधा को उसकी ज़रूरत हो",
+            "3": "अनुमति के बिना स्थान डेटा संग्रहित या साझा नहीं होता"
+          }
+        },
+        "Biometrics": {
+          "label": "बायोमेट्रिक्स",
+          "description": "उन सुविधाओं के लिए जिनमें आपकी पहचान सत्यापित करनी होती है",
+          "rule": {
+            "1": "उपयोग सिर्फ़ आपके स्पष्ट प्रमाणीकरण के बाद (जैसे Face ID या Touch ID)",
+            "2": "यह प्रोडक्ट बायोमेट्रिक डेटा तक कभी नहीं पहुँचता और न ही उसे संग्रहित करता है",
+            "3": "प्रमाणीकरण आपका डिवाइस सुरक्षित रूप से संभालता है",
+            "4": "उपयोग सिर्फ़ अनलॉक करने या क्रियाएँ स्वीकृत करने के लिए"
+          }
+        },
+        "Motion": {
+          "label": "मोशन सेंसर",
+          "description": "उन सुविधाओं के लिए उपयोग किया जाता है जो आपके डिवाइस को हिलाने या झुकाने पर प्रतिक्रिया देती हैं",
+          "rule": {
+            "1": "केवल डिवाइस की गति और ओरिएंटेशन पढ़ता है",
+            "2": "आपके स्थान या कैमरे तक कोई पहुँच नहीं",
+            "3": "आप बाद में सेटिंग्स में पहुँच रद्द कर सकते हैं"
+          }
+        },
+        "OpenExternalUrl": {
+          "label": "बाहरी URL खोलना",
+          "description": "आपके डिफ़ॉल्ट ब्राउज़र में बाहरी लिंक खोलने के लिए उपयोग होता है",
+          "rule": {
+            "1": "लिंक सिर्फ़ आपकी कार्रवाई के बाद खुलते हैं",
+            "2": "कोई स्वतः रीडायरेक्ट या बैकग्राउंड कार्रवाई नहीं",
+            "3": "सिर्फ़ स्पष्ट रूप से माँगे गए URL ही खोले जाते हैं",
+            "4": "आपकी अनुमति के बिना कोई डेटा साझा नहीं होता"
+          }
+        },
+        "ExternalRequest": {
+          "label": "वेब डोमेन",
+          "description": "निम्न डोमेन पर HTTP अनुरोध भेजने के लिए उपयोग होता है",
+          "rule": {
+            "1": "अनुरोध सिर्फ़ निर्दिष्ट डोमेन तक सीमित",
+            "2": "उपयोगकर्ता की कार्रवाई के बिना स्वतः डेटा साझा नहीं",
+            "3": "सभी अनुरोध होस्ट की मध्यस्थता से जाते हैं",
+            "4": "डिफ़ॉल्ट रूप से स्थानीय या संवेदनशील डेटा तक पहुँच नहीं"
+          }
+        },
+        "WebRtc": {
+          "label": "WebRTC",
+          "description": "वॉइस और वीडियो कॉल जैसी रीयल-टाइम संचार सुविधाओं के लिए उपयोग होता है",
+          "rule": {
+            "1": "उपयोग सिर्फ़ सक्रिय संचार के दौरान",
+            "2": "आपकी कार्रवाई के बिना बैकग्राउंड कनेक्शन नहीं",
+            "3": "सीधे कनेक्शन सिर्फ़ ज़रूरत पड़ने पर बनते हैं",
+            "4": "उपयोग के दौरान आपका IP पता उजागर हो सकता है"
+          }
+        },
+        "ChainSubmit": {
+          "label": "चेन सबमिट",
+          "description": "किसी भी Substrate चेन पर हस्ताक्षरित लेनदेन प्रसारित करने के लिए उपयोग होता है",
+          "rule": {
+            "1": "सिर्फ़ हस्ताक्षरित लेनदेन ही भेजे जा सकते हैं",
+            "2": "कोई लेनदेन स्वतः नहीं बनता या बदला नहीं जाता",
+            "3": "भेजना सिर्फ़ आपकी पुष्टि के बाद होता है",
+            "4": "आपकी निजी कुंजियों या संवेदनशील डेटा तक कोई पहुँच नहीं"
+          }
+        },
+        "PreimageSubmit": {
+          "label": "Preimage सबमिट",
+          "description": "Bulletin Chain पर preimage डेटा भेजने के लिए उपयोग होता है",
+          "rule": {
+            "1": "संग्रहीत डेटा Bulletin चेन पर सार्वजनिक होता है",
+            "2": "हमेशा अनुमति दें हर अपलोड पर लागू होता है; एक बार अनुमति दें केवल एक अपलोड पर लागू होता है",
+            "3": "डेटा ठीक वैसा ही भेजा जाता है जैसा दिया गया, बिना बदलाव के",
+            "4": "आपकी निजी कुंजियों या संवेदनशील डेटा तक कोई पहुँच नहीं"
+          }
+        },
+        "StatementSubmit": {
+          "label": "Statement सबमिट",
+          "description": "statement store में statement भेजने के लिए उपयोग होता है",
+          "rule": {
+            "1": "सिर्फ़ हस्ताक्षरित लेनदेन ही भेजे जा सकते हैं",
+            "2": "कोई लेनदेन स्वतः नहीं बनता या बदला नहीं जाता",
+            "3": "भेजना सिर्फ़ आपकी पुष्टि के बाद होता है",
+            "4": "आपकी निजी कुंजियों या संवेदनशील डेटा तक कोई पहुँच नहीं"
+          }
+        },
+        "BalanceAccess": {
+          "label": "बैलेंस",
+          "description": "आपका खर्च करने योग्य बैलेंस पढ़ने के लिए उपयोग किया जाता है",
+          "rule": {
+            "1": "भुगतान के लिए उपलब्ध बैलेंस दिखाता है",
+            "2": "प्रोडक्ट को धन खर्च करने या स्थानांतरित करने की अनुमति नहीं देता",
+            "3": "यह पता लगा सकता है कि बैलेंस बहुत कम होने के कारण भुगतान अस्वीकार हुआ",
+            "4": "पहुँच रद्द करने पर बैलेंस के आगे के अपडेट बंद हो जाते हैं"
+          }
+        },
+        "UserIdentity": {
+          "label": "पहचान",
+          "description": "मुख्य उपयोगकर्ता नाम का प्रकटीकरण",
+          "rule": {
+            "1": "प्रोडक्ट को आपका मुख्य उपयोगकर्ता नाम बताता है",
+            "2": "उपयोग सिर्फ़ पहचान के उद्देश्य से",
+            "3": "कोई अन्य निजी डेटा साझा नहीं होता",
+            "4": "आप बाद में सेटिंग्स में यह पहुँच रद्द कर सकते हैं"
+          }
+        },
+        "Files": {
+          "label": "फ़ाइलें",
+          "description": "फ़ाइलें अपलोड, डाउनलोड और प्रबंधित करने जैसी सुविधाओं के लिए उपयोग होता है",
+          "rule": {
+            "1": "पहुँच सिर्फ़ उन फ़ाइलों तक जिन्हें आप स्पष्ट रूप से चुनते हैं",
+            "2": "आपकी फ़ाइलों तक बैकग्राउंड पहुँच नहीं",
+            "3": "आपकी कार्रवाई के बिना फ़ाइलें नहीं बदली जातीं",
+            "4": "आपकी अनुमति के बिना कोई फ़ाइल साझा नहीं होती"
+          }
+        }
+      }
+    },
+    "statementStoreNetwork": {
+      "title": "टेस्टनेट एंडपॉइंट",
+      "changeNetworkDialog": {
+        "title": "टेस्टनेट एंडपॉइंट बदलें और लॉग आउट करें?",
+        "description": "एंडपॉइंट बदलने पर आप लॉग आउट हो जाएँगे और ऐप रीलोड होगा। आपको फिर से साइन इन करना होगा।",
+        "confirm": "एंडपॉइंट बदलें"
+      },
+      "options": {
+        "endpointStable": "स्थिर"
+      }
+    },
+    "offlineAccess": {
+      "menu": {
+        "enable": "ऑफ़लाइन पहुँच चालू करें",
+        "remove": "ऑफ़लाइन पहुँच हटाएँ",
+        "update": "ऐप संस्करण अपडेट करें"
+      },
+      "updateDescription": "एक नया संस्करण उपलब्ध है। पिन किए गए संस्करण को नवीनतम पर अपडेट करें।",
+      "section": {
+        "title": "ऑफ़लाइन पहुँच",
+        "description": "बिना इंटरनेट उपयोग के लिए ऐप को संग्रहित करता है",
+        "enable": "चालू करें",
+        "remove": "हटाएँ",
+        "updateTitle": "{modality} अपडेट उपलब्ध है",
+        "updateReady": "संस्करण {fromVersion} से {toVersion} तक का अपडेट इंस्टॉल के लिए तैयार है",
+        "update": "अपडेट करें",
+        "modality": {
+          "app": "ऐप",
+          "widget": "विजेट",
+          "worker": "बैकग्राउंड सेवाएँ (जैसे चैट रूम)"
+        }
+      },
+      "enableDialog": {
+        "title": "ऑफ़लाइन पहुँच चालू करें",
+        "description": "इससे मौजूदा ऐप संस्करण बिना इंटरनेट उपयोग के लिए संग्रहित हो जाएगा",
+        "confirm": "चालू करें"
+      },
+      "removeDialog": {
+        "title": "ऑफ़लाइन पहुँच हटाएँ",
+        "description": "इससे आप {name} से डिस्कनेक्ट हो जाएँगे और इंटरनेट कनेक्शन के बिना ऐप उपयोग नहीं कर पाएँगे। आप यह सेटिंग बाद में कभी भी चालू कर सकते हैं।",
+        "confirm": "हटाएँ"
+      },
+      "updateDialog": {
+        "title": "{version} के लिए ऐप संस्करण अपडेट करें",
+        "description": "इससे ऐप संस्करण {version} बिना इंटरनेट उपयोग के लिए संग्रहित हो जाएगा",
+        "confirm": "अपडेट करें"
+      },
+      "toast": {
+        "enabled": "{name} अब ऑफ़लाइन उपलब्ध है",
+        "removed": "{name} के लिए ऑफ़लाइन उपयोग हटा दिया गया",
+        "updated": "{name} नवीनतम संस्करण पर अपडेट हो गया",
+        "noVersion": "प्रोडक्ट फ़िलहाल नहीं चल रहा है",
+        "error": "ऑफ़लाइन पहुँच नहीं बदली जा सकी",
+        "updateError": "संस्करण अपडेट नहीं हो सका",
+        "modalityUpdate": {
+          "title": "{modality} अपडेट उपलब्ध है",
+          "description": "संस्करण {version} इंस्टॉल के लिए तैयार है",
+          "action": "अपडेट करें"
+        }
+      }
+    },
+    "languageSettings": {
+      "title": "भाषा",
+      "locale": {
+        "en": "अंग्रेज़ी",
+        "es": "स्पेनिश",
+        "fr": "फ़्रेंच",
+        "de": "जर्मन",
+        "it": "इतालवी",
+        "pt": "पुर्तगाली",
+        "zh-Hans": "चीनी (सरलीकृत)",
+        "ja": "जापानी",
+        "ko": "कोरियाई",
+        "ru": "रूसी",
+        "ar": "अरबी",
+        "hi": "हिन्दी",
+        "tr": "तुर्की"
+      }
+    },
+    "inputModality": {
+      "title": "खोजें",
+      "placeholder": "खोजें या {tld} पता डालें",
+      "attach": "फ़ाइलें अटैच करें",
+      "removeAttachment": "अटैचमेंट हटाएँ",
+      "loadingAttachment": "अटैचमेंट लोड हो रहा है…",
+      "asked": "इस स्क्रीन के {count} प्रोडक्ट से पूछा गया…",
+      "noContext": "इस स्क्रीन पर इसका जवाब देने वाला कुछ नहीं है।",
+      "noCandidates": "इसे संभालने वाला कुछ नहीं है।",
+      "goTo": "यहाँ जाएँ",
+      "pickerPrompt": "“{fileName}” किस प्रोडक्ट को मिलनी चाहिए?",
+      "pickerEmpty": "इस स्क्रीन का कोई प्रोडक्ट इस फ़ाइल प्रकार को स्वीकार नहीं करता।",
+      "attachmentTooLarge": "भेजने के लिए बहुत बड़ी: {fileName}",
+      "scan": "कोड स्कैन करें",
+      "scanPrompt": "स्कैन किया गया कोड",
+      "scanWillOpen": "इससे {productId} खुलेगा।",
+      "scanWillAsk": "यह इस स्क्रीन के प्रोडक्ट से पूछा जाएगा।",
+      "scanConfirm": "जारी रखें",
+      "scanCancel": "रद्द करें",
+      "scanUnavailable": "इस डिवाइस में कोई कैमरा उपलब्ध नहीं है।",
+      "scanDenied": "कैमरा एक्सेस अस्वीकार कर दिया गया।",
+      "fromThisScreen": "इस स्क्रीन से",
+      "recentlyVisited": "हाल में खोले गए",
+      "clearRecent": "साफ़ करें",
+      "addressFavorites": "पसंदीदा",
+      "suggestionSeparator": "—"
+    },
+    "networkConnection": {
+      "title": "नेटवर्क कनेक्शन",
+      "chainsLoading": "नेटवर्क लोड हो रहे हैं…",
+      "chainsEmpty": "कोई नेटवर्क कॉन्फ़िगर नहीं है।",
+      "noLightClient": "कोई लाइट क्लाइंट उपलब्ध नहीं",
+      "mode": {
+        "lightClient": "लाइट क्लाइंट",
+        "rpc": "विश्वसनीय प्रदाता",
+        "lightClientHint": "प्रदाताओं पर भरोसा किए बिना नेटवर्क डेटा सीधे अपने डिवाइस पर सत्यापित करें",
+        "rpcHint": "विश्वसनीय प्रदाताओं से तेज़ पहुँच, पर निजता कम"
+      },
+      "advanced": {
+        "title": "उन्नत",
+        "description": "कनेक्शन के तरीके कॉन्फ़िगर करें"
+      },
+      "slowLoad": {
+        "title": "लोड होने में सामान्य से ज़्यादा समय लग रहा है",
+        "description": "इंतज़ार छोड़ें और इस सत्र के लिए विश्वसनीय प्रदाताओं से तेज़ी से लोड करें",
+        "action": "तेज़ी से लोड करें"
+      },
+      "loadFailed": {
+        "title": "यह पेज लोड नहीं हो सका",
+        "description": "कनेक्शन में बहुत समय लगा। फिर कोशिश करें या तेज़ कनेक्शन इस्तेमाल करें।",
+        "descriptionReloadOnly": "कनेक्शन में बहुत समय लगा। पेज फिर से लोड करके देखें।",
+        "reload": "पेज फिर लोड करें"
+      },
+      "role": {
+        "identity": "पहचान",
+        "apps": "ऐप्स",
+        "transactions": "लेन-देन"
+      }
+    },
+    "productRuntime": {
+      "permissionDenied": {
+        "systemDeviceSettings": "डिवाइस सेटिंग्स",
+        "Camera": {
+          "title": "कैमरा पहुँच आवश्यक है",
+          "description": "वीडियो कॉल, QR स्कैन और मीडिया कैप्चर जैसी सुविधाओं के लिए उपयोग होता है"
+        },
+        "Microphone": {
+          "title": "माइक्रोफ़ोन पहुँच आवश्यक है",
+          "description": "वॉइस कॉल, मैसेजिंग और ऑडियो रिकॉर्डिंग जैसी सुविधाओं के लिए उपयोग होता है"
+        }
+      },
+      "review": {
+        "deny": "अस्वीकार करें",
+        "signPayload": {
+          "title": "लेन-देन पेलोड साइन करें",
+          "subtitle": "साइन होने से पहले पेलोड जाँचें।"
+        },
+        "signRaw": {
+          "title": "संदेश साइन करें",
+          "subtitle": "साइन होने से पहले संदेश जाँचें।"
+        },
+        "createTransaction": {
+          "title": "लेन-देन बनाएँ",
+          "subtitle": "भेजे जाने से पहले लेन-देन जाँचें।"
+        },
+        "signVrf": {
+          "title": "VRF ट्रांसक्रिप्ट साइन करें",
+          "subtitle": "साइन होने से पहले ट्रांसक्रिप्ट जाँचें।"
+        },
+        "allowance": {
+          "title": "संसाधन आवंटित करें",
+          "subtitle": "यह ऐप जो संसाधन माँग रहा है, उन्हें जाँचें।"
+        },
+        "statementSign": {
+          "title": "कथन साइन करें",
+          "subtitle": "साइन होने से पहले कथन जाँचें।"
+        },
+        "createProof": {
+          "title": "प्रमाण बनाएँ",
+          "subtitle": "यह ऐप जो प्रमाण माँग रहा है, उसे जाँचें।"
+        },
+        "legacyAccountNotice": "पुराने खाते से साइन किया जा रहा है।",
+        "resource": {
+          "statementStore": "स्टेटमेंट स्टोर स्लॉट",
+          "bulletin": "बुलेटिन स्टोरेज स्लॉट",
+          "smartContract": "खाता {account} के लिए स्मार्ट-कॉन्ट्रैक्ट गैस",
+          "autoSigning": "हर बार पूछे बिना आपकी ओर से साइन करें"
+        },
+        "accountAccess": {
+          "title": "{targetIdentifier} के खाते तक पहुँच की अनुमति दें?",
+          "subtitle": "इस ऐप को किसी दूसरे ऐप के खाते से काम करने देता है",
+          "warning": "अनुमति देने पर यह ऐप दूसरे ऐप का खाता आपकी ओर से इस्तेमाल कर सकेगा"
+        },
+        "identityDisclosure": {
+          "title": "इस ऐप के साथ अपना यूज़रनेम साझा करें?",
+          "subtitle": "यह ऐप आपका प्राथमिक यूज़रनेम देख सकेगा",
+          "warning": "अनुमति देने पर यह ऐप आपको आपके यूज़रनेम से पहचान सकेगा"
+        },
+        "productSubtree": {
+          "title": "इस ऐप को अपने खाते तक पहुँचने दें?",
+          "subtitle": "इस ऐप का खाता आपके जुड़े डिवाइस से लाता है"
+        }
+      }
+    }
+  },
+  "widget": {
+    "permission": {
+      "modality": {
+        "app": {
+          "label": "ऐप",
+          "description": "फ़ुलस्क्रीन मोड में {productName} के लिए {permission} पहुँच प्रबंधित करें"
+        },
+        "widget": {
+          "label": "विजेट",
+          "description": "डैशबोर्ड पर {productName} विजेट के लिए {permission} पहुँच प्रबंधित करें"
+        }
+      }
+    },
+    "rateLimiter": {
+      "description": "{limiterType} की सीमा पूरी हो गई",
+      "types": {
+        "rpc": "RPC",
+        "featureSupport": "सुविधा समर्थन",
+        "navigation": "नेविगेशन",
+        "localStorageRead": "लोकल स्टोरेज पठन",
+        "localStorageWrite": "लोकल स्टोरेज लेखन",
+        "pushNotification": "पुश सूचना",
+        "pushNotificationCancel": "पुश सूचना रद्दीकरण",
+        "permissions": "अनुमतियाँ",
+        "legacyAccounts": "पुराने खाते",
+        "identityAccount": "पहचान खाता",
+        "productAccounts": "प्रोडक्ट खाते",
+        "alias": "Alias",
+        "proof": "प्रमाण",
+        "signVrf": "VRF हस्ताक्षर",
+        "ringVrfRegister": "Ring VRF कुंजी पंजीकरण",
+        "ringVrfList": "Ring VRF कुंजी सूची",
+        "ringVrfSign": "Ring VRF हस्ताक्षर",
+        "entropy": "एन्ट्रॉपी",
+        "login": "लॉगिन",
+        "preimage": "Preimage"
+      }
+    },
+    "webview": {
+      "error": {
+        "domainResolve": "प्रोडक्ट नहीं मिल रहा।",
+        "fetchingFailed": "प्रोडक्ट नहीं लाया जा सका।",
+        "loadFailed": "लोड करने में विफल: {description} ({code})"
+      },
+      "loading": {
+        "reaching": "{identifier} से संपर्क हो रहा है",
+        "reachingGeneric": "संपर्क हो रहा है"
+      },
+      "crash": {
+        "title": "प्रोडक्ट ने काम करना बंद कर दिया",
+        "subtitle": "पेज रीलोड करके देखें।",
+        "reload": "रीलोड करें",
+        "advanced": "विवरण दिखाएँ",
+        "reason": "कारण: {reason}",
+        "exitCode": "एग्ज़िट कोड: {code}"
+      },
+      "unresponsive": {
+        "title": "पेज प्रतिक्रिया नहीं दे रहा",
+        "subtitle": "यह अपने आप ठीक हो सकता है, या आप अभी रीलोड कर सकते हैं।",
+        "reload": "रीलोड करें",
+        "advanced": "विवरण दिखाएँ"
+      },
+      "degraded": {
+        "title": "प्रोडक्ट धीरे प्रतिक्रिया दे रहा है",
+        "reload": "रीलोड करें",
+        "dismiss": "खारिज करें"
+      }
+    },
+    "productContainerBinding": {
+      "aliasPermission": {
+        "title": "{requestedIdentifier} में आपके alias तक पहुँच की अनुमति दें?",
+        "subtitle": "ऐप्स के बीच आपके पहचान खाते को जोड़ने के लिए उपयोग होता है",
+        "keyOwner": "{keyOwner} की कुंजी का उपयोग",
+        "requestingProduct": "अनुरोध करने वाला प्रोडक्ट",
+        "requestedContext": "अनुरोधित संदर्भ",
+        "warning": "अनुमति देने पर यह ऐप आपको पहचान सकेगा और दूसरे ऐप में आपकी गतिविधि ट्रैक कर सकेगा",
+        "deny": "अनुमति न दें",
+        "allowOnce": "एक बार अनुमति दें",
+        "allowAlways": "हमेशा अनुमति दें"
+      },
+      "proofPermission": {
+        "title": "{requestedIdentifier} को यह साबित करने दें कि आप एक व्यक्ति हैं?",
+        "subtitle": "आपकी पहचान बताए बिना साबित करता है कि आप एक अद्वितीय इंसान हैं",
+        "warning": "अनुमति देने पर यह ऐप आपकी ओर से हस्ताक्षरित प्रूफ़ ऑफ़ पर्सनहुड बना सकेगा",
+        "deny": "अनुमति न दें",
+        "allow": "अनुमति दें"
+      },
+      "signVrf": {
+        "title": "{requestingIdentifier} को सत्यापन-योग्य यादृच्छिक हस्ताक्षर बनाने दें?",
+        "subtitle": "आपके प्रोडक्ट खाते से जुड़ा लॉटरी-शैली का VRF हस्ताक्षर बनाता है",
+        "account": "हस्ताक्षर करने वाला खाता",
+        "transcript": "Transcript",
+        "transcriptLabel": "लेबल",
+        "warning": "अनुमति देने पर यह ऐप आपकी ओर से VRF हस्ताक्षर बना सकेगा",
+        "deny": "अनुमति न दें",
+        "allow": "अनुमति दें"
+      },
+      "allocationRequest": {
+        "title": "अनुमति अनुरोध",
+        "description": "{productName} संसाधन आवंटन का अनुरोध कर रहा है",
+        "requestedResources": "अनुरोधित संसाधन",
+        "polkadotAppHint": "Polkadot App में स्वीकृति देने के लिए तैयार रहें",
+        "grantAccess": "जारी रखें",
+        "pending": "आवंटित हो रहा है...",
+        "polkadotAppLine1": "अपने मोबाइल पर Polkadot App खोलें,",
+        "polkadotAppLine2": "फिर उसे स्वीकृत या अस्वीकार करें",
+        "polkadotAppApproveButton": "स्वीकृत करें",
+        "allocationRejected": "अनुमति अनुरोध रद्द किया गया",
+        "smartContractDetailsIntro": "निम्न खाते कॉन्ट्रैक्ट कॉल पर स्वतः हस्ताक्षर करेंगे:",
+        "appAccountWithIndex": "इंडेक्स {index} वाला ऐप खाता",
+        "copyAccountAddress": "खाते का पता कॉपी करें",
+        "resource": {
+          "StatementStoreAllowance": "आपकी ओर से statement प्रकाशित करना",
+          "BulletinAllowance": "आपकी ओर से Bulletin Chain पर प्रकाशित करना",
+          "SmartContractAllowance": "स्मार्ट कॉन्ट्रैक्ट कॉल पर स्वतः हस्ताक्षर करना",
+          "AutoSigning": "लेनदेन पर स्वतः हस्ताक्षर करना"
+        }
+      }
+    }
+  }
+}

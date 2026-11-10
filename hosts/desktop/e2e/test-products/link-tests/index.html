@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Link Tests</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      h2 {
+        margin-top: 24px;
+        margin-bottom: 8px;
+        color: #555;
+        font-size: 14px;
+        text-transform: uppercase;
+      }
+      section {
+        margin-bottom: 8px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      pre {
+        border-radius: 4px;
+        background: #f6f6f6;
+        padding: 8px;
+        overflow: auto;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      button,
+      a.btn {
+        display: inline-block;
+        cursor: pointer;
+        margin: 2px;
+        border: 1px solid #666;
+        border-radius: 4px;
+        background: #fff;
+        padding: 6px 10px;
+        color: #000;
+        font-size: 13px;
+        text-decoration: none;
+      }
+      button:hover,
+      a.btn:hover {
+        background: #eee;
+      }
+      #status {
+        font-family: ui-monospace, Menlo, Monaco, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Link Tests</h1>
+
+    <section>
+      <h2>Status</h2>
+      <pre id="status" data-testid="status">(initializing)</pre>
+    </section>
+
+    <section>
+      <h2>Client-side navigation (SPA)</h2>
+      <button data-testid="push-state" onclick="doPush()">pushState → /push-target</button>
+      <button data-testid="replace-state" onclick="doReplace()">replaceState → /replace-target</button>
+      <button data-testid="push-nested" onclick="doPushNested()">pushState → /deep/nested/path</button>
+    </section>
+
+    <section>
+      <h2>Top-level navigation (same product)</h2>
+      <a class="btn" data-testid="anchor-link" href="/anchor-target">&lt;a href="/anchor-target"&gt;</a>
+      <button data-testid="location-href" onclick="window.location.href = '/location-target'">window.location.href</button>
+      <button data-testid="reload" onclick="window.location.reload()">reload</button>
+    </section>
+
+    <section>
+      <h2>Hash navigation</h2>
+      <a class="btn" data-testid="hash-link" href="#section-a">#section-a</a>
+    </section>
+
+    <section>
+      <h2>Cross-product</h2>
+      <a class="btn" data-testid="cross-product-link" href="polkadot://cross-product-target{{TLD}}/home"
+        >polkadot://cross-product-target{{TLD}}/home</a
+      >
+      <button data-testid="cross-product-location" onclick="window.location.href = 'polkadot://cross-product-target{{TLD}}/from-js'">
+        location.href = polkadot://…
+      </button>
+    </section>
+
+    <section>
+      <h2>External URL</h2>
+      <a class="btn" data-testid="external-link" href="https://example.com">https://example.com</a>
+    </section>
+
+    <section>
+      <h2>Delayed boot redirect (simulates SPA init)</h2>
+      <button data-testid="trigger-delayed-push" onclick="scheduleDelayedPush()">Schedule pushState in 1500ms</button>
+      <p>Use this to test that a delayed pushState on a backgrounded tab does not hijack the host route.</p>
+    </section>
+
+    <section>
+      <h2>Find in page fixture</h2>
+      <!-- Deterministic, unique tokens for find-in-page tests (browser project):
+         "alfafind" appears exactly 3 times, "betafind" exactly once. No other
+         element on the page contains these tokens, so native findInPage counts
+         are stable. Do not reuse these words elsewhere in this fixture. -->
+      <p data-testid="find-fixture">alfafind alfafind alfafind betafind</p>
+    </section>
+
+    <div id="section-a"></div>
+
+    <script>
+      function updateStatus() {
+        const s = {
+          pathname: window.location.pathname,
+          hash: window.location.hash,
+          href: window.location.href,
+        };
+        document.getElementById('status').textContent = JSON.stringify(s, null, 2);
+      }
+
+      function doPush() {
+        window.history.pushState(null, '', '/push-target');
+        updateStatus();
+      }
+
+      function doReplace() {
+        window.history.replaceState(null, '', '/replace-target');
+        updateStatus();
+      }
+
+      function doPushNested() {
+        window.history.pushState(null, '', '/deep/nested/path');
+        updateStatus();
+      }
+
+      function scheduleDelayedPush() {
+        setTimeout(() => {
+          window.history.pushState(null, '', '/delayed-boot-target');
+          updateStatus();
+          console.info('LINK_TESTS_DELAYED_PUSH_FIRED');
+        }, 1500);
+      }
+
+      // Expose for test-driven triggering: tests can call `window.__linkTests.delayedPush()`
+      // without needing to wait for a user click.
+      window.__linkTests = {
+        delayedPush: scheduleDelayedPush,
+        pushNow: path => {
+          window.history.pushState(null, '', path);
+          updateStatus();
+        },
+        replaceNow: path => {
+          window.history.replaceState(null, '', path);
+          updateStatus();
+        },
+      };
+
+      window.addEventListener('popstate', updateStatus);
+      window.addEventListener('hashchange', updateStatus);
+      updateStatus();
+      console.info('LINK_TESTS_READY');
+    </script>
+  </body>
+</html>

@@ -1,0 +1,123 @@
+import { x25519 } from '@noble/curves/ed25519.js';
+import { deriveSr25519PublicKey } from '@novasamatech/statement-store';
+import { describe, expect, it } from 'vitest';
+
+import { deviceIdentityService } from './service';
+
+const {
+  deriveEncryptionPublicKey,
+  deriveStatementAccountPublicKey,
+  generateEncryptionPrivateKey,
+  generateStatementAccountSeed,
+  isValidEncryptionPublicKey,
+} = deviceIdentityService;
+
+describe('generateStatementAccountSeed', () => {
+  it('returns a 64-byte expanded sr25519 secret', () => {
+    const seed = generateStatementAccountSeed();
+
+    expect(seed).toBeInstanceOf(Uint8Array);
+    expect(seed.length).toBe(64);
+  });
+
+  it('returns a different seed on each call', () => {
+    const a = generateStatementAccountSeed();
+    const b = generateStatementAccountSeed();
+
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+  });
+
+  it('produces a seed that derives a 32-byte sr25519 public key', () => {
+    const seed = generateStatementAccountSeed();
+    const publicKey = deriveSr25519PublicKey(seed);
+
+    expect(publicKey.length).toBe(32);
+  });
+});
+
+describe('deriveStatementAccountPublicKey', () => {
+  it('is deterministic for a given seed', () => {
+    const seed = generateStatementAccountSeed();
+    const a = deriveStatementAccountPublicKey(seed);
+    const b = deriveStatementAccountPublicKey(seed);
+
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+  });
+});
+
+describe('generateEncryptionPrivateKey', () => {
+  it('returns a 32-byte X25519 private key', () => {
+    const priv = generateEncryptionPrivateKey();
+
+    expect(priv).toBeInstanceOf(Uint8Array);
+    expect(priv.length).toBe(32);
+  });
+
+  it('returns a different key on each call', () => {
+    const a = generateEncryptionPrivateKey();
+    const b = generateEncryptionPrivateKey();
+
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+  });
+});
+
+describe('deriveEncryptionPublicKey', () => {
+  it('returns a 32-byte X25519 public key', () => {
+    const priv = generateEncryptionPrivateKey();
+    const pub = deriveEncryptionPublicKey(priv);
+
+    expect(pub.length).toBe(32);
+  });
+
+  it('is deterministic for a given private key', () => {
+    const priv = generateEncryptionPrivateKey();
+    const a = deriveEncryptionPublicKey(priv);
+    const b = deriveEncryptionPublicKey(priv);
+
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+  });
+
+  it('matches the noble/curves X25519 encoding', () => {
+    const priv = generateEncryptionPrivateKey();
+    const ours = deriveEncryptionPublicKey(priv);
+    const reference = x25519.getPublicKey(priv);
+
+    expect(Buffer.from(ours).equals(Buffer.from(reference))).toBe(true);
+  });
+
+  it('agrees with the peer on a shared secret', () => {
+    const alicePriv = generateEncryptionPrivateKey();
+    const bobPriv = generateEncryptionPrivateKey();
+
+    const aliceSees = x25519.getSharedSecret(alicePriv, deriveEncryptionPublicKey(bobPriv));
+    const bobSees = x25519.getSharedSecret(bobPriv, deriveEncryptionPublicKey(alicePriv));
+
+    expect(Buffer.from(aliceSees).equals(Buffer.from(bobSees))).toBe(true);
+  });
+});
+
+describe('isValidEncryptionPublicKey', () => {
+  it('accepts a derived 32-byte key', () => {
+    const pub = deriveEncryptionPublicKey(generateEncryptionPrivateKey());
+
+    expect(isValidEncryptionPublicKey(pub)).toBe(true);
+  });
+
+  it('rejects a 65-byte key', () => {
+    expect(isValidEncryptionPublicKey(new Uint8Array(65).fill(0xab))).toBe(false);
+  });
+
+  it('rejects a 33-byte value', () => {
+    expect(isValidEncryptionPublicKey(new Uint8Array(33).fill(7))).toBe(false);
+  });
+
+  it('rejects empty input', () => {
+    expect(isValidEncryptionPublicKey(new Uint8Array(0))).toBe(false);
+  });
+
+  // Deliberate limitation: every 32-byte string is a valid X25519 key, so degenerate
+  // ones are caught at agreement time (RFC 7748), not here.
+  it('accepts any 32 bytes — validity is enforced at key agreement', () => {
+    expect(isValidEncryptionPublicKey(new Uint8Array(32).fill(0xff))).toBe(true);
+  });
+});
