@@ -276,6 +276,7 @@ fn the_provider_config_lists_published_then_unnamed_bundled() {
 	let bundled = |name: &str| FundingProviderEntry {
 		product_id: ProductId::for_test(name),
 		worker_manifest: Some("{}".to_string()),
+		root_manifest: None,
 		origin: FundingProviderOrigin::Bundled,
 		has_app: Some(true),
 	};

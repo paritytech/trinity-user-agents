@@ -3113,9 +3113,6 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
-	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
-		true
-	}
 
 	async fn detected_country(&self) -> Option<String> {
 		None

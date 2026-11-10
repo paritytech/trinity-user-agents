@@ -1708,7 +1708,14 @@ impl FundingProvider for ProductRuntimeHost {
 				if matches!(target, latest::FundingFrameTarget::App { .. }) {
 					let has_app = match services.funding_providers().has_app(&provider.product_id) {
 						Some(has_app) => has_app,
-						None => platform.provider_has_app(provider).await,
+						None => crate::runtime::product_manifest::publishes_app(
+							services,
+							services.platform.as_ref(),
+							&provider.product_id,
+							APP_LOOKUP_CEILING,
+						)
+						.await
+						.unwrap_or(false),
 					};
 					if !has_app {
 						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
@@ -1952,6 +1959,10 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;

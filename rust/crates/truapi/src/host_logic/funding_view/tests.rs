@@ -25,6 +25,7 @@ fn candidate(name: &str, routes: Vec<FundingRoute>) -> FundingCandidate {
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
+		brand: None,
 	}
 }
 
